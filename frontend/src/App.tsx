@@ -7,9 +7,18 @@ import AssessView from './components/AssessView';
 
 const TABS = ['风险看板', '告警中心', '智能对话', '风险评估'];
 
+function getTab(): number {
+  try { return parseInt(localStorage.getItem('active_tab') || '0'); } catch { return 0; }
+}
+
 export default function App() {
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState(getTab);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const switchTab = (i: number) => {
+    setTab(i);
+    localStorage.setItem('active_tab', String(i));
+  };
 
   return (
     <div className="flex h-screen">
@@ -20,7 +29,7 @@ export default function App() {
           {TABS.map((name, i) => (
             <button
               key={name}
-              onClick={() => setTab(i)}
+              onClick={() => switchTab(i)}
               className={`px-4 py-1.5 text-sm rounded-lg transition-colors ${
                 tab === i
                   ? 'bg-[#333] text-white'

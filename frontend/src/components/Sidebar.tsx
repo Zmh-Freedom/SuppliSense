@@ -19,6 +19,10 @@ export default function Sidebar({ onRefresh }: Props) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [load]);
 
   const add = async () => {
     const name = newName.trim();
