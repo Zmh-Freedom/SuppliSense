@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timezone
 
 import akshare as ak
 
@@ -156,18 +157,26 @@ def _parse_float(val) -> float:
         return 0.0
 
 
+_CACHE_TTL_SECONDS = 24 * 3600  # 24 hours
+
+
 def _load_from_cache(name: str) -> FinancialMetrics | None:
     db = get_db()
     doc = db["financial_cache"].find_one({"name": name})
-    if doc:
-        return FinancialMetrics(**doc["metrics"])
-    return None
+    if not doc:
+        return None
+    cached_at = doc.get("cached_at")
+    if cached_at:
+        age = (datetime.now(timezone.utc) - cached_at).total_seconds()
+        if age > _CACHE_TTL_SECONDS:
+            return None  # expired
+    return FinancialMetrics(**doc["metrics"])
 
 
 def _save_cache(name: str, metrics: FinancialMetrics) -> None:
     db = get_db()
     db["financial_cache"].update_one(
         {"name": name},
-        {"$set": {"name": name, "metrics": metrics.model_dump()}},
+        {"$set": {"name": name, "metrics": metrics.model_dump(), "cached_at": datetime.now(timezone.utc)}},
         upsert=True,
     )

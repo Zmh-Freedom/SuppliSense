@@ -113,15 +113,28 @@ def search_companies(keyword: str, limit: int = 20) -> list[str]:
     return _rank_and_dedupe(names, keyword)[:limit]
 
 
-def _rank_and_dedupe(names: list[str], keyword: str) -> list[str]:
-    # pre-load listed company names for ranking boost
-    db = get_db()
-    listed = {doc["name"] for doc in db["baseinfo"].find(
-        {"items.result.bondNum": {"$nin": [None, ""]}},
-        {"name": 1},
-    )}
+_listed_cache: tuple[set[str], float] | None = None
 
-    # rank: listed > contiguous > prefix > formal > longer
+
+def _get_listed_companies() -> set[str]:
+    global _listed_cache
+    import time
+    now = time.time()
+    if _listed_cache is None or (now - _listed_cache[1]) > 300:  # 5 min TTL
+        db = get_db()
+        _listed_cache = (
+            {doc["name"] for doc in db["baseinfo"].find(
+                {"items.result.bondNum": {"$nin": [None, ""]}},
+                {"name": 1},
+            )},
+            now,
+        )
+    return _listed_cache[0]
+
+
+def _rank_and_dedupe(names: list[str], keyword: str) -> list[str]:
+    listed = _get_listed_companies()
+
     names = sorted(names, key=lambda n: (
         n in listed,
         keyword in n,
@@ -130,7 +143,6 @@ def _rank_and_dedupe(names: list[str], keyword: str) -> list[str]:
         len(n),
     ), reverse=True)
 
-    # dedupe: if short name is substring of a longer name, remove it
     result = []
     for name in names:
         if not any(name != other and name in other for other in names):
