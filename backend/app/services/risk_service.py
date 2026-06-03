@@ -19,6 +19,10 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     indicators = get_risk_indicators(name)
     financial = get_financial_metrics(name)
 
+    # check if in watchlist
+    from app.services.alert_service import get_watchlist
+    in_watchlist = name in get_watchlist()
+
     req = RiskCalculateRequest(
         company=profile,
         risk=risk,
@@ -57,6 +61,8 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         risk_detail=risk_detail,
         score_breakdown=breakdown,
     )
+    # add watchlist status
+    response.risk_detail["in_watchlist"] = in_watchlist
     save_snapshot(name, response)
     return response
 
