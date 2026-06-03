@@ -33,7 +33,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         bankruptcy_count=indicators["bankruptcy_count"],
         env_penalty_count=indicators["env_penalty_count"],
     )
-    score = _calc_score(req)
+    score, breakdown = _calc_score(req)
     level = _score_to_level(score)
 
     risk_detail = {
@@ -55,60 +55,93 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         risk_level=level,
         financial=financial,
         risk_detail=risk_detail,
+        score_breakdown=breakdown,
     )
     save_snapshot(name, response)
     return response
 
 
 def calculate_risk(request: RiskCalculateRequest) -> RiskCalculateResponse:
-    score = _calc_score(request)
+    score, breakdown = _calc_score(request)
     level = _score_to_level(score)
-    return RiskCalculateResponse(risk_score=score, risk_level=level)
+    return RiskCalculateResponse(risk_score=score, risk_level=level, score_breakdown=breakdown)
 
 
-def _calc_score(req: RiskCalculateRequest) -> int:
+def _calc_score(req: RiskCalculateRequest) -> tuple[int, dict]:
     risk = req.risk
     fin = req.financial
 
     def clamp(v, lo, hi):
         return max(lo, min(hi, v))
 
-    # ---- financial (max 35) ----
-    fin_score = 0.0
+    breakdown = {}
+
+    # ---- financial ----
+    fin_items = {}
     if fin:
         if fin.debt_ratio > 0.4:
-            fin_score += clamp((fin.debt_ratio - 0.4) / 0.5 * 15, 0, 15)
+            pts = round(clamp((fin.debt_ratio - 0.4) / 0.5 * 15, 0, 15), 1)
+            fin_items["资产负债率"] = f"{pts}分 (当前{fin.debt_ratio*100:.1f}%)"
         if fin.cash_flow < 0:
-            fin_score += 8
+            fin_items["现金流为负"] = f"8分 (每股{fin.cash_flow:.2f}元)"
         if fin.revenue_growth < 0:
-            fin_score += clamp(3 + abs(fin.revenue_growth) * 20, 0, 7)
+            pts = round(clamp(3 + abs(fin.revenue_growth) * 20, 0, 7), 1)
+            fin_items["营收下降"] = f"{pts}分 (增长率{fin.revenue_growth*100:.1f}%)"
         if fin.net_profit_growth < 0:
-            fin_score += clamp(3 + abs(fin.net_profit_growth) * 20, 0, 7)
+            pts = round(clamp(3 + abs(fin.net_profit_growth) * 20, 0, 7), 1)
+            fin_items["净利下降"] = f"{pts}分 (增长率{fin.net_profit_growth*100:.1f}%)"
 
-    # ---- judicial (max 40) ----
-    judicial_score = 0.0
-    judicial_score += clamp(risk.lawsuit_count * 0.3, 0, 10)
-    judicial_score += clamp(risk.executed_count * 5, 0, 20)
+    fin_score = sum(float(v.split("分")[0]) for v in fin_items.values())
+    breakdown["财务风险"] = {"总分": round(fin_score, 1), "明细": fin_items}
+
+    # ---- judicial ----
+    jud_items = {}
+    lawsuit_pts = round(clamp(risk.lawsuit_count * 0.3, 0, 10), 1)
+    if lawsuit_pts > 0:
+        jud_items["诉讼"] = f"{lawsuit_pts}分 ({risk.lawsuit_count}起)"
+    exec_pts = round(clamp(risk.executed_count * 5, 0, 20), 1)
+    if exec_pts > 0:
+        jud_items["被执行"] = f"{exec_pts}分 ({risk.executed_count}条)"
     if req.dishonesty_count > 0:
-        judicial_score += 25
+        jud_items["失信"] = f"25分 ({req.dishonesty_count}条)"
     if req.major_lawsuit:
-        judicial_score += 10
-    # new dimensions
-    judicial_score += clamp(req.guarantee_count * 0.005, 0, 5)  # 对外担保
-    judicial_score += clamp(req.pledge_count * 0.3, 0, 4)  # 股权质押
+        jud_items["重大诉讼"] = "10分"
+    guarantee_pts = round(clamp(req.guarantee_count * 0.005, 0, 5), 1)
+    if guarantee_pts > 0:
+        jud_items["对外担保"] = f"{guarantee_pts}分 ({req.guarantee_count}次)"
+    pledge_pts = round(clamp(req.pledge_count * 0.3, 0, 4), 1)
+    if pledge_pts > 0:
+        jud_items["股权质押"] = f"{pledge_pts}分 ({req.pledge_count}次)"
 
-    # ---- operational (max 25) ----
-    op_score = 0.0
-    op_score += clamp(risk.abnormal_operation_count * 3, 0, 12)
-    op_score += clamp(risk.administrative_penalty_count * 2, 0, 10)
+    jud_score = sum(float(v.split("分")[0]) for v in jud_items.values())
+    breakdown["司法风险"] = {"总分": round(jud_score, 1), "明细": jud_items}
+
+    # ---- operational ----
+    op_items = {}
+    abnormal_pts = round(clamp(risk.abnormal_operation_count * 3, 0, 12), 1)
+    if abnormal_pts > 0:
+        op_items["经营异常"] = f"{abnormal_pts}分 ({risk.abnormal_operation_count}次)"
+    penalty_pts = round(clamp(risk.administrative_penalty_count * 2, 0, 10), 1)
+    if penalty_pts > 0:
+        op_items["行政处罚"] = f"{penalty_pts}分 ({risk.administrative_penalty_count}条)"
     if req.legal_person_change_frequent:
-        op_score += 5
-    # new dimensions
-    op_score += clamp(req.bankruptcy_count * 3, 0, 9)  # 破产/清算
-    op_score += clamp(req.env_penalty_count * 2, 0, 5)  # 环保处罚
+        op_items["法人频繁变更"] = "5分"
+    bankrupt_pts = round(clamp(req.bankruptcy_count * 3, 0, 9), 1)
+    if bankrupt_pts > 0:
+        op_items["破产/清算"] = f"{bankrupt_pts}分 ({req.bankruptcy_count}次)"
+    env_pts = round(clamp(req.env_penalty_count * 2, 0, 5), 1)
+    if env_pts > 0:
+        op_items["环保处罚"] = f"{env_pts}分 ({req.env_penalty_count}条)"
 
-    total = int(fin_score + judicial_score + op_score)
-    return min(total, 100)
+    op_score = sum(float(v.split("分")[0]) for v in op_items.values())
+    breakdown["经营风险"] = {"总分": round(op_score, 1), "明细": op_items}
+
+    total = int(fin_score + jud_score + op_score)
+    breakdown["总计"] = min(total, 100)
+    if total > 100:
+        breakdown["说明"] = "实际总分超过100，已封顶"
+
+    return min(total, 100), breakdown
 
 
 def _score_to_level(score: int) -> str:

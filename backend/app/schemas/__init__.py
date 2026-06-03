@@ -27,6 +27,7 @@ class RiskCalculateResponse(BaseModel):
     risk_level: str
     financial: FinancialMetrics | None = None
     risk_detail: dict | None = None
+    score_breakdown: dict | None = None
 
 
 class RiskAssessRequest(BaseModel):
