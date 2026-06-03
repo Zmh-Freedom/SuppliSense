@@ -4,9 +4,10 @@ import type { WatchlistData, AlertDoc } from '../types';
 
 interface Props {
   onRefresh: () => void;
+  onSelect?: (name: string) => void;
 }
 
-export default function Sidebar({ onRefresh }: Props) {
+export default function Sidebar({ onRefresh, onSelect }: Props) {
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [alertCount, setAlertCount] = useState(0);
   const [newName, setNewName] = useState('');
@@ -116,13 +117,14 @@ export default function Sidebar({ onRefresh }: Props) {
           watchlist.map(c => (
             <div
               key={c}
-              className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-white/60 transition-colors cursor-default"
+              className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-white/60 transition-colors cursor-pointer"
               onMouseEnter={() => setHovered(c)}
               onMouseLeave={() => setHovered(null)}
+              onClick={() => onSelect?.(c)}
             >
               <span className="text-xs text-[#444] truncate flex-1">{c}</span>
               <button
-                onClick={() => remove(c)}
+                onClick={e => { e.stopPropagation(); remove(c); }}
                 className={`text-gray-300 hover:text-red-400 text-sm leading-none transition-all shrink-0 ml-1 ${
                   hovered === c ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                 }`}

@@ -1,18 +1,27 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import type { RiskResult } from '../types';
 
-export default function AssessView() {
-  const [name, setName] = useState('');
+export default function AssessView({ initialName = '' }: { initialName?: string }) {
+  const [name, setName] = useState(initialName);
   const [data, setData] = useState<RiskResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const prevName = useRef(initialName);
 
-  const assess = async () => {
-    if (!name.trim()) return;
+  useEffect(() => {
+    if (initialName && initialName !== prevName.current) {
+      prevName.current = initialName;
+      setName(initialName);
+      runAssess(initialName);
+    }
+  }, [initialName]);
+
+  const runAssess = async (target: string) => {
+    if (!target.trim()) return;
     setLoading(true); setError('');
     try {
-      const res = await api.post<RiskResult>('/risk/assess', { company_name: name.trim() });
+      const res = await api.post<RiskResult>('/risk/assess', { company_name: target.trim() });
       setData(res);
     } catch {
       setError('评估失败');
@@ -20,6 +29,8 @@ export default function AssessView() {
     }
     setLoading(false);
   };
+
+  const assess = () => runAssess(name);
 
   const score = data?.risk_score ?? 0;
   const color = score <= 30 ? '#2d8c63' : score <= 60 ? '#d4a040' : '#e06060';
