@@ -1,89 +1,88 @@
 """
 飞书机器人推送服务。
 
-配置：.env 中设置 FEISHU_WEBHOOK_URL
+配置：.env 中设置 FEISHU_WEBHOOK_URL 和 FEISHU_SECRET（签名校验用）
 获取方式：飞书群 → 群设置 → 群机器人 → 添加自定义机器人 → 复制 webhook 地址
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
+import time
 
 import httpx
 
 WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
+SECRET = os.getenv("FEISHU_SECRET", "")
+
+
+def _signed_url() -> str:
+    if not SECRET:
+        return WEBHOOK_URL
+    ts = str(int(time.time()))
+    sign = base64.b64encode(
+        hmac.new(SECRET.encode(), f"{ts}\n{SECRET}".encode(), hashlib.sha256).digest()
+    ).decode()
+    sep = "&" if "?" in WEBHOOK_URL else "?"
+    return f"{WEBHOOK_URL}{sep}timestamp={ts}&sign={sign}"
+
+
+def _post(payload: dict) -> bool:
+    if not WEBHOOK_URL:
+        return False
+    try:
+        httpx.post(_signed_url(), json=payload, timeout=10)
+        return True
+    except Exception:
+        return False
 
 
 def send_text(text: str) -> bool:
     """发送纯文本消息"""
-    if not WEBHOOK_URL:
-        return False
-    try:
-        httpx.post(WEBHOOK_URL, json={"msg_type": "text", "content": {"text": text}}, timeout=10)
-        return True
-    except Exception:
-        return False
+    return _post({"msg_type": "text", "content": {"text": text}})
 
 
 def send_risk_report(report: str) -> bool:
     """发送 Markdown 格式的风险报告"""
-    if not WEBHOOK_URL:
-        return False
-    try:
-        payload = {
-            "msg_type": "interactive",
-            "card": {
-                "config": {"wide_screen_mode": True},
-                "header": {
-                    "title": {"tag": "plain_text", "content": "📊 供应商风险日报"},
-                    "template": "wathet",
-                },
-                "elements": [
-                    {"tag": "markdown", "content": report},
-                    {"tag": "hr"},
-                    {
-                        "tag": "note",
-                        "elements": [
-                            {"tag": "plain_text", "content": "🤖 供应商风险分析 Agent · 自动推送"}
-                        ],
-                    },
-                ],
+    return _post({
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": "📊 供应商风险日报"},
+                "template": "wathet",
             },
-        }
-        httpx.post(WEBHOOK_URL, json=payload, timeout=10)
-        return True
-    except Exception:
-        return False
+            "elements": [
+                {"tag": "markdown", "content": report},
+                {"tag": "hr"},
+                {"tag": "note", "elements": [{"tag": "plain_text", "content": "🤖 供应商风险分析 Agent · 自动推送"}]},
+            ],
+        },
+    })
 
 
 def send_alert_card(company_name: str, severity: str, changes: list[dict]) -> bool:
     """发送单条告警卡片"""
-    if not WEBHOOK_URL:
-        return False
-
     color = "red" if severity == "critical" else "yellow"
     icon = "🔴" if severity == "critical" else "🟡"
     change_lines = "\n".join(
         f"{c['field']}：{c.get('old', '-')} → **{c.get('new', '-')}**" for c in changes[:10]
     )
-
-    try:
-        payload = {
-            "msg_type": "interactive",
-            "card": {
-                "config": {"wide_screen_mode": True},
-                "header": {
-                    "title": {"tag": "plain_text", "content": f"{icon} 风险告警"},
-                    "template": color,
-                },
-                "elements": [
-                    {"tag": "markdown", "content": f"**{company_name}** 风险发生变化\n\n{change_lines}"},
-                ],
+    return _post({
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": f"{icon} 风险告警"},
+                "template": color,
             },
-        }
-        httpx.post(WEBHOOK_URL, json=payload, timeout=10)
-        return True
-    except Exception:
-        return False
+            "elements": [
+                {"tag": "markdown", "content": f"**{company_name}** 风险发生变化\n\n{change_lines}"},
+            ],
+        },
+    })
 
 
 def send_daily_digest() -> None:
