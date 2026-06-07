@@ -113,18 +113,24 @@ def _scheduled_refresh() -> None:
     run_refresh_all()
 
 
+def _scheduled_digest() -> None:
+    from app.services.feishu import send_daily_digest
+    send_daily_digest()
+
+
 def start_scheduler() -> None:
     free_cron = os.getenv("ALERT_CHECK_CRON", "0 9 * * *")
     paid_cron = os.getenv("ALERT_REFRESH_CRON", "0 9 * * 1")
+    digest_cron = os.getenv("FEISHU_DIGEST_CRON", "0 9 * * *")
 
     _add_job(_scheduled_financial, free_cron, "financial_check")
+    _add_job(_scheduled_digest, digest_cron, "daily_digest")
     _add_job(_scheduled_refresh, paid_cron, "full_refresh")
 
     _scheduler.start()
     logger.info(
-        "Dual-frequency scheduler started: financial[%s] refresh[%s]",
-        free_cron,
-        paid_cron,
+        "Scheduler started: financial[%s] digest[%s] refresh[%s]",
+        free_cron, digest_cron, paid_cron,
     )
 
 

@@ -78,6 +78,9 @@ def detect_changes(company_name: str) -> dict:
             "changes": changes,
             "severity": severity,
         })
+        # push to feishu
+        from app.services.feishu import send_alert_card
+        send_alert_card(company_name, severity, changes)
 
     return {
         "company_name": company_name,

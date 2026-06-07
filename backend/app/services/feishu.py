@@ -1,0 +1,142 @@
+"""
+飞书机器人推送服务。
+
+配置：.env 中设置 FEISHU_WEBHOOK_URL
+获取方式：飞书群 → 群设置 → 群机器人 → 添加自定义机器人 → 复制 webhook 地址
+"""
+
+import json
+import os
+
+import httpx
+
+WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
+
+
+def send_text(text: str) -> bool:
+    """发送纯文本消息"""
+    if not WEBHOOK_URL:
+        return False
+    try:
+        httpx.post(WEBHOOK_URL, json={"msg_type": "text", "content": {"text": text}}, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def send_risk_report(report: str) -> bool:
+    """发送 Markdown 格式的风险报告"""
+    if not WEBHOOK_URL:
+        return False
+    try:
+        payload = {
+            "msg_type": "interactive",
+            "card": {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {"tag": "plain_text", "content": "📊 供应商风险日报"},
+                    "template": "wathet",
+                },
+                "elements": [
+                    {"tag": "markdown", "content": report},
+                    {"tag": "hr"},
+                    {
+                        "tag": "note",
+                        "elements": [
+                            {"tag": "plain_text", "content": "🤖 供应商风险分析 Agent · 自动推送"}
+                        ],
+                    },
+                ],
+            },
+        }
+        httpx.post(WEBHOOK_URL, json=payload, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def send_alert_card(company_name: str, severity: str, changes: list[dict]) -> bool:
+    """发送单条告警卡片"""
+    if not WEBHOOK_URL:
+        return False
+
+    color = "red" if severity == "critical" else "yellow"
+    icon = "🔴" if severity == "critical" else "🟡"
+    change_lines = "\n".join(
+        f"{c['field']}：{c.get('old', '-')} → **{c.get('new', '-')}**" for c in changes[:10]
+    )
+
+    try:
+        payload = {
+            "msg_type": "interactive",
+            "card": {
+                "config": {"wide_screen_mode": True},
+                "header": {
+                    "title": {"tag": "plain_text", "content": f"{icon} 风险告警"},
+                    "template": color,
+                },
+                "elements": [
+                    {"tag": "markdown", "content": f"**{company_name}** 风险发生变化\n\n{change_lines}"},
+                ],
+            },
+        }
+        httpx.post(WEBHOOK_URL, json=payload, timeout=10)
+        return True
+    except Exception:
+        return False
+
+
+def send_daily_digest() -> None:
+    """生成并发送每日简报"""
+    from app.db.mongo import get_db
+
+    db = get_db()
+    companies = [doc["company_name"] for doc in db["watchlist"].find()]
+    if not companies:
+        send_text("📊 供应商风险日报\n\n暂无监控企业，请在系统中添加。")
+        return
+
+    lines = []
+    alerts = list(db["alerts"].find().sort("created_at", -1).limit(10))
+
+    # summary
+    distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
+    for name in companies:
+        snap = db["alert_snapshots"].find_one({"company_name": name}, sort=[("checked_at", -1)])
+        level = snap.get("risk_level", "未知") if snap else "未知"
+        distribution[level] = distribution.get(level, 0) + 1
+
+    lines.append(f"**监控 {len(companies)} 家供应商**")
+    lines.append(
+        f"低风险 {distribution['低风险']} · 中风险 {distribution['中风险']} · 高风险 {distribution['高风险']} · 未评估 {distribution['未知']}"
+    )
+    lines.append("")
+
+    # alert summary
+    if alerts:
+        lines.append("**最新告警**")
+        for a in alerts[:5]:
+            ts = a["created_at"].strftime("%m-%d %H:%M") if hasattr(a["created_at"], "strftime") else str(a.get("created_at", ""))[:16]
+            changes = a.get("changes", [])
+            change_text = " · ".join(f"{c['field']}: {c['old']}→{c['new']}" for c in changes)
+            lines.append(f"- {a['company_name']} {change_text} _{ts}_")
+    else:
+        lines.append("无新告警 ✅")
+
+    # top risk companies
+    lines.append("")
+    lines.append("**高风险关注**")
+    high_risk = []
+    for name in companies:
+        snap = db["alert_snapshots"].find_one({"company_name": name}, sort=[("checked_at", -1)])
+        if snap and snap.get("risk_score", 0) > 30:
+            high_risk.append((name, snap["risk_score"], snap["risk_level"]))
+    high_risk.sort(key=lambda x: x[1], reverse=True)
+
+    if high_risk:
+        for name, score, level in high_risk[:8]:
+            lines.append(f"- **{name}** {score}/100 {level}")
+    else:
+        lines.append("暂无中高风险企业 ✅")
+
+    send_risk_report("\n".join(lines))
