@@ -17,9 +17,11 @@ interface DashboardData {
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [predictions, setPredictions] = useState<any[]>([]);
 
   const load = useCallback(() => {
     api.get<DashboardData>('/alert/dashboard').then(setData);
+    api.get<any[]>('/alert/predict').then(p => setPredictions(p || []));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -76,6 +78,33 @@ export default function Dashboard() {
           ))}
         </div>
       </div>
+
+      {/* predictions */}
+      {predictions.filter(p => p.probability !== 'low').length > 0 && (
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-4">
+          <h3 className="text-sm font-medium text-[#555] mb-3">
+            ⚡ 早期预警信号
+            <span className="text-xs text-gray-400 ml-2">基于趋势分析，预测未来风险恶化概率</span>
+          </h3>
+          <div className="space-y-2">
+            {predictions.filter(p => p.probability !== 'low').slice(0, 6).map(p => {
+              const color = p.probability === 'high' ? '#dc2626' : '#d97706';
+              const bg = p.probability === 'high' ? '#fef2f2' : '#fffbf0';
+              return (
+                <div key={p.company_name} className="flex items-center gap-3 px-3 py-2 rounded-xl" style={{ background: bg }}>
+                  <span className="text-sm font-semibold text-[#333] flex-1 truncate">{p.company_name}</span>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ color, background: `${color}15` }}>
+                    {p.label}
+                  </span>
+                  <span className="text-[11px] text-gray-400">
+                    {p.signals?.slice(0, 2).map((s: any) => s.signal).join(' · ')}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* company list */}
       <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">

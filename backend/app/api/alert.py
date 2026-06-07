@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query, UploadFile
 
 from app.db.mongo import get_db
 from app.services.alert_rules import get_rules, set_rules
+from app.services.predictor import predict_all, predict_company
 from app.services.alert_service import (
     add_to_watchlist,
     detect_changes,
@@ -184,6 +185,19 @@ async def list_rules(company_name: str = Query(None, description="企业名称�
 @router.put("/rules")
 async def update_rules(req: RulesRequest):
     return set_rules(req.company_name, [r.model_dump() for r in req.rules])
+
+
+@router.get("/predict")
+async def predict_all_companies():
+    return predict_all()
+
+
+@router.get("/predict/{company_name}")
+async def predict_one(company_name: str):
+    result = predict_company(company_name)
+    if result is None:
+        return {"company_name": company_name, "probability": "unknown", "label": "未找到"}
+    return result
 
 
 @router.delete("/watch")
