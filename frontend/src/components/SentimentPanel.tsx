@@ -11,7 +11,10 @@ interface SentimentItem {
   sentiment_score: number;
   negative_count: number;
   articles_count: number;
+  total_events: number;
   top_risk_tags: string[];
+  summary: string;
+  key_concerns: string[];
   analyzed_at: string | null;
   has_data: boolean;
 }
@@ -34,6 +37,9 @@ interface CompanySentiment {
   sentiment_score: number;
   risk_tags: RiskTag[];
   articles: SentimentArticle[];
+  summary: string;
+  key_concerns: string[];
+  total_events: number;
   has_data: boolean;
 }
 
@@ -136,6 +142,30 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
               </div>
             )}
 
+            {/* LLM summary + key concerns */}
+            {detail.summary && (
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
+                <div className="text-xs font-medium text-amber-700 mb-1">🤖 AI 分析摘要</div>
+                <p className="text-xs text-amber-800 leading-relaxed">{detail.summary}</p>
+                {detail.key_concerns?.length > 0 && (
+                  <ul className="mt-2 space-y-0.5">
+                    {detail.key_concerns.map((c, i) => (
+                      <li key={i} className="text-[11px] text-amber-700 flex items-start gap-1">
+                        <span className="text-amber-400">•</span> {c}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* total events */}
+            {detail.total_events > 0 && (
+              <div className="text-xs text-gray-500">
+                累计风险事件：<span className="font-semibold text-red-500">{detail.total_events.toLocaleString()}</span> 条
+              </div>
+            )}
+
             {/* articles */}
             {detail.articles.length > 0 && (
               <div>
@@ -210,7 +240,7 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
               >
                 <span className="text-sm text-[#333] flex-1 truncate">{c.company_name}</span>
                 <span className="text-[11px] text-red-500">
-                  {c.negative_count}/{c.articles_count} 负面
+                  {c.total_events?.toLocaleString() || 0} 事件
                 </span>
                 <div className="w-20 h-1.5 rounded-full bg-gray-100 shrink-0">
                   <div
