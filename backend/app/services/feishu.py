@@ -138,4 +138,20 @@ def send_daily_digest() -> None:
     else:
         lines.append("暂无中高风险企业 ✅")
 
+    # sentiment summary
+    lines.append("")
+    lines.append("**舆情监控**")
+    neg_companies = []
+    for name in companies:
+        sent = db["sentiment_results"].find_one({"company_name": name})
+        if sent and sent.get("sentiment_score", 0) < -0.2:
+            neg_companies.append((name, sent.get("sentiment_score", 0), sent.get("negative_count", 0)))
+    neg_companies.sort(key=lambda x: x[1])
+
+    if neg_companies:
+        for name, score, neg_count in neg_companies[:5]:
+            lines.append(f"- {name} 负面舆情 {neg_count}条（情感分 {score}）")
+    else:
+        lines.append("无负面舆情 ✅")
+
     send_risk_report("\n".join(lines))

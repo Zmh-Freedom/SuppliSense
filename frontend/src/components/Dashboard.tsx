@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
+import SentimentPanel from './SentimentPanel';
 
 interface CompanySnap {
   name: string;
@@ -105,6 +106,9 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      {/* sentiment overview */}
+      <SentimentPanel />
 
       {/* company list */}
       <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">

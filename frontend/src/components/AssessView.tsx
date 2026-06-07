@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import type { RiskResult } from '../types';
+import SentimentPanel from './SentimentPanel';
 
 export default function AssessView({ initialName = '' }: { initialName?: string }) {
   const [name, setName] = useState(initialName);
@@ -137,6 +138,9 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
               ) : <p className="text-gray-400 text-xs">无财报数据</p>}
             </div>
           </div>
+
+          {/* sentiment panel for this company */}
+          {data && <div className="mt-4"><SentimentPanel companyName={name} /></div>}
         </>
       )}
     </div>

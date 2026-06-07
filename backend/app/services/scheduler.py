@@ -118,19 +118,26 @@ def _scheduled_digest() -> None:
     send_daily_digest()
 
 
+def _scheduled_sentiment() -> None:
+    from app.services.sentiment import analyze_all_sentiment
+    analyze_all_sentiment()
+
+
 def start_scheduler() -> None:
     free_cron = os.getenv("ALERT_CHECK_CRON", "0 9 * * *")
     paid_cron = os.getenv("ALERT_REFRESH_CRON", "0 9 * * 1")
     digest_cron = os.getenv("FEISHU_DIGEST_CRON", "0 9 * * *")
+    sentiment_cron = os.getenv("SENTIMENT_CHECK_CRON", "0 10 * * *")
 
     _add_job(_scheduled_financial, free_cron, "financial_check")
     _add_job(_scheduled_digest, digest_cron, "daily_digest")
     _add_job(_scheduled_refresh, paid_cron, "full_refresh")
+    _add_job(_scheduled_sentiment, sentiment_cron, "sentiment_check")
 
     _scheduler.start()
     logger.info(
-        "Scheduler started: financial[%s] digest[%s] refresh[%s]",
-        free_cron, digest_cron, paid_cron,
+        "Scheduler started: financial[%s] digest[%s] refresh[%s] sentiment[%s]",
+        free_cron, digest_cron, paid_cron, sentiment_cron,
     )
 
 
