@@ -96,6 +96,31 @@ def _calc_score(req: RiskCalculateRequest) -> tuple[int, dict]:
         if fin.net_profit_growth < 0:
             pts = round(clamp(3 + abs(fin.net_profit_growth) * 20, 0, 7), 1)
             fin_items["净利下降"] = f"{pts}分 (增长率{fin.net_profit_growth*100:.1f}%)"
+        # new: liquidity
+        if fin.current_ratio > 0 and fin.current_ratio < 1.0:
+            pts = round(clamp((1.0 - fin.current_ratio) * 10, 0, 6), 1)
+            fin_items["流动比率过低"] = f"{pts}分 (当前{fin.current_ratio:.2f})"
+        if fin.quick_ratio > 0 and fin.quick_ratio < 0.8:
+            pts = round(clamp((0.8 - fin.quick_ratio) * 12, 0, 5), 1)
+            fin_items["速动比率过低"] = f"{pts}分 (当前{fin.quick_ratio:.2f})"
+        # new: profitability
+        if fin.roe > 0 and fin.roe < 0.05:
+            pts = 3
+            fin_items["ROE偏低"] = f"{pts}分 ({fin.roe*100:.1f}%)"
+        # new: earnings quality
+        if fin.recurring_profit_ratio > 0 and fin.recurring_profit_ratio < 0.7:
+            pts = round(clamp((0.7 - fin.recurring_profit_ratio) * 10, 0, 5), 1)
+            fin_items["利润含金量低"] = f"{pts}分 (扣非占比{fin.recurring_profit_ratio*100:.1f}%)"
+        # new: trends
+        if fin.revenue_trend < -0.02:
+            pts = 4
+            fin_items["营收持续下滑"] = f"{pts}分 (3年趋势)"
+        if fin.debt_trend > 0.02:
+            pts = 3
+            fin_items["负债率持续上升"] = f"{pts}分 (3年趋势)"
+        if fin.ar_turnover_days > 180:
+            pts = round(clamp((fin.ar_turnover_days - 180) / 180 * 4, 0, 4), 1)
+            fin_items["应收款周转慢"] = f"{pts}分 ({fin.ar_turnover_days:.0f}天)"
 
     fin_score = sum(float(v.split("分")[0]) for v in fin_items.values())
     breakdown["财务风险"] = {"总分": round(fin_score, 1), "明细": fin_items}

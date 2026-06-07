@@ -25,6 +25,17 @@ export interface FinancialMetrics {
   net_profit_growth: number;
   debt_ratio: number;
   cash_flow: number;
+  roe?: number;
+  net_profit_margin?: number;
+  current_ratio?: number;
+  quick_ratio?: number;
+  equity_ratio?: number;
+  inventory_turnover?: number;
+  ar_turnover_days?: number;
+  recurring_profit_ratio?: number;
+  revenue_trend?: number;
+  net_profit_trend?: number;
+  debt_trend?: number;
 }
 
 export interface RiskResult {

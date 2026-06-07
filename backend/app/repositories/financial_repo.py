@@ -2,6 +2,7 @@ import re
 from datetime import datetime, timezone
 
 import akshare as ak
+import pandas as pd
 
 from app.db.mongo import get_db
 from app.repositories.company_repo import get_baseinfo
@@ -75,17 +76,69 @@ def _fetch_a_share(code: str) -> FinancialMetrics | None:
         return None
 
     cols = ["营业总收入同比增长率", "净利润同比增长率", "资产负债率"]
-    df = df.dropna(subset=[c for c in cols if c in df.columns])
-    if df.empty:
+    valid = df.dropna(subset=[c for c in cols if c in df.columns])
+    if valid.empty:
         return None
 
-    latest = df.iloc[-1]
+    latest = valid.iloc[-1]
+
+    # trend: compute 3-year slope from annual data
+    rev_trend, profit_trend, debt_trend = _compute_trends(df)
+
+    # recurring profit ratio
+    recurring_ratio = 0.0
+    deducted = _parse_float(latest.get("扣非净利润"))
+    net = _parse_float(latest.get("净利润"))
+    if net > 0 and deducted != 0:
+        recurring_ratio = round(deducted / net, 4)
+
     return FinancialMetrics(
         revenue_growth=_parse_pct(latest.get("营业总收入同比增长率")),
         net_profit_growth=_parse_pct(latest.get("净利润同比增长率")),
         debt_ratio=_parse_pct(latest.get("资产负债率")),
         cash_flow=_parse_float(latest.get("每股经营现金流")),
+        roe=_parse_pct(latest.get("净资产收益率")),
+        net_profit_margin=_parse_pct(latest.get("销售净利率")),
+        current_ratio=_parse_float(latest.get("流动比率")),
+        quick_ratio=_parse_float(latest.get("速动比率")),
+        equity_ratio=_parse_float(latest.get("产权比率")),
+        inventory_turnover=_parse_float(latest.get("存货周转率")),
+        ar_turnover_days=_parse_float(latest.get("应收账款周转天数")),
+        recurring_profit_ratio=recurring_ratio,
+        revenue_trend=round(rev_trend, 4),
+        net_profit_trend=round(profit_trend, 4),
+        debt_trend=round(debt_trend, 4),
     )
+
+
+def _compute_trends(df) -> tuple[float, float, float]:
+    """3-year slope from annual reports (取每年年末数据)."""
+    try:
+        # filter to annual reports only (年底数据)
+        df["dt"] = pd.to_datetime(df["报告期"], errors="coerce")
+        annual = df[df["dt"].dt.month == 12].tail(5)  # last 5 years
+        if len(annual) < 2:
+            return 0.0, 0.0, 0.0
+
+        years = (annual["dt"] - annual["dt"].min()).dt.days / 365.0
+        rev = pd.to_numeric(annual["营业总收入"], errors="coerce").values
+        profit = pd.to_numeric(annual["净利润"], errors="coerce").values
+        debt = annual["资产负债率"].apply(_parse_pct).values
+
+        rev_slope = _slope(years.values, rev) / (abs(rev.mean()) + 1) if len(rev) > 1 else 0
+        profit_slope = _slope(years.values, profit) / (abs(profit.mean()) + 1) if len(profit) > 1 else 0
+        debt_slope = _slope(years.values, debt) if len(debt) > 1 else 0
+
+        return float(rev_slope), float(profit_slope), float(debt_slope)
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
+def _slope(x, y) -> float:
+    n = len(x)
+    if n < 2:
+        return 0.0
+    return float((n * (x * y).sum() - x.sum() * y.sum()) / (n * (x * x).sum() - x.sum() ** 2 + 1e-9))
 
 
 def _fetch_hk(code: str) -> FinancialMetrics | None:

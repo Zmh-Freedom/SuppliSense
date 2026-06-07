@@ -71,18 +71,38 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
           </div>
 
           {/* metrics */}
-          <div className="grid grid-cols-4 gap-3 mb-6">
-            {fin ? (
-              <>
+          {fin && (
+            <>
+              <div className="grid grid-cols-4 gap-3 mb-3">
                 <Metric label="营收增长" value={`${(fin.revenue_growth * 100).toFixed(1)}%`} />
                 <Metric label="净利增长" value={`${(fin.net_profit_growth * 100).toFixed(1)}%`} />
                 <Metric label="负债率" value={`${(fin.debt_ratio * 100).toFixed(1)}%`} />
                 <Metric label="每股现金流" value={`¥${fin.cash_flow.toFixed(2)}`} />
-              </>
-            ) : (
-              Array(4).fill(null).map((_, i) => <Metric key={i} label="—" value="无数据" />)
-            )}
-          </div>
+              </div>
+              <div className="grid grid-cols-4 gap-3 mb-3">
+                <Metric label="ROE" value={`${((fin.roe ?? 0) * 100).toFixed(1)}%`} />
+                <Metric label="净利率" value={`${((fin.net_profit_margin ?? 0) * 100).toFixed(1)}%`} />
+                <Metric label="流动比率" value={`${(fin.current_ratio ?? 0).toFixed(2)}`} />
+                <Metric label="速动比率" value={`${(fin.quick_ratio ?? 0).toFixed(2)}`} />
+              </div>
+              <div className="grid grid-cols-4 gap-3 mb-3">
+                <Metric label="存货周转" value={`${(fin.inventory_turnover ?? 0).toFixed(1)}`} />
+                <Metric label="应收款周转" value={`${(fin.ar_turnover_days ?? 0).toFixed(0)}天`} />
+                <Metric label="扣非占比" value={`${((fin.recurring_profit_ratio ?? 0) * 100).toFixed(1)}%`} />
+                <Metric label="产权比率" value={`${(fin.equity_ratio ?? 0).toFixed(2)}`} />
+              </div>
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                <Metric label="营收趋势" value={fin.revenue_trend && fin.revenue_trend < 0 ? `↓ ${Math.abs(fin.revenue_trend * 100).toFixed(1)}%` : fin.revenue_trend ? '→ 稳定' : '-'} />
+                <Metric label="负债趋势" value={fin.debt_trend && fin.debt_trend > 0 ? `↑ +${(fin.debt_trend * 100).toFixed(1)}%` : fin.debt_trend ? '→ 稳定' : '-'} />
+                <Metric label="净利趋势" value={fin.net_profit_trend && fin.net_profit_trend < 0 ? `↓ ${Math.abs(fin.net_profit_trend * 100).toFixed(1)}%` : fin.net_profit_trend ? '→ 稳定' : '-'} />
+              </div>
+            </>
+          )}
+          {!fin && (
+            <div className="grid grid-cols-4 gap-3 mb-6">
+              {Array(4).fill(null).map((_, i) => <Metric key={i} label="—" value="无数据" />)}
+            </div>
+          )}
 
           {/* risk detail */}
           <h3 className="text-sm font-semibold mb-3 text-[#555]">风险明细</h3>
