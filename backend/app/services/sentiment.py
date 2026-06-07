@@ -280,10 +280,14 @@ def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | 
     # cache check
     if not force_refresh:
         cached = db["sentiment_results"].find_one({"company_name": company_name})
-        if cached and (datetime.now(timezone.utc) - cached["analyzed_at"]).total_seconds() < 6 * 3600:
-            cached["_id"] = str(cached["_id"])
-            cached["analyzed_at"] = cached["analyzed_at"].isoformat()
-            return cached
+        if cached:
+            cached_at = cached["analyzed_at"]
+            if hasattr(cached_at, "replace") and cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - cached_at).total_seconds() < 6 * 3600:
+                cached["_id"] = str(cached["_id"])
+                cached["analyzed_at"] = cached_at.isoformat()
+                return cached
 
     # ---- Phase 1: search news ----
     news_articles = _search_news(company_name)

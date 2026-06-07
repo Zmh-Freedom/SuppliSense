@@ -12,6 +12,7 @@ export default defineConfig({
       '/risk': 'http://localhost:8000',
       '/financial': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
+      '/sentiment': 'http://localhost:8000',
     },
   },
 })
