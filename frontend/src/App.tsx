@@ -5,8 +5,9 @@ import AlertCenter from './components/AlertCenter';
 import ChatView from './components/ChatView';
 import AssessView from './components/AssessView';
 import RiskMatrix from './components/RiskMatrix';
+import SentimentView from './components/SentimentView';
 
-const TABS = ['风险看板', '告警中心', '智能对话', '风险评估', '风险矩阵'];
+const TABS = ['风险看板', '告警中心', '智能对话', '风险评估', '风险矩阵', '舆情监控'];
 
 function getTab(): number {
   try { return parseInt(localStorage.getItem('active_tab') || '0'); } catch { return 0; }
@@ -54,6 +55,7 @@ export default function App() {
           {tab === 2 && <ChatView />}
           {tab === 3 && <AssessView initialName={assessTarget} />}
           {tab === 4 && <RiskMatrix />}
+          {tab === 5 && <SentimentView />}
         </div>
       </main>
     </div>
