@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Query, UploadFile
 
 from app.db.mongo import get_db
+from app.services.alert_rules import get_rules, set_rules
 from app.services.alert_service import (
     add_to_watchlist,
     detect_changes,
@@ -18,6 +19,18 @@ router = APIRouter()
 
 class CompanyRequest(BaseModel):
     company_name: str
+
+
+class RuleItem(BaseModel):
+    field: str
+    operator: str
+    threshold: float = 0
+    severity: str = "warning"
+
+
+class RulesRequest(BaseModel):
+    company_name: str | None = None
+    rules: list[RuleItem]
 
 
 class BatchRequest(BaseModel):
@@ -160,6 +173,17 @@ async def refresh_alert(req: CompanyRequest):
 async def refresh_all_watched():
     """Paid: refresh ALL watched companies via Tianyancha API."""
     return run_refresh_all()
+
+
+@router.get("/rules")
+async def list_rules(company_name: str = Query(None, description="企业名称，不传返回全局规则")):
+    rules = get_rules(company_name)
+    return {"company_name": company_name or "__global__", "rules": rules}
+
+
+@router.put("/rules")
+async def update_rules(req: RulesRequest):
+    return set_rules(req.company_name, [r.model_dump() for r in req.rules])
 
 
 @router.delete("/watch")

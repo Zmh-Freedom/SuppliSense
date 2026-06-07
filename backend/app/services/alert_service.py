@@ -72,15 +72,24 @@ def detect_changes(company_name: str) -> dict:
     ) else "warning" if changes else "normal"
 
     if changes:
-        db["alerts"].insert_one({
-            "company_name": company_name,
-            "created_at": datetime.now(timezone.utc),
-            "changes": changes,
-            "severity": severity,
-        })
-        # push to feishu
-        from app.services.feishu import send_alert_card
-        send_alert_card(company_name, severity, changes)
+        # apply custom alert rules
+        from app.services.alert_rules import evaluate_changes, get_rules
+        rules = get_rules(company_name)
+        triggered = evaluate_changes(rules, changes)
+
+        if triggered:
+            final_severity = "critical" if any(t["severity"] == "critical" for t in triggered) else "warning"
+            db["alerts"].insert_one({
+                "company_name": company_name,
+                "created_at": datetime.now(timezone.utc),
+                "changes": triggered,
+                "severity": final_severity,
+            })
+            # push to feishu
+            from app.services.feishu import send_alert_card
+            send_alert_card(company_name, final_severity, triggered)
+        else:
+            changes = []  # no rules triggered, suppress alert
 
     return {
         "company_name": company_name,
