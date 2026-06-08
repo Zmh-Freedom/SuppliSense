@@ -277,9 +277,30 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          {/* sentiment */}
-          {data && <div className="mt-4"><SentimentPanel companyName={name} /></div>}
+          {/* sentiment - inline collapsible */}
+          <ExpandableSentiment key={`sentiment-${name}`} name={name} />
         </>
+      )}
+    </div>
+  );
+}
+
+function ExpandableSentiment({ name }: { name: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left"
+      >
+        <span className="text-sm font-medium text-[#555]">📰 舆情分析</span>
+        <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
+      </button>
+      {open && (
+        <div className="bg-[#fafaf8] border border-[#e8e8e3] border-t-0 rounded-b-xl p-0">
+          <SentimentPanel companyName={name} />
+        </div>
       )}
     </div>
   );
