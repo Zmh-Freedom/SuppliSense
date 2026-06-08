@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import SentimentPanel from './SentimentPanel';
+import RiskMatrix from './RiskMatrix';
 
 interface CompanySnap {
   name: string;
@@ -140,6 +141,9 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      {/* risk matrix */}
+      <RiskMatrix />
     </div>
   );
 }

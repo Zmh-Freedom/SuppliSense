@@ -1,7 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../api';
 import type { RiskResult } from '../types';
 import SentimentPanel from './SentimentPanel';
+
+const LEVEL_COLOR: Record<string, string> = {
+  '高风险': '#dc2626', '中风险': '#d97706', '低风险': '#16a34a',
+  '严重': '#dc2626', '中等': '#d97706', '轻微': '#16a34a',
+  'critical': '#dc2626', 'high': '#dc2626', 'medium': '#d97706', 'low': '#16a34a',
+};
+const LEVEL_BG: Record<string, string> = {
+  '高风险': '#fef2f2', '中风险': '#fffbf0', '低风险': '#ecfdf5',
+};
 
 export default function AssessView({ initialName = '' }: { initialName?: string }) {
   const [name, setName] = useState(initialName);
@@ -139,13 +148,190 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             </div>
           </div>
 
-          {/* sentiment panel for this company */}
+          {/* ---- Additional analysis sections (collapsible) ---- */}
+
+          {/* ESG */}
+          <Expandable title="🌍 ESG 评分" endpoint={`/p2/esg/${encodeURIComponent(name)}`}
+            render={(d: any) => (
+              <div className="grid grid-cols-3 gap-3">
+                {['environmental', 'social', 'governance'].map(dim => {
+                  const dd = d[dim];
+                  return (
+                    <div key={dim} className="bg-white border border-[#e8e8e3] rounded-xl p-3">
+                      <div className="text-xs text-gray-500 mb-1">{dim === 'environmental' ? 'E·环境' : dim === 'social' ? 'S·社会' : 'G·治理'}</div>
+                      <div className="text-lg font-bold" style={{ color: LEVEL_COLOR[dd.level] }}>{dd.score.toFixed(0)}</div>
+                      <div className="text-[11px]" style={{ color: LEVEL_COLOR[dd.level] }}>{dd.level}</div>
+                      {dd.detail.map((item: any, i: number) => (
+                        <div key={i} className="text-[10px] text-gray-500 mt-1 flex justify-between">
+                          <span>{item.item}</span>
+                          <span>{item.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          />
+
+          {/* Macro */}
+          <Expandable title="🌐 宏观风险" endpoint={`/analysis/macro/${encodeURIComponent(name)}`}
+            render={(d: any) => (
+              <div>
+                <div className="flex items-center gap-3 mb-3">
+                  <span className="text-2xl font-bold" style={{ color: LEVEL_COLOR[d.total_level] }}>{d.total_score}</span>
+                  <span className="text-sm" style={{ color: LEVEL_COLOR[d.total_level] }}>{d.total_level}</span>
+                  <span className="text-xs text-gray-400">行业{d.industry_risk?.risk_score || 0} + 地区{d.regional_risk?.score || 0} + 政策{d.policy_risks?.score || 0}</span>
+                </div>
+                {d.policy_risks?.tags?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {d.policy_risks.tags.map((t: any, i: number) => (
+                      <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{t.tag}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          />
+
+          {/* Alternatives */}
+          <Expandable title="🔀 替代建议" endpoint={`/analysis/alternatives/${encodeURIComponent(name)}`}
+            render={(d: any) => (
+              <div>
+                {d.alternatives?.length === 0 ? (
+                  <p className="text-xs text-gray-400">{d.source_risk_score < 60 ? '风险较低，暂不需替代' : '暂未找到替代'}</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {d.alternatives?.slice(0, 4).map((a: any, i: number) => (
+                      <div key={i} className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-lg px-3 py-2">
+                        <span className="text-xs font-bold text-green-600">#{i + 1}</span>
+                        <span className="text-xs text-[#333] truncate flex-1">{a.company_name.slice(0, 12)}</span>
+                        {a.risk_score !== null && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: LEVEL_BG[a.risk_level], color: LEVEL_COLOR[a.risk_level] }}>
+                            {a.risk_level}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          />
+
+          {/* Contagion */}
+          <Expandable title="🔗 风险传染" endpoint={`/p2/contagion/${encodeURIComponent(name)}`}
+            render={(d: any) => (
+              <div>
+                <div className="flex gap-4 mb-2 text-xs text-gray-500">
+                  <span>关联方 {d.related_count}</span>
+                  <span>分支 {d.branch_count}</span>
+                  <span>依赖 {d.dependency_count}</span>
+                  <span className="text-red-500">高风险 {d.high_risk_related_count}</span>
+                </div>
+                {d.related_entities?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {d.related_entities.slice(0, 8).map((e: any, i: number) => (
+                      <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-gray-50 border border-gray-100 text-gray-600">
+                        {e.name.slice(0, 15)} <span className="text-gray-400">({e.relation_type})</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          />
+
+          {/* Scenario */}
+          <Expandable title="🎯 情景模拟" endpoint={`/analysis/scenario/${encodeURIComponent(name)}?scenario=bankruptcy`}
+            render={(d: any) => (
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-lg font-bold" style={{ color: LEVEL_COLOR[d.impact_level] }}>{d.impact_score} · {d.impact_level}</span>
+                  <span className="text-xs text-gray-400">{d.scenario_desc}</span>
+                </div>
+                <div className="space-y-1">
+                  {d.suggested_actions?.slice(0, 3).map((a: string, i: number) => (
+                    <div key={i} className="text-xs text-gray-600">{a}</div>
+                  ))}
+                </div>
+              </div>
+            )}
+          />
+
+          {/* Sanctions */}
+          <Expandable title="🛡️ 制裁筛查" endpoint={`/analysis/sanctions/${encodeURIComponent(name)}`}
+            render={(d: any) => (
+              <div>
+                <span className={`text-sm font-bold ${d.clean ? 'text-green-600' : 'text-red-600'}`}>
+                  {d.clean ? '✅ 未命中' : `⚠️ ${d.match_count}条命中`}
+                </span>
+                {d.matches?.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {d.matches.map((m: any, i: number) => (
+                      <div key={i} className="text-xs text-gray-600">
+                        <span className={m.level === 'critical' ? 'text-red-500' : 'text-amber-600'}>
+                          {m.name || m.detail || m.country}
+                        </span>
+                        {m.program && <span className="text-gray-400"> · {m.program}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          />
+
+          {/* sentiment */}
           {data && <div className="mt-4"><SentimentPanel companyName={name} /></div>}
         </>
       )}
     </div>
   );
 }
+
+// ---- Expandable section ----
+
+function Expandable({ title, endpoint, render }: { title: string; endpoint: string; render: (d: any) => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<any>(null);
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    if (!data) {
+      try {
+        const d = await api.get<any>(endpoint);
+        setData(d);
+      } catch { setData({ error: true }); }
+    }
+  };
+
+  return (
+    <div className="mt-3">
+      <button
+        onClick={toggle}
+        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left"
+      >
+        <span className="text-sm font-medium text-[#555]">{title}</span>
+        <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
+      </button>
+      {open && (
+        <div className="bg-[#fafaf8] border border-[#e8e8e3] border-t-0 rounded-b-xl px-4 py-3">
+          {!data ? (
+            <p className="text-xs text-gray-400">加载中…</p>
+          ) : data.error ? (
+            <p className="text-xs text-gray-400">暂无数据</p>
+          ) : (
+            render(data)
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- helpers ----
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (

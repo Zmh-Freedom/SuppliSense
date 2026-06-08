@@ -4,14 +4,9 @@ import Dashboard from './components/Dashboard';
 import AlertCenter from './components/AlertCenter';
 import ChatView from './components/ChatView';
 import AssessView from './components/AssessView';
-import RiskMatrix from './components/RiskMatrix';
 import SentimentView from './components/SentimentView';
-import ESGView from './components/ESGView';
-import ContagionView from './components/ContagionView';
-import MacroView from './components/MacroView';
-import ScenarioView from './components/ScenarioView';
 
-const TABS = ['风险看板', '告警中心', '智能对话', '风险评估', '风险矩阵', '舆情监控', 'ESG评分', '风险传染', '宏观&替代', '情景&制裁'];
+const TABS = ['风险看板', '企业评估', '告警中心', '舆情监控', '智能对话'];
 
 function getTab(): number {
   try { return parseInt(localStorage.getItem('active_tab') || '0'); } catch { return 0; }
@@ -29,7 +24,7 @@ export default function App() {
 
   const onSelectCompany = (name: string) => {
     setAssessTarget(name);
-    switchTab(3);  // jump to assess tab
+    switchTab(1);  // jump to assess tab
   };
 
   return (
@@ -55,15 +50,10 @@ export default function App() {
 
         <div className="flex-1 overflow-auto" key={refreshKey}>
           {tab === 0 && <Dashboard />}
-          {tab === 1 && <AlertCenter />}
-          {tab === 2 && <ChatView />}
-          {tab === 3 && <AssessView initialName={assessTarget} />}
-          {tab === 4 && <RiskMatrix />}
-          {tab === 5 && <SentimentView />}
-          {tab === 6 && <ESGView />}
-          {tab === 7 && <ContagionView />}
-          {tab === 8 && <MacroView />}
-          {tab === 9 && <ScenarioView />}
+          {tab === 1 && <AssessView initialName={assessTarget} />}
+          {tab === 2 && <AlertCenter />}
+          {tab === 3 && <SentimentView />}
+          {tab === 4 && <ChatView />}
         </div>
       </main>
     </div>
