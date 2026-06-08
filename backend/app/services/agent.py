@@ -91,6 +91,49 @@ def _unwatch(company_name: str) -> dict:
     return remove_from_watchlist(company_name)
 
 
+@_register("esg_assessment", "评估企业ESG风险（环境/社会/治理三维评分）。输入：{\"company_name\": \"完整名称\"}")
+def _esg(company_name: str) -> dict:
+    from app.services.esg_service import assess_esg
+    result = assess_esg(company_name)
+    if result is None:
+        return {"error": "未找到企业数据"}
+    return result
+
+
+@_register("contagion_analysis", "分析企业风险传染路径（分支机构/供应链/同行业）。输入：{\"company_name\": \"完整名称\"}")
+def _contagion(company_name: str) -> dict:
+    from app.services.contagion import analyze_contagion
+    return analyze_contagion(company_name)
+
+
+@_register("sentiment_analysis", "分析企业舆情情感（新闻搜索+LLM分析）。输入：{\"company_name\": \"完整名称\"}")
+def _sentiment(company_name: str) -> dict:
+    from app.services.sentiment import analyze_sentiment
+    result = analyze_sentiment(company_name)
+    if result is None:
+        return {"error": "暂无舆情数据"}
+    return {
+        "company_name": result["company_name"],
+        "sentiment_score": result["sentiment_score"],
+        "negative_count": result["negative_count"],
+        "neutral_count": result["neutral_count"],
+        "positive_count": result["positive_count"],
+        "articles_count": result["articles_count"],
+        "summary": result["summary"],
+        "key_concerns": result.get("key_concerns", []),
+        "risk_tags": [t["tag"] for t in result.get("risk_tags", [])],
+    }
+
+
+@_register("predict_risk", "预测企业未来6-12月风险恶化概率。输入：{\"company_name\": \"完整名称\"}")
+def _predict(company_name: str) -> dict:
+    from app.services.predictor import predict_company
+    result = predict_company(company_name)
+    if result is None:
+        return {"error": "未找到企业数据"}
+    return result
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:
@@ -136,13 +179,18 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 回答：{{"answer": "回复内容"}}
 - 每次只调一个工具
 - **严禁编造任何数据**，所有数字必须来自工具返回结果
-- 涉及风险、财报、公司信息的问题，必须调工具获取数据后再回答
-- 看清单：用 get_watchlist，不传参数写 {{}}
+- 看清单：用 get_watchlist
 - 看风险：先用 search_company 搜全名，再用 assess_risk
-- assess_risk 已包含财报数据（financial字段），上市公司要分析财报
-- financial 中 debt_ratio=0 表示数据缺失（港股无此数据），不要解读为低负债
-- risk_detail 中 in_watchlist=true 表示已在监控，不要再说"建议加入监控"
-- 搜不到就告知用户，不要反复搜，300字以内"""
+- 看ESG：用 esg_assessment 获取环境/社会/治理三维评分
+- 看传染：用 contagion_analysis 查关联方和供应链风险
+- 看舆情：用 sentiment_analysis 看新闻情感趋势
+- 看预测：用 predict_risk 看未来风险恶化概率
+- 要对比多家：先 get_watchlist，再逐个 assess_risk
+- assess_risk 已含财报数据，上市公司要分析财报
+- debt_ratio=0 表示数据缺失（港股），不要解读为低负债
+- in_watchlist=true 表示已在监控，不要建议"加入监控"
+- 综合问题可调多个工具（ESG+风险+舆情），但每次只调一个
+- 搜不到就告知用户，300字以内"""
 
 
 def _build_tool_prompt() -> str:
