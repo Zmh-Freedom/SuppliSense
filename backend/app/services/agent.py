@@ -134,6 +134,18 @@ def _predict(company_name: str) -> dict:
     return result
 
 
+@_register("macro_risk", "分析企业宏观风险（行业PMI景气+地区信用+政策标签）。输入：{\"company_name\": \"完整名称\"}")
+def _macro(company_name: str) -> dict:
+    from app.services.macro_service import assess_macro_risk
+    return assess_macro_risk(company_name)
+
+
+@_register("find_alternatives", "为高风险企业推荐同行业低风险替代供应商。输入：{\"company_name\": \"完整名称\"}")
+def _alternatives(company_name: str) -> dict:
+    from app.services.alternative_service import find_alternatives
+    return find_alternatives(company_name)
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:
@@ -185,6 +197,8 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 看传染：用 contagion_analysis 查关联方和供应链风险
 - 看舆情：用 sentiment_analysis 看新闻情感趋势
 - 看预测：用 predict_risk 看未来风险恶化概率
+- 看宏观：用 macro_risk 看行业景气+地区风险+政策标签
+- 找替代：用 find_alternatives 为高风险企业推荐同行业低风险供应商
 - 要对比多家：先 get_watchlist，再逐个 assess_risk
 - assess_risk 已含财报数据，上市公司要分析财报
 - debt_ratio=0 表示数据缺失（港股），不要解读为低负债
