@@ -146,6 +146,18 @@ def _alternatives(company_name: str) -> dict:
     return find_alternatives(company_name)
 
 
+@_register("scenario_simulate", "模拟供应商倒闭/诉讼等情景下的影响。输入：{\"company_name\": \"完整名称\", \"scenario\": \"bankruptcy|lawsuit|disruption|quality\"}")
+def _simulate(company_name: str, scenario: str = "bankruptcy") -> dict:
+    from app.services.scenario_service import simulate
+    return simulate(company_name, scenario)
+
+
+@_register("check_sanctions", "筛查企业是否在国际制裁/黑名单中（OFAC实体清单/失信等）。输入：{\"company_name\": \"完整名称\"}")
+def _sanctions(company_name: str) -> dict:
+    from app.services.sanctions_service import check_sanctions
+    return check_sanctions(company_name)
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:
@@ -199,6 +211,8 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 看预测：用 predict_risk 看未来风险恶化概率
 - 看宏观：用 macro_risk 看行业景气+地区风险+政策标签
 - 找替代：用 find_alternatives 为高风险企业推荐同行业低风险供应商
+- 情景模拟：用 scenario_simulate 模拟供应商倒闭/诉讼等影响
+- 制裁筛查：用 check_sanctions 查国际制裁/失信/黑名单
 - 要对比多家：先 get_watchlist，再逐个 assess_risk
 - assess_risk 已含财报数据，上市公司要分析财报
 - debt_ratio=0 表示数据缺失（港股），不要解读为低负债

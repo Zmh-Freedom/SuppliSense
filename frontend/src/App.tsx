@@ -9,8 +9,9 @@ import SentimentView from './components/SentimentView';
 import ESGView from './components/ESGView';
 import ContagionView from './components/ContagionView';
 import MacroView from './components/MacroView';
+import ScenarioView from './components/ScenarioView';
 
-const TABS = ['风险看板', '告警中心', '智能对话', '风险评估', '风险矩阵', '舆情监控', 'ESG评分', '风险传染', '宏观&替代'];
+const TABS = ['风险看板', '告警中心', '智能对话', '风险评估', '风险矩阵', '舆情监控', 'ESG评分', '风险传染', '宏观&替代', '情景&制裁'];
 
 function getTab(): number {
   try { return parseInt(localStorage.getItem('active_tab') || '0'); } catch { return 0; }
@@ -62,6 +63,7 @@ export default function App() {
           {tab === 6 && <ESGView />}
           {tab === 7 && <ContagionView />}
           {tab === 8 && <MacroView />}
+          {tab === 9 && <ScenarioView />}
         </div>
       </main>
     </div>

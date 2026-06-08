@@ -15,6 +15,7 @@ from app.api.risk import router as risk_router
 from app.api.sentiment import router as sentiment_router
 from app.api.p2 import router as p2_router
 from app.api.macro import router as macro_router
+from app.api.scenario import router as scenario_router
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 
@@ -42,6 +43,7 @@ app.include_router(risk_router, prefix="/risk", tags=["risk"])
 app.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 app.include_router(p2_router, prefix="/p2", tags=["p2"])
 app.include_router(macro_router, prefix="/analysis", tags=["analysis"])
+app.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
 
 
 @app.get("/health")
