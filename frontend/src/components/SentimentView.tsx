@@ -16,7 +16,6 @@ interface Article {
   confidence: number;
   risk_tags: string[];
   summary: string;
-  source_type: string;
 }
 
 interface CompanySentiment {
@@ -31,8 +30,6 @@ interface CompanySentiment {
   articles: Article[];
   summary: string;
   key_concerns: string[];
-  total_events: number;
-  news_count: number;
   has_data: boolean;
 }
 
@@ -178,7 +175,7 @@ export default function SentimentView() {
                 <div className="text-[11px] text-green-400 mt-1">正面</div>
               </div>
               <div className="bg-white border border-[#e8e8e3] rounded-xl p-4 text-center">
-                <div className="text-2xl font-bold text-[#333]">{detail.news_count || detail.articles_count}</div>
+                <div className="text-2xl font-bold text-[#333]">{detail.articles_count}</div>
                 <div className="text-[11px] text-gray-400 mt-1">总计</div>
               </div>
             </div>
@@ -240,7 +237,6 @@ export default function SentimentView() {
               <div className="space-y-2">
                 {filteredArticles.map((a, i) => {
                   const s = a.sentiment || 'neutral';
-                  const isNews = a.source_type === 'news';
                   return (
                     <div
                       key={i}
@@ -271,7 +267,7 @@ export default function SentimentView() {
 
                           {/* meta */}
                           <div className="flex items-center gap-2 mt-1.5">
-                            {isNews && a.source && (
+                            {a.source && (
                               <span className="text-[11px] text-gray-400">{a.source}</span>
                             )}
                             {a.date && (
@@ -287,11 +283,6 @@ export default function SentimentView() {
                               {SENTIMENT_LABEL[s]}
                               {a.confidence > 0 && a.confidence < 1 && ` ${(a.confidence * 100).toFixed(0)}%`}
                             </span>
-                            {!isNews && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
-                                天眼风险
-                              </span>
-                            )}
                           </div>
 
                           {/* summary */}

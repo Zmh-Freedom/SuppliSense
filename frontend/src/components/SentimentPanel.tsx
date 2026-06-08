@@ -11,7 +11,6 @@ interface SentimentItem {
   sentiment_score: number;
   negative_count: number;
   articles_count: number;
-  total_events: number;
   top_risk_tags: string[];
   summary: string;
   key_concerns: string[];
@@ -39,7 +38,6 @@ interface CompanySentiment {
   articles: SentimentArticle[];
   summary: string;
   key_concerns: string[];
-  total_events: number;
   has_data: boolean;
 }
 
@@ -159,13 +157,6 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
               </div>
             )}
 
-            {/* total events */}
-            {detail.total_events > 0 && (
-              <div className="text-xs text-gray-500">
-                累计风险事件：<span className="font-semibold text-red-500">{detail.total_events.toLocaleString()}</span> 条
-              </div>
-            )}
-
             {/* articles */}
             {detail.articles.length > 0 && (
               <div>
@@ -240,7 +231,7 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
               >
                 <span className="text-sm text-[#333] flex-1 truncate">{c.company_name}</span>
                 <span className="text-[11px] text-red-500">
-                  {c.total_events?.toLocaleString() || 0} 事件
+                  {c.articles_count} 条新闻
                 </span>
                 <div className="w-20 h-1.5 rounded-full bg-gray-100 shrink-0">
                   <div
