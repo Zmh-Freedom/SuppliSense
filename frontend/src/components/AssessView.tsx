@@ -151,7 +151,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
           {/* ---- Additional analysis sections (collapsible) ---- */}
 
           {/* ESG */}
-          <Expandable title="🌍 ESG 评分" endpoint={`/p2/esg/${encodeURIComponent(name)}`}
+          <Expandable key={`esg-${name}`} title="🌍 ESG 评分" endpoint={`/p2/esg/${encodeURIComponent(name)}`}
             render={(d: any) => (
               <div className="grid grid-cols-3 gap-3">
                 {['environmental', 'social', 'governance'].map(dim => {
@@ -174,8 +174,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          {/* Macro */}
-          <Expandable title="🌐 宏观风险" endpoint={`/analysis/macro/${encodeURIComponent(name)}`}
+          <Expandable key={`macro-${name}`} title="🌐 宏观风险" endpoint={`/analysis/macro/${encodeURIComponent(name)}`}
             render={(d: any) => (
               <div>
                 <div className="flex items-center gap-3 mb-3">
@@ -194,8 +193,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          {/* Alternatives */}
-          <Expandable title="🔀 替代建议" endpoint={`/analysis/alternatives/${encodeURIComponent(name)}`}
+          <Expandable key={`alt-${name}`} title="🔀 替代建议" endpoint={`/analysis/alternatives/${encodeURIComponent(name)}`}
             render={(d: any) => (
               <div>
                 {d.alternatives?.length === 0 ? (
@@ -219,8 +217,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          {/* Contagion */}
-          <Expandable title="🔗 风险传染" endpoint={`/p2/contagion/${encodeURIComponent(name)}`}
+          <Expandable key={`contagion-${name}`} title="🔗 风险传染" endpoint={`/p2/contagion/${encodeURIComponent(name)}`}
             render={(d: any) => (
               <div>
                 <div className="flex gap-4 mb-2 text-xs text-gray-500">
@@ -242,8 +239,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          {/* Scenario */}
-          <Expandable title="🎯 情景模拟" endpoint={`/analysis/scenario/${encodeURIComponent(name)}?scenario=bankruptcy`}
+          <Expandable key={`scenario-${name}`} title="🎯 情景模拟" endpoint={`/analysis/scenario/${encodeURIComponent(name)}?scenario=bankruptcy`}
             render={(d: any) => (
               <div>
                 <div className="flex items-center gap-3 mb-2">
@@ -259,8 +255,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          {/* Sanctions */}
-          <Expandable title="🛡️ 制裁筛查" endpoint={`/analysis/sanctions/${encodeURIComponent(name)}`}
+          <Expandable key={`sanc-${name}`} title="🛡️ 制裁筛查" endpoint={`/analysis/sanctions/${encodeURIComponent(name)}`}
             render={(d: any) => (
               <div>
                 <span className={`text-sm font-bold ${d.clean ? 'text-green-600' : 'text-red-600'}`}>
