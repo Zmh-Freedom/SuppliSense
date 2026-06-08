@@ -13,6 +13,7 @@ from app.api.company import router as company_router
 from app.api.financial import router as financial_router
 from app.api.risk import router as risk_router
 from app.api.sentiment import router as sentiment_router
+from app.api.p2 import router as p2_router
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 
@@ -38,6 +39,7 @@ app.include_router(company_router, prefix="/company", tags=["company"])
 app.include_router(financial_router, prefix="/financial", tags=["financial"])
 app.include_router(risk_router, prefix="/risk", tags=["risk"])
 app.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
+app.include_router(p2_router, prefix="/p2", tags=["p2"])
 
 
 @app.get("/health")
