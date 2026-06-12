@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 from openai import OpenAI
 
+from app.core.cache import cached, invalidate_cache
 from app.db.mongo import get_db
 
 _llm_client = None
@@ -359,6 +360,7 @@ def _check_negative_alert(company_name: str, result: dict) -> None:
 
 # ---- Trend & Dashboard ----
 
+@cached("sentiment_trend", ttl=1800)  # 30 minutes
 def get_sentiment_trend(company_name: str) -> dict:
     db = get_db()
     docs = list(
@@ -394,6 +396,7 @@ def _trend_direction(trend: list[dict]) -> str:
     return "stable"
 
 
+@cached("sentiment_dashboard", ttl=300)  # 5 minutes
 def get_sentiment_dashboard() -> dict:
     db = get_db()
     companies = [doc["company_name"] for doc in db["watchlist"].find()]
