@@ -22,8 +22,8 @@ export default function Dashboard() {
   const [predictions, setPredictions] = useState<any[]>([]);
 
   const load = useCallback(() => {
-    api.get<DashboardData>('/alert/dashboard').then(setData);
-    api.get<any[]>('/alert/predict').then(p => setPredictions(p || []));
+    api.get<DashboardData>('/alert/dashboard').then(setData).catch(() => {});
+    api.get<any[]>('/alert/predict').then(p => setPredictions(p || [])).catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);

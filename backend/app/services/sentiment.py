@@ -187,9 +187,11 @@ def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | 
     """搜索公司新闻并用 LLM 分析舆情情感。缓存 6 小时。"""
     db = get_db()
 
-    # cache check
+    # cache check - 取最新一条记录
     if not force_refresh:
-        cached = db["sentiment_results"].find_one({"company_name": company_name})
+        cached = db["sentiment_results"].find_one(
+            {"company_name": company_name}, sort=[("analyzed_at", -1)]
+        )
         if cached:
             cached_at = cached["analyzed_at"]
             if hasattr(cached_at, "replace") and cached_at.tzinfo is None:
@@ -298,13 +300,11 @@ def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | 
 
 
 def _save_sentiment(company_name: str, result: dict) -> None:
+    """插入新记录（而非覆盖），保留历史用于趋势对比。"""
     db = get_db()
     result_copy = {k: v for k, v in result.items()}
-    db["sentiment_results"].update_one(
-        {"company_name": company_name},
-        {"$set": result_copy},
-        upsert=True,
-    )
+    result_copy["company_name"] = company_name
+    db["sentiment_results"].insert_one(result_copy)
 
 
 def _check_negative_alert(company_name: str, result: dict) -> None:
@@ -400,7 +400,10 @@ def get_sentiment_dashboard() -> dict:
 
     items = []
     for name in companies:
-        doc = db["sentiment_results"].find_one({"company_name": name})
+        # 取最新一条记录（按 analyzed_at 降序）
+        doc = db["sentiment_results"].find_one(
+            {"company_name": name}, sort=[("analyzed_at", -1)]
+        )
         if doc:
             items.append({
                 "company_name": name,

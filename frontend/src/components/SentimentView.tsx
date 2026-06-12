@@ -61,7 +61,7 @@ export default function SentimentView() {
   const loadCompanies = useCallback(() => {
     api.get<{ companies: string[] }>('/alert/watchlist').then(d => {
       setCompanies(d.companies || []);
-    });
+    }).catch(() => {});
   }, []);
 
   useEffect(() => { loadCompanies(); }, [loadCompanies]);
@@ -80,12 +80,17 @@ export default function SentimentView() {
 
   const onRefresh = async (name: string) => {
     setLoading(true);
-    const d = await api.post<CompanySentiment>('/sentiment/analyze', {
-      company_name: name,
-      force_refresh: true,
-    });
-    setDetail(d);
-    setLoading(false);
+    try {
+      const d = await api.post<CompanySentiment>('/sentiment/analyze', {
+        company_name: name,
+        force_refresh: true,
+      });
+      setDetail(d);
+    } catch {
+      // 刷新失败，保持旧数据
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredArticles = (detail?.articles || []).filter(a =>

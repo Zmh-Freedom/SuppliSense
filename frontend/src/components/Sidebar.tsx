@@ -15,8 +15,8 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
   const [hovered, setHovered] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api.get<{ alerts: AlertDoc[] }>('/alert/history').then(d => setAlertCount(d.alerts.length));
-    api.get<WatchlistData>('/alert/watchlist').then(d => setWatchlist(d.companies));
+    api.get<{ alerts: AlertDoc[] }>('/alert/history').then(d => setAlertCount(d.alerts.length)).catch(() => {});
+    api.get<WatchlistData>('/alert/watchlist').then(d => setWatchlist(d.companies)).catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -29,26 +29,39 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
     const name = newName.trim();
     if (!name || adding) return;
     setAdding(true);
-    await api.post('/alert/watch', { company_name: name });
-    setNewName('');
-    await load();
-    onRefresh();
-    setAdding(false);
+    try {
+      await api.post('/alert/watch', { company_name: name });
+      setNewName('');
+      await load();
+      onRefresh();
+    } catch {
+      // 添加失败，静默处理
+    } finally {
+      setAdding(false);
+    }
   };
 
   const remove = async (name: string) => {
-    await api.delete('/alert/watch', { company_name: name });
-    setHovered(null);
-    await load();
-    onRefresh();
+    try {
+      await api.delete('/alert/watch', { company_name: name });
+      setHovered(null);
+      await load();
+      onRefresh();
+    } catch {
+      // 移除失败，静默处理
+    }
   };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await api.upload('/alert/watch/upload', file);
-    await load();
-    onRefresh();
+    try {
+      await api.upload('/alert/watch/upload', file);
+      await load();
+      onRefresh();
+    } catch {
+      // 上传失败，静默处理
+    }
   };
 
   return (
@@ -141,13 +154,13 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
       <div className="border-t border-[#e8e8e3] px-4 py-3 space-y-2">
         <div className="flex gap-2">
           <button
-            onClick={() => api.post('/alert/check-all').then(load)}
+            onClick={() => api.post('/alert/check-all').then(load).catch(() => {})}
             className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors"
           >
             ⚡ 免费巡检
           </button>
           <button
-            onClick={() => api.post('/alert/refresh-all').then(load)}
+            onClick={() => api.post('/alert/refresh-all').then(load).catch(() => {})}
             className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors"
           >
             🔄 付费刷新

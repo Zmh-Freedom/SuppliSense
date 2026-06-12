@@ -58,21 +58,26 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
 
   useEffect(() => {
     if (companyName) {
-      api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`).then(setDetail);
+      api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`).then(setDetail).catch(() => {});
     } else {
-      api.get<SentimentDashboard>('/sentiment/dashboard/overview').then(setDash);
+      api.get<SentimentDashboard>('/sentiment/dashboard/overview').then(setDash).catch(() => {});
     }
   }, [companyName]);
 
   const onAnalyze = async () => {
     if (!companyName) return;
     setLoading(true);
-    const r = await api.post<CompanySentiment>('/sentiment/analyze', {
-      company_name: companyName,
-      force_refresh: true,
-    });
-    setDetail(r);
-    setLoading(false);
+    try {
+      const r = await api.post<CompanySentiment>('/sentiment/analyze', {
+        company_name: companyName,
+        force_refresh: true,
+      });
+      setDetail(r);
+    } catch {
+      // 分析失败，保持旧数据
+    } finally {
+      setLoading(false);
+    }
   };
 
   // ---- single company detail ----
