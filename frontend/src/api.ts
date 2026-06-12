@@ -108,7 +108,7 @@ export async function chatStream(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch('/api/chat/stream', {
+  const res = await fetch('/chat/stream', {
     method: 'POST',
     headers,
     body: JSON.stringify({ message, session_id: sessionId, mode }),

@@ -20,14 +20,14 @@ class ChatRequest(BaseModel):
     mode: str = "react"  # "react", "plan-execute", or "multi-agent"
 
 
-@router.post("/chat")
+@router.post("/")
 async def chat_endpoint(req: ChatRequest):
     sid = req.session_id or str(uuid.uuid4())
     reply = await asyncio.to_thread(agent_chat, sid, req.message)
     return {"reply": reply, "session_id": sid}
 
 
-@router.post("/chat/stream")
+@router.post("/stream")
 async def chat_stream_endpoint(req: ChatRequest):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
