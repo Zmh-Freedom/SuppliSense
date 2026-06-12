@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { api } from '../api';
+import { api, chatStream } from '../api';
 import type { ChatMessage, RiskResult } from '../types';
 
 interface Session {
@@ -25,6 +25,12 @@ function saveSessions(sessions: Session[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
 }
 
+interface StreamState {
+  thinking: string;
+  toolCalls: Array<{ tool: string; args: Record<string, unknown>; result?: unknown }>;
+  answerChunks: string[];
+}
+
 export default function ChatView() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [activeSid, setActiveSid] = useState<string>(() => {
@@ -34,12 +40,13 @@ export default function ChatView() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [streamState, setStreamState] = useState<StreamState | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const active = sessions.find(s => s.sid === activeSid);
   const msgs = active?.msgs ?? [];
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, streamState]);
 
   const persist = (sid: string, newMsgs: ChatMessage[]) => {
     const list = loadSessions();
@@ -67,26 +74,67 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: msg }];
     persist(sid, newMsgs);
     setLoading(true);
+    setStreamState({ thinking: '', toolCalls: [], answerChunks: [] });
 
     try {
-      const res = await api.post<{ reply: string }>('/chat/chat', { message: msg, session_id: sid });
-      newMsgs.push({ role: 'assistant', content: res.reply });
-    } catch {
+      await chatStream(msg, sid, {
+        onSession: (sessionId) => {
+          if (!activeSid) setActiveSid(sessionId);
+        },
+        onThinking: (data) => {
+          setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
+        },
+        onToolCall: (data) => {
+          setStreamState(prev => prev ? {
+            ...prev,
+            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }]
+          } : null);
+        },
+        onToolResult: (data) => {
+          setStreamState(prev => {
+            if (!prev) return null;
+            const toolCalls = [...prev.toolCalls];
+            const lastTool = toolCalls[toolCalls.length - 1];
+            if (lastTool && lastTool.tool === data.tool) {
+              lastTool.result = data.result;
+            }
+            return { ...prev, toolCalls };
+          });
+        },
+        onAnswerChunk: (data) => {
+          setStreamState(prev => prev ? {
+            ...prev,
+            answerChunks: [...prev.answerChunks, data.text]
+          } : null);
+        },
+        onDone: (data) => {
+          newMsgs.push({ role: 'assistant', content: data.answer });
+          persist(sid, newMsgs);
+          setStreamState(null);
+          setLoading(false);
+        },
+        onError: (data) => {
+          console.error('Stream error:', data.message);
+        },
+      });
+    } catch (err) {
       newMsgs.push({ role: 'assistant', content: '请求失败，请重试' });
+      persist(sid, newMsgs);
+      setStreamState(null);
+      setLoading(false);
     }
-
-    persist(sid, newMsgs);
-    setLoading(false);
   };
 
   const newChat = () => {
     setActiveSid('');
     setShowHistory(false);
+    setStreamState(null);
   };
 
   const switchSession = (sid: string) => {
     setActiveSid(sid);
     setShowHistory(false);
+    setStreamState(null);
   };
 
   const deleteSession = (sid: string, e: React.MouseEvent) => {
@@ -134,11 +182,41 @@ export default function ChatView() {
             </div>
           </div>
         ))}
-        {loading && (
+        {loading && streamState && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-[#e8e8e3] flex items-center justify-center text-xs font-semibold text-[#555] shrink-0">AI</div>
-            <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-gray-400 animate-pulse">
-              分析中…
+            <div className="max-w-[80%] space-y-2">
+              {/* Thinking indicator */}
+              {streamState.thinking && streamState.answerChunks.length === 0 && (
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-gray-500">
+                  <span className="inline-block animate-pulse">{streamState.thinking}</span>
+                </div>
+              )}
+              {/* Tool calls */}
+              {streamState.toolCalls.length > 0 && (
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs space-y-2">
+                  {streamState.toolCalls.map((tc, i) => (
+                    <div key={i} className="flex items-start gap-2">
+                      <span className="text-[#333] font-mono">🔧 {tc.tool}</span>
+                      <span className="text-gray-400 truncate flex-1">
+                        {JSON.stringify(tc.args)}
+                      </span>
+                      {tc.result !== undefined && (
+                        <span className="text-green-500">✓</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Streaming answer */}
+              {streamState.answerChunks.length > 0 && (
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-[#2d2d2d]">
+                  <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
+                    <ReactMarkdown>{streamState.answerChunks.join('')}</ReactMarkdown>
+                  </div>
+                  <span className="inline-block w-2 h-4 bg-[#333] animate-pulse ml-1" />
+                </div>
+              )}
             </div>
           </div>
         )}

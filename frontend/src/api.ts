@@ -80,3 +80,98 @@ export const api = {
     }) as Promise<T>;
   },
 };
+
+// ---- Streaming (SSE) ----
+export interface StreamCallbacks {
+  onSession?: (sessionId: string) => void;
+  onThinking?: (data: { iteration?: number; message: string }) => void;
+  onToolCall?: (data: { tool: string; args: Record<string, unknown> }) => void;
+  onToolResult?: (data: { tool: string; result: unknown }) => void;
+  onAnswerChunk?: (data: { text: string }) => void;
+  onDone?: (data: { answer: string }) => void;
+  onError?: (data: { message: string }) => void;
+}
+
+export async function chatStream(
+  message: string,
+  sessionId: string,
+  callbacks: StreamCallbacks,
+): Promise<string> {
+  const token = getToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch('/api/chat/stream', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ message, session_id: sessionId }),
+  });
+
+  if (res.status === 401) {
+    clearToken();
+    window.location.reload();
+    throw new Error('登录已过期，请重新登录');
+  }
+
+  if (!res.ok || !res.body) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullAnswer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE events
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+    let currentEvent = '';
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7);
+      } else if (line.startsWith('data: ')) {
+        const dataStr = line.slice(6);
+        try {
+          const data = JSON.parse(dataStr);
+          switch (currentEvent) {
+            case 'session':
+              callbacks.onSession?.(data);
+              break;
+            case 'thinking':
+              callbacks.onThinking?.(data);
+              break;
+            case 'tool_call':
+              callbacks.onToolCall?.(data);
+              break;
+            case 'tool_result':
+              callbacks.onToolResult?.(data);
+              break;
+            case 'answer_chunk':
+              fullAnswer += data.text;
+              callbacks.onAnswerChunk?.(data);
+              break;
+            case 'done':
+              callbacks.onDone?.(data);
+              break;
+            case 'error':
+              callbacks.onError?.(data);
+              break;
+          }
+        } catch {
+          // Ignore parse errors
+        }
+      }
+    }
+  }
+
+  return fullAnswer;
+}
