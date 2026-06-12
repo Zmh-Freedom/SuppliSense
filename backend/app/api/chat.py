@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from app.services.agent import chat as agent_chat
 from app.services.agent import chat_stream as agent_chat_stream
 from app.services.agent import chat_stream_with_plan as agent_chat_stream_with_plan
+from app.services.agent import chat_stream_with_agents as agent_chat_stream_with_agents
 
 router = APIRouter()
 
@@ -16,7 +17,7 @@ router = APIRouter()
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "react"  # "react" or "plan-execute"
+    mode: str = "react"  # "react", "plan-execute", or "multi-agent"
 
 
 @router.post("/chat")
@@ -34,6 +35,8 @@ async def chat_stream_endpoint(req: ChatRequest):
     # Choose execution mode
     if req.mode == "plan-execute":
         stream_fn = agent_chat_stream_with_plan
+    elif req.mode == "multi-agent":
+        stream_fn = agent_chat_stream_with_agents
     else:
         stream_fn = agent_chat_stream
 
