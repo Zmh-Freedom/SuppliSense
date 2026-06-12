@@ -27,6 +27,7 @@ function saveSessions(sessions: Session[]) {
 
 interface StreamState {
   thinking: string;
+  plan: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> | null;
   toolCalls: Array<{ tool: string; args: Record<string, unknown>; result?: unknown }>;
   answerChunks: string[];
 }
@@ -41,6 +42,7 @@ export default function ChatView() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
+  const [mode, setMode] = useState<'react' | 'plan-execute'>('react');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const active = sessions.find(s => s.sid === activeSid);
@@ -74,7 +76,7 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: msg }];
     persist(sid, newMsgs);
     setLoading(true);
-    setStreamState({ thinking: '', toolCalls: [], answerChunks: [] });
+    setStreamState({ thinking: '', plan: null, toolCalls: [], answerChunks: [] });
 
     try {
       await chatStream(msg, sid, {
@@ -83,6 +85,9 @@ export default function ChatView() {
         },
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
+        },
+        onPlan: (data) => {
+          setStreamState(prev => prev ? { ...prev, plan: data.steps } : null);
         },
         onToolCall: (data) => {
           setStreamState(prev => prev ? {
@@ -116,7 +121,7 @@ export default function ChatView() {
         onError: (data) => {
           console.error('Stream error:', data.message);
         },
-      });
+      }, mode);
     } catch (err) {
       newMsgs.push({ role: 'assistant', content: '请求失败，请重试' });
       persist(sid, newMsgs);
@@ -192,6 +197,21 @@ export default function ChatView() {
                   <span className="inline-block animate-pulse">{streamState.thinking}</span>
                 </div>
               )}
+              {/* Execution plan (Plan-and-Execute mode) */}
+              {streamState.plan && streamState.plan.length > 0 && streamState.toolCalls.length === 0 && (
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs">
+                  <div className="text-gray-500 mb-2">📋 执行计划：</div>
+                  <div className="space-y-1">
+                    {streamState.plan.map((step, i) => (
+                      <div key={i} className="flex items-center gap-2 text-gray-600">
+                        <span className="text-gray-400">{i + 1}.</span>
+                        <span className="font-mono">{step.tool}</span>
+                        {step.parallel && <span className="text-blue-400 text-[10px]">并行</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* Tool calls */}
               {streamState.toolCalls.length > 0 && (
                 <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs space-y-2">
@@ -228,6 +248,33 @@ export default function ChatView() {
 
       {/* input */}
       <div className="px-4 pb-6 pt-2">
+        {/* Mode selector */}
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-xs text-gray-400">模式：</span>
+          <button
+            onClick={() => setMode('react')}
+            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+              mode === 'react'
+                ? 'bg-[#333] text-white'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            标准
+          </button>
+          <button
+            onClick={() => setMode('plan-execute')}
+            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+              mode === 'plan-execute'
+                ? 'bg-[#333] text-white'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            规划执行
+          </button>
+          <span className="text-xs text-gray-400 ml-1">
+            {mode === 'react' ? '逐步推理' : '先规划后执行'}
+          </span>
+        </div>
         <div className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-2xl px-4 py-1 focus-within:border-[#bbb] focus-within:shadow-sm transition-shadow">
           <input
             value={input}

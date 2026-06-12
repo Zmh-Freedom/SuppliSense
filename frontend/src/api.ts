@@ -85,6 +85,7 @@ export const api = {
 export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
   onThinking?: (data: { iteration?: number; message: string }) => void;
+  onPlan?: (data: { steps: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> }) => void;
   onToolCall?: (data: { tool: string; args: Record<string, unknown> }) => void;
   onToolResult?: (data: { tool: string; result: unknown }) => void;
   onAnswerChunk?: (data: { text: string }) => void;
@@ -96,6 +97,7 @@ export async function chatStream(
   message: string,
   sessionId: string,
   callbacks: StreamCallbacks,
+  mode: 'react' | 'plan-execute' = 'react',
 ): Promise<string> {
   const token = getToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -106,7 +108,7 @@ export async function chatStream(
   const res = await fetch('/api/chat/stream', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ message, session_id: sessionId }),
+    body: JSON.stringify({ message, session_id: sessionId, mode }),
   });
 
   if (res.status === 401) {
@@ -148,6 +150,9 @@ export async function chatStream(
               break;
             case 'thinking':
               callbacks.onThinking?.(data);
+              break;
+            case 'plan':
+              callbacks.onPlan?.(data);
               break;
             case 'tool_call':
               callbacks.onToolCall?.(data);

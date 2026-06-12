@@ -415,3 +415,70 @@ async def chat_stream(session_id: str, message: str) -> AsyncGenerator[str, None
 def _sse_event(event_type: str, data: dict) -> str:
     """Format data as SSE event string."""
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def chat_stream_with_plan(session_id: str, message: str) -> AsyncGenerator[str, None]:
+    """
+    Plan-and-Execute mode with streaming.
+    Uses planner to generate execution plan, then executor to run it.
+    """
+    from app.services.executor import execute_plan_stream
+    from app.db.mongo import get_db
+
+    try:
+        # Execute plan with streaming
+        async for event in execute_plan_stream(message, session_id):
+            event_type = event.get("type", "")
+
+            if event_type == "planning":
+                yield _sse_event("thinking", {"message": event.get("thought", "")})
+            elif event_type == "plan":
+                yield _sse_event("plan", {"steps": event.get("steps", [])})
+            elif event_type == "parallel_start":
+                yield _sse_event("thinking", {"message": f"并行执行 {event.get('count', 0)} 个任务..."})
+            elif event_type == "step_start":
+                yield _sse_event("tool_call", {
+                    "tool": event.get("tool", ""),
+                    "args": event.get("args", {}),
+                })
+            elif event_type == "step_result":
+                yield _sse_event("tool_result", {
+                    "tool": event.get("tool", ""),
+                    "result": event.get("result", {}),
+                })
+            elif event_type == "step_error":
+                yield _sse_event("error", {
+                    "message": f"{event.get('tool', '')}: {event.get('error', '')}",
+                })
+            elif event_type == "thinking":
+                yield _sse_event("thinking", {"message": event.get("message", "")})
+            elif event_type == "final_answer":
+                answer = event.get("answer", "")
+                # Save to conversation history
+                db = get_db()
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                db["conversations"].update_one(
+                    {"session_id": session_id},
+                    {
+                        "$push": {
+                            "messages": {
+                                "$each": [
+                                    {"role": "user", "content": message},
+                                    {"role": "assistant", "content": answer},
+                                ]
+                            }
+                        },
+                        "$setOnInsert": {"session_id": session_id, "created_at": now},
+                    },
+                    upsert=True,
+                )
+                # Stream answer in chunks
+                for i in range(0, len(answer), 10):
+                    chunk = answer[i:i+10]
+                    yield _sse_event("answer_chunk", {"text": chunk})
+                    await asyncio.sleep(0.02)
+                yield _sse_event("done", {"answer": answer})
+
+    except Exception as e:
+        yield _sse_event("error", {"message": f"执行错误: {str(e)}"})
