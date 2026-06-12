@@ -2,11 +2,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import logging
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from app.api.alert import router as alert_router
 from app.api.async_tasks import router as async_tasks_router
@@ -20,10 +21,22 @@ from app.api.p2 import router as p2_router
 from app.api.macro import router as macro_router
 from app.api.scenario import router as scenario_router
 from app.core.config import settings
+from app.core.logging import setup_logging, get_logger
+from app.core.metrics import (
+    HTTP_REQUESTS_TOTAL,
+    HTTP_REQUEST_DURATION,
+    get_metrics,
+)
+from app.core.sentry import init_sentry
 from app.db.mongo import close_db, ensure_indexes
 from app.services.scheduler import start_scheduler, stop_scheduler
 
-logger = logging.getLogger(__name__)
+# Setup logging
+setup_logging()
+logger = get_logger(__name__)
+
+# Initialize Sentry
+init_sentry()
 
 
 def create_default_admin():
@@ -40,19 +53,23 @@ def create_default_admin():
                 password="admin123",
                 role=UserRole.ADMIN,
             ))
-            logger.info("Default admin user created (username: admin, password: admin123)")
+            logger.info("default_admin_created", username="admin")
         except ValueError:
             pass  # User already exists
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("application_starting", version=settings.APP_VERSION)
     ensure_indexes()
     create_default_admin()
     start_scheduler()
+    logger.info("application_started")
     yield
+    logger.info("application_shutting_down")
     stop_scheduler()
     close_db()
+    logger.info("application_stopped")
 
 
 app = FastAPI(
@@ -68,6 +85,31 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+
+
+# Metrics middleware
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start_time = time.time()
+
+    response = await call_next(request)
+
+    duration = time.time() - start_time
+    endpoint = request.url.path
+
+    HTTP_REQUESTS_TOTAL.labels(
+        method=request.method,
+        endpoint=endpoint,
+        status=response.status_code,
+    ).inc()
+
+    HTTP_REQUEST_DURATION.labels(
+        method=request.method,
+        endpoint=endpoint,
+    ).observe(duration)
+
+    return response
+
 
 # Auth router (no prefix, already has /auth prefix)
 app.include_router(auth_router)
@@ -90,3 +132,10 @@ app.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Prometheus metrics endpoint."""
+    metrics_text, content_type = get_metrics()
+    return PlainTextResponse(metrics_text, media_type=content_type)
