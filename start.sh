@@ -25,10 +25,24 @@ echo -e "${YELLOW}📦 检查 MongoDB...${NC}"
 if docker ps | grep -q mongodb; then
     echo -e "${GREEN}✓ MongoDB 已在运行${NC}"
 else
-    if docker ps -a | grep -q mongodb; then
-        docker start mongodb > /dev/null
-        echo -e "${GREEN}✓ MongoDB 已启动${NC}"
+    # 检查是否存在容器（包括停止的）
+    if docker ps -a --format '{{.Names}}' | grep -q '^mongodb$'; then
+        # 容器存在，尝试启动
+        if docker start mongodb > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ MongoDB 已启动${NC}"
+        else
+            # 启动失败，删除并重建
+            echo -e "${YELLOW}⚠ MongoDB 容器异常，正在重建...${NC}"
+            docker rm -f mongodb > /dev/null 2>&1
+            docker run -d --name mongodb \
+                -p 27017:27017 \
+                -e MONGO_INITDB_ROOT_USERNAME=root \
+                -e MONGO_INITDB_ROOT_PASSWORD=123456 \
+                mongo:7 > /dev/null
+            echo -e "${GREEN}✓ MongoDB 已重建并启动${NC}"
+        fi
     else
+        # 容器不存在，创建新的
         docker run -d --name mongodb \
             -p 27017:27017 \
             -e MONGO_INITDB_ROOT_USERNAME=root \
@@ -43,10 +57,22 @@ echo -e "${YELLOW}📦 检查 Redis...${NC}"
 if docker ps | grep -q redis; then
     echo -e "${GREEN}✓ Redis 已在运行${NC}"
 else
-    if docker ps -a | grep -q redis; then
-        docker start redis > /dev/null
-        echo -e "${GREEN}✓ Redis 已启动${NC}"
+    # 检查是否存在容器（包括停止的）
+    if docker ps -a --format '{{.Names}}' | grep -q '^redis$'; then
+        # 容器存在，尝试启动
+        if docker start redis > /dev/null 2>&1; then
+            echo -e "${GREEN}✓ Redis 已启动${NC}"
+        else
+            # 启动失败，删除并重建
+            echo -e "${YELLOW}⚠ Redis 容器异常，正在重建...${NC}"
+            docker rm -f redis > /dev/null 2>&1
+            docker run -d --name redis \
+                -p 6379:6379 \
+                redis:7 > /dev/null
+            echo -e "${GREEN}✓ Redis 已重建并启动${NC}"
+        fi
     else
+        # 容器不存在，创建新的
         docker run -d --name redis \
             -p 6379:6379 \
             redis:7 > /dev/null
