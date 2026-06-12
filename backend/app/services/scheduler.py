@@ -159,5 +159,5 @@ def _add_job(func, cron: str, job_id: str) -> None:
 
 
 def stop_scheduler() -> None:
-    _scheduler.shutdown(wait=False)
-    logger.info("Alert scheduler stopped")
+    _scheduler.shutdown(wait=True, grace_period=30)
+    logger.info("Alert scheduler stopped (waited for running tasks)")

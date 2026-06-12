@@ -57,11 +57,13 @@ export default function SentimentView() {
   const [detail, setDetail] = useState<CompanySentiment | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<string>('all');
+  const [listError, setListError] = useState(false);
 
   const loadCompanies = useCallback(() => {
-    api.get<{ companies: string[] }>('/alert/watchlist').then(d => {
-      setCompanies(d.companies || []);
-    }).catch(() => {});
+    setListError(false);
+    api.get<{ companies: string[] }>('/alert/watchlist')
+      .then(d => setCompanies(d.companies || []))
+      .catch(() => setListError(true));
   }, []);
 
   useEffect(() => { loadCompanies(); }, [loadCompanies]);
@@ -110,19 +112,25 @@ export default function SentimentView() {
           <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家监控企业</p>
         </div>
         <div className="py-1">
-          {companies.map(name => (
-            <button
-              key={name}
-              onClick={() => selectCompany(name)}
-              className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                selected === name
-                  ? 'bg-[#e8e8e3] text-[#333] font-medium'
-                  : 'text-[#555] hover:bg-[#eee]'
-              }`}
-            >
-              {name}
-            </button>
-          ))}
+          {listError ? (
+            <p className="text-xs text-red-400 text-center py-4">加载失败</p>
+          ) : companies.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-4">暂无监控企业</p>
+          ) : (
+            companies.map(name => (
+              <button
+                key={name}
+                onClick={() => selectCompany(name)}
+                className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+                  selected === name
+                    ? 'bg-[#e8e8e3] text-[#333] font-medium'
+                    : 'text-[#555] hover:bg-[#eee]'
+                }`}
+              >
+                {name}
+              </button>
+            ))
+          )}
         </div>
       </div>
 

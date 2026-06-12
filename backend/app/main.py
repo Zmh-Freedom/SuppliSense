@@ -16,14 +16,17 @@ from app.api.sentiment import router as sentiment_router
 from app.api.p2 import router as p2_router
 from app.api.macro import router as macro_router
 from app.api.scenario import router as scenario_router
+from app.db.mongo import close_db, ensure_indexes
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    ensure_indexes()
     start_scheduler()
     yield
     stop_scheduler()
+    close_db()
 
 
 app = FastAPI(title="Supplier Risk Analysis Agent", version="0.3.0", lifespan=lifespan)

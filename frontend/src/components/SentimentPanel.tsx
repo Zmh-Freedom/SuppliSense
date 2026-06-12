@@ -55,18 +55,25 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
   const [dash, setDash] = useState<SentimentDashboard | null>(null);
   const [detail, setDetail] = useState<CompanySentiment | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
+    setError(false);
     if (companyName) {
-      api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`).then(setDetail).catch(() => {});
+      api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`)
+        .then(setDetail)
+        .catch(() => setError(true));
     } else {
-      api.get<SentimentDashboard>('/sentiment/dashboard/overview').then(setDash).catch(() => {});
+      api.get<SentimentDashboard>('/sentiment/dashboard/overview')
+        .then(setDash)
+        .catch(() => setError(true));
     }
   }, [companyName]);
 
   const onAnalyze = async () => {
     if (!companyName) return;
     setLoading(true);
+    setError(false);
     try {
       const r = await api.post<CompanySentiment>('/sentiment/analyze', {
         company_name: companyName,
@@ -74,7 +81,7 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
       });
       setDetail(r);
     } catch {
-      // 分析失败，保持旧数据
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -82,10 +89,11 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
 
   // ---- single company detail ----
   if (companyName) {
-    if (!detail) return <div className="text-xs text-gray-400 p-4">加载舆情数据…</div>;
+    if (!detail && !error) return <div className="text-xs text-gray-400 p-4">加载舆情数据…</div>;
+    if (error) return <div className="text-xs text-red-400 p-4">加载失败</div>;
 
     const scoreColor =
-      detail.sentiment_score < -0.2 ? '#dc2626' : detail.sentiment_score > 0.2 ? '#16a34a' : '#999';
+      detail!.sentiment_score < -0.2 ? '#dc2626' : detail!.sentiment_score > 0.2 ? '#16a34a' : '#999';
 
     return (
       <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 space-y-4">
@@ -100,7 +108,7 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
           </button>
         </div>
 
-        {!detail.has_data ? (
+        {!detail!.has_data ? (
           <p className="text-xs text-gray-400">暂无舆情数据，请确保已在监控列表中并执行过数据刷新。</p>
         ) : (
           <>
@@ -108,32 +116,32 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
             <div className="flex items-center gap-4">
               <div className="text-center">
                 <div className="text-3xl font-bold" style={{ color: scoreColor }}>
-                  {detail.sentiment_score > 0 ? '+' : ''}{detail.sentiment_score.toFixed(2)}
+                  {detail!.sentiment_score > 0 ? '+' : ''}{detail!.sentiment_score.toFixed(2)}
                 </div>
                 <div className="text-[11px] text-gray-400 mt-1">情感得分</div>
               </div>
               <div className="flex-1 grid grid-cols-3 gap-2 text-center">
                 <div className="bg-red-50 rounded-lg py-2">
-                  <div className="text-lg font-bold text-red-600">{detail.negative_count}</div>
+                  <div className="text-lg font-bold text-red-600">{detail!.negative_count}</div>
                   <div className="text-[11px] text-red-400">负面</div>
                 </div>
                 <div className="bg-gray-50 rounded-lg py-2">
-                  <div className="text-lg font-bold text-gray-600">{detail.neutral_count}</div>
+                  <div className="text-lg font-bold text-gray-600">{detail!.neutral_count}</div>
                   <div className="text-[11px] text-gray-400">中性</div>
                 </div>
                 <div className="bg-green-50 rounded-lg py-2">
-                  <div className="text-lg font-bold text-green-600">{detail.positive_count}</div>
-                  <div className="text-[11px] text-green-400">正面</div>
+                  <div className="text-lg font-bold text-green-600">{detail!.positive_count}</div>
+                  <div className="text-[11px] text-gray-400">正面</div>
                 </div>
               </div>
             </div>
 
             {/* risk tags */}
-            {detail.risk_tags.length > 0 && (
+            {detail!.risk_tags.length > 0 && (
               <div>
                 <div className="text-xs text-gray-500 mb-2">风险标签</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {detail.risk_tags.map(t => (
+                  {detail!.risk_tags.map(t => (
                     <span
                       key={t.tag}
                       className="text-[11px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-100"
@@ -146,13 +154,13 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
             )}
 
             {/* LLM summary + key concerns */}
-            {detail.summary && (
+            {detail!.summary && (
               <div className="bg-amber-50 border border-amber-100 rounded-xl p-3">
                 <div className="text-xs font-medium text-amber-700 mb-1">🤖 AI 分析摘要</div>
-                <p className="text-xs text-amber-800 leading-relaxed">{detail.summary}</p>
-                {detail.key_concerns?.length > 0 && (
+                <p className="text-xs text-amber-800 leading-relaxed">{detail!.summary}</p>
+                {detail!.key_concerns?.length > 0 && (
                   <ul className="mt-2 space-y-0.5">
-                    {detail.key_concerns.map((c, i) => (
+                    {detail!.key_concerns.map((c, i) => (
                       <li key={i} className="text-[11px] text-amber-700 flex items-start gap-1">
                         <span className="text-amber-400">•</span> {c}
                       </li>
@@ -163,11 +171,11 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
             )}
 
             {/* articles */}
-            {detail.articles.length > 0 && (
+            {detail!.articles.length > 0 && (
               <div>
-                <div className="text-xs text-gray-500 mb-2">最新报道 ({detail.articles.length}篇)</div>
+                <div className="text-xs text-gray-500 mb-2">最新报道 ({detail!.articles.length}篇)</div>
                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {detail.articles.slice(0, 10).map((a, i) => {
+                  {detail!.articles.slice(0, 10).map((a, i) => {
                     const sColor =
                       a.sentiment === 'negative'
                         ? '#dc2626'
@@ -194,7 +202,7 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
             )}
 
             <div className="text-[11px] text-gray-400 text-right">
-              分析时间：{detail.analyzed_at?.slice(0, 16).replace('T', ' ') || '-'}
+              分析时间：{detail!.analyzed_at?.slice(0, 16).replace('T', ' ') || '-'}
             </div>
           </>
         )}
@@ -203,7 +211,8 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
   }
 
   // ---- dashboard overview ----
-  if (!dash) return <div className="text-xs text-gray-400 p-4">加载舆情总览…</div>;
+  if (!dash && !error) return <div className="text-xs text-gray-400 p-4">加载舆情总览…</div>;
+  if (error) return <div className="text-xs text-red-400 p-4">舆情加载失败</div>;
 
   return (
     <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">
@@ -211,23 +220,23 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
         <h3 className="text-sm font-medium text-[#555]">
           📰 舆情监控
           <span className="text-xs text-gray-400 ml-2">
-            {dash.analyzed_count}/{dash.total_monitored} 家已分析
+            {dash!.analyzed_count}/{dash!.total_monitored} 家已分析
           </span>
         </h3>
-        {dash.negative_alert_count > 0 && (
+        {dash!.negative_alert_count > 0 && (
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">
-            {dash.negative_alert_count} 家负面舆情
+            {dash!.negative_alert_count} 家负面舆情
           </span>
         )}
       </div>
 
-      {dash.companies.length === 0 ? (
+      {dash!.companies.length === 0 ? (
         <p className="text-xs text-gray-400 py-4 text-center">暂无监控企业</p>
-      ) : dash.negative_companies.length === 0 ? (
+      ) : dash!.negative_companies.length === 0 ? (
         <p className="text-xs text-gray-400 py-4 text-center">舆情正常 ✅</p>
       ) : (
         <div className="space-y-1.5">
-          {dash.negative_companies.map(c => {
+          {dash!.negative_companies.map(c => {
             const barPct = Math.min(Math.abs(c.sentiment_score) * 100, 100);
             return (
               <div
@@ -258,9 +267,9 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
         </div>
       )}
 
-      {dash.analyzed_at && (
+      {dash!.analyzed_at && (
         <div className="text-[11px] text-gray-400 text-right mt-3">
-          最近分析：{dash.analyzed_at?.slice(0, 16).replace('T', ' ') || '-'}
+          最近分析：{dash!.analyzed_at?.slice(0, 16).replace('T', ' ') || '-'}
         </div>
       )}
     </div>

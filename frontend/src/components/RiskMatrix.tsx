@@ -10,12 +10,19 @@ interface CompanySnap {
 export default function RiskMatrix() {
   const [companies, setCompanies] = useState<CompanySnap[]>([]);
   const [tooltip, setTooltip] = useState<{ name: string; score: number; level: string; x: number; y: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const load = useCallback(() => {
-    api.get<{ companies: CompanySnap[] }>('/alert/dashboard').then(d => {
-      const filtered = d.companies.filter(c => c.score !== null);
-      setCompanies(filtered);
-    });
+    setLoading(true);
+    setError(false);
+    api.get<{ companies: CompanySnap[] }>('/alert/dashboard')
+      .then(d => {
+        const filtered = d.companies.filter(c => c.score !== null);
+        setCompanies(filtered);
+      })
+      .catch(() => { setError(true); })
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -43,73 +50,84 @@ export default function RiskMatrix() {
         <button onClick={load} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
       </div>
 
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6">
-        <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
-          <span>← 低</span>
-          <span>影响程度 →</span>
-          <span>高 →</span>
+      {error ? (
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center">
+          <p className="text-gray-400 mb-3">加载失败</p>
+          <button onClick={load} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
         </div>
-
-        {/* matrix grid */}
-        <div className="relative w-full aspect-square max-w-lg mx-auto" style={{ minHeight: 360 }}>
-          {/* quadrants */}
-          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-            {quadrants.map(q => (
-              <g key={q.label}>
-                <rect x={q.x} y={q.y} width={q.w} height={q.h} fill={q.color} stroke={q.border} strokeWidth="0.5" />
-                <text x={q.x + q.w / 2} y={q.y + q.h / 2 + 1} textAnchor="middle" fontSize="3" fill="#94a3b8">
-                  {q.label}
-                </text>
-              </g>
-            ))}
-            {/* risk axis labels */}
-            <text x="2" y="20" fontSize="2.5" fill="#94a3b8" transform="rotate(-90, 2, 50)">高风险 ← 风险程度 → 低风险</text>
-          </svg>
-
-          {/* company dots */}
-          {companies.map(c => {
-            const x = toX(c.name);
-            const y = toY(c.score);
-            const color = c.score <= 30 ? '#059669' : c.score <= 60 ? '#d97706' : '#dc2626';
-            return (
-              <div
-                key={c.name}
-                className="absolute w-3 h-3 rounded-full border-2 border-white shadow-sm cursor-pointer hover:scale-150 transition-transform z-10"
-                style={{
-                  left: `${x}%`,
-                  top: `${y}%`,
-                  background: color,
-                  transform: 'translate(-50%, -50%)',
-                }}
-                onMouseEnter={() => setTooltip({ name: c.name, score: c.score, level: c.level, x, y })}
-                onMouseLeave={() => setTooltip(null)}
-              />
-            );
-          })}
+      ) : loading ? (
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center text-gray-300">
+          加载中…
         </div>
-
-        {/* tooltip */}
-        {tooltip && (
-          <div className="text-center mt-2 text-sm">
-            <span className="font-medium">{tooltip.name}</span>
-            <span className="text-gray-400 mx-2">|</span>
-            <span className="font-semibold">{tooltip.score}/100</span>
-            <span className="text-gray-400 ml-1">{tooltip.level}</span>
+      ) : (
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
+            <span>← 低</span>
+            <span>影响程度 →</span>
+            <span>高 →</span>
           </div>
-        )}
 
-        {/* legend */}
-        <div className="flex justify-center gap-4 mt-4 text-xs text-gray-500">
-          {quadrants.map(q => (
-            <span key={q.label} className="flex items-center gap-1">
-              <span className="w-3 h-3 rounded-sm" style={{ background: q.color, border: `1px solid ${q.border}` }} />
-              {q.label}
-            </span>
-          ))}
+          {/* matrix grid */}
+          <div className="relative w-full aspect-square max-w-lg mx-auto" style={{ minHeight: 360 }}>
+            {/* quadrants */}
+            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {quadrants.map(q => (
+                <g key={q.label}>
+                  <rect x={q.x} y={q.y} width={q.w} height={q.h} fill={q.color} stroke={q.border} strokeWidth="0.5" />
+                  <text x={q.x + q.w / 2} y={q.y + q.h / 2 + 1} textAnchor="middle" fontSize="3" fill="#94a3b8">
+                    {q.label}
+                  </text>
+                </g>
+              ))}
+              {/* risk axis labels */}
+              <text x="2" y="20" fontSize="2.5" fill="#94a3b8" transform="rotate(-90, 2, 50)">高风险 ← 风险程度 → 低风险</text>
+            </svg>
+
+            {/* company dots */}
+            {companies.map(c => {
+              const x = toX(c.name);
+              const y = toY(c.score);
+              const color = c.score <= 30 ? '#059669' : c.score <= 60 ? '#d97706' : '#dc2626';
+              return (
+                <div
+                  key={c.name}
+                  className="absolute w-3 h-3 rounded-full border-2 border-white shadow-sm cursor-pointer hover:scale-150 transition-transform z-10"
+                  style={{
+                    left: `${x}%`,
+                    top: `${y}%`,
+                    background: color,
+                    transform: 'translate(-50%, -50%)',
+                  }}
+                  onMouseEnter={() => setTooltip({ name: c.name, score: c.score, level: c.level, x, y })}
+                  onMouseLeave={() => setTooltip(null)}
+                />
+              );
+            })}
+          </div>
+
+          {/* tooltip */}
+          {tooltip && (
+            <div className="text-center mt-2 text-sm">
+              <span className="font-medium">{tooltip.name}</span>
+              <span className="text-gray-400 mx-2">|</span>
+              <span className="font-semibold">{tooltip.score}/100</span>
+              <span className="text-gray-400 ml-1">{tooltip.level}</span>
+            </div>
+          )}
+
+          {/* legend */}
+          <div className="flex justify-center gap-4 mt-4 text-xs text-gray-500">
+            {quadrants.map(q => (
+              <span key={q.label} className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded-sm" style={{ background: q.color, border: `1px solid ${q.border}` }} />
+                {q.label}
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {companies.length === 0 && (
+      {!loading && !error && companies.length === 0 && (
         <p className="text-gray-300 text-center mt-16">暂无评估数据，请先评估监控清单中的企业</p>
       )}
     </div>

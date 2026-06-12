@@ -20,13 +20,28 @@ interface DashboardData {
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [predictions, setPredictions] = useState<any[]>([]);
+  const [error, setError] = useState(false);
 
   const load = useCallback(() => {
-    api.get<DashboardData>('/alert/dashboard').then(setData).catch(() => {});
-    api.get<any[]>('/alert/predict').then(p => setPredictions(p || [])).catch(() => {});
+    setError(false);
+    api.get<DashboardData>('/alert/dashboard')
+      .then(setData)
+      .catch(() => { setError(true); });
+    api.get<any[]>('/alert/predict')
+      .then(p => setPredictions(p || []))
+      .catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  if (error) {
+    return (
+      <div className="max-w-2xl mx-auto py-20 text-center">
+        <p className="text-gray-400 mb-4">加载失败，请检查后端服务</p>
+        <button onClick={load} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
+      </div>
+    );
+  }
 
   if (!data) return <div className="p-6 text-gray-300">加载中…</div>;
 
