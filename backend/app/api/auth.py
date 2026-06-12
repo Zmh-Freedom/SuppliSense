@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.deps import get_current_active_user, require_admin
@@ -28,6 +29,11 @@ from app.services.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
 
 
 @router.post("/register", response_model=UserResponse)
@@ -84,9 +90,9 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 
 @router.post("/login/json", response_model=Token)
-async def login_json(username: str, password: str):
+async def login_json(req: LoginRequest):
     """Login with JSON body (for frontend)."""
-    user = authenticate_user(username, password)
+    user = authenticate_user(req.username, req.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
