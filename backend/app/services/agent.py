@@ -159,6 +159,20 @@ def _sanctions(company_name: str) -> dict:
     return check_sanctions(company_name)
 
 
+@_register("knowledge_search", "从知识库检索相关文档（财报、合同、ESG报告等）。输入：{\"query\": \"搜索关键词\", \"company_name\": \"可选，企业全称\"}")
+def _knowledge_search(query: str, company_name: str = "") -> dict:
+    from app.services.retriever import retrieve_context
+    context = retrieve_context(query, n_results=5)
+    if not context:
+        return {"message": "未找到相关文档", "suggestion": "请先上传相关文档到知识库"}
+    return {
+        "query": query,
+        "company_name": company_name,
+        "context": context,
+        "message": "以下是从知识库检索到的相关信息",
+    }
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:
@@ -214,6 +228,7 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 找替代：用 find_alternatives 为高风险企业推荐同行业低风险供应商
 - 情景模拟：用 scenario_simulate 模拟供应商倒闭/诉讼等影响
 - 制裁筛查：用 check_sanctions 查国际制裁/失信/黑名单
+- 知识库检索：用 knowledge_search 检索上传的文档（财报、合同、ESG报告等）
 - 要对比多家：先 get_watchlist，再逐个 assess_risk
 - assess_risk 已含财报数据，上市公司要分析财报
 - debt_ratio=0 表示数据缺失（港股），不要解读为低负债

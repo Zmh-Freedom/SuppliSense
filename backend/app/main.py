@@ -15,6 +15,7 @@ from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.company import router as company_router
 from app.api.financial import router as financial_router
+from app.api.knowledge import router as knowledge_router
 from app.api.risk import router as risk_router
 from app.api.sentiment import router as sentiment_router
 from app.api.p2 import router as p2_router
@@ -122,6 +123,7 @@ app.include_router(alert_router, prefix="/alert", tags=["alert"])
 app.include_router(chat_router, prefix="/chat", tags=["chat"])
 app.include_router(company_router, prefix="/company", tags=["company"])
 app.include_router(financial_router, prefix="/financial", tags=["financial"])
+app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 app.include_router(risk_router, prefix="/risk", tags=["risk"])
 app.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 app.include_router(p2_router, prefix="/p2", tags=["p2"])

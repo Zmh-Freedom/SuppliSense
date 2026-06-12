@@ -16,6 +16,7 @@ export default defineConfig({
       '/sentiment': 'http://localhost:8000',
       '/p2': 'http://localhost:8000',
       '/analysis': 'http://localhost:8000',
+      '/knowledge': 'http://localhost:8000',
     },
   },
 })
