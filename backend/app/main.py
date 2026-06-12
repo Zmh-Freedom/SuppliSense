@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.alert import router as alert_router
+from app.api.async_tasks import router as async_tasks_router
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
 from app.api.company import router as company_router
@@ -70,6 +71,9 @@ app.add_middleware(
 
 # Auth router (no prefix, already has /auth prefix)
 app.include_router(auth_router)
+
+# Async tasks router
+app.include_router(async_tasks_router)
 
 # Business routers
 app.include_router(alert_router, prefix="/alert", tags=["alert"])
