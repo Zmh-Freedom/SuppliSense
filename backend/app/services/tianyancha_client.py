@@ -69,7 +69,8 @@ def _call(path: str, company_name: str) -> dict | None:
             headers={"Authorization": TOKEN},
             timeout=30.0,
         )
-        r.raise_for_status()
+        if not r.is_success:
+            return None
         data = r.json()
         code = data.get("error_code", -1)
         if code == 0 or code == 300000:  # 0=success, 300000=no results (valid)

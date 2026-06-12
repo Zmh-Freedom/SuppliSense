@@ -1,3 +1,5 @@
+import asyncio
+
 from pydantic import BaseModel
 
 from fastapi import APIRouter, Query, UploadFile
@@ -58,7 +60,7 @@ async def alert_check(req: CompanyRequest):
             "changed": False,
             "message": "暂无历史快照，请先执行风险评估",
         }
-    return detect_changes(req.company_name)
+    return await asyncio.to_thread(detect_changes, req.company_name)
 
 
 @router.get("/dashboard")
@@ -154,6 +156,7 @@ async def watch_upload(file: UploadFile):
             if val and len(val) > 2 and not val.startswith("#"):
                 names.append(val)
 
+    wb.close()
     results = [add_to_watchlist(n) for n in names]
     return {"total": len(results), "results": results}
 
@@ -161,19 +164,19 @@ async def watch_upload(file: UploadFile):
 @router.post("/check-all")
 async def check_all_watched():
     """Free: compare snapshots + AkShare financial for all watched companies."""
-    return run_financial_check()
+    return await asyncio.to_thread(run_financial_check)
 
 
 @router.post("/refresh")
 async def refresh_alert(req: CompanyRequest):
     """Paid: refresh single company via Tianyancha API."""
-    return refresh_company(req.company_name)
+    return await asyncio.to_thread(refresh_company, req.company_name)
 
 
 @router.post("/refresh-all")
 async def refresh_all_watched():
     """Paid: refresh ALL watched companies via Tianyancha API."""
-    return run_refresh_all()
+    return await asyncio.to_thread(run_refresh_all)
 
 
 @router.get("/rules")
@@ -189,12 +192,12 @@ async def update_rules(req: RulesRequest):
 
 @router.get("/predict")
 async def predict_all_companies():
-    return predict_all()
+    return await asyncio.to_thread(predict_all)
 
 
 @router.get("/predict/{company_name}")
 async def predict_one(company_name: str):
-    result = predict_company(company_name)
+    result = await asyncio.to_thread(predict_company, company_name)
     if result is None:
         return {"company_name": company_name, "probability": "unknown", "label": "未找到"}
     return result

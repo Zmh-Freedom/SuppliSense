@@ -88,8 +88,6 @@ def detect_changes(company_name: str) -> dict:
             # push to feishu
             from app.services.feishu import send_alert_card
             send_alert_card(company_name, final_severity, triggered)
-        else:
-            changes = []  # no rules triggered, suppress alert
 
     return {
         "company_name": company_name,

@@ -33,8 +33,8 @@ def _post(payload: dict) -> bool:
     if not WEBHOOK_URL:
         return False
     try:
-        httpx.post(_signed_url(), json=payload, timeout=10)
-        return True
+        r = httpx.post(_signed_url(), json=payload, timeout=10)
+        return r.is_success
     except Exception:
         return False
 
@@ -143,7 +143,9 @@ def send_daily_digest() -> None:
     lines.append("**舆情监控**")
     neg_companies = []
     for name in companies:
-        sent = db["sentiment_results"].find_one({"company_name": name})
+        sent = db["sentiment_results"].find_one(
+            {"company_name": name}, sort=[("analyzed_at", -1)]
+        )
         if sent and sent.get("sentiment_score", 0) < -0.2:
             neg_companies.append((name, sent.get("sentiment_score", 0), sent.get("negative_count", 0)))
     neg_companies.sort(key=lambda x: x[1])

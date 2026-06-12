@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 from pydantic import BaseModel
@@ -17,5 +18,5 @@ class ChatRequest(BaseModel):
 @router.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     sid = req.session_id or str(uuid.uuid4())
-    reply = agent_chat(sid, req.message)
+    reply = await asyncio.to_thread(agent_chat, sid, req.message)
     return {"reply": reply, "session_id": sid}

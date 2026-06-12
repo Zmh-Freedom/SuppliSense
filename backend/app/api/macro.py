@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter
 
 from app.services.macro_service import assess_macro_risk, get_industry_pmi
@@ -12,7 +14,7 @@ router = APIRouter()
 @router.get("/macro/pmi")
 async def latest_pmi():
     """获取最新 PMI 数据。"""
-    pmi = get_industry_pmi()
+    pmi = await asyncio.to_thread(get_industry_pmi)
     if pmi is None:
         return {"error": "PMI 数据获取失败"}
     return pmi
@@ -21,7 +23,7 @@ async def latest_pmi():
 @router.get("/macro/{company_name}")
 async def company_macro_risk(company_name: str):
     """评估企业的宏观风险（政策+地区+行业）。"""
-    return assess_macro_risk(company_name)
+    return await asyncio.to_thread(assess_macro_risk, company_name)
 
 
 # ---- alternatives ----
@@ -29,10 +31,10 @@ async def company_macro_risk(company_name: str):
 @router.get("/alternatives/{company_name}")
 async def company_alternatives(company_name: str):
     """为企业推荐低风险替代供应商。"""
-    return find_alternatives(company_name)
+    return await asyncio.to_thread(find_alternatives, company_name)
 
 
 @router.get("/alternatives")
 async def alternative_dashboard():
     """替代建议总览：所有高风险企业的替代方案。"""
-    return get_alternative_dashboard()
+    return await asyncio.to_thread(get_alternative_dashboard)

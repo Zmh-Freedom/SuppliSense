@@ -12,10 +12,14 @@ function getTab(): number {
   try { return parseInt(localStorage.getItem('active_tab') || '0'); } catch { return 0; }
 }
 
+function getAssessTarget(): string {
+  try { return localStorage.getItem('assess_target') || ''; } catch { return ''; }
+}
+
 export default function App() {
   const [tab, setTab] = useState(getTab);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [assessTarget, setAssessTarget] = useState('');
+  const [assessTarget, setAssessTarget] = useState(getAssessTarget);
 
   const switchTab = (i: number) => {
     setTab(i);
@@ -24,6 +28,7 @@ export default function App() {
 
   const onSelectCompany = (name: string) => {
     setAssessTarget(name);
+    localStorage.setItem('assess_target', name);
     switchTab(1);  // jump to assess tab
   };
 
