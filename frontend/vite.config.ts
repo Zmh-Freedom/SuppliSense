@@ -17,6 +17,7 @@ export default defineConfig({
       '/p2': 'http://localhost:8000',
       '/analysis': 'http://localhost:8000',
       '/knowledge': 'http://localhost:8000',
+      '/upload': 'http://localhost:8000',
     },
   },
 })

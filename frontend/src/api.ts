@@ -86,6 +86,9 @@ export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
   onThinking?: (data: { iteration?: number; message: string }) => void;
   onPlan?: (data: { steps: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> }) => void;
+  onAgentSelection?: (data: { agents: string[]; reasoning: string }) => void;
+  onAgentStart?: (data: { agent: string; description: string }) => void;
+  onAgentComplete?: (data: { agent: string; summary: string }) => void;
   onToolCall?: (data: { tool: string; args: Record<string, unknown> }) => void;
   onToolResult?: (data: { tool: string; result: unknown }) => void;
   onAnswerChunk?: (data: { text: string }) => void;
@@ -97,7 +100,7 @@ export async function chatStream(
   message: string,
   sessionId: string,
   callbacks: StreamCallbacks,
-  mode: 'react' | 'plan-execute' = 'react',
+  mode: 'react' | 'plan-execute' | 'multi-agent' = 'react',
 ): Promise<string> {
   const token = getToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -153,6 +156,15 @@ export async function chatStream(
               break;
             case 'plan':
               callbacks.onPlan?.(data);
+              break;
+            case 'agent_selection':
+              callbacks.onAgentSelection?.(data);
+              break;
+            case 'agent_start':
+              callbacks.onAgentStart?.(data);
+              break;
+            case 'agent_complete':
+              callbacks.onAgentComplete?.(data);
               break;
             case 'tool_call':
               callbacks.onToolCall?.(data);

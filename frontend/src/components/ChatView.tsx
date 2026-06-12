@@ -28,6 +28,7 @@ function saveSessions(sessions: Session[]) {
 interface StreamState {
   thinking: string;
   plan: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> | null;
+  agents: { selected: string[]; reasoning: string; status: Record<string, 'running' | 'complete' | 'error'> } | null;
   toolCalls: Array<{ tool: string; args: Record<string, unknown>; result?: unknown }>;
   answerChunks: string[];
 }
@@ -42,7 +43,7 @@ export default function ChatView() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
-  const [mode, setMode] = useState<'react' | 'plan-execute'>('react');
+  const [mode, setMode] = useState<'react' | 'plan-execute' | 'multi-agent'>('react');
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const active = sessions.find(s => s.sid === activeSid);
@@ -76,7 +77,7 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: msg }];
     persist(sid, newMsgs);
     setLoading(true);
-    setStreamState({ thinking: '', plan: null, toolCalls: [], answerChunks: [] });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [] });
 
     try {
       await chatStream(msg, sid, {
@@ -88,6 +89,40 @@ export default function ChatView() {
         },
         onPlan: (data) => {
           setStreamState(prev => prev ? { ...prev, plan: data.steps } : null);
+        },
+        onAgentSelection: (data) => {
+          setStreamState(prev => prev ? {
+            ...prev,
+            agents: {
+              selected: data.agents,
+              reasoning: data.reasoning,
+              status: Object.fromEntries(data.agents.map(a => [a, 'running']))
+            }
+          } : null);
+        },
+        onAgentStart: (data) => {
+          setStreamState(prev => {
+            if (!prev || !prev.agents) return null;
+            return {
+              ...prev,
+              agents: {
+                ...prev.agents,
+                status: { ...prev.agents.status, [data.agent]: 'running' }
+              }
+            };
+          });
+        },
+        onAgentComplete: (data) => {
+          setStreamState(prev => {
+            if (!prev || !prev.agents) return null;
+            return {
+              ...prev,
+              agents: {
+                ...prev.agents,
+                status: { ...prev.agents.status, [data.agent]: 'complete' }
+              }
+            };
+          });
         },
         onToolCall: (data) => {
           setStreamState(prev => prev ? {
@@ -212,6 +247,29 @@ export default function ChatView() {
                   </div>
                 </div>
               )}
+              {/* Agent selection (Multi-Agent mode) */}
+              {streamState.agents && streamState.agents.selected.length > 0 && streamState.toolCalls.length === 0 && (
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs">
+                  <div className="text-gray-500 mb-2">🤖 Agent 分配：</div>
+                  <div className="space-y-2">
+                    <div className="text-gray-400 text-[11px] italic">{streamState.agents.reasoning}</div>
+                    <div className="space-y-1">
+                      {streamState.agents.selected.map((agent, i) => {
+                        const status = streamState.agents?.status[agent] || 'running';
+                        const statusIcon = status === 'complete' ? '✓' : status === 'error' ? '✗' : '⏳';
+                        const statusColor = status === 'complete' ? 'text-green-500' : status === 'error' ? 'text-red-500' : 'text-blue-400';
+                        return (
+                          <div key={i} className="flex items-center gap-2 text-gray-600">
+                            <span className={statusColor}>{statusIcon}</span>
+                            <span className="font-mono">{agent}</span>
+                            {status === 'running' && <span className="text-blue-400 text-[10px] animate-pulse">分析中...</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* Tool calls */}
               {streamState.toolCalls.length > 0 && (
                 <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs space-y-2">
@@ -271,8 +329,18 @@ export default function ChatView() {
           >
             规划执行
           </button>
+          <button
+            onClick={() => setMode('multi-agent')}
+            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+              mode === 'multi-agent'
+                ? 'bg-[#333] text-white'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            多Agent
+          </button>
           <span className="text-xs text-gray-400 ml-1">
-            {mode === 'react' ? '逐步推理' : '先规划后执行'}
+            {mode === 'react' ? '逐步推理' : mode === 'plan-execute' ? '先规划后执行' : '专业Agent协作'}
           </span>
         </div>
         <div className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-2xl px-4 py-1 focus-within:border-[#bbb] focus-within:shadow-sm transition-shadow">
