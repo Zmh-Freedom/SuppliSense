@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import { isAuthenticated } from './api';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import AlertCenter from './components/AlertCenter';
 import ChatView from './components/ChatView';
 import AssessView from './components/AssessView';
 import SentimentView from './components/SentimentView';
+import LoginPage from './components/LoginPage';
 
 const TABS = ['风险看板', '企业评估', '告警中心', '舆情监控', '智能对话'];
 
@@ -17,9 +19,14 @@ function getAssessTarget(): string {
 }
 
 export default function App() {
+  const [loggedIn, setLoggedIn] = useState(isAuthenticated);
   const [tab, setTab] = useState(getTab);
   const [refreshKey, setRefreshKey] = useState(0);
   const [assessTarget, setAssessTarget] = useState(getAssessTarget);
+
+  if (!loggedIn) {
+    return <LoginPage onLogin={() => setLoggedIn(true)} />;
+  }
 
   const switchTab = (i: number) => {
     setTab(i);

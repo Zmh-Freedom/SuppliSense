@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
+      '/auth': 'http://localhost:8000',
       '/chat': 'http://localhost:8000',
       '/alert': 'http://localhost:8000',
       '/company': 'http://localhost:8000',
