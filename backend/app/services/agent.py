@@ -1,11 +1,12 @@
 """
-ReAct Agent with tool calling and conversation memory.
+ReAct Agent with tool calling, conversation memory, and streaming support.
 """
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from openai import OpenAI
 
@@ -317,3 +318,100 @@ def _force_answer(messages: list) -> str:
         model=MODEL, messages=messages,
     )
     return resp.choices[0].message.content or "抱歉，分析超时，请重试。"
+
+
+# ---- Streaming ----
+
+async def chat_stream(session_id: str, message: str) -> AsyncGenerator[str, None]:
+    """
+    Async generator that yields SSE events for streaming response.
+    Events: thinking, tool_call, tool_result, answer_chunk, done, error
+    """
+    history = _load_history(session_id)
+    system = SYSTEM_PROMPT.replace("{tool_descriptions}", _build_tool_prompt())
+
+    messages = [{"role": "system", "content": system}]
+    for m in history[-20:]:
+        messages.append(m)
+    messages.append({"role": "user", "content": message})
+
+    tool_called = False
+    full_answer = ""
+
+    try:
+        for iteration in range(MAX_ITERATIONS):
+            yield _sse_event("thinking", {"iteration": iteration + 1, "message": f"思考中... (第 {iteration + 1} 轮)"})
+
+            # Call LLM in thread pool to avoid blocking
+            resp = await asyncio.to_thread(
+                _get_client().chat.completions.create,
+                model=MODEL, messages=messages, temperature=0,
+            )
+            text = resp.choices[0].message.content.strip() or ""
+
+            parsed = _try_parse(text)
+            if parsed is None:
+                messages.append({"role": "assistant", "content": text})
+                yield _sse_event("error", {"message": "格式错误，正在重试..."})
+                messages.append({"role": "user", "content": "请严格按JSON格式回复：{\"tool\": \"工具名\", \"args\": {...}} 或 {\"answer\": \"...\"}"})
+                continue
+
+            if "tool" in parsed:
+                tool_called = True
+                tool_name = parsed["tool"]
+                args = parsed.get("args", {})
+
+                if tool_name not in TOOLS:
+                    messages.append({"role": "assistant", "content": text})
+                    yield _sse_event("error", {"message": f"未知工具: {tool_name}"})
+                    messages.append({"role": "user", "content": f"未知工具 {tool_name}。可用工具：{list(TOOLS.keys())}"})
+                    continue
+
+                yield _sse_event("tool_call", {"tool": tool_name, "args": args})
+
+                fn = TOOLS[tool_name][0]
+                try:
+                    result = await asyncio.to_thread(fn, **args)
+                except Exception as e:
+                    result = {"error": str(e)}
+
+                yield _sse_event("tool_result", {"tool": tool_name, "result": result})
+
+                messages.append({"role": "assistant", "content": text})
+                messages.append({"role": "user", "content": f"工具返回：{json.dumps(result, ensure_ascii=False)}"})
+                continue
+
+            if "answer" in parsed:
+                # require at least one tool call for analysis questions
+                if not tool_called and any(kw in message for kw in ["风险", "评估", "分析", "财务", "诉讼", "监控", "查", "看", "对比"]):
+                    messages.append({"role": "assistant", "content": text})
+                    yield _sse_event("thinking", {"message": "需要先获取数据..."})
+                    messages.append({"role": "user", "content": "请先用工具获取真实数据，不要直接编造内容。"})
+                    continue
+
+                answer = parsed["answer"]
+                # Stream answer chunk by chunk (simulate typing)
+                for i in range(0, len(answer), 10):
+                    chunk = answer[i:i+10]
+                    full_answer += chunk
+                    yield _sse_event("answer_chunk", {"text": chunk})
+                    await asyncio.sleep(0.02)  # Small delay for typing effect
+
+                _save_turn(session_id, message, answer)
+                yield _sse_event("done", {"answer": answer})
+                return
+
+        # Max iterations reached
+        yield _sse_event("thinking", {"message": "达到最大调用次数，正在生成最终回答..."})
+        fallback = await asyncio.to_thread(_force_answer, messages)
+        _save_turn(session_id, message, fallback)
+        yield _sse_event("answer_chunk", {"text": fallback})
+        yield _sse_event("done", {"answer": fallback})
+
+    except Exception as e:
+        yield _sse_event("error", {"message": f"发生错误: {str(e)}"})
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """Format data as SSE event string."""
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
