@@ -21,6 +21,7 @@ from app.api.sentiment import router as sentiment_router
 from app.api.p2 import router as p2_router
 from app.api.macro import router as macro_router
 from app.api.scenario import router as scenario_router
+from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
 from app.core.metrics import (
@@ -129,6 +130,7 @@ app.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 app.include_router(p2_router, prefix="/p2", tags=["p2"])
 app.include_router(macro_router, prefix="/analysis", tags=["analysis"])
 app.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
+app.include_router(upload_router, prefix="/upload", tags=["upload"])
 
 
 @app.get("/health")
