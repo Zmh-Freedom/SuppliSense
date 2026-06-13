@@ -22,17 +22,26 @@ export default function Dashboard() {
   const [predictions, setPredictions] = useState<any[]>([]);
   const [error, setError] = useState(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: AbortSignal) => {
     setError(false);
-    api.get<DashboardData>('/alert/dashboard')
-      .then(setData)
-      .catch(() => { setError(true); });
-    api.get<any[]>('/alert/predict')
-      .then(p => setPredictions(p || []))
-      .catch(() => {});
+    Promise.all([
+      api.get<DashboardData>('/alert/dashboard', undefined, signal),
+      api.get<any[]>('/alert/predict', undefined, signal),
+    ])
+      .then(([dashData, predData]) => {
+        setData(dashData);
+        setPredictions(predData || []);
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') setError(true);
+      });
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   if (error) {
     return (

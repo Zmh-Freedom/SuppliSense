@@ -59,14 +59,18 @@ export default function SentimentView() {
   const [filter, setFilter] = useState<string>('all');
   const [listError, setListError] = useState(false);
 
-  const loadCompanies = useCallback(() => {
+  const loadCompanies = useCallback((signal?: AbortSignal) => {
     setListError(false);
-    api.get<{ companies: string[] }>('/alert/watchlist')
+    api.get<{ companies: string[] }>('/alert/watchlist', undefined, signal)
       .then(d => setCompanies(d.companies || []))
-      .catch(() => setListError(true));
+      .catch((err) => { if (err.name !== 'AbortError') setListError(true); });
   }, []);
 
-  useEffect(() => { loadCompanies(); }, [loadCompanies]);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadCompanies(controller.signal);
+    return () => controller.abort();
+  }, [loadCompanies]);
 
   const selectCompany = async (name: string) => {
     setSelected(name);

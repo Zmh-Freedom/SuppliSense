@@ -43,24 +43,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string, params?: Record<string, string>) => {
+  get: <T>(path: string, params?: Record<string, string>, signal?: AbortSignal) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-    return request<T>(`${path}${qs}`);
+    return request<T>(`${path}${qs}`, { signal });
   },
 
-  post: <T>(path: string, body?: unknown) =>
+  post: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>(path, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
+      signal,
     }),
 
-  delete: <T>(path: string, params?: Record<string, string>) => {
+  delete: <T>(path: string, params?: Record<string, string>, signal?: AbortSignal) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-    return request<T>(`${path}${qs}`, { method: 'DELETE' });
+    return request<T>(`${path}${qs}`, { method: 'DELETE', signal });
   },
 
-  upload: <T>(path: string, file: File) => {
+  upload: <T>(path: string, file: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file);
 
@@ -70,7 +71,7 @@ export const api = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    return fetch(path, { method: 'POST', body: form, headers }).then(r => {
+    return fetch(path, { method: 'POST', body: form, headers, signal }).then(r => {
       if (r.status === 401) {
         clearToken();
         window.location.reload();

@@ -47,15 +47,19 @@ export default function ESGView() {
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<ESGResult | null>(null);
 
-  const loadAll = () => {
+  const loadAll = (signal?: AbortSignal) => {
     setLoading(true);
-    api.get<{ companies: ESGResult[] }>('/p2/esg').then(d => {
+    api.get<{ companies: ESGResult[] }>('/p2/esg', undefined, signal).then(d => {
       setCompanies(d.companies || []);
       setLoading(false);
-    });
+    }).catch(() => setLoading(false));
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadAll(controller.signal);
+    return () => controller.abort();
+  }, []);
 
   const selectCompany = async (name: string) => {
     const r = await api.get<ESGResult>(`/p2/esg/${encodeURIComponent(name)}`);

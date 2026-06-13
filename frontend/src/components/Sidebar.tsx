@@ -14,15 +14,22 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
   const [adding, setAdding] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    api.get<{ alerts: AlertDoc[] }>('/alert/history').then(d => setAlertCount(d.alerts.length)).catch(() => {});
-    api.get<WatchlistData>('/alert/watchlist').then(d => setWatchlist(d.companies)).catch(() => {});
+  const load = useCallback((signal?: AbortSignal) => {
+    api.get<{ alerts: AlertDoc[] }>('/alert/history', undefined, signal)
+      .then(d => setAlertCount(d.alerts.length)).catch(() => {});
+    api.get<WatchlistData>('/alert/watchlist', undefined, signal)
+      .then(d => setWatchlist(d.companies)).catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const timer = setInterval(load, 30000); // 30秒轮询，减少不必要请求
-    return () => clearInterval(timer);
+    const controller = new AbortController();
+    load(controller.signal);
+    const timer = setInterval(() => load(controller.signal), 30000); // 30秒轮询，减少不必要请求
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
   }, [load]);
 
   const add = async () => {

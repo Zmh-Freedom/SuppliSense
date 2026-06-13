@@ -42,12 +42,17 @@ export default function ContagionView() {
   const [depForm, setDepForm] = useState({ supplier: '', customer: '', material: '', importance: 'medium' });
   const [deps, setDeps] = useState<any[]>([]);
 
-  const loadDash = () => {
-    api.get<ContagionDashboard>('/p2/contagion').then(setDash);
-    api.get<{ companies: string[] }>('/alert/watchlist').then(d => setCompanies(d.companies || []));
+  const loadDash = (signal?: AbortSignal) => {
+    api.get<ContagionDashboard>('/p2/contagion', undefined, signal).then(setDash).catch(() => {});
+    api.get<{ companies: string[] }>('/alert/watchlist', undefined, signal)
+      .then(d => setCompanies(d.companies || [])).catch(() => {});
   };
 
-  useEffect(() => { loadDash(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadDash(controller.signal);
+    return () => controller.abort();
+  }, []);
 
   const selectCompany = async (name: string) => {
     const r = await api.get<ContagionResult>(`/p2/contagion/${encodeURIComponent(name)}`);

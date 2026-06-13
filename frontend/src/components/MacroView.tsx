@@ -50,9 +50,13 @@ export default function MacroView() {
   const [altDash, setAltDash] = useState<any>(null);
 
   useEffect(() => {
-    api.get<{ companies: string[] }>('/alert/watchlist').then(d => setCompanies(d.companies || []));
-    api.get<any>('/analysis/macro/pmi').then(setPmi);
-    api.get<any>('/analysis/alternatives').then(setAltDash);
+    const controller = new AbortController();
+    const signal = controller.signal;
+    api.get<{ companies: string[] }>('/alert/watchlist', undefined, signal)
+      .then(d => setCompanies(d.companies || [])).catch(() => {});
+    api.get<any>('/analysis/macro/pmi', undefined, signal).then(setPmi).catch(() => {});
+    api.get<any>('/analysis/alternatives', undefined, signal).then(setAltDash).catch(() => {});
+    return () => controller.abort();
   }, []);
 
   const select = async (name: string) => {

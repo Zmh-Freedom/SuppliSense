@@ -63,19 +63,23 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
     setError(false);
     setAnalyzing(false);
     setIsStale(false);
+    const controller = new AbortController();
     if (companyName) {
-      api.get<CompanySentiment & { analyzing?: boolean; is_stale?: boolean }>(`/sentiment/${encodeURIComponent(companyName)}`)
+      api.get<CompanySentiment & { analyzing?: boolean; is_stale?: boolean }>(
+        `/sentiment/${encodeURIComponent(companyName)}`, undefined, controller.signal
+      )
         .then(r => {
           setDetail(r);
           if (r.analyzing) setAnalyzing(true);
           if (r.is_stale) setIsStale(true);
         })
-        .catch(() => setError(true));
+        .catch((err) => { if (err.name !== 'AbortError') setError(true); });
     } else {
-      api.get<SentimentDashboard>('/sentiment/dashboard/overview')
+      api.get<SentimentDashboard>('/sentiment/dashboard/overview', undefined, controller.signal)
         .then(setDash)
-        .catch(() => setError(true));
+        .catch((err) => { if (err.name !== 'AbortError') setError(true); });
     }
+    return () => controller.abort();
   }, [companyName]);
 
   // 自动轮询：当后台正在分析时，每5秒刷新一次直到数据就绪

@@ -52,7 +52,11 @@ export default function ScenarioView() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    api.get<{ companies: string[] }>('/alert/watchlist').then(d => setCompanies(d.companies || []));
+    const controller = new AbortController();
+    api.get<{ companies: string[] }>('/alert/watchlist', undefined, controller.signal)
+      .then(d => setCompanies(d.companies || []))
+      .catch(() => {});
+    return () => controller.abort();
   }, []);
 
   const select = async (name: string) => {

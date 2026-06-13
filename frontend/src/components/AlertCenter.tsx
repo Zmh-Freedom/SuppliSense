@@ -7,16 +7,20 @@ export default function AlertCenter() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: AbortSignal) => {
     setLoading(true);
     setError(false);
-    api.get<{ alerts: AlertDoc[] }>('/alert/history')
+    api.get<{ alerts: AlertDoc[] }>('/alert/history', undefined, signal)
       .then(d => setAlerts(d.alerts))
-      .catch(() => { setError(true); })
+      .catch((err) => { if (err.name !== 'AbortError') setError(true); })
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   const clear = async () => {
     try {

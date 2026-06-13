@@ -13,19 +13,23 @@ export default function RiskMatrix() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: AbortSignal) => {
     setLoading(true);
     setError(false);
-    api.get<{ companies: CompanySnap[] }>('/alert/dashboard')
+    api.get<{ companies: CompanySnap[] }>('/alert/dashboard', undefined, signal)
       .then(d => {
         const filtered = d.companies.filter(c => c.score !== null);
         setCompanies(filtered);
       })
-      .catch(() => { setError(true); })
+      .catch((err) => { if (err.name !== 'AbortError') setError(true); })
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load]);
 
   // Map score to y (0-100 → 100-0, so high risk is at top)
   const toY = (score: number) => 100 - score;
