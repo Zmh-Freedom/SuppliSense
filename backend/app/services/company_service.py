@@ -1,11 +1,13 @@
 from fastapi import HTTPException
 
+from app.core.cache import cached
 from app.repositories.company_repo import get_baseinfo, get_risk_info
 from app.schemas.company import CompanyProfile
 from app.schemas.risk import RiskInfo
 from app.services.tianyancha_client import fetch_company
 
 
+@cached("company_profile", ttl=7200)  # 2小时缓存
 def get_company_profile(company_name: str) -> CompanyProfile:
     profile = get_baseinfo(company_name)
     if profile is None:
@@ -16,6 +18,7 @@ def get_company_profile(company_name: str) -> CompanyProfile:
     return profile
 
 
+@cached("company_risk", ttl=7200)  # 2小时缓存
 def get_company_risk(company_name: str) -> RiskInfo:
     risk = get_risk_info(company_name)
     if risk is None:
