@@ -1,0 +1,13 @@
+**/venv/
+**/node_modules/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/dist/
+**/logs/
+**/*.pid
+**/.env
+**/.env.local
+.git/
+.DS_Store
+*.log

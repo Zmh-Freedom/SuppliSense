@@ -5,7 +5,7 @@ load_dotenv()
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -113,24 +113,24 @@ async def metrics_middleware(request: Request, call_next):
     return response
 
 
-# Auth router (no prefix, already has /auth prefix)
-app.include_router(auth_router)
+# API v1 master router
+api_v1 = APIRouter(prefix="/api/v1")
 
-# Async tasks router
-app.include_router(async_tasks_router)
+api_v1.include_router(auth_router)
+api_v1.include_router(async_tasks_router)
+api_v1.include_router(alert_router, prefix="/alert", tags=["alert"])
+api_v1.include_router(chat_router, prefix="/chat", tags=["chat"])
+api_v1.include_router(company_router, prefix="/company", tags=["company"])
+api_v1.include_router(financial_router, prefix="/financial", tags=["financial"])
+api_v1.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
+api_v1.include_router(risk_router, prefix="/risk", tags=["risk"])
+api_v1.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
+api_v1.include_router(p2_router, prefix="/p2", tags=["p2"])
+api_v1.include_router(macro_router, prefix="/analysis", tags=["analysis"])
+api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
+api_v1.include_router(upload_router, prefix="/upload", tags=["upload"])
 
-# Business routers
-app.include_router(alert_router, prefix="/alert", tags=["alert"])
-app.include_router(chat_router, prefix="/chat", tags=["chat"])
-app.include_router(company_router, prefix="/company", tags=["company"])
-app.include_router(financial_router, prefix="/financial", tags=["financial"])
-app.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
-app.include_router(risk_router, prefix="/risk", tags=["risk"])
-app.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
-app.include_router(p2_router, prefix="/p2", tags=["p2"])
-app.include_router(macro_router, prefix="/analysis", tags=["analysis"])
-app.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
-app.include_router(upload_router, prefix="/upload", tags=["upload"])
+app.include_router(api_v1)
 
 
 @app.get("/health")

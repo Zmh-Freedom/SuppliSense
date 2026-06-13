@@ -1,4 +1,5 @@
 const TOKEN_KEY = 'auth_token';
+const API_BASE = '/api/v1';
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -26,7 +27,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(path, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
 
   if (res.status === 401) {
     clearToken();
@@ -71,7 +72,7 @@ export const api = {
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    return fetch(path, { method: 'POST', body: form, headers, signal }).then(r => {
+    return fetch(`${API_BASE}${path}`, { method: 'POST', body: form, headers, signal }).then(r => {
       if (r.status === 401) {
         clearToken();
         window.location.reload();
@@ -109,7 +110,7 @@ export async function chatStream(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch('/chat/stream', {
+  const res = await fetch(`${API_BASE}/chat/stream`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ message, session_id: sessionId, mode }),
