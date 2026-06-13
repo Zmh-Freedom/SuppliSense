@@ -56,12 +56,20 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
   const [detail, setDetail] = useState<CompanySentiment | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [isStale, setIsStale] = useState(false);
 
   useEffect(() => {
     setError(false);
+    setAnalyzing(false);
+    setIsStale(false);
     if (companyName) {
-      api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`)
-        .then(setDetail)
+      api.get<CompanySentiment & { analyzing?: boolean; is_stale?: boolean }>(`/sentiment/${encodeURIComponent(companyName)}`)
+        .then(r => {
+          setDetail(r);
+          if (r.analyzing) setAnalyzing(true);
+          if (r.is_stale) setIsStale(true);
+        })
         .catch(() => setError(true));
     } else {
       api.get<SentimentDashboard>('/sentiment/dashboard/overview')
@@ -69,6 +77,23 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
         .catch(() => setError(true));
     }
   }, [companyName]);
+
+  // 自动轮询：当后台正在分析时，每5秒刷新一次直到数据就绪
+  useEffect(() => {
+    if (!analyzing || !companyName) return;
+    const timer = setInterval(() => {
+      api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(companyName)}`)
+        .then(r => {
+          if (!r.analyzing) {
+            setDetail(r);
+            setAnalyzing(false);
+            setIsStale(false);
+          }
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [analyzing, companyName]);
 
   const onAnalyze = async () => {
     if (!companyName) return;
@@ -89,6 +114,15 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
 
   // ---- single company detail ----
   if (companyName) {
+    // 正在首次分析（无缓存）
+    if (analyzing && !detail?.has_data) {
+      return (
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 text-center">
+          <div className="text-xs text-gray-400">🔄 正在分析舆情数据，请稍候…</div>
+          <div className="mt-2 text-[11px] text-gray-300">首次分析需要 15-20 秒，之后会缓存</div>
+        </div>
+      );
+    }
     if (!detail && !error) return <div className="text-xs text-gray-400 p-4">加载舆情数据…</div>;
     if (error) return <div className="text-xs text-red-400 p-4">加载失败</div>;
 
@@ -99,13 +133,20 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
       <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-medium text-[#555]">📰 舆情分析</h3>
-          <button
-            onClick={onAnalyze}
-            disabled={loading}
-            className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
-          >
-            {loading ? '分析中…' : '刷新分析'}
-          </button>
+          <div className="flex items-center gap-2">
+            {isStale && (
+              <span className="text-[10px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded">
+                数据已过期，后台刷新中
+              </span>
+            )}
+            <button
+              onClick={onAnalyze}
+              disabled={loading}
+              className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
+            >
+              {loading ? '分析中…' : '刷新分析'}
+            </button>
+          </div>
         </div>
 
         {!detail!.has_data ? (

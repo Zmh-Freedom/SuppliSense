@@ -184,23 +184,39 @@ def _extract_risk_tags(articles: list[dict]) -> list[dict]:
 
 # ---- Core API ----
 
+def _get_cached_sentiment(company_name: str) -> dict | None:
+    """仅返回缓存的舆情数据（不论是否过期），不触发外部调用。"""
+    db = get_db()
+    cached = db["sentiment_results"].find_one(
+        {"company_name": company_name}, sort=[("analyzed_at", -1)]
+    )
+    if cached:
+        cached_at = cached["analyzed_at"]
+        if hasattr(cached_at, "replace") and cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+        cached["_id"] = str(cached["_id"])
+        cached["analyzed_at"] = cached_at.isoformat()
+        cached["cache_age_hours"] = round(
+            (datetime.now(timezone.utc) - cached_at).total_seconds() / 3600, 1
+        )
+        cached["is_stale"] = cached["cache_age_hours"] >= 6
+        return cached
+    return None
+
+
+# 跟踪正在后台分析的企业，避免重复触发
+_analyzing_locks: set[str] = set()
+
+
 def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | None:
     """搜索公司新闻并用 LLM 分析舆情情感。缓存 6 小时。"""
     db = get_db()
 
     # cache check - 取最新一条记录
     if not force_refresh:
-        cached = db["sentiment_results"].find_one(
-            {"company_name": company_name}, sort=[("analyzed_at", -1)]
-        )
-        if cached:
-            cached_at = cached["analyzed_at"]
-            if hasattr(cached_at, "replace") and cached_at.tzinfo is None:
-                cached_at = cached_at.replace(tzinfo=timezone.utc)
-            if (datetime.now(timezone.utc) - cached_at).total_seconds() < 6 * 3600:
-                cached["_id"] = str(cached["_id"])
-                cached["analyzed_at"] = cached_at.isoformat()
-                return cached
+        cached = _get_cached_sentiment(company_name)
+        if cached and not cached.get("is_stale", False):
+            return cached
 
     # search news
     news_articles = _search_news(company_name)
@@ -436,6 +452,19 @@ def get_sentiment_dashboard() -> dict:
         "companies": items,
         "negative_companies": negative_companies[:10],
     }
+
+
+def analyze_sentiment_background(company_name: str) -> None:
+    """后台执行舆情分析，避免阻塞请求。自动防重复触发。"""
+    if company_name in _analyzing_locks:
+        return
+    _analyzing_locks.add(company_name)
+    try:
+        analyze_sentiment(company_name, force_refresh=True)
+    except Exception:
+        pass  # 后台任务失败静默处理
+    finally:
+        _analyzing_locks.discard(company_name)
 
 
 def analyze_all_sentiment() -> list[dict]:
