@@ -417,12 +417,24 @@ def get_sentiment_dashboard() -> dict:
     db = get_db()
     companies = [doc["company_name"] for doc in db["watchlist"].find()]
 
+    # 使用聚合查询一次性获取所有企业的最新舆情（替代 N+1 循环查询）
+    snap_map: dict = {}
+    if companies:
+        pipeline = [
+            {"$match": {"company_name": {"$in": companies}}},
+            {"$sort": {"analyzed_at": -1}},
+            {"$group": {
+                "_id": "$company_name",
+                "doc": {"$first": "$$ROOT"},
+            }},
+        ]
+        for doc in db["sentiment_results"].aggregate(pipeline):
+            snap = doc["doc"]
+            snap_map[snap["company_name"]] = snap
+
     items = []
     for name in companies:
-        # 取最新一条记录（按 analyzed_at 降序）
-        doc = db["sentiment_results"].find_one(
-            {"company_name": name}, sort=[("analyzed_at", -1)]
-        )
+        doc = snap_map.get(name)
         if doc:
             items.append({
                 "company_name": name,
