@@ -71,10 +71,23 @@ async def alert_dashboard():
     distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
     details = []
 
+    # 使用聚合查询一次性获取所有企业的最新快照（替代 N+1 循环查询）
+    snap_map: dict = {}
+    if companies:
+        pipeline = [
+            {"$match": {"company_name": {"$in": companies}}},
+            {"$sort": {"checked_at": -1}},
+            {"$group": {
+                "_id": "$company_name",
+                "doc": {"$first": "$$ROOT"},
+            }},
+        ]
+        for doc in db["alert_snapshots"].aggregate(pipeline):
+            snap = doc["doc"]
+            snap_map[snap["company_name"]] = snap
+
     for name in companies:
-        snap = db["alert_snapshots"].find_one(
-            {"company_name": name}, sort=[("checked_at", -1)]
-        )
+        snap = snap_map.get(name)
         if snap:
             level = snap.get("risk_level", "未知")
             distribution[level] = distribution.get(level, 0) + 1
