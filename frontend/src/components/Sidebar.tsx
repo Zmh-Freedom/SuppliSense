@@ -21,7 +21,7 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const timer = setInterval(load, 5000);
+    const timer = setInterval(load, 30000); // 30秒轮询，减少不必要请求
     return () => clearInterval(timer);
   }, [load]);
 
