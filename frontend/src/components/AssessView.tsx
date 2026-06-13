@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 import type { RiskResult } from '../types';
 import SentimentPanel from './SentimentPanel';

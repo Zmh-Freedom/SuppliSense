@@ -79,7 +79,7 @@ export default function ESGView() {
             <h2 className="text-sm font-semibold text-[#333]">ESG 评分</h2>
             <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家企业</p>
           </div>
-          <button onClick={loadAll} className="text-xs text-blue-500 hover:text-blue-600">刷新</button>
+          <button onClick={() => loadAll()} className="text-xs text-blue-500 hover:text-blue-600">刷新</button>
         </div>
         {companies.map(c => {
           const color = LEVEL_COLOR[c.total_level] || '#999';

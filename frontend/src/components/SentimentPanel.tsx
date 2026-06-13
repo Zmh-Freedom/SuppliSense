@@ -311,12 +311,6 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
           })}
         </div>
       )}
-
-      {dash!.analyzed_at && (
-        <div className="text-[11px] text-gray-400 text-right mt-3">
-          最近分析：{dash!.analyzed_at?.slice(0, 16).replace('T', ' ') || '-'}
-        </div>
-      )}
     </div>
   );
 }

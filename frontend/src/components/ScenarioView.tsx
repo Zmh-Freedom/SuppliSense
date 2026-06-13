@@ -38,10 +38,6 @@ const LEVEL_COLOR: Record<string, string> = {
   '严重': '#dc2626', '中等': '#d97706', '轻微': '#16a34a',
   'critical': '#dc2626', 'high': '#dc2626', 'medium': '#d97706', 'low': '#16a34a',
 };
-const LEVEL_BG: Record<string, string> = {
-  '严重': '#fef2f2', '中等': '#fffbf0', '轻微': '#ecfdf5',
-  'critical': '#fef2f2', 'high': '#fef2f2', 'medium': '#fffbf0', 'low': '#ecfdf5',
-};
 
 export default function ScenarioView() {
   const [companies, setCompanies] = useState<string[]>([]);

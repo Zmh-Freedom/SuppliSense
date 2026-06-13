@@ -47,7 +47,7 @@ export default function Dashboard() {
     return (
       <div className="max-w-2xl mx-auto py-20 text-center">
         <p className="text-gray-400 mb-4">加载失败，请检查后端服务</p>
-        <button onClick={load} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
+        <button onClick={() => load()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
       </div>
     );
   }
@@ -65,7 +65,7 @@ export default function Dashboard() {
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[#333]">风险看板</h2>
-        <button onClick={load} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
+        <button onClick={() => load()} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
       </div>
 
       {/* summary cards */}

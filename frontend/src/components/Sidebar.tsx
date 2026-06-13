@@ -161,13 +161,13 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
       <div className="border-t border-[#e8e8e3] px-4 py-3 space-y-2">
         <div className="flex gap-2">
           <button
-            onClick={() => api.post('/alert/check-all').then(load).catch(() => {})}
+            onClick={() => api.post('/alert/check-all').then(() => load()).catch(() => {})}
             className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors"
           >
             ⚡ 免费巡检
           </button>
           <button
-            onClick={() => api.post('/alert/refresh-all').then(load).catch(() => {})}
+            onClick={() => api.post('/alert/refresh-all').then(() => load()).catch(() => {})}
             className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors"
           >
             🔄 付费刷新

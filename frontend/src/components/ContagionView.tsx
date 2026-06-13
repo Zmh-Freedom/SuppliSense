@@ -88,7 +88,7 @@ export default function ContagionView() {
               {dash?.total_companies ?? 0} 企业 · {dash?.total_dependencies ?? 0} 依赖
             </p>
           </div>
-          <button onClick={loadDash} className="text-xs text-blue-500">刷新</button>
+          <button onClick={() => loadDash()} className="text-xs text-blue-500">刷新</button>
         </div>
 
         {/* summary cards */}

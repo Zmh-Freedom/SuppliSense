@@ -51,13 +51,13 @@ export default function RiskMatrix() {
     <div className="max-w-4xl mx-auto py-6 px-4">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-[#333]">风险矩阵</h2>
-        <button onClick={load} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
+        <button onClick={() => load()} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
       </div>
 
       {error ? (
         <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center">
           <p className="text-gray-400 mb-3">加载失败</p>
-          <button onClick={load} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
+          <button onClick={() => load()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
         </div>
       ) : loading ? (
         <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center text-gray-300">

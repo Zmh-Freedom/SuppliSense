@@ -178,7 +178,7 @@ export default function KnowledgePanel() {
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-gray-400">
                     {String(result.metadata?.source || 'Unknown')}
-                    {result.metadata?.page && ` (第${result.metadata.page}页)`}
+                    {result.metadata?.page ? ` (第${String(result.metadata.page)}页)` : ''}
                   </span>
                   <span className="text-xs text-gray-400">
                     相似度: {((1 - (result.distance || 0)) * 100).toFixed(1)}%
