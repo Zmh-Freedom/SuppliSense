@@ -248,7 +248,7 @@ export default function SentimentView() {
             {/* articles list */}
             {filteredArticles.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-8">
-                {detail.has_data ? '无匹配新闻' : '暂无数据，请先执行天眼查数据刷新'}
+                {detail.has_data ? '无匹配新闻' : '暂无舆情数据，请点击上方「开始分析」按钮'}
               </p>
             ) : (
               <div className="space-y-2">
