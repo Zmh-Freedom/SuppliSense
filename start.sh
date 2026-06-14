@@ -8,6 +8,9 @@ if ! docker info > /dev/null 2>&1; then
     exit 1
 fi
 
+echo "📦 检查是否需要备份..."
+bash backup.sh 2>/dev/null || true
+
 echo "🚀 启动供应商风险分析系统..."
 docker compose up -d --build
 echo ""

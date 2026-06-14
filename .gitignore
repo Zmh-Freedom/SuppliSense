@@ -65,3 +65,6 @@ htmlcov/
 
 # Docker
 docker-compose.override.yml
+
+# Backups
+backups/
