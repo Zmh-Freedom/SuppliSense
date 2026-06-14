@@ -28,8 +28,8 @@ def get_branches(company_name: str) -> list[dict]:
         return []
 
     items = doc.get("items") or {}
-    result = items.get("result") or {}
-    branch_list = result.get("items", [])
+    # Branch data stored as items.items or items.result.items depending on source
+    branch_list = items.get("items") or items.get("result", {}).get("items", [])
     if not isinstance(branch_list, list):
         return []
 
@@ -212,7 +212,7 @@ def get_graph_data(company_name: str) -> dict:
 
     nodes.append({
         "id": company_name,
-        "label": company_name[:12],
+        "label": company_name[:20],
         "type": "center",
         "risk_score": center_risk,
     })
@@ -227,9 +227,13 @@ def get_graph_data(company_name: str) -> dict:
                     {"company_name": node_id}, sort=[("checked_at", -1)]
                 )
                 risk_score = snap.get("risk_score", 0) if snap else 0
+            # Show distinguishing part: strip common parent prefix
+            label = node_id
+            if node_id.startswith(company_name):
+                label = node_id[len(company_name):] or node_id
             nodes.append({
                 "id": node_id,
-                "label": node_id[:12],
+                "label": label[:16],
                 "type": r["relation"],
                 "risk_score": risk_score,
             })
