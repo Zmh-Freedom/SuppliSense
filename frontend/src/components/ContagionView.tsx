@@ -11,7 +11,7 @@ import {
   MarkerType,
   BaseEdge,
   EdgeLabelRenderer,
-  getBezierPath,
+  getSmoothStepPath,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
@@ -79,7 +79,7 @@ function StyledEdge({
   sourcePosition, targetPosition,
   data, markerEnd,
 }: any) {
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX, sourceY, sourcePosition,
     targetX, targetY, targetPosition,
   });
