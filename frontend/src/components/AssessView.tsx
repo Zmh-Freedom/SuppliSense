@@ -77,6 +77,22 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
               <div className="flex-1 bg-[#e5e5e0] h-2 rounded-full">
                 <div className="h-full rounded-full transition-all duration-700" style={{ width: `${data.risk_score}%`, background: color }} />
               </div>
+              <div className="flex gap-2 shrink-0">
+                <a
+                  href={`/api/v1/report/excel/${encodeURIComponent(name)}`}
+                  className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors no-underline"
+                >
+                  导出 Excel
+                </a>
+                <a
+                  href={`/api/v1/report/html/${encodeURIComponent(name)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] transition-colors no-underline"
+                >
+                  导出报告
+                </a>
+              </div>
             </div>
           </div>
 

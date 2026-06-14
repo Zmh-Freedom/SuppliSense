@@ -19,6 +19,7 @@ from app.api.knowledge import router as knowledge_router
 from app.api.risk import router as risk_router
 from app.api.sentiment import router as sentiment_router
 from app.api.p2 import router as p2_router
+from app.api.report import router as report_router
 from app.api.macro import router as macro_router
 from app.api.scenario import router as scenario_router
 from app.api.upload import router as upload_router
@@ -129,6 +130,7 @@ api_v1.include_router(p2_router, prefix="/p2", tags=["p2"])
 api_v1.include_router(macro_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(upload_router, prefix="/upload", tags=["upload"])
+api_v1.include_router(report_router, prefix="/report", tags=["report"])
 
 app.include_router(api_v1)
 
