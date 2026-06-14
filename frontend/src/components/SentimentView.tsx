@@ -202,10 +202,11 @@ export default function SentimentView() {
             <p className="text-sm text-gray-400">{reqError || '暂无舆情数据'}</p>
             <button
               onClick={() => onRefresh(selected)}
-              disabled={loading}
-              className="text-sm bg-[#333] text-white rounded-lg px-5 py-2 hover:bg-[#555] disabled:opacity-50"
+              disabled={isWorking}
+              className="text-sm bg-[#333] text-white rounded-lg px-5 py-2 hover:bg-[#555] disabled:opacity-60 inline-flex items-center gap-2"
             >
-              开始分析
+              {isWorking && <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+              {isWorking ? '分析中…' : '开始分析'}
             </button>
             <p className="text-xs text-gray-300">通过 DuckDuckGo 搜索新闻 + AI 情感分析</p>
           </div>
@@ -223,8 +224,9 @@ export default function SentimentView() {
               <button
                 onClick={() => onRefresh(selected)}
                 disabled={isWorking}
-                className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-50 transition-colors"
+                className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-60 transition-colors inline-flex items-center gap-1.5"
               >
+                {isWorking && <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                 {isWorking ? '分析中…' : detail.has_data ? '刷新分析' : '开始分析'}
               </button>
             </div>
