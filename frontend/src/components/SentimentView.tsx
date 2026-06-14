@@ -57,7 +57,7 @@ export default function SentimentView() {
   const loadDetail = useCallback(async (name: string) => {
     try {
       const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
-      if ((d as any).analyzing) {
+      if (((d as any).analyzing || (d as any).refreshing)) {
         setAnalyzing(true);
       } else if (d.has_data && d.articles_count > 0) {
         // Real data arrived — stop polling
@@ -129,7 +129,7 @@ export default function SentimentView() {
     stopPoll();
     try {
       const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
-      if ((d as any).analyzing) {
+      if (((d as any).analyzing || (d as any).refreshing)) {
         setAnalyzing(true);
       } else {
         setDetail(d);
@@ -150,7 +150,7 @@ export default function SentimentView() {
         company_name: name,
         force_refresh: true,
       });
-      if (d.analyzing) {
+      if (d.analyzing || d.refreshing) {
         setAnalyzing(true);
         if (d.has_data && d.articles) {
           setDetail(d);
