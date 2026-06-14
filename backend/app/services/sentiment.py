@@ -12,10 +12,13 @@
 """
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 
 from app.core.cache import cached, invalidate_cache
 from app.db.mongo import get_db
@@ -82,7 +85,8 @@ def _call_llm(prompt: str) -> dict | None:
         if text.startswith("```"):
             text = text.split("\n", 1)[1].rsplit("\n", 1)[0]
         return json.loads(text)
-    except Exception:
+    except Exception as e:
+        logger.warning("LLM sentiment call failed: %s", e)
         return None
 
 
@@ -510,10 +514,10 @@ def analyze_sentiment_background(company_name: str) -> None:
             import asyncio
             from app.services.ws_manager import ws_manager
             asyncio.create_task(ws_manager.broadcast("sentiment_ready", {"company_name": company_name}))
-        except Exception:
-            pass
-    except Exception:
-        pass  # 后台任务失败静默处理
+        except Exception as e:
+            logger.warning("ws_broadcast_failed: %s", e)
+    except Exception as e:
+        logger.error("sentiment_background_failed company=%s error=%s", company_name, e)
     finally:
         _analyzing_locks.discard(company_name)
 
