@@ -123,7 +123,7 @@ export default function SentimentView() {
   const onRefresh = async (name: string) => {
     setLoading(true);
     setReqError('');
-    setAnalyzing(false);
+    setAnalyzing(true);
     stopPoll();
     try {
       const d = await api.post<any>('/sentiment/analyze', {
@@ -131,13 +131,11 @@ export default function SentimentView() {
         force_refresh: true,
       });
       if (d.analyzing) {
-        // Background analysis started — poll for results
         setAnalyzing(true);
         if (d.has_data && d.articles) {
           setDetail(d);
         }
       } else if (d.has_data) {
-        // Analysis returned immediately (sync)
         setDetail(d);
         setAnalyzing(false);
       } else {
@@ -301,10 +299,17 @@ export default function SentimentView() {
             </div>
 
             {/* articles list */}
-            {filteredArticles.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">
-                {detail.has_data ? '无匹配新闻' : '暂无舆情数据，请点击「开始分析」获取'}
-              </p>
+            {!detail.has_data ? (
+              <p className="text-sm text-gray-400 text-center py-8">暂无舆情数据，请点击「开始分析」获取</p>
+            ) : filteredArticles.length === 0 ? (
+              <div className="text-center py-8 space-y-1">
+                <p className="text-sm text-gray-400">未搜索到相关新闻</p>
+                <p className="text-xs text-gray-300">DuckDuckGo 未找到「{selected}」的近期新闻</p>
+                <button onClick={() => onRefresh(selected)} disabled={isWorking}
+                  className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50 mt-2">
+                  重新搜索
+                </button>
+              </div>
             ) : (
               <div className="space-y-2">
                 {filteredArticles.map((a, i) => {

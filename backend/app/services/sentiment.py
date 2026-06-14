@@ -88,6 +88,14 @@ def _call_llm(prompt: str) -> dict | None:
 
 # ---- News search ----
 
+def _short_name(company_name: str) -> str:
+    """提取公司简称用于搜索，去掉常见后缀。"""
+    for suffix in ["股份有限公司", "有限责任公司", "有限公司", "股份公司", "集团公司"]:
+        if company_name.endswith(suffix):
+            return company_name[:-len(suffix)]
+    return company_name
+
+
 def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     """通过 DuckDuckGo 搜索公司新闻。"""
     import requests
@@ -97,12 +105,13 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    query = f"{_short_name(company_name)} 新闻"
 
     # method 1: DDG HTML endpoint
     try:
         resp = requests.get(
             "https://html.duckduckgo.com/html/",
-            params={"q": f"{company_name} 新闻", "iar": "news"},
+            params={"q": query, "iar": "news"},
             headers=headers,
             timeout=15,
         )
@@ -138,7 +147,8 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     try:
         from duckduckgo_search import DDGS
         with DDGS() as ddgs:
-            results = list(ddgs.news(company_name[:6], region="cn-zh", max_results=max_results))
+            short = _short_name(company_name)
+            results = list(ddgs.news(short, region="cn-zh", max_results=max_results))
         for r in results:
             title = r.get("title", "")
             if title:
