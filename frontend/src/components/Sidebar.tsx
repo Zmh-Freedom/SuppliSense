@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
+import { wsClient } from '../websocket';
 import type { WatchlistData, AlertDoc } from '../types';
 
 interface Props {
@@ -21,14 +22,13 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
       .then(d => setWatchlist(d.companies)).catch(() => {});
   }, []);
 
-  useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    const timer = setInterval(() => load(controller.signal), 30000); // 30秒轮询，减少不必要请求
+    load();
+    wsClient.connect();
+    const unsub = wsClient.on('alert_update', () => load());
     return () => {
-      clearInterval(timer);
-      controller.abort();
+      unsub();
+      wsClient.disconnect();
     };
   }, [load]);
 

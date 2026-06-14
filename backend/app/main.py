@@ -5,7 +5,7 @@ load_dotenv()
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -145,3 +145,26 @@ async def metrics_endpoint():
     """Prometheus metrics endpoint."""
     metrics_text, content_type = get_metrics()
     return PlainTextResponse(metrics_text, media_type=content_type)
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    from app.services.ws_manager import ws_manager
+
+    await websocket.accept()
+    client_id = f"{id(websocket)}"
+    await ws_manager.connect(websocket, client_id)
+
+    try:
+        while True:
+            # Keep connection alive, handle client messages if needed
+            data = await websocket.receive_text()
+            # Client can send ping or subscription messages
+            if data == "ping":
+                await websocket.send_text('{"event":"pong","data":{}}')
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        ws_manager.disconnect(client_id)

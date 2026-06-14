@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
+import { wsClient } from '../websocket';
 
 interface RiskTag {
   tag: string;
@@ -82,21 +83,21 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
     return () => controller.abort();
   }, [companyName]);
 
-  // 自动轮询：当后台正在分析时，每5秒刷新一次直到数据就绪
+  // 自动刷新：WebSocket 推送分析完成消息后重新拉取数据
   useEffect(() => {
     if (!analyzing || !companyName) return;
-    const timer = setInterval(() => {
-      api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(companyName)}`)
-        .then(r => {
-          if (!r.analyzing) {
+    const unsub = wsClient.on('sentiment_ready', (data: { company_name: string }) => {
+      if (data.company_name === companyName) {
+        api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`)
+          .then(r => {
             setDetail(r);
             setAnalyzing(false);
             setIsStale(false);
-          }
-        })
-        .catch(() => {});
-    }, 5000);
-    return () => clearInterval(timer);
+          })
+          .catch(() => {});
+      }
+    });
+    return () => unsub();
   }, [analyzing, companyName]);
 
   const onAnalyze = async () => {

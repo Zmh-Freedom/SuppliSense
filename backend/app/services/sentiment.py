@@ -473,6 +473,13 @@ def analyze_sentiment_background(company_name: str) -> None:
     _analyzing_locks.add(company_name)
     try:
         analyze_sentiment(company_name, force_refresh=True)
+        # Notify WebSocket clients that analysis is ready
+        try:
+            import asyncio
+            from app.services.ws_manager import ws_manager
+            asyncio.create_task(ws_manager.broadcast("sentiment_ready", {"company_name": company_name}))
+        except Exception:
+            pass
     except Exception:
         pass  # 后台任务失败静默处理
     finally:

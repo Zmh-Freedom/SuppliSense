@@ -1,7 +1,27 @@
+import asyncio
+import json
+import logging
 from datetime import datetime, timezone
 
 from app.db.mongo import get_db
 from app.schemas import RiskCalculateResponse
+
+logger = logging.getLogger(__name__)
+
+
+def _broadcast_alert_update() -> None:
+    """Notify all WebSocket clients that alert data changed."""
+    try:
+        from app.services.ws_manager import ws_manager
+        db = get_db()
+        count = db["alerts"].count_documents({})
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(ws_manager.broadcast("alert_update", {"count": count}))
+        else:
+            asyncio.run(ws_manager.broadcast("alert_update", {"count": count}))
+    except Exception:
+        pass  # WebSocket push is best-effort
 
 
 def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
@@ -106,12 +126,14 @@ def add_to_watchlist(company_name: str) -> dict:
         {"$set": {"company_name": company_name, "added_at": datetime.now(timezone.utc)}},
         upsert=True,
     )
+    _broadcast_alert_update()
     return {"company_name": company_name, "status": "watching"}
 
 
 def remove_from_watchlist(company_name: str) -> dict:
     db = get_db()
     db["watchlist"].delete_one({"company_name": company_name})
+    _broadcast_alert_update()
     return {"company_name": company_name, "status": "removed"}
 
 

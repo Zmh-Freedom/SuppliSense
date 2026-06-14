@@ -9,6 +9,7 @@ export default defineConfig({
       '/api/v1': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
       '/metrics': 'http://localhost:8000',
+      '/ws': { target: 'ws://localhost:8000', ws: true },
     },
   },
 })
