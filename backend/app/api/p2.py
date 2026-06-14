@@ -9,6 +9,7 @@ from app.services.contagion import (
     add_dependency,
     analyze_contagion,
     get_contagion_dashboard,
+    get_graph_data,
     get_supply_dependencies,
     remove_dependency,
 )
@@ -39,6 +40,12 @@ async def esg_dashboard():
 async def company_contagion(company_name: str):
     """分析企业的风险传染路径。"""
     return await asyncio.to_thread(analyze_contagion, company_name)
+
+
+@router.get("/contagion/{company_name}/graph")
+async def company_contagion_graph(company_name: str):
+    """返回图谱可视化所需的 nodes + edges 数据。"""
+    return await asyncio.to_thread(get_graph_data, company_name)
 
 
 @router.get("/contagion")

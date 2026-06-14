@@ -195,6 +195,60 @@ def analyze_contagion(company_name: str) -> dict:
     }
 
 
+def get_graph_data(company_name: str) -> dict:
+    """Return nodes+edges format for graph visualization."""
+    data = analyze_contagion(company_name)
+    db = get_db()
+
+    # Center node
+    nodes = []
+    edges = []
+
+    # Get center node risk score
+    center_snap = db["alert_snapshots"].find_one(
+        {"company_name": company_name}, sort=[("checked_at", -1)]
+    )
+    center_risk = center_snap.get("risk_score", 0) if center_snap else 0
+
+    nodes.append({
+        "id": company_name,
+        "label": company_name[:12],
+        "type": "center",
+        "risk_score": center_risk,
+    })
+
+    for i, r in enumerate(data["related_entities"]):
+        node_id = r["name"]
+        # Avoid duplicate nodes
+        if not any(n["id"] == node_id for n in nodes):
+            risk_score = 0
+            if r.get("in_watchlist"):
+                snap = db["alert_snapshots"].find_one(
+                    {"company_name": node_id}, sort=[("checked_at", -1)]
+                )
+                risk_score = snap.get("risk_score", 0) if snap else 0
+            nodes.append({
+                "id": node_id,
+                "label": node_id[:12],
+                "type": r["relation"],
+                "risk_score": risk_score,
+            })
+
+        edges.append({
+            "id": f"e{i}-{company_name}-{node_id}",
+            "source": company_name,
+            "target": node_id,
+            "relation": r["relation"],
+            "label": r.get("relation_type", r["relation"]),
+        })
+
+    return {
+        "company_name": company_name,
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
 def get_contagion_dashboard() -> dict:
     """全局风险传染看板。"""
     db = get_db()
