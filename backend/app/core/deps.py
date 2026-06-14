@@ -2,18 +2,31 @@
 FastAPI dependencies for authentication.
 """
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
-from app.core.security import decode_access_token
+from app.core.security import decode_token
 from app.schemas.user import UserInDB, UserRole
 from app.services.auth import get_user_by_id
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
-def get_current_user(token: str | None = Depends(oauth2_scheme)) -> UserInDB:
-    """Get the current authenticated user from JWT token."""
+def _extract_token(request: Request, header_token: str | None) -> str | None:
+    """Extract JWT from HttpOnly cookie first, then Authorization header."""
+    token = request.cookies.get("access_token")
+    if token:
+        return token
+    return header_token
+
+
+def get_current_user(
+    request: Request,
+    header_token: str | None = Depends(oauth2_scheme),
+) -> UserInDB:
+    """Get the current authenticated user from JWT token (cookie or header)."""
+    token = _extract_token(request, header_token)
+
     if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -21,11 +34,19 @@ def get_current_user(token: str | None = Depends(oauth2_scheme)) -> UserInDB:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_access_token(token)
+    payload = decode_token(token)
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="无效的认证凭据",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Refresh tokens cannot be used for API access
+    if payload.get("type") == "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="请使用 access token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

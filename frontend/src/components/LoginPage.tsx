@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { setStoredUser } from '../api';
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -18,7 +19,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setError('');
 
     try {
-      const res = await fetch('/auth/login/json', {
+      const res = await fetch('/api/v1/auth/login/json', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password }),
@@ -30,7 +31,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       }
 
       const data = await res.json();
-      localStorage.setItem('auth_token', data.access_token);
+      setStoredUser(data.username, data.role);
       onLogin();
     } catch (err: any) {
       setError(err.message || '登录失败，请检查用户名和密码');

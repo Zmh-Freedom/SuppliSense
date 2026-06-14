@@ -1,36 +1,58 @@
-const TOKEN_KEY = 'auth_token';
+const SESSION_KEY = 'session';
 const API_BASE = '/api/v1';
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+export function getStoredUser(): { username: string; role: string } | null {
+  try {
+    const data = localStorage.getItem(SESSION_KEY);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+export function setStoredUser(username: string, role: string): void {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({ username, role }));
 }
 
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+export function clearStoredUser(): void {
+  localStorage.removeItem(SESSION_KEY);
 }
 
 export function isAuthenticated(): boolean {
-  return !!getToken();
+  return !!getStoredUser();
+}
+
+async function refreshAccessToken(): Promise<boolean> {
+  const stored = getStoredUser();
+  if (!stored) return false;
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: '' }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...(options?.headers as Record<string, string> || {}),
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    credentials: 'same-origin',
+  });
 
   if (res.status === 401) {
-    clearToken();
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      const retryRes = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        credentials: 'same-origin',
+      });
+      if (retryRes.ok) return retryRes.json();
+    }
+    clearStoredUser();
     window.location.reload();
     throw new Error('登录已过期，请重新登录');
   }
@@ -66,15 +88,14 @@ export const api = {
     const form = new FormData();
     form.append('file', file);
 
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    return fetch(`${API_BASE}${path}`, { method: 'POST', body: form, headers, signal }).then(r => {
+    return fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      body: form,
+      signal,
+      credentials: 'same-origin',
+    }).then(r => {
       if (r.status === 401) {
-        clearToken();
+        clearStoredUser();
         window.location.reload();
         throw new Error('登录已过期');
       }
@@ -104,20 +125,15 @@ export async function chatStream(
   callbacks: StreamCallbacks,
   mode: 'react' | 'plan-execute' | 'multi-agent' = 'react',
 ): Promise<string> {
-  const token = getToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
   const res = await fetch(`${API_BASE}/chat/stream`, {
     method: 'POST',
-    headers,
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, session_id: sessionId, mode }),
+    credentials: 'same-origin',
   });
 
   if (res.status === 401) {
-    clearToken();
+    clearStoredUser();
     window.location.reload();
     throw new Error('登录已过期，请重新登录');
   }
@@ -137,9 +153,8 @@ export async function chatStream(
 
     buffer += decoder.decode(value, { stream: true });
 
-    // Parse SSE events
     const lines = buffer.split('\n');
-    buffer = lines.pop() || ''; // Keep incomplete line in buffer
+    buffer = lines.pop() || '';
 
     let currentEvent = '';
     for (const line of lines) {
