@@ -12,11 +12,11 @@ class WSManager:
 
     async def connect(self, websocket: WebSocket, client_id: str) -> None:
         self._connections[client_id] = websocket
-        logger.info("ws_client_connected", client_id=client_id, total=len(self._connections))
+        logger.info("ws_client_connected client_id=%s total=%d", client_id, len(self._connections))
 
     def disconnect(self, client_id: str) -> None:
         self._connections.pop(client_id, None)
-        logger.info("ws_client_disconnected", client_id=client_id, total=len(self._connections))
+        logger.info("ws_client_disconnected client_id=%s total=%d", client_id, len(self._connections))
 
     async def broadcast(self, event: str, payload: dict) -> None:
         """Push an event to all connected clients."""
