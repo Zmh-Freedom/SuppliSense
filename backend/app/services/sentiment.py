@@ -97,21 +97,47 @@ def _short_name(company_name: str) -> str:
 
 
 def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
-    """通过 DuckDuckGo 搜索公司新闻。"""
+    """通过 Bing 搜索公司新闻（DuckDuckGo 限流时备用）。"""
     import requests
     from bs4 import BeautifulSoup
+    from urllib.parse import quote
 
     articles: list[dict] = []
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
-    query = f"{_short_name(company_name)} 新闻"
+    short = _short_name(company_name)
+    query = f"{short} 最新新闻"
 
-    # method 1: DDG HTML endpoint
+    # method 1: Bing search
+    try:
+        resp = requests.get(
+            "https://www.bing.com/search",
+            params={"q": query, "setlang": "zh-Hans", "count": max_results},
+            headers=headers,
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for item in soup.select("li.b_algo"):
+                title_el = item.select_one("h2 a")
+                snippet_el = item.select_one(".b_caption p")
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                body = snippet_el.get_text(strip=True)[:300] if snippet_el else ""
+                url = title_el.get("href", "")
+                articles.append({"title": title, "body": body, "source": "Bing", "url": url, "date": ""})
+            if articles:
+                return articles[:max_results]
+    except Exception:
+        pass
+
+    # method 2: DDG HTML endpoint (fallback)
     try:
         resp = requests.get(
             "https://html.duckduckgo.com/html/",
-            params={"q": query, "iar": "news"},
+            params={"q": f"{short} 新闻", "iar": "news"},
             headers=headers,
             timeout=15,
         )
@@ -121,11 +147,9 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
                 title_el = res.select_one(".result__title")
                 snippet_el = res.select_one(".result__snippet")
                 link_el = res.select_one(".result__url") or res.select_one("a[href]")
-
                 title = title_el.get_text(strip=True) if title_el else ""
                 if not title:
                     continue
-
                 body = snippet_el.get_text(strip=True) if snippet_el else ""
                 url = ""
                 if link_el:
@@ -135,32 +159,30 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
                         parsed = urlparse(url)
                         qs = parse_qs(parsed.query)
                         url = qs.get("uddg", [url])[0]
-
                 articles.append({"title": title, "body": body[:200], "source": "", "url": url, "date": ""})
-
             if articles:
                 return articles[:max_results]
     except Exception:
         pass
 
-    # method 2: ddgs library
-    try:
-        from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            short = _short_name(company_name)
-            results = list(ddgs.news(short, region="cn-zh", max_results=max_results))
-        for r in results:
-            title = r.get("title", "")
-            if title:
-                articles.append({
-                    "title": title, "body": r.get("body", "")[:200],
-                    "source": r.get("source", ""), "url": r.get("url", ""),
-                    "date": r.get("date", ""),
-                })
-        if articles:
-            return articles[:max_results]
-    except Exception:
-        pass
+    # method 3: ddgs / duckduckgo_search library
+    for lib in ["ddgs", "duckduckgo_search"]:
+        try:
+            mod = __import__(lib)
+            with mod.DDGS() as ddgs:
+                results = list(ddgs.news(short, region="cn-zh", max_results=max_results))
+            for r in results:
+                title = r.get("title", "")
+                if title:
+                    articles.append({
+                        "title": title, "body": r.get("body", "")[:200],
+                        "source": r.get("source", ""), "url": r.get("url", ""),
+                        "date": r.get("date", ""),
+                    })
+            if articles:
+                return articles[:max_results]
+        except Exception:
+            pass
 
     return []
 
