@@ -43,7 +43,9 @@ const SENTIMENT_LABEL: Record<string, string> = {
 
 export default function SentimentView() {
   const [companies, setCompanies] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string>('');
+  const [selected, setSelected] = useState<string>(() => {
+    try { return localStorage.getItem('sentiment_company') || ''; } catch { return ''; }
+  });
   const [detail, setDetail] = useState<CompanySentiment | null>(null);
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -57,11 +59,15 @@ export default function SentimentView() {
       const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
       if ((d as any).analyzing) {
         setAnalyzing(true);
-      } else {
+      } else if (d.has_data && d.articles_count > 0) {
+        // Real data arrived — stop polling
         setDetail(d);
         setAnalyzing(false);
         setReqError('');
         stopPoll();
+      } else {
+        // No data yet, keep waiting (background task still running)
+        setAnalyzing(true);
       }
     } catch {
       setAnalyzing(false);
@@ -72,11 +78,19 @@ export default function SentimentView() {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
   };
 
-  // Poll while analyzing
+  // Poll while analyzing (with 30s timeout)
   useEffect(() => {
     if (!analyzing || !selected) return;
     pollRef.current = setInterval(() => loadDetail(selected), 3000);
-    return () => stopPoll();
+    const timeout = setTimeout(() => {
+      setAnalyzing(false);
+      setReqError('分析超时，请手动刷新页面');
+      stopPoll();
+    }, 45000);
+    return () => {
+      stopPoll();
+      clearTimeout(timeout);
+    };
   }, [analyzing, selected, loadDetail]);
 
   // WebSocket
@@ -100,8 +114,14 @@ export default function SentimentView() {
     return () => controller.abort();
   }, [loadCompanies]);
 
+  // Auto-load detail for persisted company on mount
+  useEffect(() => {
+    if (selected) selectCompany(selected);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectCompany = async (name: string) => {
     setSelected(name);
+    localStorage.setItem('sentiment_company', name);
     setDetail(null);
     setAnalyzing(false);
     setReqError('');
