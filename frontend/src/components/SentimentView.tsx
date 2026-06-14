@@ -35,21 +35,10 @@ interface CompanySentiment {
 }
 
 const SENTIMENT_COLORS: Record<string, string> = {
-  negative: '#dc2626',
-  neutral: '#6b7280',
-  positive: '#16a34a',
+  negative: '#dc2626', neutral: '#6b7280', positive: '#16a34a',
 };
-
-const SENTIMENT_BG: Record<string, string> = {
-  negative: '#fef2f2',
-  neutral: '#f9fafb',
-  positive: '#ecfdf5',
-};
-
 const SENTIMENT_LABEL: Record<string, string> = {
-  negative: '负面',
-  neutral: '中性',
-  positive: '正面',
+  negative: '负面', neutral: '中性', positive: '正面',
 };
 
 export default function SentimentView() {
@@ -60,32 +49,37 @@ export default function SentimentView() {
   const [analyzing, setAnalyzing] = useState(false);
   const [filter, setFilter] = useState<string>('all');
   const [listError, setListError] = useState(false);
+  const [reqError, setReqError] = useState('');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadDetail = useCallback(async (name: string) => {
     try {
       const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
-      if (d.analyzing) {
+      if ((d as any).analyzing) {
         setAnalyzing(true);
       } else {
         setDetail(d);
         setAnalyzing(false);
-        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        setReqError('');
+        stopPoll();
       }
     } catch {
-      setDetail(null);
       setAnalyzing(false);
     }
   }, []);
 
-  // Auto-poll while analyzing
+  const stopPoll = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
+  // Poll while analyzing
   useEffect(() => {
     if (!analyzing || !selected) return;
     pollRef.current = setInterval(() => loadDetail(selected), 3000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    return () => stopPoll();
   }, [analyzing, selected, loadDetail]);
 
-  // WebSocket: sentiment ready
+  // WebSocket
   useEffect(() => {
     const unsub = wsClient.on('sentiment_ready', (data: { company_name: string }) => {
       if (data.company_name === selected) loadDetail(selected);
@@ -110,13 +104,13 @@ export default function SentimentView() {
     setSelected(name);
     setDetail(null);
     setAnalyzing(false);
+    setReqError('');
     setLoading(true);
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    stopPoll();
     try {
       const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
-      if (d.analyzing) {
+      if ((d as any).analyzing) {
         setAnalyzing(true);
-        setDetail(null);
       } else {
         setDetail(d);
       }
@@ -128,21 +122,30 @@ export default function SentimentView() {
 
   const onRefresh = async (name: string) => {
     setLoading(true);
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    setReqError('');
+    setAnalyzing(false);
+    stopPoll();
     try {
-      const d = await api.post<CompanySentiment & { analyzing?: boolean }>('/sentiment/analyze', {
+      const d = await api.post<any>('/sentiment/analyze', {
         company_name: name,
         force_refresh: true,
       });
       if (d.analyzing) {
+        // Background analysis started — poll for results
         setAnalyzing(true);
-        setDetail(d.has_data ? d : null);
-      } else {
+        if (d.has_data && d.articles) {
+          setDetail(d);
+        }
+      } else if (d.has_data) {
+        // Analysis returned immediately (sync)
         setDetail(d);
         setAnalyzing(false);
+      } else {
+        setReqError('分析请求已发送，请稍候刷新');
       }
-    } catch {
-      // 刷新失败，保持旧数据
+    } catch (e: any) {
+      setReqError(e.message || '请求失败，请确保后端服务正常运行');
+      setAnalyzing(false);
     } finally {
       setLoading(false);
     }
@@ -156,6 +159,8 @@ export default function SentimentView() {
     (detail?.sentiment_score ?? 0) < -0.2 ? '#dc2626' :
     (detail?.sentiment_score ?? 0) > 0.2 ? '#16a34a' : '#6b7280';
 
+  const isWorking = loading || analyzing;
+
   return (
     <div className="flex h-full">
       {/* left: company list */}
@@ -167,20 +172,11 @@ export default function SentimentView() {
         <div className="py-1">
           {listError ? (
             <p className="text-xs text-red-400 text-center py-4">加载失败</p>
-          ) : companies.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-4">暂无监控企业</p>
           ) : (
             companies.map(name => (
-              <button
-                key={name}
-                onClick={() => selectCompany(name)}
-                className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
-                  selected === name
-                    ? 'bg-[#e8e8e3] text-[#333] font-medium'
-                    : 'text-[#555] hover:bg-[#eee]'
-                }`}
-              >
-                {name}
+              <button key={name} onClick={() => selectCompany(name)}
+                className={`w-full text-left px-4 py-2.5 text-sm ${selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'}`}>
+                {name.slice(0, 16)}
               </button>
             ))
           )}
@@ -193,13 +189,25 @@ export default function SentimentView() {
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             选择左侧企业查看舆情详情
           </div>
-        ) : loading || analyzing ? (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-            {analyzing ? '正在分析舆情数据，预计 15-20 秒…' : '加载中…'}
+        ) : isWorking ? (
+          <div className="flex flex-col items-center justify-center h-full gap-3">
+            <div className="w-8 h-8 border-2 border-[#333] border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-gray-500">
+              {analyzing ? '正在搜索新闻并分析舆情，预计 15-20 秒…' : '加载中…'}
+            </p>
+            <p className="text-xs text-gray-400">{selected}</p>
           </div>
         ) : !detail ? (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-            加载失败
+          <div className="flex flex-col items-center justify-center h-full gap-4">
+            <p className="text-sm text-gray-400">{reqError || '暂无舆情数据'}</p>
+            <button
+              onClick={() => onRefresh(selected)}
+              disabled={loading}
+              className="text-sm bg-[#333] text-white rounded-lg px-5 py-2 hover:bg-[#555] disabled:opacity-50"
+            >
+              开始分析
+            </button>
+            <p className="text-xs text-gray-300">通过 DuckDuckGo 搜索新闻 + AI 情感分析</p>
           </div>
         ) : (
           <div className="p-6 max-w-3xl">
@@ -209,16 +217,21 @@ export default function SentimentView() {
                 <h2 className="text-lg font-semibold text-[#333]">{selected}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">
                   分析时间：{detail.analyzed_at?.slice(0, 16).replace('T', ' ') || '-'}
+                  {analyzing && <span className="ml-2 text-blue-500">● 刷新中</span>}
                 </p>
               </div>
               <button
                 onClick={() => onRefresh(selected)}
-                disabled={loading}
+                disabled={isWorking}
                 className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-50 transition-colors"
               >
-                {loading ? '分析中…' : detail.has_data ? '刷新分析' : '开始分析'}
+                {isWorking ? '分析中…' : detail.has_data ? '刷新分析' : '开始分析'}
               </button>
             </div>
+
+            {reqError && (
+              <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 mb-4 text-sm text-red-600">{reqError}</div>
+            )}
 
             {/* summary card */}
             <div className="grid grid-cols-5 gap-3 mb-6">
@@ -254,9 +267,7 @@ export default function SentimentView() {
                 {detail.key_concerns?.length > 0 && (
                   <ul className="mt-2 space-y-0.5">
                     {detail.key_concerns.map((c, i) => (
-                      <li key={i} className="text-xs text-amber-700 flex gap-1">
-                        <span>•</span> {c}
-                      </li>
+                      <li key={i} className="text-xs text-amber-700 flex gap-1"><span>•</span> {c}</li>
                     ))}
                   </ul>
                 )}
@@ -280,15 +291,8 @@ export default function SentimentView() {
               <span className="text-xs text-gray-400">({filteredArticles.length}篇)</span>
               <div className="flex-1" />
               {['all', 'negative', 'neutral', 'positive'].map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`text-xs px-3 py-1 rounded-full transition-colors ${
-                    filter === f
-                      ? 'bg-[#333] text-white'
-                      : 'text-gray-500 hover:bg-gray-100'
-                  }`}
-                >
+                <button key={f} onClick={() => setFilter(f)}
+                  className={`text-xs px-3 py-1 rounded-full transition-colors ${filter === f ? 'bg-[#333] text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
                   {f === 'all' ? '全部' : SENTIMENT_LABEL[f]}
                 </button>
               ))}
@@ -304,71 +308,25 @@ export default function SentimentView() {
                 {filteredArticles.map((a, i) => {
                   const s = a.sentiment || 'neutral';
                   return (
-                    <div
-                      key={i}
-                      className="bg-white border border-[#e8e8e3] rounded-xl p-4 hover:border-[#ccc] transition-colors"
-                    >
+                    <div key={i} className="bg-white border border-[#e8e8e3] rounded-xl p-4 hover:border-[#ccc] transition-colors">
                       <div className="flex items-start gap-3">
-                        {/* sentiment dot */}
-                        <span
-                          className="w-2 h-2 rounded-full mt-1.5 shrink-0"
-                          style={{ background: SENTIMENT_COLORS[s] || '#999' }}
-                          title={SENTIMENT_LABEL[s]}
-                        />
-
+                        <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: SENTIMENT_COLORS[s] || '#999' }} />
                         <div className="flex-1 min-w-0">
-                          {/* title */}
                           {a.url ? (
-                            <a
-                              href={a.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-sm text-[#333] hover:text-blue-600 leading-relaxed"
-                            >
+                            <a href={a.url} target="_blank" rel="noopener noreferrer"
+                              className="text-sm text-[#333] hover:text-blue-500 transition-colors line-clamp-2">
                               {a.title}
                             </a>
                           ) : (
-                            <span className="text-sm text-[#333] leading-relaxed">{a.title}</span>
+                            <p className="text-sm text-[#333] line-clamp-2">{a.title}</p>
                           )}
-
-                          {/* meta */}
-                          <div className="flex items-center gap-2 mt-1.5">
-                            {a.source && (
-                              <span className="text-[11px] text-gray-400">{a.source}</span>
-                            )}
-                            {a.date && (
-                              <span className="text-[11px] text-gray-400">{a.date?.slice(0, 10)}</span>
-                            )}
-                            <span
-                              className="text-[10px] px-1.5 py-0.5 rounded"
-                              style={{
-                                background: SENTIMENT_BG[s] || '#f5f5f5',
-                                color: SENTIMENT_COLORS[s] || '#999',
-                              }}
-                            >
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] text-gray-400">{a.source || a.date || '-'}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: SENTIMENT_COLORS[s] + '18', color: SENTIMENT_COLORS[s] }}>
                               {SENTIMENT_LABEL[s]}
-                              {a.confidence > 0 && a.confidence < 1 && ` ${(a.confidence * 100).toFixed(0)}%`}
                             </span>
+                            {a.summary && <span className="text-[10px] text-gray-400 truncate">{a.summary}</span>}
                           </div>
-
-                          {/* summary */}
-                          {a.summary && (
-                            <p className="text-xs text-gray-500 mt-1 leading-relaxed">{a.summary}</p>
-                          )}
-
-                          {/* risk tags */}
-                          {a.risk_tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-2">
-                              {a.risk_tags.map(tag => (
-                                <span
-                                  key={tag}
-                                  className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-500 border border-red-100"
-                                >
-                                  {tag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       </div>
                     </div>
