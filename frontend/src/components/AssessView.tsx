@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../api';
 import type { RiskResult } from '../types';
 import SentimentPanel from './SentimentPanel';
@@ -18,6 +18,27 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const prevName = useRef(initialName);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const runAssess = useCallback(async (target: string) => {
+    if (!target.trim()) return;
+    // Cancel previous in-flight request
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setData(null);  // Clear old data immediately
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.post<RiskResult>('/risk/assess', { company_name: target.trim() }, controller.signal);
+      setData(res);
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      setError('评估失败');
+    }
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     if (initialName && initialName !== prevName.current) {
@@ -25,20 +46,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
       setName(initialName);
       runAssess(initialName);
     }
-  }, [initialName]);
-
-  const runAssess = async (target: string) => {
-    if (!target.trim()) return;
-    setLoading(true); setError('');
-    try {
-      const res = await api.post<RiskResult>('/risk/assess', { company_name: target.trim() });
-      setData(res);
-    } catch {
-      setError('评估失败');
-      setData(null);
-    }
-    setLoading(false);
-  };
+  }, [initialName, runAssess]);
 
   const assess = () => runAssess(name);
 
