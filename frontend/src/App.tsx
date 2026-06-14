@@ -7,9 +7,10 @@ import ChatView from './components/ChatView';
 import AssessView from './components/AssessView';
 import SentimentView from './components/SentimentView';
 import KnowledgePanel from './components/KnowledgePanel';
+import ContagionView from './components/ContagionView';
 import LoginPage from './components/LoginPage';
 
-const TABS = ['风险看板', '企业评估', '告警中心', '舆情监控', '智能对话', '知识库'];
+const TABS = ['风险看板', '企业评估', '告警中心', '舆情监控', '智能对话', '知识库', '关系图谱'];
 
 function getTab(): number {
   try { return parseInt(localStorage.getItem('active_tab') || '0'); } catch { return 0; }
@@ -68,6 +69,7 @@ export default function App() {
           {tab === 3 && <SentimentView />}
           {tab === 4 && <ChatView />}
           {tab === 5 && <KnowledgePanel />}
+          {tab === 6 && <ContagionView />}
         </div>
       </main>
     </div>
