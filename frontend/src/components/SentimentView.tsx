@@ -165,9 +165,9 @@ export default function SentimentView() {
               <button
                 onClick={() => onRefresh(selected)}
                 disabled={loading}
-                className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
+                className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-50 transition-colors"
               >
-                {loading ? '刷新中…' : '刷新分析'}
+                {loading ? '分析中…' : detail.has_data ? '刷新分析' : '开始分析'}
               </button>
             </div>
 
@@ -248,7 +248,7 @@ export default function SentimentView() {
             {/* articles list */}
             {filteredArticles.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-8">
-                {detail.has_data ? '无匹配新闻' : '暂无舆情数据，请点击上方「开始分析」按钮'}
+                {detail.has_data ? '无匹配新闻' : '暂无舆情数据，请点击「开始分析」获取'}
               </p>
             ) : (
               <div className="space-y-2">
