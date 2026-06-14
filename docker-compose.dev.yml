@@ -31,7 +31,9 @@ services:
       retries: 5
 
   backend:
-    image: python:3.12-slim
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     container_name: sra-backend
     restart: unless-stopped
     working_dir: /app
