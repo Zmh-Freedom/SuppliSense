@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../api';
+import { wsClient } from '../websocket';
 
 interface RiskTag {
   tag: string;
@@ -56,8 +57,41 @@ export default function SentimentView() {
   const [selected, setSelected] = useState<string>('');
   const [detail, setDetail] = useState<CompanySentiment | null>(null);
   const [loading, setLoading] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [filter, setFilter] = useState<string>('all');
   const [listError, setListError] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadDetail = useCallback(async (name: string) => {
+    try {
+      const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
+      if (d.analyzing) {
+        setAnalyzing(true);
+      } else {
+        setDetail(d);
+        setAnalyzing(false);
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      }
+    } catch {
+      setDetail(null);
+      setAnalyzing(false);
+    }
+  }, []);
+
+  // Auto-poll while analyzing
+  useEffect(() => {
+    if (!analyzing || !selected) return;
+    pollRef.current = setInterval(() => loadDetail(selected), 3000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [analyzing, selected, loadDetail]);
+
+  // WebSocket: sentiment ready
+  useEffect(() => {
+    const unsub = wsClient.on('sentiment_ready', (data: { company_name: string }) => {
+      if (data.company_name === selected) loadDetail(selected);
+    });
+    return () => unsub();
+  }, [selected, loadDetail]);
 
   const loadCompanies = useCallback((signal?: AbortSignal) => {
     setListError(false);
@@ -74,10 +108,18 @@ export default function SentimentView() {
 
   const selectCompany = async (name: string) => {
     setSelected(name);
+    setDetail(null);
+    setAnalyzing(false);
     setLoading(true);
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     try {
-      const d = await api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(name)}`);
-      setDetail(d);
+      const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
+      if (d.analyzing) {
+        setAnalyzing(true);
+        setDetail(null);
+      } else {
+        setDetail(d);
+      }
     } catch {
       setDetail(null);
     }
@@ -86,12 +128,19 @@ export default function SentimentView() {
 
   const onRefresh = async (name: string) => {
     setLoading(true);
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     try {
-      const d = await api.post<CompanySentiment>('/sentiment/analyze', {
+      const d = await api.post<CompanySentiment & { analyzing?: boolean }>('/sentiment/analyze', {
         company_name: name,
         force_refresh: true,
       });
-      setDetail(d);
+      if (d.analyzing) {
+        setAnalyzing(true);
+        setDetail(d.has_data ? d : null);
+      } else {
+        setDetail(d);
+        setAnalyzing(false);
+      }
     } catch {
       // 刷新失败，保持旧数据
     } finally {
@@ -144,9 +193,9 @@ export default function SentimentView() {
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             选择左侧企业查看舆情详情
           </div>
-        ) : loading ? (
+        ) : loading || analyzing ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
-            加载中…
+            {analyzing ? '正在分析舆情数据，预计 15-20 秒…' : '加载中…'}
           </div>
         ) : !detail ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
