@@ -10,7 +10,7 @@ interface CompanySnap {
 
 export default function RiskMatrix() {
   const { data, isLoading, error, refetch } = useDashboard();
-  const [tooltip, setTooltip] = useState<{ name: string; score: number; level: string; x: number; y: number } | null>(null);
+  const [tooltip, setTooltip] = useState<{ name: string; score: number; level: string; x: number; y: number; mouseX: number; mouseY: number } | null>(null);
 
   const companies = (data?.companies ?? []).filter(c => c.score !== null) as CompanySnap[];
 
@@ -87,22 +87,40 @@ export default function RiskMatrix() {
                     width: `${size}px`,
                     height: `${size}px`,
                   }}
-                  onMouseEnter={() => setTooltip({ name: c.name, score: c.score, level: c.level, x, y })}
+                  onMouseEnter={(e) => {
+                    const rect = e.currentTarget.parentElement!.getBoundingClientRect();
+                    setTooltip({
+                      name: c.name,
+                      score: c.score,
+                      level: c.level,
+                      x, y,
+                      mouseX: e.clientX - rect.left,
+                      mouseY: e.clientY - rect.top,
+                    });
+                  }}
                   onMouseLeave={() => setTooltip(null)}
                 />
               );
             })}
-          </div>
 
-          {/* tooltip */}
-          {tooltip && (
-            <div className="text-center mt-2 text-sm">
-              <span className="font-medium">{tooltip.name}</span>
-              <span className="text-gray-400 mx-2">|</span>
-              <span className="font-semibold">{tooltip.score}/100</span>
-              <span className="text-gray-400 ml-1">{tooltip.level}</span>
-            </div>
-          )}
+            {/* tooltip */}
+            {tooltip && (
+              <div
+                className="absolute z-20 bg-white border border-[#e8e8e3] rounded-lg shadow-lg px-3 py-2 pointer-events-none"
+                style={{
+                  left: `${tooltip.mouseX}px`,
+                  top: `${tooltip.mouseY - 8}px`,
+                  transform: 'translate(-50%, -100%)',
+                }}
+              >
+                <div className="text-sm font-medium text-[#333]">{tooltip.name}</div>
+                <div className="text-xs text-gray-500">
+                  <span className="font-semibold">{tooltip.score}/100</span>
+                  <span className="ml-1">{tooltip.level}</span>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* legend */}
           <div className="flex justify-center gap-4 mt-4 text-xs text-gray-500">
