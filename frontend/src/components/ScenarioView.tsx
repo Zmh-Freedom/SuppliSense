@@ -1,5 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
+import { useWatchlist } from '../hooks';
+import { queryKeys } from '../query-keys';
 
 interface ImpactFactor {
   factor: string; detail: string; score: number; level: string;
@@ -40,37 +43,39 @@ const LEVEL_COLOR: Record<string, string> = {
 };
 
 export default function ScenarioView() {
-  const [companies, setCompanies] = useState<string[]>([]);
-  const [selected, setSelected] = useState('');
-  const [scenario, setScenario] = useState('bankruptcy');
-  const [sim, setSim] = useState<SimResult | null>(null);
-  const [sanc, setSanc] = useState<SanctionsResult | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { companies } = useWatchlist();
+  const [selected, setSelected] = useState<string>(() => {
+    try { return localStorage.getItem('scenario_company') || ''; } catch { return ''; }
+  });
+  const [scenario, setScenario] = useState<string>(() => {
+    try { return localStorage.getItem('scenario_type') || 'bankruptcy'; } catch { return 'bankruptcy'; }
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    api.get<{ companies: string[] }>('/alert/watchlist', undefined, controller.signal)
-      .then(d => setCompanies(d.companies || []))
-      .catch(() => {});
-    return () => controller.abort();
-  }, []);
+  const simQuery = useQuery({
+    queryKey: queryKeys.scenarioDetail(selected, scenario),
+    queryFn: () => api.get<SimResult>(`/analysis/scenario/${encodeURIComponent(selected)}?scenario=${scenario}`),
+    enabled: !!selected,
+  });
 
-  const select = async (name: string) => {
+  const sancQuery = useQuery({
+    queryKey: queryKeys.sanctionsDetail(selected),
+    queryFn: () => api.get<SanctionsResult>(`/analysis/sanctions/${encodeURIComponent(selected)}`),
+    enabled: !!selected,
+  });
+
+  const sim = simQuery.data ?? null;
+  const sanc = sancQuery.data ?? null;
+  const loading = (simQuery.isLoading || sancQuery.isLoading) && !!selected;
+  const error = simQuery.error || sancQuery.error ? '加载失败，请重试' : '';
+
+  const select = (name: string) => {
     setSelected(name);
-    setLoading(true);
-    const [simRes, sancRes] = await Promise.all([
-      api.get<SimResult>(`/analysis/scenario/${encodeURIComponent(name)}?scenario=${scenario}`),
-      api.get<SanctionsResult>(`/analysis/sanctions/${encodeURIComponent(name)}`),
-    ]);
-    setSim(simRes); setSanc(sancRes); setLoading(false);
+    localStorage.setItem('scenario_company', name);
   };
 
-  const runScenario = async (s: string) => {
+  const runScenario = (s: string) => {
     setScenario(s);
-    if (!selected) return;
-    setLoading(true);
-    const simRes = await api.get<SimResult>(`/analysis/scenario/${encodeURIComponent(selected)}?scenario=${s}`);
-    setSim(simRes); setLoading(false);
+    localStorage.setItem('scenario_type', s);
   };
 
   return (
@@ -83,8 +88,8 @@ export default function ScenarioView() {
         </div>
         <div className="py-1">
           {companies.map(name => (
-            <button key={name} onClick={() => select(name)}
-              className={`w-full text-left px-4 py-2.5 text-sm ${selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'}`}>{name}</button>
+            <button key={name} onClick={() => select(name)} disabled={loading}
+              className={`w-full text-left px-4 py-2.5 text-sm disabled:opacity-50 ${selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'}`}>{name}</button>
           ))}
         </div>
       </div>
@@ -99,6 +104,8 @@ export default function ScenarioView() {
           <div className="max-w-2xl space-y-6">
             <h2 className="text-lg font-semibold text-[#333]">{selected}</h2>
 
+            {error && <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-sm text-red-600">{error}</div>}
+
             {/* ---- scenario simulator ---- */}
             <div>
               <h3 className="text-sm font-medium text-[#555] mb-3">🎯 情景模拟</h3>
@@ -106,8 +113,8 @@ export default function ScenarioView() {
               {/* scenario selector */}
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {SCENARIOS.map(s => (
-                  <button key={s.key} onClick={() => runScenario(s.key)}
-                    className={`text-xs p-3 rounded-xl border transition-colors text-left ${
+                  <button key={s.key} onClick={() => runScenario(s.key)} disabled={loading}
+                    className={`text-xs p-3 rounded-xl border transition-colors text-left disabled:opacity-50 ${
                       scenario === s.key ? 'border-[#333] bg-[#f5f5f5]' : 'border-[#e8e8e3] hover:border-[#ccc]'
                     }`}>
                     <div className="font-medium text-[#333]">{s.label}</div>

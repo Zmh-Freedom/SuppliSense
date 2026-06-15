@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   ReactFlow,
   Controls,
@@ -17,6 +18,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
+import { queryKeys } from '../query-keys';
 
 interface GraphNode {
   id: string;
@@ -46,7 +48,7 @@ interface ContagionSummary {
 }
 
 // ---- Colors ----
-const COLORS = {
+const COLORS: Record<string, { line: string; bg: string; text: string; label: string }> = {
   branch: { line: '#818cf8', bg: '#eef2ff', text: '#4338ca', label: '分支' },
   supply_chain: { line: '#fbbf24', bg: '#fffbeb', text: '#b45309', label: '供应链' },
   same_industry: { line: '#34d399', bg: '#ecfdf5', text: '#047857', label: '同行业' },
@@ -58,8 +60,15 @@ function riskColor(score: number) {
   return { line: '#4ade80', bg: '#f0fdf4', text: '#16a34a', label: '低风险' };
 }
 
+interface NodeData {
+  label: string;
+  risk_score?: number;
+  relationType?: string;
+  [key: string]: unknown;
+}
+
 // ---- Custom Center Node ----
-function CenterNode({ data }: any) {
+function CenterNode({ data }: { data: NodeData }) {
   return (
     <div className="relative">
       <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
@@ -84,9 +93,9 @@ function CenterNode({ data }: any) {
 }
 
 // ---- Custom Related Node ----
-function RelatedNode({ data }: any) {
+function RelatedNode({ data }: { data: NodeData }) {
   const rc = riskColor(data.risk_score || 0);
-  const rel = (COLORS as any)[data.relationType] || COLORS.branch;
+  const rel = COLORS[data.relationType || ''] || COLORS.branch;
 
   return (
     <div
@@ -127,7 +136,7 @@ function RelatedNode({ data }: any) {
       }}>
         {data.label}
       </div>
-      {data.risk_score > 0 && (
+      {data.risk_score != null && data.risk_score > 0 && (
         <div style={{
           marginTop: 6,
           fontSize: 10,
@@ -149,7 +158,26 @@ function RelatedNode({ data }: any) {
 const nodeTypes = { center: CenterNode, related: RelatedNode };
 
 // ---- Custom Edge ----
-function StyledEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: any) {
+interface EdgeData {
+  color?: string;
+  dashed?: boolean;
+  label?: string;
+  [key: string]: unknown;
+}
+
+interface StyledEdgeProps {
+  id: string;
+  sourceX: number;
+  sourceY: number;
+  targetX: number;
+  targetY: number;
+  sourcePosition: Position;
+  targetPosition: Position;
+  data?: EdgeData;
+  markerEnd?: string;
+}
+
+function StyledEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: StyledEdgeProps) {
   const [edgePath, labelX, labelY] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 12 });
 
   return (
@@ -243,12 +271,12 @@ function buildEdges(gedges: GraphEdge[]): Edge[] {
     type: 'styled',
     data: {
       label: ge.label,
-      color: (COLORS as any)[ge.relation]?.line || '#94a3b8',
+      color: COLORS[ge.relation]?.line || '#94a3b8',
       dashed: ge.relation === 'same_industry',
     },
     markerEnd: {
       type: MarkerType.ArrowClosed,
-      color: (COLORS as any)[ge.relation]?.line || '#94a3b8',
+      color: COLORS[ge.relation]?.line || '#94a3b8',
       width: 16,
       height: 16,
     },
@@ -277,33 +305,41 @@ function Legend() {
 
 // ---- Component ----
 export default function ContagionView() {
-  const [companies, setCompanies] = useState<ContagionSummary[]>([]);
-  const [selected, setSelected] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<string>(() => {
+    try { return localStorage.getItem('contagion_company') || ''; } catch { return ''; }
+  });
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    api.get<{ companies: ContagionSummary[] }>('/p2/contagion', undefined, controller.signal)
-      .then(d => setCompanies(d.companies || []))
-      .catch(() => {});
-    return () => controller.abort();
-  }, []);
+  const listQuery = useQuery({
+    queryKey: queryKeys.contagionSummary,
+    queryFn: () => api.get<{ companies: ContagionSummary[] }>('/p2/contagion'),
+  });
 
-  const select = useCallback(async (name: string) => {
-    setSelected(name);
-    setLoading(true);
-    try {
-      const g = await api.get<GraphData>(`/p2/contagion/${encodeURIComponent(name)}/graph`);
-      setNodes(layoutNodes(g.nodes, 900, 650));
-      setEdges(buildEdges(g.edges));
-    } catch {
+  const graphQuery = useQuery({
+    queryKey: queryKeys.contagionGraph(selected),
+    queryFn: () => api.get<GraphData>(`/p2/contagion/${encodeURIComponent(selected)}/graph`),
+    enabled: !!selected,
+  });
+
+  const companies = listQuery.data?.companies ?? [];
+  const loading = graphQuery.isLoading && !!selected;
+
+  // Sync graph data to ReactFlow state
+  useEffect(() => {
+    if (graphQuery.data) {
+      setNodes(layoutNodes(graphQuery.data.nodes, 900, 650));
+      setEdges(buildEdges(graphQuery.data.edges));
+    } else if (graphQuery.isError) {
       setNodes([]);
       setEdges([]);
     }
-    setLoading(false);
-  }, [setNodes, setEdges]);
+  }, [graphQuery.data, graphQuery.isError, setNodes, setEdges]);
+
+  const select = (name: string) => {
+    setSelected(name);
+    localStorage.setItem('contagion_company', name);
+  };
 
   return (
     <div className="flex h-full">
@@ -315,8 +351,8 @@ export default function ContagionView() {
         </div>
         <div className="py-1">
           {companies.map(c => (
-            <button key={c.company_name} onClick={() => select(c.company_name)}
-              className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between transition-colors ${
+            <button key={c.company_name} onClick={() => select(c.company_name)} disabled={loading}
+              className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between transition-colors disabled:opacity-50 ${
                 selected === c.company_name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'
               }`}>
               <span className="truncate">{c.company_name.slice(0, 16)}</span>

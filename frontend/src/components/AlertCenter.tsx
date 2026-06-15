@@ -1,37 +1,23 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
+import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '../api';
+import { useAlertHistory } from '../hooks';
+import { queryKeys } from '../query-keys';
 import type { AlertDoc } from '../types';
 
 export default function AlertCenter() {
-  const [alerts, setAlerts] = useState<AlertDoc[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const queryClient = useQueryClient();
+  const { data: alerts, isLoading, error, refetch } = useAlertHistory();
+  const [checking, setChecking] = useState(false);
 
-  const load = useCallback((signal?: AbortSignal) => {
-    setLoading(true);
-    setError(false);
-    api.get<{ alerts: AlertDoc[] }>('/alert/history', undefined, signal)
-      .then(d => setAlerts(d.alerts))
-      .catch((err) => { if (err.name !== 'AbortError') setError(true); })
-      .finally(() => setLoading(false));
-  }, []);
+  const clearMutation = useMutation({
+    mutationFn: () => api.delete('/alert/history'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+  const alertList = alerts ?? [];
 
-  const clear = async () => {
-    try {
-      await api.delete('/alert/history');
-      setAlerts([]);
-    } catch {
-      // 清空失败
-    }
-  };
-
-  if (loading) {
+  if (isLoading) {
     return <div className="max-w-2xl mx-auto py-10 text-center text-gray-300">加载中…</div>;
   }
 
@@ -39,20 +25,21 @@ export default function AlertCenter() {
     return (
       <div className="max-w-2xl mx-auto py-20 text-center">
         <p className="text-gray-400 mb-4">加载失败，请检查后端服务</p>
-        <button onClick={() => load()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
+        <button onClick={() => refetch()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
       </div>
     );
   }
 
-  if (alerts.length === 0) {
+  if (alertList.length === 0) {
     return (
       <div className="max-w-2xl mx-auto py-10 text-center">
         <p className="text-gray-300 text-lg mb-4">暂无告警</p>
         <button
-          onClick={() => api.post('/alert/check-all').then(() => load()).catch(() => {})}
-          className="bg-[#333] text-white rounded-xl px-5 py-2 text-sm hover:bg-[#555]"
+          onClick={() => { setChecking(true); api.post('/alert/check-all').then(() => refetch()).catch(() => {}).finally(() => setChecking(false)); }}
+          disabled={checking}
+          className="bg-[#333] text-white rounded-xl px-5 py-2 text-sm hover:bg-[#555] disabled:opacity-50"
         >
-          立即巡检
+          {checking ? '巡检中…' : '立即巡检'}
         </button>
       </div>
     );
@@ -61,11 +48,11 @@ export default function AlertCenter() {
   return (
     <div className="max-w-2xl mx-auto py-4 px-4">
       <div className="flex justify-between items-center mb-4">
-        <p className="text-sm text-gray-400">{alerts.length} 条告警</p>
-        <button onClick={clear} className="text-xs text-gray-400 hover:text-gray-600">清空记录</button>
+        <p className="text-sm text-gray-400">{alertList.length} 条告警</p>
+        <button onClick={() => clearMutation.mutate()} disabled={clearMutation.isPending} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">{clearMutation.isPending ? '清空中…' : '清空记录'}</button>
       </div>
 
-      {alerts.map((doc, i) => {
+      {alertList.map((doc: AlertDoc, i: number) => {
         const isCritical = doc.severity === 'critical';
         return (
           <div

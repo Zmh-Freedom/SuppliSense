@@ -7,15 +7,19 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.3.0",
+    "@tanstack/react-query": "^5.101.0",
     "@xyflow/react": "^12.11.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.17.0",
+    "recharts": "^3.8.1",
     "tailwindcss": "^4.3.0"
   },
   "devDependencies": {
@@ -30,6 +34,7 @@
     "globals": "^17.6.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
-    "vite": "^8.0.12"
+    "vite": "^8.0.12",
+    "vite-plugin-checker": "^0.14.1"
   }
 }

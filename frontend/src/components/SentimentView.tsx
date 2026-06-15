@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { wsClient } from '../websocket';
+import { useWatchlist } from '../hooks';
+import { queryKeys } from '../query-keys';
 
 interface RiskTag {
   tag: string;
@@ -42,131 +45,56 @@ const SENTIMENT_LABEL: Record<string, string> = {
 };
 
 export default function SentimentView() {
-  const [companies, setCompanies] = useState<string[]>([]);
+  const queryClient = useQueryClient();
+  const { companies, error: listError } = useWatchlist();
   const [selected, setSelected] = useState<string>(() => {
     try { return localStorage.getItem('sentiment_company') || ''; } catch { return ''; }
   });
-  const [detail, setDetail] = useState<CompanySentiment | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
   const [filter, setFilter] = useState<string>('all');
-  const [listError, setListError] = useState(false);
-  const [reqError, setReqError] = useState('');
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const loadDetail = useCallback(async (name: string) => {
-    try {
-      const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
-      if (((d as any).analyzing || (d as any).refreshing)) {
-        setAnalyzing(true);
-      } else if (d.has_data && d.articles_count > 0) {
-        // Real data arrived — stop polling
-        setDetail(d);
-        setAnalyzing(false);
-        setReqError('');
-        stopPoll();
-      } else {
-        // No data yet, keep waiting (background task still running)
-        setAnalyzing(true);
-      }
-    } catch {
-      setAnalyzing(false);
-    }
-  }, []);
+  const detailQuery = useQuery({
+    queryKey: queryKeys.sentimentDetail(selected),
+    queryFn: () => api.get<CompanySentiment & { analyzing?: boolean; refreshing?: boolean }>(
+      `/sentiment/${encodeURIComponent(selected)}`
+    ),
+    enabled: !!selected,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return (d?.analyzing || d?.refreshing) ? 3000 : false;
+    },
+  });
 
-  const stopPoll = () => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  };
+  const analyzeMutation = useMutation({
+    mutationFn: () => api.post<{ analyzing?: boolean; refreshing?: boolean } & CompanySentiment>('/sentiment/analyze', {
+      company_name: selected,
+      force_refresh: true,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.sentimentDetail(selected) }),
+  });
 
-  // Poll while analyzing (with 30s timeout)
+  const detail = detailQuery.data ?? null;
+  const analyzing = detail?.analyzing || detail?.refreshing || false;
+  const isWorking = detailQuery.isFetching || analyzeMutation.isPending;
+  const reqError = detailQuery.error ? '加载失败' : analyzeMutation.error ? '请求失败，请确保后端服务正常运行' : '';
+
+  // WebSocket invalidation
   useEffect(() => {
-    if (!analyzing || !selected) return;
-    pollRef.current = setInterval(() => loadDetail(selected), 3000);
-    const timeout = setTimeout(() => {
-      setAnalyzing(false);
-      setReqError('分析超时，请手动刷新页面');
-      stopPoll();
-    }, 45000);
-    return () => {
-      stopPoll();
-      clearTimeout(timeout);
-    };
-  }, [analyzing, selected, loadDetail]);
-
-  // WebSocket
-  useEffect(() => {
+    if (!selected) return;
     const unsub = wsClient.on('sentiment_ready', (data: { company_name: string }) => {
-      if (data.company_name === selected) loadDetail(selected);
+      if (data.company_name === selected) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.sentimentDetail(selected) });
+      }
     });
     return () => unsub();
-  }, [selected, loadDetail]);
+  }, [selected, queryClient]);
 
-  const loadCompanies = useCallback((signal?: AbortSignal) => {
-    setListError(false);
-    api.get<{ companies: string[] }>('/alert/watchlist', undefined, signal)
-      .then(d => setCompanies(d.companies || []))
-      .catch((err) => { if (err.name !== 'AbortError') setListError(true); });
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    loadCompanies(controller.signal);
-    return () => controller.abort();
-  }, [loadCompanies]);
-
-  // Auto-load detail for persisted company on mount
-  useEffect(() => {
-    if (selected) selectCompany(selected);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const selectCompany = async (name: string) => {
+  const selectCompany = (name: string) => {
     setSelected(name);
     localStorage.setItem('sentiment_company', name);
-    setDetail(null);
-    setAnalyzing(false);
-    setReqError('');
-    setLoading(true);
-    stopPoll();
-    try {
-      const d = await api.get<CompanySentiment & { analyzing?: boolean }>(`/sentiment/${encodeURIComponent(name)}`);
-      if (((d as any).analyzing || (d as any).refreshing)) {
-        setAnalyzing(true);
-      } else {
-        setDetail(d);
-      }
-    } catch {
-      setDetail(null);
-    }
-    setLoading(false);
   };
 
-  const onRefresh = async (name: string) => {
-    setLoading(true);
-    setReqError('');
-    setAnalyzing(true);
-    stopPoll();
-    try {
-      const d = await api.post<any>('/sentiment/analyze', {
-        company_name: name,
-        force_refresh: true,
-      });
-      if (d.analyzing || d.refreshing) {
-        setAnalyzing(true);
-        if (d.has_data && d.articles) {
-          setDetail(d);
-        }
-      } else if (d.has_data) {
-        setDetail(d);
-        setAnalyzing(false);
-      } else {
-        setReqError('分析请求已发送，请稍候刷新');
-      }
-    } catch (e: any) {
-      setReqError(e.message || '请求失败，请确保后端服务正常运行');
-      setAnalyzing(false);
-    } finally {
-      setLoading(false);
-    }
+  const onRefresh = () => {
+    analyzeMutation.mutate();
   };
 
   const filteredArticles = (detail?.articles || []).filter(a =>
@@ -176,8 +104,6 @@ export default function SentimentView() {
   const scoreColor =
     (detail?.sentiment_score ?? 0) < -0.2 ? '#dc2626' :
     (detail?.sentiment_score ?? 0) > 0.2 ? '#16a34a' : '#6b7280';
-
-  const isWorking = loading || analyzing;
 
   return (
     <div className="flex h-full">
@@ -192,8 +118,8 @@ export default function SentimentView() {
             <p className="text-xs text-red-400 text-center py-4">加载失败</p>
           ) : (
             companies.map(name => (
-              <button key={name} onClick={() => selectCompany(name)}
-                className={`w-full text-left px-4 py-2.5 text-sm ${selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'}`}>
+              <button key={name} onClick={() => selectCompany(name)} disabled={isWorking}
+                className={`w-full text-left px-4 py-2.5 text-sm disabled:opacity-50 ${selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'}`}>
                 {name.slice(0, 16)}
               </button>
             ))
@@ -207,7 +133,7 @@ export default function SentimentView() {
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             选择左侧企业查看舆情详情
           </div>
-        ) : isWorking ? (
+        ) : isWorking && !detail ? (
           <div className="flex flex-col items-center justify-center h-full gap-3">
             <div className="w-8 h-8 border-2 border-[#333] border-t-transparent rounded-full animate-spin" />
             <p className="text-sm text-gray-500">
@@ -219,7 +145,7 @@ export default function SentimentView() {
           <div className="flex flex-col items-center justify-center h-full gap-4">
             <p className="text-sm text-gray-400">{reqError || '暂无舆情数据'}</p>
             <button
-              onClick={() => onRefresh(selected)}
+              onClick={onRefresh}
               disabled={isWorking}
               className="text-sm bg-[#333] text-white rounded-lg px-5 py-2 hover:bg-[#555] disabled:opacity-60 inline-flex items-center gap-2"
             >
@@ -240,7 +166,7 @@ export default function SentimentView() {
                 </p>
               </div>
               <button
-                onClick={() => onRefresh(selected)}
+                onClick={onRefresh}
                 disabled={isWorking}
                 className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-60 transition-colors inline-flex items-center gap-1.5"
               >
@@ -325,7 +251,7 @@ export default function SentimentView() {
               <div className="text-center py-8 space-y-1">
                 <p className="text-sm text-gray-400">未搜索到相关新闻</p>
                 <p className="text-xs text-gray-300">DuckDuckGo 未找到「{selected}」的近期新闻</p>
-                <button onClick={() => onRefresh(selected)} disabled={isWorking}
+                <button onClick={onRefresh} disabled={isWorking}
                   className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50 mt-2">
                   重新搜索
                 </button>

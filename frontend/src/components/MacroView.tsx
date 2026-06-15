@@ -1,5 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
+import { useWatchlist } from '../hooks';
+import { queryKeys } from '../query-keys';
+import type { PMIOverview, AlternativeDashboard } from '../types';
 
 interface PolicyTag {
   tag: string;
@@ -41,32 +45,42 @@ const LEVEL_BG: Record<string, string> = {
 };
 
 export default function MacroView() {
-  const [companies, setCompanies] = useState<string[]>([]);
-  const [selected, setSelected] = useState('');
-  const [macro, setMacro] = useState<MacroResult | null>(null);
-  const [alt, setAlt] = useState<AltResult | null>(null);
-  const [pmi, setPmi] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [altDash, setAltDash] = useState<any>(null);
+  const { companies } = useWatchlist();
+  const [selected, setSelected] = useState<string>(() => {
+    try { return localStorage.getItem('macro_company') || ''; } catch { return ''; }
+  });
 
-  useEffect(() => {
-    const controller = new AbortController();
-    const signal = controller.signal;
-    api.get<{ companies: string[] }>('/alert/watchlist', undefined, signal)
-      .then(d => setCompanies(d.companies || [])).catch(() => {});
-    api.get<any>('/analysis/macro/pmi', undefined, signal).then(setPmi).catch(() => {});
-    api.get<any>('/analysis/alternatives', undefined, signal).then(setAltDash).catch(() => {});
-    return () => controller.abort();
-  }, []);
+  const pmiQuery = useQuery({
+    queryKey: queryKeys.pmi,
+    queryFn: () => api.get<PMIOverview>('/analysis/macro/pmi'),
+  });
 
-  const select = async (name: string) => {
+  const altDashQuery = useQuery({
+    queryKey: queryKeys.alternativeDashboard,
+    queryFn: () => api.get<AlternativeDashboard>('/analysis/alternatives'),
+  });
+
+  const macroQuery = useQuery({
+    queryKey: queryKeys.macroDetail(selected),
+    queryFn: () => api.get<MacroResult>(`/analysis/macro/${encodeURIComponent(selected)}`),
+    enabled: !!selected,
+  });
+
+  const altQuery = useQuery({
+    queryKey: queryKeys.alternativeDetail(selected),
+    queryFn: () => api.get<AltResult>(`/analysis/alternatives/${encodeURIComponent(selected)}`),
+    enabled: !!selected,
+  });
+
+  const pmi = pmiQuery.data ?? null;
+  const altDash = altDashQuery.data ?? null;
+  const macro = macroQuery.data ?? null;
+  const alt = altQuery.data ?? null;
+  const loading = (macroQuery.isLoading || altQuery.isLoading) && !!selected;
+
+  const select = (name: string) => {
     setSelected(name);
-    setLoading(true);
-    const [m, a] = await Promise.all([
-      api.get<MacroResult>(`/analysis/macro/${encodeURIComponent(name)}`),
-      api.get<AltResult>(`/analysis/alternatives/${encodeURIComponent(name)}`),
-    ]);
-    setMacro(m); setAlt(a); setLoading(false);
+    localStorage.setItem('macro_company', name);
   };
 
   return (
@@ -97,8 +111,8 @@ export default function MacroView() {
 
         <div className="py-1">
           {companies.map(name => (
-            <button key={name} onClick={() => select(name)}
-              className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${
+            <button key={name} onClick={() => select(name)} disabled={loading}
+              className={`w-full text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 ${
                 selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'
               }`}>{name}</button>
           ))}

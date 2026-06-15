@@ -1,11 +1,9 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { setStoredUser } from '../api';
 
-interface LoginPageProps {
-  onLogin: () => void;
-}
-
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage() {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -32,7 +30,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
       const data = await res.json();
       setStoredUser(data.username, data.role);
-      onLogin();
+      navigate('/', { replace: true });
     } catch (err: any) {
       setError(err.message || '登录失败，请检查用户名和密码');
     } finally {

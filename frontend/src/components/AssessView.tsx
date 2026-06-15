@@ -1,6 +1,13 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '../api';
-import type { RiskResult } from '../types';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ReferenceArea, ReferenceLine } from 'recharts';
+import type {
+  RiskResult, ESGResult, MacroRiskResult, AlternativeResult,
+  ContagionResult, ScenarioResult, SanctionsResult,
+} from '../types';
+import { queryKeys } from '../query-keys';
 import SentimentPanel from './SentimentPanel';
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -12,43 +19,46 @@ const LEVEL_BG: Record<string, string> = {
   '高风险': '#fef2f2', '中风险': '#fffbf0', '低风险': '#ecfdf5',
 };
 
-export default function AssessView({ initialName = '' }: { initialName?: string }) {
+export default function AssessView() {
+  const { companyName } = useParams<{ companyName?: string }>();
+  const initialName = companyName ? decodeURIComponent(companyName) : '';
   const [name, setName] = useState(initialName);
-  const [data, setData] = useState<RiskResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const prevName = useRef(initialName);
-  const abortRef = useRef<AbortController | null>(null);
 
-  const runAssess = useCallback(async (target: string) => {
-    if (!target.trim()) return;
-    // Cancel previous in-flight request
-    if (abortRef.current) abortRef.current.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const assessMutation = useMutation({
+    mutationFn: ({ target, force }: { target: string; force?: boolean }) =>
+      api.post<RiskResult>('/risk/assess', { company_name: target.trim(), force_refresh: !!force }),
+  });
 
-    setData(null);  // Clear old data immediately
-    setLoading(true);
-    setError('');
-    try {
-      const res = await api.post<RiskResult>('/risk/assess', { company_name: target.trim() }, controller.signal);
-      setData(res);
-    } catch (err: any) {
-      if (err.name === 'AbortError') return;
-      setError('评估失败');
-    }
-    setLoading(false);
-  }, []);
+  const trendQuery = useQuery({
+    queryKey: queryKeys.riskTrend(name),
+    queryFn: () => api.get<{ data: { date: string; risk_score: number }[] }>(
+      `/trend/risk/${encodeURIComponent(name)}?days=90`
+    ),
+    enabled: !!assessMutation.data,
+  });
+
+  const data = assessMutation.data ?? null;
+  const loading = assessMutation.isPending;
+  const error = assessMutation.error ? '评估失败' : '';
+  const refreshing = loading && !!data;
+  const trend = trendQuery.data?.data ?? [];
 
   useEffect(() => {
-    if (initialName && initialName !== prevName.current) {
-      prevName.current = initialName;
+    if (initialName) {
       setName(initialName);
-      runAssess(initialName);
+      assessMutation.mutate({ target: initialName });
     }
-  }, [initialName, runAssess]);
+  }, [initialName]);
 
-  const assess = () => runAssess(name);
+  const assess = () => {
+    if (!name.trim()) return;
+    assessMutation.mutate({ target: name });
+  };
+
+  const refresh = () => {
+    if (!name.trim()) return;
+    assessMutation.mutate({ target: name, force: true });
+  };
 
   const score = data?.risk_score ?? 0;
   const color = score <= 30 ? '#2d8c63' : score <= 60 ? '#d4a040' : '#e06060';
@@ -82,10 +92,27 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
                 {data.risk_score}
               </div>
               <span className="text-lg font-semibold" style={{ color }}>{data.risk_level}</span>
+              {data.is_listed && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#e8e8e3] bg-white text-gray-500 shrink-0">上市</span>
+              )}
               <div className="flex-1 bg-[#e5e5e0] h-2 rounded-full">
                 <div className="h-full rounded-full transition-all duration-700" style={{ width: `${data.risk_score}%`, background: color }} />
               </div>
-              <div className="flex gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
+                {data.cache_age_hours != null && (
+                  <span className={`text-[10px] whitespace-nowrap ${data.is_stale ? 'text-amber-500' : 'text-gray-400'}`}
+                    title={data.cached_at?.slice(0, 19).replace('T', ' ') ?? ''}>
+                    {data.cache_age_hours < 1
+                      ? `${Math.round(data.cache_age_hours * 60)} 分钟前`
+                      : `${data.cache_age_hours.toFixed(1)} 小时前`}
+                  </span>
+                )}
+                {data.is_stale && (
+                  <button onClick={refresh} disabled={refreshing}
+                    className="text-[10px] text-amber-600 hover:text-amber-800 border border-amber-200 rounded-md px-1.5 py-0.5 disabled:opacity-50 whitespace-nowrap">
+                    {refreshing ? '刷新中…' : '刷新'}
+                  </button>
+                )}
                 <a
                   href={`/api/v1/report/excel/${encodeURIComponent(name)}`}
                   className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors no-underline"
@@ -103,6 +130,65 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
               </div>
             </div>
           </div>
+
+          {/* risk trend */}
+          {trend.length > 1 && (
+            <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6">
+              <h3 className="text-sm font-semibold text-[#333] mb-1">近90天风险评分趋势</h3>
+              <p className="text-[11px] text-gray-400 mb-4">
+                最新 {trend[trend.length - 1]?.risk_score ?? '—'} 分 · 最高 {Math.max(...trend.map(d => d.risk_score))} · 最低 {Math.min(...trend.map(d => d.risk_score))}
+              </p>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={trend} margin={{top: 5, right: 5, bottom: 5, left: 0}}>
+                  <defs>
+                    <linearGradient id="riskAreaGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#333" stopOpacity={0.12} />
+                      <stop offset="100%" stopColor="#333" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  {/* Risk zone backgrounds */}
+                  <ReferenceArea y1={60} y2={100} fill="#fef2f2" fillOpacity={0.6} />
+                  <ReferenceArea y1={30} y2={60} fill="#fffbeb" fillOpacity={0.6} />
+                  <ReferenceArea y1={0} y2={30} fill="#f0fdf4" fillOpacity={0.6} />
+                  {/* Threshold lines */}
+                  <ReferenceLine y={60} stroke="#fca5a5" strokeDasharray="4 4" strokeWidth={1} />
+                  <ReferenceLine y={30} stroke="#86efac" strokeDasharray="4 4" strokeWidth={1} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
+                  <XAxis dataKey="date" tick={{fontSize: 10, fill: '#999'}} axisLine={{stroke: '#eee'}} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={{fontSize: 10, fill: '#999'}} axisLine={false} tickLine={false} width={24} />
+                  <Tooltip
+                    contentStyle={{
+                      background: '#fff',
+                      border: '1px solid #e8e8e3',
+                      borderRadius: 12,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+                      fontSize: 12,
+                      padding: '8px 12px',
+                    }}
+                    labelStyle={{color: '#999', marginBottom: 2}}
+                    formatter={(value) => {
+                      const lvl = Number(value) >= 60 ? '高风险' : Number(value) >= 30 ? '中风险' : '低风险';
+                      const clr = Number(value) >= 60 ? '#dc2626' : Number(value) >= 30 ? '#d97706' : '#16a34a';
+                      return [<span key={0} style={{color: clr, fontWeight: 600}}>{value} 分 · {lvl}</span>, ''];
+                    }}
+                  />
+                  <Area type="monotone" dataKey="risk_score" stroke="none" fill="url(#riskAreaGrad)" />
+                  <Line
+                    type="monotone" dataKey="risk_score"
+                    stroke="#333" strokeWidth={2.5}
+                    dot={{r: 3, fill: '#fff', stroke: '#333', strokeWidth: 2}}
+                    activeDot={{r: 5, fill: '#333', stroke: '#fff', strokeWidth: 2}}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+              {/* Legend */}
+              <div className="flex justify-center gap-4 mt-3 text-[10px] text-gray-400">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-100 border border-green-200" />低风险 0-30</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-200" />中风险 30-60</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-200" />高风险 60-100</span>
+              </div>
+            </div>
+          )}
 
           {/* metrics */}
           {fin && (
@@ -175,17 +261,17 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
           {/* ---- Additional analysis sections (collapsible) ---- */}
 
           {/* ESG */}
-          <Expandable key={`esg-${name}`} title="🌍 ESG 评分" endpoint={`/p2/esg/${encodeURIComponent(name)}`}
-            render={(d: any) => (
+          <Expandable<ESGResult> key={`esg-${name}`} title="🌍 ESG 评分" endpoint={`/p2/esg/${encodeURIComponent(name)}`}
+            render={(d) => (
               <div className="grid grid-cols-3 gap-3">
-                {['environmental', 'social', 'governance'].map(dim => {
+                {(['environmental', 'social', 'governance'] as const).map(dim => {
                   const dd = d[dim];
                   return (
                     <div key={dim} className="bg-white border border-[#e8e8e3] rounded-xl p-3">
                       <div className="text-xs text-gray-500 mb-1">{dim === 'environmental' ? 'E·环境' : dim === 'social' ? 'S·社会' : 'G·治理'}</div>
                       <div className="text-lg font-bold" style={{ color: LEVEL_COLOR[dd.level] }}>{dd.score.toFixed(0)}</div>
                       <div className="text-[11px]" style={{ color: LEVEL_COLOR[dd.level] }}>{dd.level}</div>
-                      {dd.detail.map((item: any, i: number) => (
+                      {dd.detail.map((item, i) => (
                         <div key={i} className="text-[10px] text-gray-500 mt-1 flex justify-between">
                           <span>{item.item}</span>
                           <span>{item.value}</span>
@@ -198,8 +284,8 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          <Expandable key={`macro-${name}`} title="🌐 宏观风险" endpoint={`/analysis/macro/${encodeURIComponent(name)}`}
-            render={(d: any) => (
+          <Expandable<MacroRiskResult> key={`macro-${name}`} title="🌐 宏观风险" endpoint={`/analysis/macro/${encodeURIComponent(name)}`}
+            render={(d) => (
               <div>
                 <div className="flex items-center gap-3 mb-3">
                   <span className="text-2xl font-bold" style={{ color: LEVEL_COLOR[d.total_level] }}>{d.total_score}</span>
@@ -208,7 +294,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
                 </div>
                 {d.policy_risks?.tags?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {d.policy_risks.tags.map((t: any, i: number) => (
+                    {d.policy_risks.tags.map((t, i) => (
                       <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">{t.tag}</span>
                     ))}
                   </div>
@@ -217,14 +303,14 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          <Expandable key={`alt-${name}`} title="🔀 替代建议" endpoint={`/analysis/alternatives/${encodeURIComponent(name)}`}
-            render={(d: any) => (
+          <Expandable<AlternativeResult> key={`alt-${name}`} title="🔀 替代建议" endpoint={`/analysis/alternatives/${encodeURIComponent(name)}`}
+            render={(d) => (
               <div>
                 {d.alternatives?.length === 0 ? (
-                  <p className="text-xs text-gray-400">{d.source_risk_score < 60 ? '风险较低，暂不需替代' : '暂未找到替代'}</p>
+                  <p className="text-xs text-gray-400">{d.source_risk_score != null && d.source_risk_score < 60 ? '风险较低，暂不需替代' : '暂未找到替代'}</p>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
-                    {d.alternatives?.slice(0, 4).map((a: any, i: number) => (
+                    {d.alternatives?.slice(0, 4).map((a, i) => (
                       <div key={i} className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-lg px-3 py-2">
                         <span className="text-xs font-bold text-green-600">#{i + 1}</span>
                         <span className="text-xs text-[#333] truncate flex-1">{a.company_name.slice(0, 12)}</span>
@@ -241,8 +327,8 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          <Expandable key={`contagion-${name}`} title="🔗 风险传染" endpoint={`/p2/contagion/${encodeURIComponent(name)}`}
-            render={(d: any) => (
+          <Expandable<ContagionResult> key={`contagion-${name}`} title="🔗 风险传染" endpoint={`/p2/contagion/${encodeURIComponent(name)}`}
+            render={(d) => (
               <div>
                 <div className="flex gap-4 mb-2 text-xs text-gray-500">
                   <span>关联方 {d.related_count}</span>
@@ -252,7 +338,7 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
                 </div>
                 {d.related_entities?.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {d.related_entities.slice(0, 8).map((e: any, i: number) => (
+                    {d.related_entities.slice(0, 8).map((e, i) => (
                       <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-gray-50 border border-gray-100 text-gray-600">
                         {e.name.slice(0, 15)} <span className="text-gray-400">({e.relation_type})</span>
                       </span>
@@ -263,15 +349,15 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          <Expandable key={`scenario-${name}`} title="🎯 情景模拟" endpoint={`/analysis/scenario/${encodeURIComponent(name)}?scenario=bankruptcy`}
-            render={(d: any) => (
+          <Expandable<ScenarioResult> key={`scenario-${name}`} title="🎯 情景模拟" endpoint={`/analysis/scenario/${encodeURIComponent(name)}?scenario=bankruptcy`}
+            render={(d) => (
               <div>
                 <div className="flex items-center gap-3 mb-2">
                   <span className="text-lg font-bold" style={{ color: LEVEL_COLOR[d.impact_level] }}>{d.impact_score} · {d.impact_level}</span>
                   <span className="text-xs text-gray-400">{d.scenario_desc}</span>
                 </div>
                 <div className="space-y-1">
-                  {d.suggested_actions?.slice(0, 3).map((a: string, i: number) => (
+                  {d.suggested_actions?.slice(0, 3).map((a, i) => (
                     <div key={i} className="text-xs text-gray-600">{a}</div>
                   ))}
                 </div>
@@ -279,15 +365,15 @@ export default function AssessView({ initialName = '' }: { initialName?: string 
             )}
           />
 
-          <Expandable key={`sanc-${name}`} title="🛡️ 制裁筛查" endpoint={`/analysis/sanctions/${encodeURIComponent(name)}`}
-            render={(d: any) => (
+          <Expandable<SanctionsResult> key={`sanc-${name}`} title="🛡️ 制裁筛查" endpoint={`/analysis/sanctions/${encodeURIComponent(name)}`}
+            render={(d) => (
               <div>
                 <span className={`text-sm font-bold ${d.clean ? 'text-green-600' : 'text-red-600'}`}>
                   {d.clean ? '✅ 未命中' : `⚠️ ${d.match_count}条命中`}
                 </span>
                 {d.matches?.length > 0 && (
                   <div className="mt-2 space-y-1">
-                    {d.matches.map((m: any, i: number) => (
+                    {d.matches.map((m, i) => (
                       <div key={i} className="text-xs text-gray-600">
                         <span className={m.level === 'critical' ? 'text-red-500' : 'text-amber-600'}>
                           {m.name || m.detail || m.country}
@@ -332,18 +418,19 @@ function ExpandableSentiment({ name }: { name: string }) {
 
 // ---- Expandable section ----
 
-function Expandable({ title, endpoint, render }: { title: string; endpoint: string; render: (d: any) => React.ReactNode }) {
+function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: string; render: (d: T) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<T | null>(null);
+  const [error, setError] = useState(false);
 
   const toggle = async () => {
     if (open) { setOpen(false); return; }
     setOpen(true);
-    if (!data) {
+    if (!data && !error) {
       try {
-        const d = await api.get<any>(endpoint);
+        const d = await api.get<T>(endpoint);
         setData(d);
-      } catch { setData({ error: true }); }
+      } catch { setError(true); }
     }
   };
 
@@ -358,10 +445,10 @@ function Expandable({ title, endpoint, render }: { title: string; endpoint: stri
       </button>
       {open && (
         <div className="bg-[#fafaf8] border border-[#e8e8e3] border-t-0 rounded-b-xl px-4 py-3">
-          {!data ? (
-            <p className="text-xs text-gray-400">加载中…</p>
-          ) : data.error ? (
+          {error ? (
             <p className="text-xs text-gray-400">暂无数据</p>
+          ) : !data ? (
+            <p className="text-xs text-gray-400">加载中…</p>
           ) : (
             render(data)
           )}

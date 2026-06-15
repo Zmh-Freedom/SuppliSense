@@ -1,5 +1,7 @@
 import { useState, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
+import { queryKeys } from '../query-keys';
 
 interface DocumentStats {
   total_documents: number;
@@ -21,72 +23,63 @@ interface SearchResult {
 }
 
 export default function KnowledgePanel() {
-  const [stats, setStats] = useState<DocumentStats | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const queryClient = useQueryClient();
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
-  const [searching, setSearching] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loadStats = async () => {
-    try {
-      const res = await api.get<DocumentStats>('/knowledge/stats');
-      setStats(res);
-    } catch {
-      setStats(null);
-    }
-  };
+  const statsQuery = useQuery({
+    queryKey: queryKeys.knowledgeStats,
+    queryFn: () => api.get<DocumentStats>('/knowledge/stats'),
+  });
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setUploading(true);
-    setUploadResult(null);
-
-    try {
-      const res = await api.upload<UploadResult>('/knowledge/upload', file);
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => api.upload<UploadResult>('/knowledge/upload', file),
+    onSuccess: (res) => {
       setUploadResult(res);
-      loadStats();
-    } catch (err) {
-      console.error('Upload failed:', err);
-      alert('上传失败，请重试');
-    }
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledgeStats });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    },
+    onError: () => alert('上传失败，请重试'),
+  });
 
-    setUploading(false);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
+  const searchMutation = useMutation({
+    mutationFn: () => api.post<{ results: SearchResult[] }>('/knowledge/search', {
+      query: searchQuery,
+      n_results: 5,
+    }),
+    onSuccess: (res) => setSearchResults(res.results || []),
+    onError: () => setSearchResults([]),
+  });
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return;
-
-    setSearching(true);
-    try {
-      const res = await api.post<{ results: SearchResult[] }>('/knowledge/search', {
-        query: searchQuery,
-        n_results: 5,
-      });
-      setSearchResults(res.results || []);
-    } catch {
-      setSearchResults([]);
-    }
-    setSearching(false);
-  };
-
-  const handleClear = async () => {
-    if (!confirm('确定要清空知识库吗？此操作不可恢复。')) return;
-
-    try {
-      await api.delete('/knowledge/clear');
-      setStats(null);
+  const clearMutation = useMutation({
+    mutationFn: () => api.delete('/knowledge/clear'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledgeStats });
       setSearchResults([]);
       alert('知识库已清空');
-    } catch {
-      alert('清空失败，请重试');
-    }
+    },
+    onError: () => alert('清空失败，请重试'),
+  });
+
+  const stats = statsQuery.data ?? null;
+
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadResult(null);
+    uploadMutation.mutate(file);
+  };
+
+  const handleSearch = () => {
+    if (!searchQuery.trim()) return;
+    searchMutation.mutate();
+  };
+
+  const handleClear = () => {
+    if (!confirm('确定要清空知识库吗？此操作不可恢复。')) return;
+    clearMutation.mutate();
   };
 
   return (
@@ -98,7 +91,7 @@ export default function KnowledgePanel() {
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium">知识库统计</span>
           <button
-            onClick={loadStats}
+            onClick={() => statsQuery.refetch()}
             className="text-xs text-gray-400 hover:text-gray-600"
           >
             刷新
@@ -136,10 +129,10 @@ export default function KnowledgePanel() {
             type="file"
             accept=".pdf,.docx,.xlsx,.txt"
             onChange={handleUpload}
-            disabled={uploading}
+            disabled={uploadMutation.isPending}
             className="flex-1 text-sm text-gray-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:bg-[#f0f0eb] file:text-[#333] hover:file:bg-[#e8e8e3] file:cursor-pointer disabled:opacity-50"
           />
-          {uploading && <span className="text-xs text-gray-400">上传中...</span>}
+          {uploadMutation.isPending && <span className="text-xs text-gray-400">上传中...</span>}
         </div>
         {uploadResult && (
           <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
@@ -165,10 +158,10 @@ export default function KnowledgePanel() {
           />
           <button
             onClick={handleSearch}
-            disabled={searching || !searchQuery.trim()}
+            disabled={searchMutation.isPending || !searchQuery.trim()}
             className="text-sm bg-[#333] text-white rounded-lg px-4 py-1.5 hover:bg-[#555] disabled:opacity-40"
           >
-            {searching ? '检索中' : '检索'}
+            {searchMutation.isPending ? '检索中' : '检索'}
           </button>
         </div>
         {searchResults.length > 0 && (
@@ -191,7 +184,7 @@ export default function KnowledgePanel() {
             ))}
           </div>
         )}
-        {searchResults.length === 0 && searchQuery && !searching && (
+        {searchResults.length === 0 && searchQuery && !searchMutation.isPending && (
           <p className="text-sm text-gray-400 text-center py-4">未找到相关文档</p>
         )}
       </div>
@@ -200,9 +193,10 @@ export default function KnowledgePanel() {
       <div className="mt-auto pt-4 border-t border-[#e8e8e3]">
         <button
           onClick={handleClear}
-          className="text-sm text-red-500 hover:text-red-600"
+          disabled={clearMutation.isPending}
+          className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
         >
-          清空知识库
+          {clearMutation.isPending ? '清空中…' : '清空知识库'}
         </button>
       </div>
     </div>

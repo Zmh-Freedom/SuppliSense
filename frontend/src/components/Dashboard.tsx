@@ -1,58 +1,40 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
 import RiskMatrix from './RiskMatrix';
-
-interface CompanySnap {
-  name: string;
-  score: number | null;
-  level: string;
-  last_checked: string | null;
-}
-
-interface DashboardData {
-  total: number;
-  distribution: Record<string, number>;
-  companies: CompanySnap[];
-  alert_count: number;
-}
+import { useDashboard } from '../hooks';
+import { queryKeys } from '../query-keys';
+import type { Prediction } from '../types';
 
 export default function Dashboard() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [predictions, setPredictions] = useState<any[]>([]);
-  const [error, setError] = useState(false);
+  const dashQuery = useDashboard();
+  const predQuery = useQuery({
+    queryKey: queryKeys.predictions,
+    queryFn: () => api.get<Prediction[]>('/alert/predict'),
+  });
+  const trendQuery = useQuery({
+    queryKey: queryKeys.alertTrend(30),
+    queryFn: () => api.get<{data: {date: string; count: number}[]}>('/trend/alert?days=30'),
+  });
 
-  const load = useCallback((signal?: AbortSignal) => {
-    setError(false);
-    Promise.all([
-      api.get<DashboardData>('/alert/dashboard', undefined, signal),
-      api.get<any[]>('/alert/predict', undefined, signal),
-    ])
-      .then(([dashData, predData]) => {
-        setData(dashData);
-        setPredictions(predData || []);
-      })
-      .catch((err) => {
-        if (err.name !== 'AbortError') setError(true);
-      });
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
+  const data = dashQuery.data;
+  const predictions = predQuery.data ?? [];
+  const alertTrend = trendQuery.data?.data ?? [];
+  const isLoading = dashQuery.isLoading;
+  const isRefreshing = dashQuery.isFetching && !dashQuery.isLoading;
+  const error = dashQuery.error;
 
   if (error) {
     return (
       <div className="max-w-2xl mx-auto py-20 text-center">
         <p className="text-gray-400 mb-4">加载失败，请检查后端服务</p>
-        <button onClick={() => load()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
+        <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-sm text-blue-500 hover:text-blue-600 disabled:opacity-50">重试</button>
       </div>
     );
   }
 
-  if (!data) return <div className="p-6 text-gray-300">加载中…</div>;
+  if (isLoading || !data) return <div className="p-6 text-gray-300">加载中…</div>;
 
   const levels = [
     { key: '高风险', color: '#e06060', bg: '#fef5f5' },
@@ -65,7 +47,7 @@ export default function Dashboard() {
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[#333]">风险看板</h2>
-        <button onClick={() => load()} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
+        <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">{isRefreshing ? '刷新中…' : '刷新'}</button>
       </div>
 
       {/* summary cards */}
@@ -75,6 +57,51 @@ export default function Dashboard() {
         <SummaryCard label="高风险" value={data.distribution['高风险'] || 0} color="#e06060" />
         <SummaryCard label="低风险" value={data.distribution['低风险'] || 0} color="#2d8c63" />
       </div>
+
+      {/* Trend Charts */}
+      {alertTrend.length > 0 && (
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">
+          <h3 className="text-sm font-semibold text-[#333] mb-1">近30天告警趋势</h3>
+          <p className="text-[11px] text-gray-400 mb-4">
+            共 {alertTrend.reduce((s, d) => s + d.count, 0)} 次告警 · 日均 {(alertTrend.reduce((s, d) => s + d.count, 0) / alertTrend.length).toFixed(1)} 次
+          </p>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={alertTrend} barCategoryGap="30%">
+              <defs>
+                <linearGradient id="alertBarGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ef4444" stopOpacity={0.9} />
+                  <stop offset="100%" stopColor="#fca5a5" stopOpacity={0.3} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
+              <XAxis dataKey="date" tick={{fontSize: 10, fill: '#999'}} axisLine={{stroke: '#eee'}} tickLine={false} />
+              <YAxis allowDecimals={false} tick={{fontSize: 10, fill: '#999'}} axisLine={false} tickLine={false} width={24} />
+              <Tooltip
+                contentStyle={{
+                  background: '#fff',
+                  border: '1px solid #e8e8e3',
+                  borderRadius: 12,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+                  fontSize: 12,
+                  padding: '8px 12px',
+                }}
+                labelStyle={{color: '#999', marginBottom: 2}}
+                formatter={(value) => [`${value} 次告警`, '']}
+              />
+              <ReferenceLine
+                y={Math.ceil(alertTrend.reduce((s, d) => s + d.count, 0) / alertTrend.length)}
+                stroke="#e5e7eb" strokeDasharray="4 4" strokeWidth={1}
+                label={{value: '均值', position: 'right', fontSize: 10, fill: '#bbb'}}
+              />
+              <Bar dataKey="count" radius={[6, 6, 0, 0]} maxBarSize={32}>
+                {alertTrend.map((entry, i) => (
+                  <Cell key={i} fill={entry.count >= 3 ? '#ef4444' : entry.count >= 1 ? '#f59e0b' : '#d1d5db'} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* risk distribution bar */}
       <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">
@@ -123,7 +150,7 @@ export default function Dashboard() {
                     {p.label}
                   </span>
                   <span className="text-[11px] text-gray-400">
-                    {p.signals?.slice(0, 2).map((s: any) => s.signal).join(' · ')}
+                    {p.signals?.slice(0, 2).map(s => s.signal).join(' · ')}
                   </span>
                 </div>
               );

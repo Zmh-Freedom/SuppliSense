@@ -43,6 +43,10 @@ export interface RiskResult {
   risk_level: string;
   financial: FinancialMetrics | null;
   risk_detail: RiskDetail;
+  cached_at: string | null;
+  cache_age_hours: number | null;
+  is_stale: boolean;
+  is_listed: boolean;
 }
 
 export interface AlertDoc {
@@ -60,4 +64,143 @@ export interface WatchlistData {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+// ---- Dashboard ----
+export interface Prediction {
+  company_name: string;
+  predicted_score: number;
+  predicted_level: string;
+  probability: 'high' | 'medium' | 'low';
+  label: string;
+  signals: { signal: string; weight: number }[];
+  trend: 'rising' | 'falling' | 'stable';
+}
+
+// ---- Macro / PMI ----
+export interface PMIData {
+  date: string;
+  value: number;
+  label: string;
+}
+
+export interface PMIOverview {
+  manufacturing_pmi: number;
+  non_manufacturing_pmi: number;
+  error?: boolean;
+}
+
+export interface AlternativeDashboard {
+  total_alternatives: number;
+  industries: string[];
+  high_risk_count: number;
+}
+
+// ---- WebSocket Events ----
+export interface WSEventMap {
+  alert: AlertDoc;
+  alert_update: AlertDoc;
+  risk_update: { company_name: string; score: number; level: string };
+  task_complete: { task_id: string; status: string; result?: unknown };
+  notification: { message: string; type: string };
+  sentiment_ready: { company_name: string };
+}
+
+// ---- AssessView Expandable ----
+export interface JudicialDetail {
+  count: number;
+  detail: { case_number: string; amount?: number; date?: string; type?: string }[];
+}
+
+export interface PolicyRisk {
+  score: number;
+  count: number;
+  tags: { tag: string; level: string; desc: string }[];
+}
+
+export interface Alternative {
+  company_name: string;
+  industry: string;
+  risk_score: number | null;
+  risk_level: string;
+}
+
+export interface RelatedEntity {
+  name: string;
+  relation: string;
+  risk_score?: number;
+}
+
+export interface JudicialMatch {
+  case_number: string;
+  type: string;
+  amount?: number;
+  date?: string;
+}
+
+// ---- ESG ----
+export interface ESGDimension {
+  score: number;
+  level: string;
+  detail: { item: string; value: string | number }[];
+}
+
+export interface ESGResult {
+  environmental: ESGDimension;
+  social: ESGDimension;
+  governance: ESGDimension;
+}
+
+// ---- Macro Risk ----
+export interface MacroRiskResult {
+  company_name: string;
+  assessed_at: string;
+  total_score: number;
+  total_level: string;
+  policy_risks: PolicyRisk;
+  regional_risk: { province: string; score: number; level: string; label?: string };
+  industry_risk: { industry: string; pmi_value?: number; pmi_label?: string; risk_score: number; risk_level: string; pmi_date?: string };
+}
+
+// ---- Alternatives ----
+export interface AlternativeResult {
+  company_name: string;
+  source_industry: string;
+  source_risk_score: number | null;
+  alternatives_count: number;
+  alternatives: Alternative[];
+}
+
+// ---- Contagion ----
+export interface ContagionResult {
+  company_name: string;
+  related_count: number;
+  branch_count: number;
+  dependency_count: number;
+  high_risk_related_count: number;
+  related_entities: { name: string; relation_type: string; risk_score?: number }[];
+}
+
+// ---- Scenario ----
+export interface ScenarioResult {
+  scenario: string;
+  scenario_desc: string;
+  impact_score: number;
+  impact_level: string;
+  suggested_actions: string[];
+}
+
+// ---- Sanctions ----
+export interface SanctionsMatch {
+  name?: string;
+  detail?: string;
+  country?: string;
+  program?: string;
+  level?: string;
+}
+
+export interface SanctionsResult {
+  clean: boolean;
+  match_count: number;
+  matches: SanctionsMatch[];
 }

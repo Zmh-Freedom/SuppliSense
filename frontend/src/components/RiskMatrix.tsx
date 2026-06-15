@@ -1,74 +1,55 @@
-import { useState, useEffect, useCallback } from 'react';
-import { api } from '../api';
+import { useState } from 'react';
+import { useDashboard } from '../hooks';
 
 interface CompanySnap {
   name: string;
   score: number;
   level: string;
+  alert_count?: number;
 }
 
 export default function RiskMatrix() {
-  const [companies, setCompanies] = useState<CompanySnap[]>([]);
+  const { data, isLoading, error, refetch } = useDashboard();
   const [tooltip, setTooltip] = useState<{ name: string; score: number; level: string; x: number; y: number } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
 
-  const load = useCallback((signal?: AbortSignal) => {
-    setLoading(true);
-    setError(false);
-    api.get<{ companies: CompanySnap[] }>('/alert/dashboard', undefined, signal)
-      .then(d => {
-        const filtered = d.companies.filter(c => c.score !== null);
-        setCompanies(filtered);
-      })
-      .catch((err) => { if (err.name !== 'AbortError') setError(true); })
-      .finally(() => setLoading(false));
-  }, []);
+  const companies = (data?.companies ?? []).filter(c => c.score !== null) as CompanySnap[];
 
-  useEffect(() => {
-    const controller = new AbortController();
-    load(controller.signal);
-    return () => controller.abort();
-  }, [load]);
-
-  // Map score to y (0-100 → 100-0, so high risk is at top)
-  const toY = (score: number) => 100 - score;
-  // For impact, use random spread for now; later can use registered capital
-  const toX = (name: string) => {
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) % 100;
-    return hash;
-  };
+  // Compute max alert count for scaling
+  const maxAlerts = companies.length > 0 ? Math.max(...companies.map(c => c.alert_count ?? 0), 1) : 1;
+  // x = risk_score (0-100)
+  const toX = (score: number) => score;
+  // y = alert_count mapped to 100-0 (high alerts at top)
+  const toY = (count: number) => 100 - (count / maxAlerts) * 100;
 
   const quadrants = [
-    { x: 50, y: 0, w: 50, h: 50, label: '重点监控', color: '#fef2f2', border: '#fca5a5', desc: '高风险 + 高影响' },
-    { x: 0, y: 0, w: 50, h: 50, label: '定期评估', color: '#fffbeb', border: '#fcd34d', desc: '高风险 + 低影响' },
-    { x: 50, y: 50, w: 50, h: 50, label: '持续跟踪', color: '#ecfdf5', border: '#6ee7b7', desc: '低风险 + 高影响' },
-    { x: 0, y: 50, w: 50, h: 50, label: '低优先级', color: '#f8fafc', border: '#e2e8f0', desc: '低风险 + 低影响' },
+    { x: 50, y: 0, w: 50, h: 50, label: '高风险 高告警', color: '#fef2f2', border: '#fca5a5' },
+    { x: 0, y: 0, w: 50, h: 50, label: '低风险 高告警', color: '#fffbeb', border: '#fcd34d' },
+    { x: 50, y: 50, w: 50, h: 50, label: '高风险 低告警', color: '#ecfdf5', border: '#6ee7b7' },
+    { x: 0, y: 50, w: 50, h: 50, label: '低风险 低告警', color: '#f8fafc', border: '#e2e8f0' },
   ];
 
   return (
     <div className="max-w-4xl mx-auto py-6 px-4">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-[#333]">风险矩阵</h2>
-        <button onClick={() => load()} className="text-xs text-gray-400 hover:text-gray-600">刷新</button>
+        <button onClick={() => refetch()} disabled={isLoading} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">{isLoading ? '刷新中…' : '刷新'}</button>
       </div>
 
       {error ? (
         <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center">
           <p className="text-gray-400 mb-3">加载失败</p>
-          <button onClick={() => load()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
+          <button onClick={() => refetch()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
         </div>
-      ) : loading ? (
+      ) : isLoading ? (
         <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center text-gray-300">
           加载中…
         </div>
       ) : (
         <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6">
           <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
-            <span>← 低</span>
-            <span>影响程度 →</span>
-            <span>高 →</span>
+            <span>← 低风险</span>
+            <span>风险评分 →</span>
+            <span>高风险 →</span>
           </div>
 
           {/* matrix grid */}
@@ -84,23 +65,27 @@ export default function RiskMatrix() {
                 </g>
               ))}
               {/* risk axis labels */}
-              <text x="2" y="20" fontSize="2.5" fill="#94a3b8" transform="rotate(-90, 2, 50)">高风险 ← 风险程度 → 低风险</text>
+              <text x="2" y="20" fontSize="2.5" fill="#94a3b8" transform="rotate(-90, 2, 50)">高告警 ← 告警次数 → 低告警</text>
             </svg>
 
             {/* company dots */}
             {companies.map(c => {
-              const x = toX(c.name);
-              const y = toY(c.score);
+              const x = toX(c.score);
+              const y = toY(c.alert_count ?? 0);
               const color = c.score <= 30 ? '#059669' : c.score <= 60 ? '#d97706' : '#dc2626';
+              const sizeScale = maxAlerts > 0 ? (c.alert_count ?? 0) / maxAlerts : 0;
+              const size = Math.max(8, Math.min(20, 6 + sizeScale * 14));
               return (
                 <div
                   key={c.name}
-                  className="absolute w-3 h-3 rounded-full border-2 border-white shadow-sm cursor-pointer hover:scale-150 transition-transform z-10"
+                  className="absolute rounded-full border-2 border-white shadow-sm cursor-pointer hover:scale-150 transition-transform z-10"
                   style={{
                     left: `${x}%`,
                     top: `${y}%`,
                     background: color,
                     transform: 'translate(-50%, -50%)',
+                    width: `${size}px`,
+                    height: `${size}px`,
                   }}
                   onMouseEnter={() => setTooltip({ name: c.name, score: c.score, level: c.level, x, y })}
                   onMouseLeave={() => setTooltip(null)}
@@ -131,7 +116,7 @@ export default function RiskMatrix() {
         </div>
       )}
 
-      {!loading && !error && companies.length === 0 && (
+      {!isLoading && !error && companies.length === 0 && (
         <p className="text-gray-300 text-center mt-16">暂无评估数据，请先评估监控清单中的企业</p>
       )}
     </div>

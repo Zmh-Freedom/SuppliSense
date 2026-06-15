@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import { api, chatStream } from '../api';
 import type { ChatMessage, RiskResult } from '../types';
@@ -39,7 +40,9 @@ export default function ChatView() {
     const list = loadSessions();
     return list.length > 0 ? list[list.length - 1].sid : '';
   });
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState<string>(() => {
+    try { return localStorage.getItem('chat_input') || ''; } catch { return ''; }
+  });
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
@@ -50,6 +53,16 @@ export default function ChatView() {
   const msgs = active?.msgs ?? [];
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, streamState]);
+
+  // Timeout safeguard: auto-reset loading after 60s
+  useEffect(() => {
+    if (!loading) return;
+    const timeout = setTimeout(() => {
+      setLoading(false);
+      setStreamState(null);
+    }, 60000);
+    return () => clearTimeout(timeout);
+  }, [loading]);
 
   const persist = (sid: string, newMsgs: ChatMessage[]) => {
     const list = loadSessions();
@@ -155,6 +168,10 @@ export default function ChatView() {
         },
         onError: (data) => {
           console.error('Stream error:', data.message);
+          newMsgs.push({ role: 'assistant', content: `错误：${data.message}` });
+          persist(sid, newMsgs);
+          setStreamState(null);
+          setLoading(false);
         },
       }, mode);
     } catch (err) {
@@ -346,7 +363,7 @@ export default function ChatView() {
         <div className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-2xl px-4 py-1 focus-within:border-[#bbb] focus-within:shadow-sm transition-shadow">
           <input
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => { setInput(e.target.value); localStorage.setItem('chat_input', e.target.value); }}
             onKeyDown={e => e.key === 'Enter' && send()}
             placeholder="输入问题，如：对比海康威视和宝钢的风险"
             className="flex-1 border-none outline-none py-2.5 text-sm bg-transparent placeholder-gray-300"
@@ -402,17 +419,16 @@ function QuickAssess() {
   const [name, setName] = useState('');
   const [data, setData] = useState<RiskResult | null>(null);
   const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
 
-  const assess = async () => {
-    if (!name.trim() || loading) return;
-    setLoading(true);
-    try {
-      const res = await api.post<RiskResult>('/risk/assess', { company_name: name.trim() });
-      setData(res);
-      setOpen(true);
-    } catch { setData(null); }
-    setLoading(false);
+  const assessMutation = useMutation({
+    mutationFn: () => api.post<RiskResult>('/risk/assess', { company_name: name.trim() }),
+    onSuccess: (res) => { setData(res); setOpen(true); },
+    onError: () => setData(null),
+  });
+
+  const assess = () => {
+    if (!name.trim() || assessMutation.isPending) return;
+    assessMutation.mutate();
   };
 
   const rd = data?.risk_detail;
@@ -429,9 +445,9 @@ function QuickAssess() {
             placeholder="快速查看风险详情…"
             className="flex-1 text-xs border border-[#e8e8e3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#bbb] placeholder-gray-300"
           />
-          <button onClick={assess} disabled={loading}
+          <button onClick={assess} disabled={assessMutation.isPending}
             className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-40">
-            {loading ? '查询中' : '查看'}
+            {assessMutation.isPending ? '查询中' : '查看'}
           </button>
         </div>
       </div>

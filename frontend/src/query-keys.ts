@@ -1,0 +1,26 @@
+export const queryKeys = {
+  watchlist: ['alert', 'watchlist'] as const,
+  dashboard: ['alert', 'dashboard'] as const,
+  alertHistory: ['alert', 'history'] as const,
+  predictions: ['alert', 'predict'] as const,
+  alertTrend: (days: number) => ['trend', 'alert', days] as const,
+  riskTrend: (name: string) => ['trend', 'risk', name] as const,
+  sentimentDashboard: ['sentiment', 'dashboard'] as const,
+  sentimentDetail: (name: string) => ['sentiment', 'detail', name] as const,
+  contagionSummary: ['p2', 'contagion'] as const,
+  contagionGraph: (name: string) => ['p2', 'contagion', name, 'graph'] as const,
+  esgList: ['p2', 'esg'] as const,
+  esgDetail: (name: string) => ['p2', 'esg', name] as const,
+  pmi: ['analysis', 'macro', 'pmi'] as const,
+  alternativeDashboard: ['analysis', 'alternatives'] as const,
+  macroDetail: (name: string) => ['analysis', 'macro', name] as const,
+  alternativeDetail: (name: string) => ['analysis', 'alternatives', name] as const,
+  scenarioDetail: (name: string, scenario: string) =>
+    ['analysis', 'scenario', name, scenario] as const,
+  sanctionsDetail: (name: string) => ['analysis', 'sanctions', name] as const,
+  knowledgeStats: ['knowledge', 'stats'] as const,
+  knowledgeSearch: (query: string) => ['knowledge', 'search', query] as const,
+  notifications: (limit?: number, read?: boolean) =>
+    ['notifications', { limit, read }] as const,
+  unreadCount: ['notifications', 'unread'] as const,
+} as const;

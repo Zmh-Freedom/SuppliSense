@@ -1,8 +1,10 @@
-type EventHandler = (data: any) => void;
+import type { WSEventMap } from './types';
+
+type EventHandler<T = unknown> = (data: T) => void;
 
 class WSClient {
   private ws: WebSocket | null = null;
-  private handlers: Map<string, Set<EventHandler>> = new Map();
+  private handlers: Map<string, Set<EventHandler<unknown>>> = new Map();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
 
@@ -49,7 +51,9 @@ class WSClient {
     }, this.reconnectDelay);
   }
 
-  on(event: string, handler: EventHandler) {
+  on<K extends keyof WSEventMap>(event: K, handler: EventHandler<WSEventMap[K]>): () => void;
+  on(event: string, handler: EventHandler<unknown>): () => void;
+  on(event: string, handler: EventHandler<unknown>): () => void {
     if (!this.handlers.has(event)) {
       this.handlers.set(event, new Set());
     }
@@ -57,7 +61,7 @@ class WSClient {
     return () => this.off(event, handler);
   }
 
-  off(event: string, handler: EventHandler) {
+  off(event: string, handler: EventHandler<unknown>) {
     this.handlers.get(event)?.delete(handler);
   }
 
@@ -68,6 +72,10 @@ class WSClient {
     }
     this.ws?.close();
     this.ws = null;
+  }
+
+  destroy() {
+    this.disconnect();
     this.handlers.clear();
   }
 }

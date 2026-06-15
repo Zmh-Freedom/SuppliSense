@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { wsClient } from '../websocket';
+import { queryKeys } from '../query-keys';
 
 interface RiskTag {
   tag: string;
@@ -53,69 +55,50 @@ interface SentimentArticle {
 }
 
 export default function SentimentPanel({ companyName }: { companyName?: string }) {
-  const [dash, setDash] = useState<SentimentDashboard | null>(null);
-  const [detail, setDetail] = useState<CompanySentiment | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [isStale, setIsStale] = useState(false);
+  const queryClient = useQueryClient();
 
-  useEffect(() => {
-    setError(false);
-    setAnalyzing(false);
-    setIsStale(false);
-    const controller = new AbortController();
-    if (companyName) {
-      api.get<CompanySentiment & { analyzing?: boolean; is_stale?: boolean }>(
-        `/sentiment/${encodeURIComponent(companyName)}`, undefined, controller.signal
-      )
-        .then(r => {
-          setDetail(r);
-          if (r.analyzing) setAnalyzing(true);
-          if (r.is_stale) setIsStale(true);
-        })
-        .catch((err) => { if (err.name !== 'AbortError') setError(true); });
-    } else {
-      api.get<SentimentDashboard>('/sentiment/dashboard/overview', undefined, controller.signal)
-        .then(setDash)
-        .catch((err) => { if (err.name !== 'AbortError') setError(true); });
-    }
-    return () => controller.abort();
-  }, [companyName]);
+  const dashQuery = useQuery({
+    queryKey: queryKeys.sentimentDashboard,
+    queryFn: () => api.get<SentimentDashboard>('/sentiment/dashboard/overview'),
+    enabled: !companyName,
+  });
 
-  // 自动刷新：WebSocket 推送分析完成消息后重新拉取数据
+  const detailQuery = useQuery({
+    queryKey: queryKeys.sentimentDetail(companyName || ''),
+    queryFn: () => api.get<CompanySentiment & { analyzing?: boolean; is_stale?: boolean }>(
+      `/sentiment/${encodeURIComponent(companyName!)}`
+    ),
+    enabled: !!companyName,
+    refetchInterval: (query) => {
+      const d = query.state.data;
+      return (d?.analyzing) ? 3000 : false;
+    },
+  });
+
+  const analyzeMutation = useMutation({
+    mutationFn: () => api.post<CompanySentiment>('/sentiment/analyze', {
+      company_name: companyName,
+      force_refresh: true,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.sentimentDetail(companyName || '') }),
+  });
+
+  const dash = dashQuery.data ?? null;
+  const detail = detailQuery.data ?? null;
+  const error = dashQuery.error || detailQuery.error;
+  const analyzing = detail?.analyzing ?? false;
+  const isStale = detail?.is_stale ?? false;
+
+  // WebSocket invalidation
   useEffect(() => {
-    if (!analyzing || !companyName) return;
+    if (!companyName) return;
     const unsub = wsClient.on('sentiment_ready', (data: { company_name: string }) => {
       if (data.company_name === companyName) {
-        api.get<CompanySentiment>(`/sentiment/${encodeURIComponent(companyName)}`)
-          .then(r => {
-            setDetail(r);
-            setAnalyzing(false);
-            setIsStale(false);
-          })
-          .catch(() => {});
+        queryClient.invalidateQueries({ queryKey: queryKeys.sentimentDetail(companyName) });
       }
     });
     return () => unsub();
-  }, [analyzing, companyName]);
-
-  const onAnalyze = async () => {
-    if (!companyName) return;
-    setLoading(true);
-    setError(false);
-    try {
-      const r = await api.post<CompanySentiment>('/sentiment/analyze', {
-        company_name: companyName,
-        force_refresh: true,
-      });
-      setDetail(r);
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [companyName, queryClient]);
 
   // ---- single company detail ----
   if (companyName) {
@@ -145,11 +128,11 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
               </span>
             )}
             <button
-              onClick={onAnalyze}
-              disabled={loading}
+              onClick={() => analyzeMutation.mutate()}
+              disabled={analyzeMutation.isPending}
               className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
             >
-              {loading ? '分析中…' : '刷新分析'}
+              {analyzeMutation.isPending ? '分析中…' : '刷新分析'}
             </button>
           </div>
         </div>

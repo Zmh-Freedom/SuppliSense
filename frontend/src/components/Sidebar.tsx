@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { wsClient } from '../websocket';
-import type { WatchlistData, AlertDoc } from '../types';
+import { useWatchlist, useAlertHistory } from '../hooks';
+import { queryKeys } from '../query-keys';
 
 interface Props {
   onRefresh: () => void;
@@ -9,73 +11,118 @@ interface Props {
 }
 
 export default function Sidebar({ onRefresh, onSelect }: Props) {
-  const [watchlist, setWatchlist] = useState<string[]>([]);
-  const [alertCount, setAlertCount] = useState(0);
-  const [newName, setNewName] = useState('');
-  const [adding, setAdding] = useState(false);
-  const [hovered, setHovered] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { companies: watchlist } = useWatchlist();
+  const { data: alerts } = useAlertHistory();
+  const alertCount = alerts?.length ?? 0;
 
-  const load = useCallback((signal?: AbortSignal) => {
-    api.get<{ alerts: AlertDoc[] }>('/alert/history', undefined, signal)
-      .then(d => setAlertCount(d.alerts.length)).catch(() => {});
-    api.get<WatchlistData>('/alert/watchlist', undefined, signal)
-      .then(d => setWatchlist(d.companies)).catch(() => {});
-  }, []);
+  const [newName, setNewName] = useState('');
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [toast, setToast] = useState('');
+
+  const unreadQuery = useQuery({
+    queryKey: queryKeys.unreadCount,
+    queryFn: () => api.get<{ unread_count: number }>('/notifications?limit=1&read=false'),
+    select: (d) => d.unread_count || 0,
+  });
+  const unreadCount = unreadQuery.data ?? 0;
+
+  const addMutation = useMutation({
+    mutationFn: (name: string) => api.post('/alert/watch', { company_name: name }),
+    onSuccess: () => {
+      setNewName('');
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      onRefresh();
+    },
+    onError: () => setToast('操作失败，请重试'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (name: string) => api.delete('/alert/watch', { company_name: name }),
+    onSuccess: () => {
+      setHovered(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      onRefresh();
+    },
+    onError: () => setToast('操作失败，请重试'),
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => api.upload('/alert/watch/upload', file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      onRefresh();
+    },
+    onError: () => setToast('操作失败，请重试'),
+  });
+
+  const checkAllMutation = useMutation({
+    mutationFn: () => api.post('/alert/check-all'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
+    },
+    onError: () => setToast('操作失败，请重试'),
+  });
+
+  const refreshAllMutation = useMutation({
+    mutationFn: () => api.post('/alert/refresh-all'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
+    },
+    onError: () => setToast('操作失败，请重试'),
+  });
+
+  const busy = checkAllMutation.isPending || refreshAllMutation.isPending;
 
   useEffect(() => {
-    load();
     wsClient.connect();
-    const unsub = wsClient.on('alert_update', () => load());
+    const unsubAlert = wsClient.on('alert_update', () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
+    });
+    const unsubNotif = wsClient.on('notification', () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.unreadCount });
+    });
     return () => {
-      unsub();
+      unsubAlert();
+      unsubNotif();
       wsClient.disconnect();
     };
-  }, [load]);
+  }, [queryClient]);
 
-  const add = async () => {
+  const add = () => {
     const name = newName.trim();
-    if (!name || adding) return;
-    setAdding(true);
-    try {
-      await api.post('/alert/watch', { company_name: name });
-      setNewName('');
-      await load();
-      onRefresh();
-    } catch {
-      // 添加失败，静默处理
-    } finally {
-      setAdding(false);
-    }
+    if (!name || addMutation.isPending) return;
+    addMutation.mutate(name);
   };
 
-  const remove = async (name: string) => {
-    try {
-      await api.delete('/alert/watch', { company_name: name });
-      setHovered(null);
-      await load();
-      onRefresh();
-    } catch {
-      // 移除失败，静默处理
-    }
+  const remove = (name: string) => {
+    removeMutation.mutate(name);
   };
 
-  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    try {
-      await api.upload('/alert/watch/upload', file);
-      await load();
-      onRefresh();
-    } catch {
-      // 上传失败，静默处理
-    }
+    uploadMutation.mutate(file);
   };
 
   return (
-    <aside className="w-64 h-screen border-r border-[#e8e8e3] bg-[#f5f5f0] flex flex-col text-sm">
+    <aside className="w-64 h-screen border-r border-[#e8e8e3] bg-[#f5f5f0] flex flex-col text-sm relative">
       {/* header */}
-      <div className="px-4 pt-4 pb-2">
+      <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-[#555] tracking-wide">供应商分析</h2>
+        <button className="relative" title="通知">
+          <svg className="w-5 h-5 text-[#555] hover:text-[#333] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-medium">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </button>
       </div>
 
       {/* stats */}
@@ -103,10 +150,10 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
           />
           <button
             type="submit"
-            disabled={adding || !newName.trim()}
+            disabled={addMutation.isPending || !newName.trim()}
             className="bg-[#333] text-white rounded-lg px-3 py-1.5 text-xs hover:bg-[#555] disabled:opacity-30 transition-opacity shrink-0"
           >
-            {adding ? '...' : '添加'}
+            {addMutation.isPending ? '...' : '添加'}
           </button>
         </form>
       </div>
@@ -161,20 +208,29 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
       <div className="border-t border-[#e8e8e3] px-4 py-3 space-y-2">
         <div className="flex gap-2">
           <button
-            onClick={() => api.post('/alert/check-all').then(() => load()).catch(() => {})}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors"
+            disabled={busy}
+            onClick={() => checkAllMutation.mutate()}
+            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50"
           >
-            ⚡ 免费巡检
+            {busy ? '...' : '⚡ 免费巡检'}
           </button>
           <button
-            onClick={() => api.post('/alert/refresh-all').then(() => load()).catch(() => {})}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors"
+            disabled={busy}
+            onClick={() => refreshAllMutation.mutate()}
+            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50"
           >
-            🔄 付费刷新
+            {busy ? '...' : '🔄 付费刷新'}
           </button>
         </div>
         <p className="text-[10px] text-gray-300 text-center">每日 9:00 免费 · 周一 9:00 付费</p>
       </div>
+
+      {toast && (
+        <div className="absolute bottom-4 left-4 right-4 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600 z-20">
+          {toast}
+          <button onClick={() => setToast('')} className="float-right text-red-400 hover:text-red-600">&times;</button>
+        </div>
+      )}
     </aside>
   );
 }

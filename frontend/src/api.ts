@@ -29,7 +29,8 @@ async function refreshAccessToken(): Promise<boolean> {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: '' }),
+      // refresh token is stored in httpOnly cookie; the backend reads it from the cookie, not the request body
+      body: JSON.stringify({}),
     });
     return res.ok;
   } catch {
@@ -74,6 +75,14 @@ export const api = {
   post: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>(path, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      signal,
+    }),
+
+  put: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
+    request<T>(path, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
       signal,

@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
+import { queryKeys } from '../query-keys';
 
 interface ESGDetail {
   item: string;
@@ -43,30 +45,33 @@ const DIM_LABELS: Record<string, string> = {
 };
 
 export default function ESGView() {
-  const [companies, setCompanies] = useState<ESGResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<ESGResult | null>(null);
+  const listQuery = useQuery({
+    queryKey: queryKeys.esgList,
+    queryFn: () => api.get<{ companies: ESGResult[] }>('/p2/esg'),
+  });
 
-  const loadAll = (signal?: AbortSignal) => {
-    setLoading(true);
-    api.get<{ companies: ESGResult[] }>('/p2/esg', undefined, signal).then(d => {
-      setCompanies(d.companies || []);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+  const [selectedName, setSelectedName] = useState<string>(() => {
+    try { return localStorage.getItem('esg_company') || ''; } catch { return ''; }
+  });
+
+  const detailQuery = useQuery({
+    queryKey: queryKeys.esgDetail(selectedName),
+    queryFn: () => api.get<ESGResult>(`/p2/esg/${encodeURIComponent(selectedName)}`),
+    enabled: !!selectedName,
+  });
+
+  const companies = listQuery.data?.companies ?? [];
+  const selected = detailQuery.data ?? null;
+  const isLoading = listQuery.isLoading;
+  const detailLoading = detailQuery.isLoading && !!selectedName;
+  const error = detailQuery.error ? '加载 ESG 详情失败，请重试' : '';
+
+  const selectCompany = (name: string) => {
+    setSelectedName(name);
+    localStorage.setItem('esg_company', name);
   };
 
-  useEffect(() => {
-    const controller = new AbortController();
-    loadAll(controller.signal);
-    return () => controller.abort();
-  }, []);
-
-  const selectCompany = async (name: string) => {
-    const r = await api.get<ESGResult>(`/p2/esg/${encodeURIComponent(name)}`);
-    setSelected(r);
-  };
-
-  if (loading && companies.length === 0) {
+  if (isLoading && companies.length === 0) {
     return <div className="p-6 text-gray-400 text-sm">加载 ESG 数据中…</div>;
   }
 
@@ -79,7 +84,7 @@ export default function ESGView() {
             <h2 className="text-sm font-semibold text-[#333]">ESG 评分</h2>
             <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家企业</p>
           </div>
-          <button onClick={() => loadAll()} className="text-xs text-blue-500 hover:text-blue-600">刷新</button>
+          <button onClick={() => listQuery.refetch()} className="text-xs text-blue-500 hover:text-blue-600">刷新</button>
         </div>
         {companies.map(c => {
           const color = LEVEL_COLOR[c.total_level] || '#999';
@@ -87,8 +92,9 @@ export default function ESGView() {
             <button
               key={c.company_name}
               onClick={() => selectCompany(c.company_name)}
-              className={`w-full text-left px-4 py-3 border-b border-[#eee] transition-colors hover:bg-[#eee] ${
-                selected?.company_name === c.company_name ? 'bg-[#e8e8e3]' : ''
+              disabled={detailLoading && selectedName !== c.company_name}
+              className={`w-full text-left px-4 py-3 border-b border-[#eee] transition-colors hover:bg-[#eee] disabled:opacity-50 ${
+                selectedName === c.company_name ? 'bg-[#e8e8e3]' : ''
               }`}
             >
               <div className="text-sm text-[#333] truncate">{c.company_name}</div>
@@ -113,10 +119,19 @@ export default function ESGView() {
 
       {/* right detail */}
       <div className="flex-1 overflow-y-auto p-6">
-        {!selected ? (
+        {!selectedName ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">
             选择企业查看 ESG 评分详情
           </div>
+        ) : detailLoading ? (
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">加载中…</div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2">
+            <p className="text-sm text-red-400">{error}</p>
+            <button onClick={() => detailQuery.refetch()} className="text-xs text-blue-500 hover:text-blue-600">重试</button>
+          </div>
+        ) : !selected ? (
+          <div className="flex items-center justify-center h-full text-gray-400 text-sm">暂无数据</div>
         ) : (
           <div className="max-w-2xl">
             <h2 className="text-lg font-semibold text-[#333] mb-1">{selected.company_name}</h2>
