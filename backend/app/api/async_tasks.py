@@ -23,7 +23,16 @@ class CompanyRequest(BaseModel):
     company_name: str
 
 
-@router.post("/assess")
+@router.post(
+    "/assess",
+    summary="提交异步风险评估任务",
+    description="异步提交企业风险评估任务到 Celery 队列，返回任务 ID 以供后续查询。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def assess_async(
     req: CompanyRequest,
     current_user: UserInDB = Depends(require_admin_or_analyst),
@@ -33,7 +42,16 @@ async def assess_async(
     return {"task_id": task.id, "status": "submitted", "company_name": req.company_name}
 
 
-@router.post("/refresh")
+@router.post(
+    "/refresh",
+    summary="提交异步天眼查刷新任务",
+    description="异步提交天眼查数据刷新任务（付费功能）。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def refresh_async(
     req: CompanyRequest,
     current_user: UserInDB = Depends(require_admin_or_analyst),
@@ -43,7 +61,16 @@ async def refresh_async(
     return {"task_id": task.id, "status": "submitted", "company_name": req.company_name}
 
 
-@router.post("/refresh-all")
+@router.post(
+    "/refresh-all",
+    summary="提交批量天眼查刷新任务",
+    description="异步批量提交所有监控企业的天眼查数据刷新任务（付费功能）。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def refresh_all_async(
     current_user: UserInDB = Depends(require_admin_or_analyst),
 ):
@@ -52,7 +79,16 @@ async def refresh_all_async(
     return {"task_id": task.id, "status": "submitted"}
 
 
-@router.post("/check-all")
+@router.post(
+    "/check-all",
+    summary="提交批量财务检查任务",
+    description="异步提交所有监控企业的财务数据检查任务（免费功能）。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def check_all_async_endpoint(
     current_user: UserInDB = Depends(require_admin_or_analyst),
 ):
@@ -61,7 +97,16 @@ async def check_all_async_endpoint(
     return {"task_id": task.id, "status": "submitted"}
 
 
-@router.post("/sentiment")
+@router.post(
+    "/sentiment",
+    summary="提交异步舆情分析任务",
+    description="异步提交指定企业的舆情分析任务到 Celery 队列。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def sentiment_async(
     req: CompanyRequest,
     current_user: UserInDB = Depends(require_admin_or_analyst),
@@ -71,7 +116,16 @@ async def sentiment_async(
     return {"task_id": task.id, "status": "submitted", "company_name": req.company_name}
 
 
-@router.post("/sentiment-all")
+@router.post(
+    "/sentiment-all",
+    summary="提交批量舆情分析任务",
+    description="异步提交所有监控企业的舆情分析任务到 Celery 队列。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def sentiment_all_async(
     current_user: UserInDB = Depends(require_admin_or_analyst),
 ):
@@ -80,7 +134,14 @@ async def sentiment_all_async(
     return {"task_id": task.id, "status": "submitted"}
 
 
-@router.get("/task/{task_id}")
+@router.get(
+    "/task/{task_id}",
+    summary="查询异步任务状态",
+    description="根据任务 ID 查询 Celery 异步任务的执行状态和结果。",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def get_task_status(task_id: str):
     """Get task status and result."""
     result = celery_app.AsyncResult(task_id)
@@ -100,7 +161,16 @@ async def get_task_status(task_id: str):
     return response
 
 
-@router.get("/tasks")
+@router.get(
+    "/tasks",
+    summary="列出活跃任务",
+    description="查询当前 Celery worker 上正在执行的任务列表。需管理员或分析师权限。",
+    responses={
+        401: {"description": "未认证"},
+        403: {"description": "无管理员或分析师权限"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def list_active_tasks(
     current_user: UserInDB = Depends(require_admin_or_analyst),
 ):

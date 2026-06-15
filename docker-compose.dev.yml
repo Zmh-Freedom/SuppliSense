@@ -1,6 +1,7 @@
 services:
   mongo:
     image: mongo:8
+    pull_policy: missing
     container_name: sra-mongo
     restart: unless-stopped
     environment:
@@ -15,9 +16,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+        reservations:
+          memory: 256m
+          cpus: '0.25'
 
   redis:
     image: redis:7-alpine
+    pull_policy: missing
     container_name: sra-redis
     restart: unless-stopped
     volumes:
@@ -29,6 +39,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.5'
+        reservations:
+          memory: 32m
+          cpus: '0.1'
 
   backend:
     build:
@@ -56,6 +74,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '2.0'
+        reservations:
+          memory: 256m
+          cpus: '0.5'
 
 volumes:
   mongo_data:

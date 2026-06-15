@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
 
+    # Redis
+    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+    # Rate Limiting
+    RATE_LIMIT_GLOBAL: str = "60/minute"
+    RATE_LIMIT_AUTH: str = "5/minute"
+
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 

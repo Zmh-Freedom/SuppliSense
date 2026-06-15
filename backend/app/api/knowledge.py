@@ -44,7 +44,16 @@ class StatsResponse(BaseModel):
     embedding_model: str
 
 
-@router.post("/upload", response_model=UploadResponse)
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    summary="上传文档到知识库",
+    description="上传文档（支持 PDF、DOCX、XLSX、TXT），解析后存入向量知识库以供 RAG 检索。",
+    responses={
+        400: {"description": "文件格式不支持或解析失败"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def upload_document(file: UploadFile = File(...)):
     """
     Upload a document to the knowledge base.
@@ -100,7 +109,16 @@ async def upload_document(file: UploadFile = File(...)):
     )
 
 
-@router.post("/search", response_model=SearchResponse)
+@router.post(
+    "/search",
+    response_model=SearchResponse,
+    summary="搜索知识库",
+    description="在知识库中执行语义搜索，返回与查询最相关的文档片段。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def search_documents(req: SearchRequest):
     """Search the knowledge base for relevant documents."""
     try:
@@ -115,7 +133,15 @@ async def search_documents(req: SearchRequest):
     )
 
 
-@router.get("/stats", response_model=StatsResponse)
+@router.get(
+    "/stats",
+    response_model=StatsResponse,
+    summary="获取知识库统计信息",
+    description="返回知识库的文档总数、集合名称和嵌入模型信息。",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def get_knowledge_stats():
     """Get knowledge base statistics."""
     try:
@@ -126,7 +152,14 @@ async def get_knowledge_stats():
     return StatsResponse(**stats)
 
 
-@router.delete("/clear")
+@router.delete(
+    "/clear",
+    summary="清空知识库",
+    description="删除知识库中的所有文档，操作不可恢复。",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def clear_knowledge_base():
     """Clear all documents from the knowledge base."""
     try:
@@ -137,7 +170,15 @@ async def clear_knowledge_base():
     return {"message": "Knowledge base cleared"}
 
 
-@router.delete("/documents")
+@router.delete(
+    "/documents",
+    summary="删除指定文档",
+    description="根据文档 ID 列表删除知识库中的指定文档。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def delete_knowledge_documents(ids: list[str]):
     """Delete specific documents from the knowledge base."""
     try:

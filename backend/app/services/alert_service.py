@@ -109,6 +109,33 @@ def detect_changes(company_name: str) -> dict:
             from app.services.feishu import send_alert_card
             send_alert_card(company_name, final_severity, triggered)
 
+            # Create notification document
+            db["notifications"].insert_one({
+                "type": "alert",
+                "title": f"风险预警: {company_name}",
+                "message": f"{company_name} 触发{final_severity}级别告警",
+                "company_name": company_name,
+                "read": False,
+                "created_at": datetime.now(timezone.utc),
+            })
+
+            # Broadcast via WebSocket
+            try:
+                from app.services.ws_manager import ws_manager
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(ws_manager.broadcast(
+                        "notification",
+                        {"title": f"风险预警: {company_name}", "message": f"{company_name} 触发{final_severity}级别告警", "company_name": company_name},
+                    ))
+                else:
+                    asyncio.run(ws_manager.broadcast(
+                        "notification",
+                        {"title": f"风险预警: {company_name}", "message": f"{company_name} 触发{final_severity}级别告警", "company_name": company_name},
+                    ))
+            except Exception:
+                pass  # WebSocket push is best-effort
+
     return {
         "company_name": company_name,
         "changed": len(changes) > 0,

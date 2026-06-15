@@ -28,7 +28,12 @@ class RiskCalculateResponse(BaseModel):
     financial: FinancialMetrics | None = None
     risk_detail: dict | None = None
     score_breakdown: dict | None = None
+    cached_at: str | None = None
+    cache_age_hours: float | None = None
+    is_stale: bool = False
+    is_listed: bool = False
 
 
 class RiskAssessRequest(BaseModel):
     company_name: str
+    force_refresh: bool = False

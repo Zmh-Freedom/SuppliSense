@@ -20,7 +20,15 @@ class AnalyzeRequest(BaseModel):
     force_refresh: bool = False
 
 
-@router.get("/{company_name}")
+@router.get(
+    "/{company_name}",
+    summary="获取企业舆情分析结果",
+    description="获取指定企业的舆情情感分析结果。有缓存时立即返回（过期数据后台异步刷新），无缓存时返回分析中状态并后台启动分析。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def company_sentiment(company_name: str, background_tasks: BackgroundTasks):
     """获取企业舆情分析结果。
     - 有缓存：立即返回（即使已过期），后台异步刷新
@@ -47,13 +55,29 @@ async def company_sentiment(company_name: str, background_tasks: BackgroundTasks
     }
 
 
-@router.get("/{company_name}/trend")
+@router.get(
+    "/{company_name}/trend",
+    summary="获取企业舆情趋势",
+    description="获取指定企业最近 7 次舆情分析的趋势数据，包括情感得分和关键词变化。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def sentiment_trend(company_name: str):
     """获取企业舆情趋势（最近 7 次）。"""
     return await asyncio.to_thread(get_sentiment_trend, company_name)
 
 
-@router.post("/analyze")
+@router.post(
+    "/analyze",
+    summary="触发企业舆情分析",
+    description="手动触发指定企业的舆情分析。可选 force_refresh=true 强制重新分析（后台执行），否则优先返回缓存。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def trigger_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks):
     """触发企业舆情分析。
     - force_refresh=false: 返回缓存（如有），后台刷新过期数据
@@ -92,14 +116,28 @@ async def trigger_analysis(req: AnalyzeRequest, background_tasks: BackgroundTask
     }
 
 
-@router.post("/analyze-all")
+@router.post(
+    "/analyze-all",
+    summary="批量触发所有监控企业舆情分析",
+    description="对预警监控列表中的所有企业执行舆情分析，返回每个企业的分析结果。",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def trigger_analysis_all():
     """触发所有监控企业的舆情分析。"""
     results = await asyncio.to_thread(analyze_all_sentiment)
     return {"analyzed": len(results), "results": results}
 
 
-@router.get("/dashboard/overview")
+@router.get(
+    "/dashboard/overview",
+    summary="舆情总览看板",
+    description="返回所有监控企业的舆情总览数据，包括整体情感分布、关键词云和风险企业列表。",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def sentiment_dashboard():
     """舆情总览看板。"""
     return await asyncio.to_thread(get_sentiment_dashboard)

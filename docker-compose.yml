@@ -3,6 +3,7 @@ version: "3.8"
 services:
   mongo:
     image: mongo:8
+    pull_policy: missing
     container_name: sra-mongo
     restart: unless-stopped
     environment:
@@ -17,9 +18,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+        reservations:
+          memory: 256m
+          cpus: '0.25'
 
   redis:
     image: redis:7-alpine
+    pull_policy: missing
     container_name: sra-redis
     restart: unless-stopped
     volumes:
@@ -31,6 +41,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: '0.5'
+        reservations:
+          memory: 64m
+          cpus: '0.1'
 
   backend:
     build:
@@ -45,6 +63,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '2.0'
+        reservations:
+          memory: 128m
+          cpus: '0.5'
     volumes:
       - uploads_data:/app/uploads
       - chroma_data:/app/data/chroma
@@ -59,6 +85,14 @@ services:
       - "80:80"
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+          cpus: '0.5'
+        reservations:
+          memory: 32m
+          cpus: '0.1'
 
 volumes:
   mongo_data:

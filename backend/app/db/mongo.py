@@ -64,6 +64,10 @@ def ensure_indexes() -> None:
             [("session_id", 1), ("created_at", 1)],
             background=True,
         )
+        # notifications: 按已读状态+时间
+        db["notifications"].create_index(
+            [("read", 1), ("created_at", -1)], background=True
+        )
         logger.info("MongoDB indexes ensured")
     except Exception as e:
         logger.warning("Failed to ensure indexes: %s", e)

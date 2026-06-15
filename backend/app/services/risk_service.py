@@ -60,6 +60,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         financial=financial,
         risk_detail=risk_detail,
         score_breakdown=breakdown,
+        is_listed=profile.is_listed,
     )
     # add watchlist status
     response.risk_detail["in_watchlist"] = in_watchlist

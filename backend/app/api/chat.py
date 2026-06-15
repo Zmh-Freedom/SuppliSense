@@ -20,14 +20,30 @@ class ChatRequest(BaseModel):
     mode: str = "react"  # "react", "plan-execute", or "multi-agent"
 
 
-@router.post("/")
+@router.post(
+    "/",
+    summary="AI 智能对话（同步）",
+    description="提交消息给 AI 智能体进行对话。支持三种执行模式：ReAct（默认）、Plan-Execute（先规划后执行）和 Multi-Agent（多智能体协作）。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def chat_endpoint(req: ChatRequest):
     sid = req.session_id or str(uuid.uuid4())
     reply = await asyncio.to_thread(agent_chat, sid, req.message)
     return {"reply": reply, "session_id": sid}
 
 
-@router.post("/stream")
+@router.post(
+    "/stream",
+    summary="AI 智能对话（流式 SSE）",
+    description="以 Server-Sent Events 流式返回 AI 智能体的对话响应。支持三种执行模式，首先返回 session_id，随后逐事件推送对话内容。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def chat_stream_endpoint(req: ChatRequest):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())

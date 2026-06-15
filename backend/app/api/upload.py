@@ -31,7 +31,16 @@ class FileListResponse(BaseModel):
     files: list[dict[str, Any]]
 
 
-@router.post("/upload", response_model=UploadResponse)
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    summary="上传文件进行分析",
+    description="上传文件（支持 PDF、DOCX、XLSX、TXT、CSV），解析内容并自动加入知识库。",
+    responses={
+        400: {"description": "文件格式不支持或解析失败"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def upload_file(file: UploadFile = File(...)):
     """
     Upload a file for analysis.
@@ -110,7 +119,15 @@ async def upload_file(file: UploadFile = File(...)):
     )
 
 
-@router.get("/files", response_model=FileListResponse)
+@router.get(
+    "/files",
+    response_model=FileListResponse,
+    summary="列出已上传文件",
+    description="返回所有已上传的文件列表，包含文件名、大小和上传时间。",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def list_files():
     """List all uploaded files."""
     files = []
@@ -129,7 +146,15 @@ async def list_files():
     return FileListResponse(files=files)
 
 
-@router.delete("/files/{file_id}")
+@router.delete(
+    "/files/{file_id}",
+    summary="删除已上传文件",
+    description="根据文件 ID 删除已上传的文件。",
+    responses={
+        404: {"description": "文件不存在"},
+        500: {"description": "服务器内部错误"},
+    },
+)
 async def delete_file(file_id: str):
     """Delete an uploaded file."""
     # Find and delete file
