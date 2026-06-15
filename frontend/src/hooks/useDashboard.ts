@@ -6,6 +6,7 @@ interface CompanySnap {
   name: string;
   score: number | null;
   level: string;
+  alert_count: number;
   last_checked: string | null;
 }
 
