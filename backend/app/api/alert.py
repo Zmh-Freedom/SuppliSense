@@ -109,6 +109,16 @@ async def alert_dashboard():
             snap = doc["doc"]
             snap_map[snap["company_name"]] = snap
 
+    # 使用聚合查询统计每个企业的告警次数
+    alert_count_map: dict = {}
+    if companies:
+        alert_pipeline = [
+            {"$match": {"company_name": {"$in": companies}}},
+            {"$group": {"_id": "$company_name", "count": {"$sum": 1}}},
+        ]
+        for doc in db["alerts"].aggregate(alert_pipeline):
+            alert_count_map[doc["_id"]] = doc["count"]
+
     for name in companies:
         snap = snap_map.get(name)
         if snap:
@@ -118,11 +128,12 @@ async def alert_dashboard():
                 "name": name,
                 "score": snap.get("risk_score", 0),
                 "level": level,
+                "alert_count": alert_count_map.get(name, 0),
                 "last_checked": snap["checked_at"].isoformat() if snap.get("checked_at") else None,
             })
         else:
             distribution["未知"] += 1
-            details.append({"name": name, "score": None, "level": "未知", "last_checked": None})
+            details.append({"name": name, "score": None, "level": "未知", "alert_count": 0, "last_checked": None})
 
     details.sort(key=lambda d: d["score"] if d["score"] is not None else -1, reverse=True)
 
