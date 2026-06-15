@@ -5,7 +5,7 @@ interface CompanySnap {
   name: string;
   score: number;
   level: string;
-  alert_count?: number;
+  alert_count: number;
 }
 
 export default function RiskMatrix() {
