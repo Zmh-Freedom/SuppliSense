@@ -6,6 +6,7 @@ import type { AlertDoc } from '../types';
 export function useAlertHistory() {
   return useQuery({
     queryKey: queryKeys.alertHistory,
-    queryFn: () => api.get<AlertDoc[]>('/alert/history'),
+    queryFn: () => api.get<{ count: number; alerts: AlertDoc[] }>('/alert/history'),
+    select: (d) => d.alerts,
   });
 }
