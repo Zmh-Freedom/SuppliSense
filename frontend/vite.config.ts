@@ -1,9 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import checker from 'vite-plugin-checker'
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    checker({ typescript: true }),
+  ],
   server: {
     proxy: {
       '/api/v1': 'http://localhost:8000',
