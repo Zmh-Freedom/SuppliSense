@@ -33,3 +33,7 @@ beautifulsoup4>=4.12.0
 python-multipart>=0.0.9
 # Rate limiting
 slowapi>=0.1.0
+# LangGraph agent framework
+langgraph>=0.4.0
+langchain-core>=0.3.0
+langchain-openai>=0.3.0

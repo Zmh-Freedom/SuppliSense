@@ -14,10 +14,22 @@ from app.services.agent import chat_stream_with_agents as agent_chat_stream_with
 router = APIRouter()
 
 
+async def _langgraph_react_stream(session_id: str, message: str):
+    """LangGraph ReAct 模式流式输出。"""
+    from app.graphs.react_graph import build_react_graph
+    from app.graphs.streaming import stream_react_graph
+    from app.services.agent import _load_history
+
+    graph = build_react_graph()
+    history = _load_history(session_id)
+    async for event in stream_react_graph(graph, message, session_id, history):
+        yield event
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "react"  # "react", "plan-execute", or "multi-agent"
+    mode: str = "react"  # "react", "plan-execute", "multi-agent", "langgraph-react"
 
 
 @router.post(
@@ -53,6 +65,8 @@ async def chat_stream_endpoint(req: ChatRequest):
         stream_fn = agent_chat_stream_with_plan
     elif req.mode == "multi-agent":
         stream_fn = agent_chat_stream_with_agents
+    elif req.mode == "langgraph-react":
+        stream_fn = _langgraph_react_stream
     else:
         stream_fn = agent_chat_stream
 
