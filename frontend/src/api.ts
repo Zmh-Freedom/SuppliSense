@@ -155,6 +155,7 @@ export async function chatStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let fullAnswer = '';
+  let currentEvent = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -165,7 +166,6 @@ export async function chatStream(
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    let currentEvent = '';
     for (const line of lines) {
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7);
@@ -209,6 +209,7 @@ export async function chatStream(
               callbacks.onError?.(data);
               break;
           }
+          currentEvent = '';
         } catch {
           // Ignore parse errors
         }
