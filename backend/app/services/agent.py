@@ -377,6 +377,7 @@ async def chat_stream(session_id: str, message: str) -> AsyncGenerator[str, None
 
             parsed = _try_parse(text)
             if parsed is None:
+                print(f"[DEBUG] LLM 返回内容无法解析: {text[:200]}")
                 messages.append({"role": "assistant", "content": text})
                 yield _sse_event("error", {"message": "格式错误，正在重试..."})
                 messages.append({"role": "user", "content": "请严格按JSON格式回复：{\"tool\": \"工具名\", \"args\": {...}} 或 {\"answer\": \"...\"}"})
