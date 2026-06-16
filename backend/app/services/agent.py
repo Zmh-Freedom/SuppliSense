@@ -324,6 +324,17 @@ def _try_parse(text: str) -> dict | None:
     except json.JSONDecodeError:
         pass
 
+    # try to extract JSON object from text (handle cases where LLM adds extra text)
+    import re
+    json_match = re.search(r'\{[\s\S]*\}', text)
+    if json_match:
+        try:
+            result = json.loads(json_match.group())
+            if "tool" in result or "answer" in result:
+                return result
+        except json.JSONDecodeError:
+            pass
+
     return None
 
 
