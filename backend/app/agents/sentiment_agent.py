@@ -57,8 +57,8 @@ class SentimentAnalysisAgent(BaseAgent):
         """Call a tool function."""
         if tool_name not in TOOLS:
             raise ValueError(f"Unknown tool: {tool_name}")
-        fn = TOOLS[tool_name][0]
-        return await asyncio.to_thread(fn, **args)
+        config = TOOLS[tool_name]
+        return await asyncio.to_thread(config.callable, **args)
 
     async def _generate_summary(self, query: str, results: dict) -> str:
         """Generate sentiment analysis summary using LLM."""
