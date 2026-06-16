@@ -3,7 +3,6 @@ import Layout from './components/Layout';
 import AuthGuard from './components/AuthGuard';
 import Dashboard from './components/Dashboard';
 import AssessView from './components/AssessView';
-import CompareView from './components/CompareView';
 import AlertCenter from './components/AlertCenter';
 import SentimentView from './components/SentimentView';
 import ChatView from './components/ChatView';
@@ -15,7 +14,6 @@ import LoginPage from './components/LoginPage';
 export const TAB_ROUTES = [
   { path: '/', label: '风险看板' },
   { path: '/assess', label: '企业评估' },
-  { path: '/compare', label: '供应商对比' },
   { path: '/alerts', label: '告警中心' },
   { path: '/sentiment', label: '舆情监控' },
   { path: '/chat', label: '智能对话' },
@@ -34,7 +32,6 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'assess/:companyName?', element: <AssessView /> },
-      { path: 'compare', element: <CompareView /> },
       { path: 'alerts', element: <AlertCenter /> },
       { path: 'sentiment', element: <SentimentView /> },
       { path: 'chat', element: <ChatView /> },
