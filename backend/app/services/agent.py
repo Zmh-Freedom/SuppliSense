@@ -367,21 +367,16 @@ def _save_turn(session_id: str, user_msg: str, assistant_msg: str) -> None:
     )
 
 
-# ---- ReAct loop ----
+# ---- ReAct loop (function calling) ----
 
 SYSTEM_PROMPT = """你是采购风险分析专家。
 
-可用工具：
-{tool_descriptions}
+核心规则：
+1. **必须先调用工具获取数据，严禁凭空编造数据**
+2. 回答要简洁，控制在 300 字以内
+3. 使用中文回答
 
-**你必须先用工具获取数据，绝不能在没有数据的情况下直接回答。** 涉及查询、评估、分析的问题，第一步永远是调工具。
-
-规则：
-- 调工具：{{"tool": "工具名", "args": {{"参数": "值"}}}}
-- 回答：{{"answer": "回复内容"}}
-- 每次只调一个工具
-- **严禁编造任何数据**，所有数字必须来自工具返回结果
-- 看清单：用 get_watchlist
+分析流程：
 - 看风险：先用 search_company 搜全名，再用 assess_risk
 - 看ESG：用 esg_assessment 获取环境/社会/治理三维评分
 - 看传染：用 contagion_analysis 查关联方和供应链风险
@@ -391,20 +386,20 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 找替代：用 find_alternatives 为高风险企业推荐同行业低风险供应商
 - 情景模拟：用 scenario_simulate 模拟供应商倒闭/诉讼等影响
 - 制裁筛查：用 check_sanctions 查国际制裁/失信/黑名单
-- 知识库检索：用 knowledge_search 检索上传的文档（财报、合同、ESG报告等）
+- 知识库检索：用 knowledge_search 检索上传的文档
 - 要对比多家：先 get_watchlist，再逐个 assess_risk
+
+业务规则：
 - assess_risk 已含财报数据，上市公司要分析财报
 - debt_ratio=0 表示数据缺失（港股），不要解读为低负债
 - in_watchlist=true 表示已在监控，不要建议"加入监控"
-- 综合问题可调多个工具（ESG+风险+舆情），但每次只调一个
-- 搜不到就告知用户，300字以内"""
+- 综合问题可调多个工具（ESG+风险+舆情）
+- 搜不到就告知用户
 
-
-def _build_tool_prompt() -> str:
-    lines = []
-    for name, config in TOOLS.items():
-        lines.append(f"- {name}: {config.description}")
-    return "\n".join(lines)
+监控列表操作：
+- 查看监控列表：使用 get_watchlist
+- 添加监控：使用 add_to_watchlist
+- 移除监控：使用 remove_from_watchlist"""
 
 
 def _build_tools_schema() -> list[dict]:
@@ -422,196 +417,219 @@ def _build_tools_schema() -> list[dict]:
     return schemas
 
 
+def _execute_tool_sync(tool_name: str, tool_args: dict) -> str:
+    """同步执行工具调用，返回 JSON 字符串。"""
+    if tool_name not in TOOLS:
+        return json.dumps({"error": f"未知工具: {tool_name}"}, ensure_ascii=False)
+    try:
+        config = TOOLS[tool_name]
+        raw_result = config.callable(**tool_args)
+        result_str = json.dumps(raw_result, ensure_ascii=False, default=str)
+        # 截断过长结果
+        if len(result_str) > config.max_result_tokens * 3:
+            result_str = result_str[:config.max_result_tokens * 3] + "\n\n[结果过长，已截断]"
+        return result_str
+    except Exception as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+async def _execute_tool_async(tool_name: str, tool_args: dict, retry: int = 0) -> str:
+    """异步执行工具调用，支持自动重试。"""
+    if tool_name not in TOOLS:
+        return json.dumps({"error": f"未知工具: {tool_name}"}, ensure_ascii=False)
+    try:
+        config = TOOLS[tool_name]
+        raw_result = await asyncio.to_thread(config.callable, **tool_args)
+        result_str = json.dumps(raw_result, ensure_ascii=False, default=str)
+        if len(result_str) > config.max_result_tokens * 3:
+            result_str = result_str[:config.max_result_tokens * 3] + "\n\n[结果过长，已截断]"
+        return result_str
+    except Exception as e:
+        if retry < 1:
+            await asyncio.sleep(2 ** retry)
+            return await _execute_tool_async(tool_name, tool_args, retry + 1)
+        return json.dumps({
+            "error": str(e),
+            "suggestion": f"工具 {tool_name} 执行失败，请检查参数是否正确",
+        }, ensure_ascii=False)
+
+
 def chat(session_id: str, message: str) -> str:
     history = _load_history(session_id)
-    system = SYSTEM_PROMPT.replace("{tool_descriptions}", _build_tool_prompt())
-
-    messages = [{"role": "system", "content": system}]
-    for m in history[-20:]:  # last 10 turns
-        messages.append(m)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(history[-20:])
     messages.append({"role": "user", "content": message})
 
-    tool_called = False
+    tools_schema = _build_tools_schema()
+    tool_call_count = 0
 
     for _ in range(MAX_ITERATIONS):
         resp = _get_client().chat.completions.create(
-            model=MODEL, messages=messages, temperature=0,
+            model=MODEL,
+            messages=messages,
+            tools=tools_schema,
+            tool_choice="auto",
+            temperature=0,
         )
-        text = resp.choices[0].message.content.strip() or ""
+        msg = resp.choices[0].message
 
-        parsed = _try_parse(text)
-        if parsed is None:
-            messages.append({"role": "assistant", "content": text})
-            messages.append({"role": "user", "content": "请严格按JSON格式回复：{\"tool\": \"工具名\", \"args\": {...}} 或 {\"answer\": \"...\"}"})
+        # 有工具调用
+        if msg.tool_calls:
+            messages.append(msg.model_dump())
+            for tc in msg.tool_calls:
+                tool_name = tc.function.name
+                try:
+                    tool_args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    tool_args = {}
+
+                result = _execute_tool_sync(tool_name, tool_args)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+                tool_call_count += 1
             continue
 
-        if "tool" in parsed:
-            tool_called = True
-            tool_name = parsed["tool"]
-            args = parsed.get("args", {})
-            if tool_name not in TOOLS:
-                messages.append({"role": "assistant", "content": text})
-                messages.append({"role": "user", "content": f"未知工具 {tool_name}。可用工具：{list(TOOLS.keys())}"})
-                continue
+        # 无工具调用 = 最终回答
+        answer = msg.content or ""
 
-            config = TOOLS[tool_name]
-            try:
-                result = config.callable(**args)
-            except Exception as e:
-                result = {"error": str(e)}
-
-            messages.append({"role": "assistant", "content": text})
-            messages.append({"role": "user", "content": f"工具返回：{json.dumps(result, ensure_ascii=False)}"})
+        # 要求至少一次工具调用（分析类问题）
+        if tool_call_count == 0 and any(kw in message for kw in ["风险", "评估", "分析", "财务", "诉讼", "监控", "查", "看", "对比"]):
+            messages.append({"role": "assistant", "content": answer})
+            messages.append({"role": "user", "content": "请先用工具获取真实数据，不要直接编造内容。"})
             continue
 
-        if "answer" in parsed:
-            # require at least one tool call for analysis questions
-            if not tool_called and any(kw in message for kw in ["风险", "评估", "分析", "财务", "诉讼", "监控", "查", "看", "对比"]):
-                messages.append({"role": "assistant", "content": text})
-                messages.append({"role": "user", "content": "请先用工具获取真实数据，不要直接编造内容。"})
-                continue
+        _save_turn(session_id, message, answer)
+        return answer
 
-            answer = parsed["answer"]
-            _save_turn(session_id, message, answer)
-            return answer
-
-    # fallback: force answer from last content
-    fallback = _force_answer(messages)
-    _save_turn(session_id, message, fallback)
-    return fallback
-
-
-def _try_parse(text: str) -> dict | None:
-    # extract JSON from text (handle markdown code blocks)
-    for part in text.split("```"):
-        part = part.strip()
-        if part.startswith("json"):
-            part = part[4:]
-        try:
-            result = json.loads(part)
-            if "tool" in result or "answer" in result:
-                return result
-        except json.JSONDecodeError:
-            continue
-
-    # try the raw text itself
-    try:
-        result = json.loads(text)
-        if "tool" in result or "answer" in result:
-            return result
-    except json.JSONDecodeError:
-        pass
-
-    # try to extract JSON object from text (handle cases where LLM adds extra text)
-    import re
-    json_match = re.search(r'\{[\s\S]*\}', text)
-    if json_match:
-        try:
-            result = json.loads(json_match.group())
-            if "tool" in result or "answer" in result:
-                return result
-        except json.JSONDecodeError:
-            pass
-
-    return None
-
-
-def _force_answer(messages: list) -> str:
-    messages.append({"role": "user", "content": "你已达到最大调用次数。请基于已有数据直接回答。"})
+    # 超过最大迭代，强制回答
+    messages.append({"role": "user", "content": "你已经调用了足够多的工具，请基于已有数据直接回答用户问题。"})
     resp = _get_client().chat.completions.create(
-        model=MODEL, messages=messages,
+        model=MODEL, messages=messages, temperature=0,
     )
-    return resp.choices[0].message.content or "抱歉，分析超时，请重试。"
+    answer = resp.choices[0].message.content or "抱歉，无法生成回答。"
+    _save_turn(session_id, message, answer)
+    return answer
 
 
-# ---- Streaming ----
+# ---- Streaming (real token-level) ----
 
 async def chat_stream(session_id: str, message: str) -> AsyncGenerator[str, None]:
     """
-    Async generator that yields SSE events for streaming response.
+    流式 ReAct 循环，使用原生 function calling + 真实 token 级流式输出。
     Events: thinking, tool_call, tool_result, answer_chunk, done, error
     """
     history = _load_history(session_id)
-    system = SYSTEM_PROMPT.replace("{tool_descriptions}", _build_tool_prompt())
-
-    messages = [{"role": "system", "content": system}]
-    for m in history[-20:]:
-        messages.append(m)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages.extend(history[-20:])
     messages.append({"role": "user", "content": message})
 
-    tool_called = False
+    tools_schema = _build_tools_schema()
+    tool_call_count = 0
     full_answer = ""
 
     try:
         for iteration in range(MAX_ITERATIONS):
             yield _sse_event("thinking", {"iteration": iteration + 1, "message": f"思考中... (第 {iteration + 1} 轮)"})
 
-            # Call LLM in thread pool to avoid blocking
+            # 使用 stream=True 获取真实流式输出
+            stream = await asyncio.to_thread(
+                _get_client().chat.completions.create,
+                model=MODEL,
+                messages=messages,
+                tools=tools_schema,
+                tool_choice="auto",
+                temperature=0,
+                stream=True,
+            )
+
+            # 累积 tool_calls 和 content
+            accumulated_tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments}
+            content_buffer = ""
+
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if not delta:
+                    continue
+
+                # 处理 tool_calls 增量
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in accumulated_tool_calls:
+                            accumulated_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc_delta.id:
+                            accumulated_tool_calls[idx]["id"] = tc_delta.id
+                        if tc_delta.function and tc_delta.function.name:
+                            accumulated_tool_calls[idx]["name"] = tc_delta.function.name
+                        if tc_delta.function and tc_delta.function.arguments:
+                            accumulated_tool_calls[idx]["arguments"] += tc_delta.function.arguments
+
+                # 处理 content 增量（逐 token 推送）
+                if delta.content:
+                    content_buffer += delta.content
+                    yield _sse_event("answer_chunk", {"text": delta.content})
+
+            # 如果有 tool_calls，执行工具
+            if accumulated_tool_calls:
+                # 构建 assistant 消息
+                assistant_msg = {"role": "assistant", "content": content_buffer or None, "tool_calls": []}
+                for idx in sorted(accumulated_tool_calls.keys()):
+                    tc = accumulated_tool_calls[idx]
+                    assistant_msg["tool_calls"].append({
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                    })
+                messages.append(assistant_msg)
+
+                # 并行执行所有工具调用
+                tool_tasks = []
+                tool_ids = []
+                tool_names = []
+                tool_args_list = []
+                for tc in assistant_msg["tool_calls"]:
+                    tool_name = tc["function"]["name"]
+                    try:
+                        tool_args = json.loads(tc["function"]["arguments"])
+                    except json.JSONDecodeError:
+                        tool_args = {}
+
+                    yield _sse_event("tool_call", {"tool": tool_name, "args": tool_args})
+                    tool_tasks.append(_execute_tool_async(tool_name, tool_args))
+                    tool_ids.append(tc["id"])
+                    tool_names.append(tool_name)
+                    tool_args_list.append(tool_args)
+
+                results = await asyncio.gather(*tool_tasks, return_exceptions=True)
+
+                for tc_id, tool_name, result in zip(tool_ids, tool_names, results):
+                    content = str(result) if not isinstance(result, Exception) else json.dumps({"error": str(result)}, ensure_ascii=False)
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "content": content})
+                    yield _sse_event("tool_result", {"tool": tool_name, "result": content})
+
+                tool_call_count += len(tool_names)
+                continue
+
+            # 无 tool_calls = 最终回答
+            full_answer = content_buffer
+            break
+
+        else:
+            # 超过最大迭代，强制回答
+            messages.append({"role": "user", "content": "请基于已有数据直接回答。"})
             resp = await asyncio.to_thread(
                 _get_client().chat.completions.create,
                 model=MODEL, messages=messages, temperature=0,
             )
-            text = resp.choices[0].message.content.strip() or ""
+            full_answer = resp.choices[0].message.content or "抱歉，无法生成回答。"
+            yield _sse_event("answer_chunk", {"text": full_answer})
 
-            parsed = _try_parse(text)
-            if parsed is None:
-                print(f"[DEBUG] LLM 返回内容无法解析: {text[:200]}")
-                messages.append({"role": "assistant", "content": text})
-                yield _sse_event("error", {"message": "格式错误，正在重试..."})
-                messages.append({"role": "user", "content": "请严格按JSON格式回复：{\"tool\": \"工具名\", \"args\": {...}} 或 {\"answer\": \"...\"}"})
-                continue
-
-            if "tool" in parsed:
-                tool_called = True
-                tool_name = parsed["tool"]
-                args = parsed.get("args", {})
-
-                if tool_name not in TOOLS:
-                    messages.append({"role": "assistant", "content": text})
-                    yield _sse_event("error", {"message": f"未知工具: {tool_name}"})
-                    messages.append({"role": "user", "content": f"未知工具 {tool_name}。可用工具：{list(TOOLS.keys())}"})
-                    continue
-
-                yield _sse_event("tool_call", {"tool": tool_name, "args": args})
-
-                config = TOOLS[tool_name]
-                try:
-                    result = await asyncio.to_thread(config.callable, **args)
-                except Exception as e:
-                    result = {"error": str(e)}
-
-                yield _sse_event("tool_result", {"tool": tool_name, "result": result})
-
-                messages.append({"role": "assistant", "content": text})
-                messages.append({"role": "user", "content": f"工具返回：{json.dumps(result, ensure_ascii=False)}"})
-                continue
-
-            if "answer" in parsed:
-                # require at least one tool call for analysis questions
-                if not tool_called and any(kw in message for kw in ["风险", "评估", "分析", "财务", "诉讼", "监控", "查", "看", "对比"]):
-                    messages.append({"role": "assistant", "content": text})
-                    yield _sse_event("thinking", {"message": "需要先获取数据..."})
-                    messages.append({"role": "user", "content": "请先用工具获取真实数据，不要直接编造内容。"})
-                    continue
-
-                answer = parsed["answer"]
-                # Stream answer chunk by chunk (simulate typing)
-                for i in range(0, len(answer), 10):
-                    chunk = answer[i:i+10]
-                    full_answer += chunk
-                    yield _sse_event("answer_chunk", {"text": chunk})
-                    await asyncio.sleep(0.02)  # Small delay for typing effect
-
-                _save_turn(session_id, message, answer)
-                yield _sse_event("done", {"answer": answer})
-                return
-
-        # Max iterations reached
-        yield _sse_event("thinking", {"message": "达到最大调用次数，正在生成最终回答..."})
-        fallback = await asyncio.to_thread(_force_answer, messages)
-        _save_turn(session_id, message, fallback)
-        yield _sse_event("answer_chunk", {"text": fallback})
-        yield _sse_event("done", {"answer": fallback})
+        _save_turn(session_id, message, full_answer)
+        yield _sse_event("done", {"answer": full_answer})
 
     except Exception as e:
         yield _sse_event("error", {"message": f"发生错误: {str(e)}"})
