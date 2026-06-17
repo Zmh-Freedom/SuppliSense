@@ -424,13 +424,15 @@ function ExpandableSentiment({ name }: { name: string }) {
         className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
       >
         <span className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</span>
-        <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
+        <span className="text-gray-400 text-xs transition-transform duration-200 inline-block" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▼</span>
       </button>
-      {open && (
-        <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl p-0">
-          <SentimentPanel companyName={name} />
+      <div className="expand-collapse" data-state={open ? 'open' : 'closed'}>
+        <div className="expand-content">
+          <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl p-0">
+            <SentimentPanel companyName={name} />
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -460,19 +462,21 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
         className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
       >
         <span className="text-sm font-medium text-[var(--color-text-secondary)]">{title}</span>
-        <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
+        <span className="text-gray-400 text-xs transition-transform duration-200 inline-block" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▼</span>
       </button>
-      {open && (
-        <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl px-4 py-3">
-          {error ? (
-            <p className="text-xs text-gray-400">暂无数据</p>
-          ) : !data ? (
-            <p className="text-xs text-gray-400">加载中…</p>
-          ) : (
-            render(data)
-          )}
+      <div className="expand-collapse" data-state={open ? 'open' : 'closed'}>
+        <div className="expand-content">
+          <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl px-4 py-3">
+            {error ? (
+              <p className="text-xs text-gray-400">暂无数据</p>
+            ) : !data ? (
+              <p className="text-xs text-gray-400">加载中…</p>
+            ) : (
+              render(data)
+            )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
