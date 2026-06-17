@@ -421,7 +421,7 @@ function ExpandableSentiment({ name }: { name: string }) {
     <div className="mt-3">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md"
+        className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
       >
         <span className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</span>
         <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
@@ -457,7 +457,7 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
     <div className="mt-3">
       <button
         onClick={toggle}
-        className="w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md"
+        className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
       >
         <span className="text-sm font-medium text-[var(--color-text-secondary)]">{title}</span>
         <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
