@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { api, chatStream } from '../api';
 import type { ChatMessage, RiskResult } from '../types';
@@ -394,33 +395,41 @@ export default function ChatView() {
       </div>
 
       {/* history panel */}
-      {showHistory && (
-        <div className="absolute top-12 right-4 w-80 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl shadow-lg max-h-96 overflow-auto z-10">
-          <div className="p-2">
-            <p className="text-xs text-gray-400 px-3 py-2">会话历史</p>
-            {sessions.map(s => (
-              <div
-                key={s.sid}
-                onClick={() => switchSession(s.sid)}
-                className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer transition-colors ${
-                  s.sid === activeSid ? 'bg-[var(--color-code-bg)]' : 'hover:bg-[var(--color-surface-hover)]'
-                }`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-[var(--color-text)] truncate">{s.title}</p>
-                  <p className="text-[11px] text-gray-400">{new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                </div>
-                <button
-                  onClick={(e) => deleteSession(s.sid, e)}
-                  className="text-gray-300 hover:text-red-400 text-sm ml-2 shrink-0"
+      <AnimatePresence>
+        {showHistory && (
+          <motion.div
+            className="absolute top-12 right-4 w-80 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl shadow-lg max-h-96 overflow-auto z-10"
+            initial={{ opacity: 0, scale: 0.95, y: -8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: -8 }}
+            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+          >
+            <div className="p-2">
+              <p className="text-xs text-gray-400 px-3 py-2">会话历史</p>
+              {sessions.map(s => (
+                <div
+                  key={s.sid}
+                  onClick={() => switchSession(s.sid)}
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer transition-colors ${
+                    s.sid === activeSid ? 'bg-[var(--color-code-bg)]' : 'hover:bg-[var(--color-surface-hover)]'
+                  }`}
                 >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-[var(--color-text)] truncate">{s.title}</p>
+                    <p className="text-[11px] text-gray-400">{new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                  <button
+                    onClick={(e) => deleteSession(s.sid, e)}
+                    className="text-gray-300 hover:text-red-400 text-sm ml-2 shrink-0"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -462,49 +471,57 @@ function QuickAssess() {
         </div>
       </div>
 
-      {open && data && (
-        <div className="mt-3 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm font-semibold">{name}</span>
-            <button onClick={() => { setOpen(false); setName(''); }} className="text-gray-400 hover:text-gray-600 text-sm">×</button>
-          </div>
-
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
-              style={{ background: data.risk_score <= 30 ? '#2d8c63' : data.risk_score <= 60 ? '#d4a040' : '#e06060' }}>
-              {data.risk_score}
+      <AnimatePresence>
+        {open && data && (
+          <motion.div
+            className="mt-3 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-semibold">{name}</span>
+              <button onClick={() => { setOpen(false); setName(''); }} className="text-gray-400 hover:text-gray-600 text-sm">×</button>
             </div>
-            <span className="text-sm font-semibold">{data.risk_level}</span>
-          </div>
 
-          <div className="grid grid-cols-4 gap-2 mb-3">
-            {fin ? (
-              <>
-                <MiniMetric label="营收增长" value={`${(fin.revenue_growth * 100).toFixed(1)}%`} />
-                <MiniMetric label="净利增长" value={`${(fin.net_profit_growth * 100).toFixed(1)}%`} />
-                <MiniMetric label="负债率" value={`${(fin.debt_ratio * 100).toFixed(1)}%`} />
-                <MiniMetric label="每股现金流" value={`¥${fin.cash_flow.toFixed(2)}`} />
-              </>
-            ) : <p className="text-xs text-gray-400 col-span-4">无财报数据</p>}
-          </div>
-
-          {rd && (
-            <div className="grid grid-cols-3 gap-1 text-xs text-gray-500">
-              <span>诉讼 {rd.lawsuit_count}</span>
-              <span>被执行 {rd.executed_count}</span>
-              <span>失信 {rd.dishonesty_count}</span>
-              <span>经营异常 {rd.abnormal_operation_count}</span>
-              <span>行政处罚 {rd.administrative_penalty_count}</span>
-              <span>重大诉讼 {rd.major_lawsuit ? '⚠️是' : '✓否'}</span>
-              <span>法人变更 {rd.legal_person_change_frequent ? '⚠️是' : '✓否'}</span>
-              <span>对外担保 {rd.guarantee_count ?? 0}</span>
-              <span>股权质押 {rd.pledge_count ?? 0}</span>
-              <span>破产/清算 {rd.bankruptcy_count ?? 0}</span>
-              <span>环保处罚 {rd.env_penalty_count ?? 0}</span>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
+                style={{ background: data.risk_score <= 30 ? '#2d8c63' : data.risk_score <= 60 ? '#d4a040' : '#e06060' }}>
+                {data.risk_score}
+              </div>
+              <span className="text-sm font-semibold">{data.risk_level}</span>
             </div>
-          )}
-        </div>
-      )}
+
+            <div className="grid grid-cols-4 gap-2 mb-3">
+              {fin ? (
+                <>
+                  <MiniMetric label="营收增长" value={`${(fin.revenue_growth * 100).toFixed(1)}%`} />
+                  <MiniMetric label="净利增长" value={`${(fin.net_profit_growth * 100).toFixed(1)}%`} />
+                  <MiniMetric label="负债率" value={`${(fin.debt_ratio * 100).toFixed(1)}%`} />
+                  <MiniMetric label="每股现金流" value={`¥${fin.cash_flow.toFixed(2)}`} />
+                </>
+              ) : <p className="text-xs text-gray-400 col-span-4">无财报数据</p>}
+            </div>
+
+            {rd && (
+              <div className="grid grid-cols-3 gap-1 text-xs text-gray-500">
+                <span>诉讼 {rd.lawsuit_count}</span>
+                <span>被执行 {rd.executed_count}</span>
+                <span>失信 {rd.dishonesty_count}</span>
+                <span>经营异常 {rd.abnormal_operation_count}</span>
+                <span>行政处罚 {rd.administrative_penalty_count}</span>
+                <span>重大诉讼 {rd.major_lawsuit ? '⚠️是' : '✓否'}</span>
+                <span>法人变更 {rd.legal_person_change_frequent ? '⚠️是' : '✓否'}</span>
+                <span>对外担保 {rd.guarantee_count ?? 0}</span>
+                <span>股权质押 {rd.pledge_count ?? 0}</span>
+                <span>破产/清算 {rd.bankruptcy_count ?? 0}</span>
+                <span>环保处罚 {rd.env_penalty_count ?? 0}</span>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

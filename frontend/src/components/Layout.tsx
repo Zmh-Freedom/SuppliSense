@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import ErrorBoundary from './ErrorBoundary';
 import NetworkStatus from './NetworkStatus';
 import Sidebar from './Sidebar';
@@ -39,18 +40,35 @@ export default function Layout() {
         </button>
 
         {/* Mobile sidebar overlay */}
-        {sidebarOpen && (
-          <div className="md:hidden fixed inset-0 z-20">
-            <div className="absolute inset-0 bg-black/20" onClick={() => setSidebarOpen(false)} />
-            <div className="relative w-64 h-full">
-              <Sidebar
-                onRefresh={() => {}}
-                onSelect={(name) => { navigate(`/assess/${encodeURIComponent(name)}`); setSidebarOpen(false); }}
-                onClose={() => setSidebarOpen(false)}
+        <AnimatePresence>
+          {sidebarOpen && (
+            <motion.div
+              className="md:hidden fixed inset-0 z-20"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              <motion.div
+                className="absolute inset-0 bg-black/20"
+                onClick={() => setSidebarOpen(false)}
               />
-            </div>
-          </div>
-        )}
+              <motion.div
+                className="relative w-64 h-full"
+                initial={{ x: -256 }}
+                animate={{ x: 0 }}
+                exit={{ x: -256 }}
+                transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+              >
+                <Sidebar
+                  onRefresh={() => {}}
+                  onSelect={(name) => { navigate(`/assess/${encodeURIComponent(name)}`); setSidebarOpen(false); }}
+                  onClose={() => setSidebarOpen(false)}
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Desktop sidebar */}
         <div className="hidden md:flex">

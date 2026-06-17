@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'framer-motion';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 
@@ -92,11 +93,19 @@ export default function KnowledgePanel() {
     <div className="flex flex-col h-full max-w-3xl mx-auto px-4 py-6">
       <h2 className="text-lg font-semibold mb-4">知识库管理</h2>
 
-      {message && (
-        <div className={`mb-4 rounded-lg px-4 py-2 text-sm ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
-          {message.text}
-        </div>
-      )}
+      <AnimatePresence>
+        {message && (
+          <motion.div
+            className={`mb-4 rounded-lg px-4 py-2 text-sm ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`}
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+          >
+            {message.text}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Stats */}
       <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 mb-4 shadow-sm">
@@ -203,32 +212,46 @@ export default function KnowledgePanel() {
 
       {/* Clear */}
       <div className="mt-auto pt-4 border-t border-[var(--color-border)]">
-        {confirmClear ? (
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-red-600">确定要清空知识库吗？此操作不可恢复。</span>
-            <button
-              onClick={confirmClearAction}
+        <AnimatePresence mode="wait">
+          {confirmClear ? (
+            <motion.div
+              key="confirm"
+              className="flex items-center gap-3"
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              transition={{ duration: 0.18 }}
+            >
+              <span className="text-sm text-red-600">确定要清空知识库吗？此操作不可恢复。</span>
+              <button
+                onClick={confirmClearAction}
+                disabled={clearMutation.isPending}
+                className="text-sm bg-red-500 text-white rounded-lg px-3 py-1.5 hover:bg-red-600 disabled:opacity-50"
+              >
+                {clearMutation.isPending ? '清空中…' : '确定'}
+              </button>
+              <button
+                onClick={() => setConfirmClear(false)}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                取消
+              </button>
+            </motion.div>
+          ) : (
+            <motion.button
+              key="clear-btn"
+              onClick={handleClear}
               disabled={clearMutation.isPending}
-              className="text-sm bg-red-500 text-white rounded-lg px-3 py-1.5 hover:bg-red-600 disabled:opacity-50"
+              className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
+              initial={{ opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -8 }}
+              transition={{ duration: 0.18 }}
             >
-              {clearMutation.isPending ? '清空中…' : '确定'}
-            </button>
-            <button
-              onClick={() => setConfirmClear(false)}
-              className="text-sm text-gray-500 hover:text-gray-700"
-            >
-              取消
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={handleClear}
-            disabled={clearMutation.isPending}
-            className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
-          >
-            清空知识库
-          </button>
-        )}
+              清空知识库
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
