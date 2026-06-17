@@ -59,7 +59,7 @@ export default function Dashboard() {
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[#333]">风险看板</h2>
-        <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[44px] px-2">{isRefreshing ? '刷新中…' : '刷新'}</button>
+        <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[36px] px-2 inline-flex items-center">{isRefreshing ? '刷新中…' : '刷新'}</button>
       </div>
 
       {/* summary cards */}

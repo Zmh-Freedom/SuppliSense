@@ -77,7 +77,7 @@ export default function AssessView() {
           placeholder="输入完整企业名称"
           className="flex-1 border border-[#e8e8e3] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#bbb] min-h-[44px]"
         />
-        <button onClick={assess} disabled={loading} className="bg-[#333] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[#555] disabled:opacity-50 min-h-[44px]">
+        <button onClick={assess} disabled={loading} className="bg-[#333] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[#555] disabled:opacity-50 min-h-[44px] inline-flex items-center">
           {loading ? '评估中…' : '评估'}
         </button>
       </div>
@@ -128,13 +128,13 @@ export default function AssessView() {
                 )}
                 {data.is_stale && (
                   <button onClick={refresh} disabled={refreshing}
-                    className="text-xs text-amber-600 hover:text-amber-800 border border-amber-200 rounded-md px-2 py-1 disabled:opacity-50 whitespace-nowrap min-h-[44px]">
+                    className="text-xs text-amber-600 hover:text-amber-800 border border-amber-200 rounded-md px-2 py-1 disabled:opacity-50 whitespace-nowrap min-h-[36px] inline-flex items-center">
                     {refreshing ? '刷新中…' : '刷新'}
                   </button>
                 )}
                 <a
                   href={`/api/v1/report/excel/${encodeURIComponent(name)}`}
-                  className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-2 hover:bg-green-700 transition-colors no-underline min-h-[44px]"
+                  className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors no-underline inline-flex items-center min-h-[36px]"
                 >
                   导出 Excel
                 </a>
@@ -142,7 +142,7 @@ export default function AssessView() {
                   href={`/api/v1/report/html/${encodeURIComponent(name)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs bg-[#333] text-white rounded-lg px-3 py-2 hover:bg-[#555] transition-colors no-underline min-h-[44px]"
+                  className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] transition-colors no-underline inline-flex items-center min-h-[36px]"
                 >
                   导出报告
                 </a>

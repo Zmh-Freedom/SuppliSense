@@ -338,7 +338,7 @@ export default function ChatView() {
           <span className="text-xs text-gray-400">模式：</span>
           <button
             onClick={() => setMode('react')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[44px] ${
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
               mode === 'react'
                 ? 'bg-[#333] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -348,7 +348,7 @@ export default function ChatView() {
           </button>
           <button
             onClick={() => setMode('plan-execute')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[44px] ${
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
               mode === 'plan-execute'
                 ? 'bg-[#333] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -358,7 +358,7 @@ export default function ChatView() {
           </button>
           <button
             onClick={() => setMode('multi-agent')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[44px] ${
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
               mode === 'multi-agent'
                 ? 'bg-[#333] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -381,7 +381,7 @@ export default function ChatView() {
           <button
             onClick={send}
             disabled={loading}
-            className="bg-[#333] text-white rounded-xl px-4 py-2 text-sm hover:bg-[#555] disabled:opacity-40 shrink-0 transition-colors min-h-[44px]"
+            className="bg-[#333] text-white rounded-xl px-4 py-2 text-sm hover:bg-[#555] disabled:opacity-40 shrink-0 transition-colors min-h-[44px] inline-flex items-center"
           >
             发送
           </button>

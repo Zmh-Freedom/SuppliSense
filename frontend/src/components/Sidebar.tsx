@@ -160,7 +160,7 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
           <button
             type="submit"
             disabled={addMutation.isPending || !newName.trim()}
-            className="bg-[#333] text-white rounded-lg px-3 py-2 text-xs hover:bg-[#555] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px]"
+            className="bg-[#333] text-white rounded-lg px-3 py-2 text-xs hover:bg-[#555] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px] inline-flex items-center"
           >
             {addMutation.isPending ? '...' : '添加'}
           </button>
@@ -220,14 +220,14 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
           <button
             disabled={busy}
             onClick={() => checkAllMutation.mutate()}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px]"
+            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
           >
             {busy ? '...' : '⚡ 免费巡检'}
           </button>
           <button
             disabled={busy}
             onClick={() => refreshAllMutation.mutate()}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px]"
+            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
           >
             {busy ? '...' : '🔄 付费刷新'}
           </button>
