@@ -20,9 +20,16 @@ export default function Layout() {
     <div className="flex h-screen">
       <NetworkStatus />
       <ErrorBoundary>
+        {/* Glass theme decorative blobs */}
+        <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden hidden" id="glass-blobs">
+          <div className="absolute w-[400px] h-[400px] rounded-full opacity-30 blur-[60px] animate-[float-blob_25s_ease-in-out_infinite_alternate]"
+            style={{ background: 'radial-gradient(circle, #f472b6 0%, #a78bfa 60%, transparent 80%)', top: '30%', left: '40%' }} />
+        </div>
+        <style>{`[data-theme="glass"] #glass-blobs { display: block; }`}</style>
+
         {/* Mobile hamburger */}
         <button
-          className="md:hidden fixed top-4 left-4 z-30 p-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-sm"
+          className="md:hidden fixed top-4 left-4 z-30 p-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-lg shadow-sm"
           onClick={() => setSidebarOpen(!sidebarOpen)}
           aria-label="菜单"
         >
@@ -53,7 +60,7 @@ export default function Layout() {
           />
         </div>
 
-        <main className="flex-1 flex flex-col min-w-0">
+        <main className="flex-1 flex flex-col min-w-0 relative z-10">
           <div className="flex items-center gap-1 px-6 pt-4 pb-0 overflow-x-auto" role="tablist">
             {TAB_ROUTES.map((tab, i) => (
               <button

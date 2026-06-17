@@ -27,27 +27,27 @@
 }
 
 [data-theme="glass"] {
-  --color-page-bg: #f0f2ff;
-  --color-surface: rgba(255,255,255,0.6);
-  --color-surface-hover: rgba(255,255,255,0.8);
-  --color-surface-selected: rgba(255,255,255,0.9);
-  --color-sidebar-bg: rgba(240,242,255,0.8);
+  --color-page-bg: #eef0ff;
+  --color-surface: rgba(255,255,255,0.45);
+  --color-surface-hover: rgba(255,255,255,0.6);
+  --color-surface-selected: rgba(255,255,255,0.75);
+  --color-sidebar-bg: rgba(230,235,255,0.6);
   --color-text: #1e293b;
   --color-text-secondary: #475569;
   --color-text-muted: #94a3b8;
-  --color-border: rgba(255,255,255,0.3);
-  --color-border-hover: rgba(255,255,255,0.5);
-  --color-border-focus: rgba(148,163,184,0.5);
+  --color-border: rgba(255,255,255,0.45);
+  --color-border-hover: rgba(255,255,255,0.65);
+  --color-border-focus: rgba(99,102,241,0.5);
   --color-primary-bg: #1e293b;
   --color-primary-hover: #334155;
   --color-primary-text: #fff;
-  --color-focus-ring: #1e293b;
+  --color-focus-ring: #6366f1;
   --color-scrollbar: rgba(148,163,184,0.4);
-  --color-divider: rgba(255,255,255,0.2);
-  --color-input-bg: rgba(255,255,255,0.5);
+  --color-divider: rgba(255,255,255,0.25);
+  --color-input-bg: rgba(255,255,255,0.4);
   --color-code-bg: rgba(255,255,255,0.3);
-  --color-card-shadow: 0 4px 30px rgba(0,0,0,0.06);
-  --backdrop-blur: blur(16px);
+  --color-card-shadow: 0 8px 32px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.6);
+  --backdrop-blur: blur(20px) saturate(1.8);
 }
 
 * { box-sizing: border-box; }
@@ -59,9 +59,49 @@ body {
   color: #1a1a1a;
 }
 
+/* ── Glass Theme Background ── */
 [data-theme="glass"] body {
-  background: linear-gradient(135deg, #f0f2ff 0%, #fdf2f8 50%, #f0fdf4 100%);
+  background: linear-gradient(135deg, #e0e7ff 0%, #fce7f3 35%, #d1fae5 65%, #e0e7ff 100%);
+  background-attachment: fixed;
   min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Floating color blobs behind glass */
+[data-theme="glass"] body::before,
+[data-theme="glass"] body::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+  z-index: -1;
+  pointer-events: none;
+  animation: float-blob 20s ease-in-out infinite alternate;
+}
+
+[data-theme="glass"] body::before {
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, #818cf8 0%, #c084fc 50%, transparent 70%);
+  top: -10%;
+  right: -5%;
+}
+
+[data-theme="glass"] body::after {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, #34d399 0%, #60a5fa 50%, transparent 70%);
+  bottom: -10%;
+  left: -5%;
+  animation-delay: -10s;
+}
+
+@keyframes float-blob {
+  0% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -40px) scale(1.05); }
+  66% { transform: translate(-20px, 30px) scale(0.95); }
+  100% { transform: translate(10px, -10px) scale(1.02); }
 }
 
 ::-webkit-scrollbar { width: 5px; }
@@ -74,10 +114,18 @@ body {
   }
 }
 
-/* Glassmorphism surface utility */
+/* ── Glass Surface Utility ── */
 .glass-surface {
   backdrop-filter: var(--backdrop-blur);
   -webkit-backdrop-filter: var(--backdrop-blur);
+}
+
+/* Glass highlight — subtle top-edge light reflection */
+[data-theme="glass"] .glass-surface {
+  border-top: 1px solid rgba(255,255,255,0.5);
+  border-left: 1px solid rgba(255,255,255,0.3);
+  border-right: 1px solid rgba(255,255,255,0.15);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
 }
 
 @keyframes skeleton-pulse {
