@@ -208,6 +208,179 @@ def knowledge_search(query: str, company_name: str = "") -> dict:
     }
 
 
+@tool
+def generate_report(company_name: str, report_type: str = "excel") -> dict:
+    """生成企业风险评估报告（Excel 或 HTML 格式）。
+
+    Args:
+        company_name: 企业全称
+        report_type: 报告格式，可选值: excel, html
+    """
+    from app.services.report_service import generate_excel, generate_html_report
+
+    if report_type == "html":
+        content = generate_html_report(company_name)
+        return {"company_name": company_name, "format": "html", "length": len(content), "content": content}
+    else:
+        content = generate_excel(company_name)
+        return {"company_name": company_name, "format": "excel", "size_bytes": len(content), "message": "Excel 报告已生成"}
+
+
+@tool
+def analyze_trend(company_name: str, period_months: int = 6) -> dict:
+    """分析企业风险评分的历史趋势变化。
+
+    Args:
+        company_name: 企业全称
+        period_months: 分析周期（月），默认 6
+    """
+    from datetime import datetime, timedelta, timezone
+    from app.db.mongo import get_db
+
+    db = get_db()
+    days = period_months * 30
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    snapshots = list(
+        db["alert_snapshots"]
+        .find(
+            {"company_name": company_name, "checked_at": {"$gte": since}},
+            {"checked_at": 1, "risk_score": 1, "risk_level": 1, "_id": 0},
+        )
+        .sort("checked_at", 1)
+    )
+
+    data = [
+        {
+            "date": s["checked_at"].strftime("%Y-%m-%d"),
+            "risk_score": s.get("risk_score", 0),
+            "risk_level": s.get("risk_level", ""),
+        }
+        for s in snapshots
+    ]
+
+    # 计算趋势
+    trend = "稳定"
+    if len(data) >= 2:
+        first_score = data[0]["risk_score"]
+        last_score = data[-1]["risk_score"]
+        delta = last_score - first_score
+        if delta > 10:
+            trend = "恶化"
+        elif delta < -10:
+            trend = "改善"
+
+    return {"company_name": company_name, "period_months": period_months, "trend": trend, "data": data}
+
+
+@tool
+def compare_companies(company_names: list[str]) -> dict:
+    """对比多家企业的风险状况（风险评分、财务、ESG、舆情）。
+
+    Args:
+        company_names: 企业名称列表，如 ["海康威视", "大华股份"]
+    """
+    from app.db.mongo import get_db
+
+    db = get_db()
+    collection_names = db.list_collection_names()
+    results = []
+
+    for name in company_names:
+        snap = db["alert_snapshots"].find_one(
+            {"company_name": name}, sort=[("checked_at", -1)]
+        )
+        esg = (
+            db["esg_results"].find_one(
+                {"company_name": name}, sort=[("assessed_at", -1)]
+            )
+            if "esg_results" in collection_names
+            else None
+        )
+        sent = (
+            db["sentiment_results"].find_one(
+                {"company_name": name}, sort=[("analyzed_at", -1)]
+            )
+            if "sentiment_results" in collection_names
+            else None
+        )
+
+        item: dict = {
+            "company_name": name,
+            "risk_score": snap.get("risk_score") if snap else None,
+            "risk_level": snap.get("risk_level") if snap else None,
+            "financial": snap.get("financial") if snap else None,
+        }
+        if esg:
+            item["esg"] = {
+                "total_score": esg.get("total_score"),
+                "total_level": esg.get("total_level"),
+            }
+        if sent:
+            item["sentiment"] = {
+                "sentiment_score": sent.get("sentiment_score"),
+                "articles_count": sent.get("articles_count"),
+            }
+        results.append(item)
+
+    return {"count": len(results), "companies": results}
+
+
+@tool
+def query_financials(company_name: str) -> dict:
+    """查询企业财务指标（资产负债率、净利润、营收等）。
+
+    Args:
+        company_name: 企业全称
+    """
+    from app.repositories.financial_repo import get_financial_metrics
+
+    fin = get_financial_metrics(company_name)
+    if fin is None:
+        return {"error": "未找到财务数据", "company_name": company_name}
+
+    return {
+        "company_name": company_name,
+        "revenue_growth": fin.revenue_growth,
+        "net_profit_growth": fin.net_profit_growth,
+        "debt_ratio": fin.debt_ratio,
+        "cash_flow": fin.cash_flow,
+        "roe": fin.roe,
+        "net_profit_margin": fin.net_profit_margin,
+        "current_ratio": fin.current_ratio,
+        "quick_ratio": fin.quick_ratio,
+    }
+
+
+@tool
+def manage_scheduled_report(action: str, company_names: list[str] | None = None, cron: str = "weekly", report_type: str = "excel") -> dict:
+    """管理定时报告任务（创建/查看/删除）。
+
+    Args:
+        action: 操作类型，可选值: create, list, delete
+        company_names: 监控企业列表（create 时必填）
+        cron: 定时表达式，如 weekly, daily（create 时使用）
+        report_type: 报告格式，可选值: excel, html
+    """
+    from app.services.scheduled_report import (
+        create_scheduled_report,
+        list_scheduled_reports,
+        delete_scheduled_report,
+    )
+
+    if action == "create":
+        if not company_names:
+            return {"error": "创建定时报告需要指定企业列表"}
+        return create_scheduled_report(company_names, cron, report_type)
+    elif action == "list":
+        return {"reports": list_scheduled_reports()}
+    elif action == "delete":
+        if not company_names:
+            return {"error": "删除定时报告需要指定 task_id（通过 company_names 传入）"}
+        return delete_scheduled_report(company_names[0])
+    else:
+        return {"error": f"未知操作: {action}，可选值: create, list, delete"}
+
+
 # 所有工具列表，供 graph 使用
 TOOLS_LIST = [
     search_company,
@@ -225,4 +398,9 @@ TOOLS_LIST = [
     scenario_simulate,
     check_sanctions,
     knowledge_search,
+    generate_report,
+    analyze_trend,
+    compare_companies,
+    query_financials,
+    manage_scheduled_report,
 ]

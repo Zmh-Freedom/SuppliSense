@@ -26,6 +26,26 @@ async def _langgraph_react_stream(session_id: str, message: str):
         yield event
 
 
+async def _langgraph_plan_execute_stream(session_id: str, message: str):
+    """LangGraph Plan-Execute 模式流式输出。"""
+    from app.graphs.plan_execute_graph import stream_plan_execute_graph
+    from app.services.agent import _load_history
+
+    history = _load_history(session_id)
+    async for event in stream_plan_execute_graph(message, session_id, history):
+        yield event
+
+
+async def _langgraph_supervisor_stream(session_id: str, message: str):
+    """LangGraph Supervisor 多智能体模式流式输出。"""
+    from app.graphs.supervisor_graph import stream_supervisor_graph
+    from app.services.agent import _load_history
+
+    history = _load_history(session_id)
+    async for event in stream_supervisor_graph(message, session_id, history):
+        yield event
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
@@ -67,6 +87,10 @@ async def chat_stream_endpoint(req: ChatRequest):
         stream_fn = agent_chat_stream_with_agents
     elif req.mode == "langgraph-react":
         stream_fn = _langgraph_react_stream
+    elif req.mode == "langgraph-plan-execute":
+        stream_fn = _langgraph_plan_execute_stream
+    elif req.mode == "langgraph-multi-agent":
+        stream_fn = _langgraph_supervisor_stream
     else:
         stream_fn = agent_chat_stream
 
