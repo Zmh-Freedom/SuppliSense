@@ -1,16 +1,83 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* ── Theme Tokens ── */
+:root {
+  --color-page-bg: #fafaf8;
+  --color-surface: #fff;
+  --color-surface-hover: #f9f9f5;
+  --color-surface-selected: #e8e8e3;
+  --color-sidebar-bg: #fafaf8;
+  --color-text: #333;
+  --color-text-secondary: #555;
+  --color-text-muted: #999;
+  --color-border: #e8e8e3;
+  --color-border-hover: #ccc;
+  --color-border-focus: #bbb;
+  --color-primary-bg: #333;
+  --color-primary-hover: #555;
+  --color-primary-text: #fff;
+  --color-focus-ring: #333;
+  --color-scrollbar: #d4d4cc;
+  --color-divider: #e8e8e3;
+  --color-input-bg: #fff;
+  --color-code-bg: #f0f0eb;
+  --color-card-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  --backdrop-blur: none;
+}
+
+[data-theme="glass"] {
+  --color-page-bg: #f0f2ff;
+  --color-surface: rgba(255,255,255,0.6);
+  --color-surface-hover: rgba(255,255,255,0.8);
+  --color-surface-selected: rgba(255,255,255,0.9);
+  --color-sidebar-bg: rgba(240,242,255,0.8);
+  --color-text: #1e293b;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --color-border: rgba(255,255,255,0.3);
+  --color-border-hover: rgba(255,255,255,0.5);
+  --color-border-focus: rgba(148,163,184,0.5);
+  --color-primary-bg: #1e293b;
+  --color-primary-hover: #334155;
+  --color-primary-text: #fff;
+  --color-focus-ring: #1e293b;
+  --color-scrollbar: rgba(148,163,184,0.4);
+  --color-divider: rgba(255,255,255,0.2);
+  --color-input-bg: rgba(255,255,255,0.5);
+  --color-code-bg: rgba(255,255,255,0.3);
+  --color-card-shadow: 0 4px 30px rgba(0,0,0,0.06);
+  --backdrop-blur: blur(16px);
+}
+
 * { box-sizing: border-box; }
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fafaf8; color: #1a1a1a; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--color-page-bg);
+  color: #1a1a1a;
+}
+
+[data-theme="glass"] body {
+  background: linear-gradient(135deg, #f0f2ff 0%, #fdf2f8 50%, #f0fdf4 100%);
+  min-height: 100vh;
+}
+
 ::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-thumb { background: #d4d4cc; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border-radius: 3px; }
 
 @layer base {
   *:focus-visible {
-    outline: 2px solid #333;
+    outline: 2px solid var(--color-focus-ring);
     outline-offset: 2px;
   }
+}
+
+/* Glassmorphism surface utility */
+.glass-surface {
+  backdrop-filter: var(--backdrop-blur);
+  -webkit-backdrop-filter: var(--backdrop-blur);
 }
 
 @keyframes skeleton-pulse {
