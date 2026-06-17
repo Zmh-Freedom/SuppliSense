@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
+import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ReferenceArea, ReferenceLine } from 'recharts';
 import type {
@@ -424,15 +425,27 @@ function ExpandableSentiment({ name }: { name: string }) {
         className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
       >
         <span className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</span>
-        <span className="text-gray-400 text-xs transition-transform duration-200 inline-block" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▼</span>
+        <motion.span
+          className="text-gray-400 text-xs inline-block"
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
+        >▼</motion.span>
       </button>
-      <div className="expand-collapse" data-state={open ? 'open' : 'closed'}>
-        <div className="expand-content">
-          <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl p-0">
-            <SentimentPanel companyName={name} />
-          </div>
-        </div>
-      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl p-0">
+              <SentimentPanel companyName={name} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -462,21 +475,33 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
         className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
       >
         <span className="text-sm font-medium text-[var(--color-text-secondary)]">{title}</span>
-        <span className="text-gray-400 text-xs transition-transform duration-200 inline-block" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0)' }}>▼</span>
+        <motion.span
+          className="text-gray-400 text-xs inline-block"
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
+        >▼</motion.span>
       </button>
-      <div className="expand-collapse" data-state={open ? 'open' : 'closed'}>
-        <div className="expand-content">
-          <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl px-4 py-3">
-            {error ? (
-              <p className="text-xs text-gray-400">暂无数据</p>
-            ) : !data ? (
-              <p className="text-xs text-gray-400">加载中…</p>
-            ) : (
-              render(data)
-            )}
-          </div>
-        </div>
-      </div>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl px-4 py-3">
+              {error ? (
+                <p className="text-xs text-gray-400">暂无数据</p>
+              ) : !data ? (
+                <p className="text-xs text-gray-400">加载中…</p>
+              ) : (
+                render(data)
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
