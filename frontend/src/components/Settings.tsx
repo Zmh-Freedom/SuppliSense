@@ -43,7 +43,7 @@ export default function Settings() {
       <h2 className="text-lg font-semibold text-[#333] mb-6">账户设置</h2>
 
       {/* User info */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6">
+      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6 shadow-sm">
         <h3 className="text-sm font-medium text-[#333] mb-3">账户信息</h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
@@ -58,7 +58,7 @@ export default function Settings() {
       </div>
 
       {/* Change password */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">
+      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 shadow-sm">
         <h3 className="text-sm font-medium text-[#333] mb-4">修改密码</h3>
         {msg && (
           <div className={`rounded-lg px-4 py-2 text-xs mb-4 ${
@@ -70,14 +70,18 @@ export default function Settings() {
           </div>
         )}
         <div className="space-y-3">
+          <label htmlFor="old-password" className="sr-only">原密码</label>
           <input
+            id="old-password"
             type="password"
             placeholder="原密码"
             value={oldPw}
             onChange={e => setOldPw(e.target.value)}
             className="w-full border border-[#e8e8e3] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#999]"
           />
+          <label htmlFor="new-password" className="sr-only">新密码</label>
           <input
+            id="new-password"
             type="password"
             placeholder="新密码（至少 6 位）"
             value={newPw}

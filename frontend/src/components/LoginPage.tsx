@@ -41,7 +41,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#f5f5f0]">
       <div className="w-full max-w-sm">
-        <div className="bg-white rounded-2xl shadow-sm border border-[#e8e8e3] p-8">
+        <div className="bg-white rounded-2xl shadow-md border border-[#e8e8e3] p-8">
           <div className="text-center mb-8">
             <h1 className="text-2xl font-bold text-[#333]">供应商风险分析</h1>
             <p className="text-sm text-gray-400 mt-2">请登录以继续</p>
@@ -49,8 +49,9 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-sm text-[#555] mb-1.5">用户名</label>
+              <label htmlFor="login-username" className="block text-sm text-[#555] mb-1.5">用户名</label>
               <input
+                id="login-username"
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
@@ -61,8 +62,9 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm text-[#555] mb-1.5">密码</label>
+              <label htmlFor="login-password" className="block text-sm text-[#555] mb-1.5">密码</label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}

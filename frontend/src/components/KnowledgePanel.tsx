@@ -27,6 +27,8 @@ export default function KnowledgePanel() {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [message, setMessage] = useState<{type: 'success' | 'error'; text: string} | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const statsQuery = useQuery({
@@ -41,7 +43,7 @@ export default function KnowledgePanel() {
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledgeStats });
       if (fileInputRef.current) fileInputRef.current.value = '';
     },
-    onError: () => alert('上传失败，请重试'),
+    onError: () => setMessage({type: 'error', text: '上传失败，请重试'}),
   });
 
   const searchMutation = useMutation({
@@ -58,9 +60,10 @@ export default function KnowledgePanel() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.knowledgeStats });
       setSearchResults([]);
-      alert('知识库已清空');
+      setMessage({type: 'success', text: '知识库已清空'});
+      setConfirmClear(false);
     },
-    onError: () => alert('清空失败，请重试'),
+    onError: () => { setMessage({type: 'error', text: '清空失败，请重试'}); setConfirmClear(false); },
   });
 
   const stats = statsQuery.data ?? null;
@@ -78,7 +81,10 @@ export default function KnowledgePanel() {
   };
 
   const handleClear = () => {
-    if (!confirm('确定要清空知识库吗？此操作不可恢复。')) return;
+    setConfirmClear(true);
+  };
+
+  const confirmClearAction = () => {
     clearMutation.mutate();
   };
 
@@ -86,8 +92,14 @@ export default function KnowledgePanel() {
     <div className="flex flex-col h-full max-w-3xl mx-auto px-4 py-6">
       <h2 className="text-lg font-semibold mb-4">知识库管理</h2>
 
+      {message && (
+        <div className={`mb-4 rounded-lg px-4 py-2 text-sm ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-600 border border-red-200'}`}>
+          {message.text}
+        </div>
+      )}
+
       {/* Stats */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4">
+      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 shadow-sm">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium">知识库统计</span>
           <button
@@ -118,7 +130,7 @@ export default function KnowledgePanel() {
       </div>
 
       {/* Upload */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4">
+      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 shadow-sm">
         <h3 className="text-sm font-medium mb-2">上传文档</h3>
         <p className="text-xs text-gray-400 mb-3">
           支持格式：PDF、Word、Excel、TXT。文档将被分块并存入向量数据库。
@@ -145,7 +157,7 @@ export default function KnowledgePanel() {
       </div>
 
       {/* Search */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4">
+      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 shadow-sm">
         <h3 className="text-sm font-medium mb-2">检索测试</h3>
         <div className="flex items-center gap-2 mb-3">
           <input
@@ -191,13 +203,32 @@ export default function KnowledgePanel() {
 
       {/* Clear */}
       <div className="mt-auto pt-4 border-t border-[#e8e8e3]">
-        <button
-          onClick={handleClear}
-          disabled={clearMutation.isPending}
-          className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
-        >
-          {clearMutation.isPending ? '清空中…' : '清空知识库'}
-        </button>
+        {confirmClear ? (
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-red-600">确定要清空知识库吗？此操作不可恢复。</span>
+            <button
+              onClick={confirmClearAction}
+              disabled={clearMutation.isPending}
+              className="text-sm bg-red-500 text-white rounded-lg px-3 py-1.5 hover:bg-red-600 disabled:opacity-50"
+            >
+              {clearMutation.isPending ? '清空中…' : '确定'}
+            </button>
+            <button
+              onClick={() => setConfirmClear(false)}
+              className="text-sm text-gray-500 hover:text-gray-700"
+            >
+              取消
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={handleClear}
+            disabled={clearMutation.isPending}
+            className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
+          >
+            清空知识库
+          </button>
+        )}
       </div>
     </div>
   );

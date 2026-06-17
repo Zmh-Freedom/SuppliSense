@@ -8,9 +8,10 @@ import { queryKeys } from '../query-keys';
 interface Props {
   onRefresh: () => void;
   onSelect?: (name: string) => void;
+  onClose?: () => void;
 }
 
-export default function Sidebar({ onRefresh, onSelect }: Props) {
+export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
   const queryClient = useQueryClient();
   const { companies: watchlist } = useWatchlist();
   const { data: alerts } = useAlertHistory();
@@ -110,10 +111,18 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
 
   return (
     <aside className="w-64 h-screen border-r border-[#e8e8e3] bg-[#f5f5f0] flex flex-col text-sm relative">
+      {/* mobile close */}
+      {onClose && (
+        <button className="md:hidden p-2 ml-auto text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M5 5l10 10M15 5l-10 10" />
+          </svg>
+        </button>
+      )}
       {/* header */}
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-[#555] tracking-wide">供应商分析</h2>
-        <button className="relative" title="通知">
+        <button className="relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center" title="通知" aria-label="通知">
           <svg className="w-5 h-5 text-[#555] hover:text-[#333] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
           </svg>
@@ -146,12 +155,12 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="添加企业…"
-            className="flex-1 border border-[#e8e8e3] rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-[#bbb] bg-white placeholder-gray-300"
+            className="flex-1 border border-[#e8e8e3] rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-[#bbb] bg-white placeholder-gray-300 min-h-[44px]"
           />
           <button
             type="submit"
             disabled={addMutation.isPending || !newName.trim()}
-            className="bg-[#333] text-white rounded-lg px-3 py-1.5 text-xs hover:bg-[#555] disabled:opacity-30 transition-opacity shrink-0"
+            className="bg-[#333] text-white rounded-lg px-3 py-2 text-xs hover:bg-[#555] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px]"
           >
             {addMutation.isPending ? '...' : '添加'}
           </button>
@@ -160,7 +169,7 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
 
       {/* excel import */}
       <div className="px-4 pb-3">
-        <label className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 cursor-pointer hover:text-gray-500 transition-colors border border-dashed border-[#e0e0d8] rounded-lg py-1.5">
+        <label className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 cursor-pointer hover:text-gray-500 transition-colors border border-dashed border-[#e0e0d8] rounded-lg py-2 min-h-[44px]" aria-label="导入 Excel">
           <span>📎 Excel 批量导入</span>
           <input type="file" accept=".xlsx" onChange={handleFile} className="hidden" />
         </label>
@@ -184,7 +193,7 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
           watchlist.map(c => (
             <div
               key={c}
-              className="group flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-white/60 transition-colors cursor-pointer"
+              className="group flex items-center justify-between px-2 py-2 rounded-lg hover:bg-white/60 transition-colors cursor-pointer min-h-[44px]"
               onMouseEnter={() => setHovered(c)}
               onMouseLeave={() => setHovered(null)}
               onClick={() => onSelect?.(c)}
@@ -192,10 +201,11 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
               <span className="text-xs text-[#444] truncate flex-1">{c}</span>
               <button
                 onClick={e => { e.stopPropagation(); remove(c); }}
-                className={`text-gray-300 hover:text-red-400 text-sm leading-none transition-all shrink-0 ml-1 ${
+                className={`text-gray-300 hover:text-red-400 text-sm leading-none transition-all shrink-0 ml-1 p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center ${
                   hovered === c ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                 }`}
                 title="移除"
+                aria-label="移除"
               >
                 ×
               </button>
@@ -210,14 +220,14 @@ export default function Sidebar({ onRefresh, onSelect }: Props) {
           <button
             disabled={busy}
             onClick={() => checkAllMutation.mutate()}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50"
+            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px]"
           >
             {busy ? '...' : '⚡ 免费巡检'}
           </button>
           <button
             disabled={busy}
             onClick={() => refreshAllMutation.mutate()}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-1.5 text-[11px] text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50"
+            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px]"
           >
             {busy ? '...' : '🔄 付费刷新'}
           </button>

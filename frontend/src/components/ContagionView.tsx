@@ -342,9 +342,9 @@ export default function ContagionView() {
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col md:flex-row h-full">
       {/* left panel */}
-      <div className="w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0">
+      <div className="w-full md:w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0 max-h-48 md:max-h-none">
         <div className="px-4 py-3 border-b border-[#e8e8e3]">
           <h2 className="text-sm font-semibold text-[#333]">风险传染图谱</h2>
           <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家监控企业</p>

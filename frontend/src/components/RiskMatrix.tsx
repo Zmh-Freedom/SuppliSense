@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useDashboard } from '../hooks';
+import Skeleton from './Skeleton';
 
 interface CompanySnap {
   name: string;
@@ -41,11 +42,12 @@ export default function RiskMatrix() {
           <button onClick={() => refetch()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
         </div>
       ) : isLoading ? (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center text-gray-300">
-          加载中…
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 shadow-sm">
+          <Skeleton className="h-4 w-1/3 mb-4" />
+          <Skeleton className="aspect-square w-full rounded-xl" />
         </div>
       ) : (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6">
+        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
             <span>← 低风险</span>
             <span>风险评分 →</span>

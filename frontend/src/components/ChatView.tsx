@@ -48,6 +48,16 @@ export default function ChatView() {
   const [streamState, setStreamState] = useState<StreamState | null>(null);
   const [mode, setMode] = useState<'react' | 'plan-execute' | 'multi-agent'>('react');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const saveTimerRef = useRef<number | null>(null);
+
+  // Debounced localStorage save for chat input
+  useEffect(() => {
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = window.setTimeout(() => {
+      try { localStorage.setItem('chat_input', input); } catch {}
+    }, 500);
+    return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
+  }, [input]);
 
   const active = sessions.find(s => s.sid === activeSid);
   const msgs = active?.msgs ?? [];
@@ -205,7 +215,7 @@ export default function ChatView() {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-3xl mx-auto relative">
+    <div className="flex flex-col h-full max-w-full md:max-w-3xl mx-auto relative">
       {/* top bar */}
       <div className="flex justify-end px-4 pt-3 pb-0">
         <button
@@ -228,7 +238,7 @@ export default function ChatView() {
             }`}>
               {m.role === 'user' ? '你' : 'AI'}
             </div>
-            <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+            <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
               m.role === 'user'
                 ? 'bg-[#f0f0eb] text-[#1a1a1a]'
                 : 'bg-white border border-[#e8e8e3] text-[#2d2d2d]'
@@ -245,13 +255,13 @@ export default function ChatView() {
             <div className="max-w-[80%] space-y-2">
               {/* Thinking indicator */}
               {streamState.thinking && streamState.answerChunks.length === 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-gray-500">
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-gray-500 shadow-sm">
                   <span className="inline-block animate-pulse">{streamState.thinking}</span>
                 </div>
               )}
               {/* Execution plan (Plan-and-Execute mode) */}
               {streamState.plan && streamState.plan.length > 0 && streamState.toolCalls.length === 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs">
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs shadow-sm">
                   <div className="text-gray-500 mb-2">📋 执行计划：</div>
                   <div className="space-y-1">
                     {streamState.plan.map((step, i) => (
@@ -266,7 +276,7 @@ export default function ChatView() {
               )}
               {/* Agent selection (Multi-Agent mode) */}
               {streamState.agents && streamState.agents.selected.length > 0 && streamState.toolCalls.length === 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs">
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs shadow-sm">
                   <div className="text-gray-500 mb-2">🤖 Agent 分配：</div>
                   <div className="space-y-2">
                     <div className="text-gray-400 text-[11px] italic">{streamState.agents.reasoning}</div>
@@ -289,7 +299,7 @@ export default function ChatView() {
               )}
               {/* Tool calls */}
               {streamState.toolCalls.length > 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs space-y-2">
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs space-y-2 shadow-sm">
                   {streamState.toolCalls.map((tc, i) => (
                     <div key={i} className="flex items-start gap-2">
                       <span className="text-[#333] font-mono">🔧 {tc.tool}</span>
@@ -305,7 +315,7 @@ export default function ChatView() {
               )}
               {/* Streaming answer */}
               {streamState.answerChunks.length > 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-[#2d2d2d]">
+                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-[#2d2d2d] shadow-sm">
                   <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
                     <ReactMarkdown>{streamState.answerChunks.join('')}</ReactMarkdown>
                   </div>
@@ -328,7 +338,7 @@ export default function ChatView() {
           <span className="text-xs text-gray-400">模式：</span>
           <button
             onClick={() => setMode('react')}
-            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[44px] ${
               mode === 'react'
                 ? 'bg-[#333] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -338,7 +348,7 @@ export default function ChatView() {
           </button>
           <button
             onClick={() => setMode('plan-execute')}
-            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[44px] ${
               mode === 'plan-execute'
                 ? 'bg-[#333] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -348,7 +358,7 @@ export default function ChatView() {
           </button>
           <button
             onClick={() => setMode('multi-agent')}
-            className={`text-xs px-2 py-1 rounded-md transition-colors ${
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[44px] ${
               mode === 'multi-agent'
                 ? 'bg-[#333] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
@@ -363,7 +373,7 @@ export default function ChatView() {
         <div className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-2xl px-4 py-1 focus-within:border-[#bbb] focus-within:shadow-sm transition-shadow">
           <input
             value={input}
-            onChange={e => { setInput(e.target.value); localStorage.setItem('chat_input', e.target.value); }}
+            onChange={e => { setInput(e.target.value); }}
             onKeyDown={e => e.key === 'Enter' && send()}
             placeholder="输入问题，如：对比海康威视和宝钢的风险"
             className="flex-1 border-none outline-none py-2.5 text-sm bg-transparent placeholder-gray-300"
@@ -371,7 +381,7 @@ export default function ChatView() {
           <button
             onClick={send}
             disabled={loading}
-            className="bg-[#333] text-white rounded-xl px-4 py-1.5 text-sm hover:bg-[#555] disabled:opacity-40 shrink-0 transition-colors"
+            className="bg-[#333] text-white rounded-xl px-4 py-2 text-sm hover:bg-[#555] disabled:opacity-40 shrink-0 transition-colors min-h-[44px]"
           >
             发送
           </button>
@@ -453,7 +463,7 @@ function QuickAssess() {
       </div>
 
       {open && data && (
-        <div className="mt-3 bg-white border border-[#e8e8e3] rounded-2xl p-4">
+        <div className="mt-3 bg-white border border-[#e8e8e3] rounded-2xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold">{name}</span>
             <button onClick={() => { setOpen(false); setName(''); }} className="text-gray-400 hover:text-gray-600 text-sm">×</button>

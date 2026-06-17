@@ -52,7 +52,7 @@ export default function NotificationCenter() {
         <div className="space-y-2">
           {notifs.map(n => (
             <div key={n._id}
-              className={`bg-white border rounded-xl p-4 transition-colors ${
+              className={`bg-white border rounded-xl p-4 transition-colors shadow-sm ${
                 n.read ? 'border-[#e8e8e3]' : 'border-[#ccc] bg-[#fafaf8]'
               }`}>
               <div className="flex items-start justify-between gap-3">

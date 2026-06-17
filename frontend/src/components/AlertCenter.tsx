@@ -3,6 +3,7 @@ import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '../api';
 import { useAlertHistory } from '../hooks';
 import { queryKeys } from '../query-keys';
+import Skeleton from './Skeleton';
 import type { AlertDoc } from '../types';
 
 export default function AlertCenter() {
@@ -18,7 +19,11 @@ export default function AlertCenter() {
   const alertList = alerts ?? [];
 
   if (isLoading) {
-    return <div className="max-w-2xl mx-auto py-10 text-center text-gray-300">加载中…</div>;
+    return (
+      <div className="max-w-2xl mx-auto py-6 px-4 space-y-3">
+        {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-xl" />)}
+      </div>
+    );
   }
 
   if (error) {
@@ -57,7 +62,7 @@ export default function AlertCenter() {
         return (
           <div
             key={i}
-            className={`mb-2 rounded-xl border bg-white p-4 ${
+            className={`mb-2 rounded-xl border bg-white p-4 shadow-sm ${
               isCritical ? 'border-l-[3px] border-l-[#e06060]' : 'border-l-[3px] border-l-[#d4a040]'
             } border-[#e8e8e3]`}
           >

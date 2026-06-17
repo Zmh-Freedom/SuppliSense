@@ -9,6 +9,7 @@ import type {
 } from '../types';
 import { queryKeys } from '../query-keys';
 import SentimentPanel from './SentimentPanel';
+import Skeleton, { SkeletonChart } from './Skeleton';
 
 const LEVEL_COLOR: Record<string, string> = {
   '高风险': '#dc2626', '中风险': '#d97706', '低风险': '#16a34a',
@@ -74,19 +75,37 @@ export default function AssessView() {
           onChange={e => setName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && assess()}
           placeholder="输入完整企业名称"
-          className="flex-1 border border-[#e8e8e3] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#bbb]"
+          className="flex-1 border border-[#e8e8e3] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#bbb] min-h-[44px]"
         />
-        <button onClick={assess} disabled={loading} className="bg-[#333] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[#555] disabled:opacity-50">
+        <button onClick={assess} disabled={loading} className="bg-[#333] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[#555] disabled:opacity-50 min-h-[44px]">
           {loading ? '评估中…' : '评估'}
         </button>
       </div>
 
       {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
 
+      {loading && !data && (
+        <div className="space-y-6">
+          <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center gap-4">
+              <Skeleton className="w-14 h-14 rounded-full" />
+              <div className="flex-1">
+                <Skeleton className="h-6 w-24 mb-2" />
+                <Skeleton className="h-3 w-48" />
+              </div>
+            </div>
+          </div>
+          <SkeletonChart />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+          </div>
+        </div>
+      )}
+
       {data && (
         <>
           {/* score */}
-          <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 mb-4" style={{ background: bg }}>
+          <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 mb-4 shadow-sm" style={{ background: bg }}>
             <div className="flex items-center gap-6">
               <div className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg" style={{ background: color }}>
                 {data.risk_score}
@@ -109,13 +128,13 @@ export default function AssessView() {
                 )}
                 {data.is_stale && (
                   <button onClick={refresh} disabled={refreshing}
-                    className="text-[10px] text-amber-600 hover:text-amber-800 border border-amber-200 rounded-md px-1.5 py-0.5 disabled:opacity-50 whitespace-nowrap">
+                    className="text-xs text-amber-600 hover:text-amber-800 border border-amber-200 rounded-md px-2 py-1 disabled:opacity-50 whitespace-nowrap min-h-[44px]">
                     {refreshing ? '刷新中…' : '刷新'}
                   </button>
                 )}
                 <a
                   href={`/api/v1/report/excel/${encodeURIComponent(name)}`}
-                  className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors no-underline"
+                  className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-2 hover:bg-green-700 transition-colors no-underline min-h-[44px]"
                 >
                   导出 Excel
                 </a>
@@ -123,7 +142,7 @@ export default function AssessView() {
                   href={`/api/v1/report/html/${encodeURIComponent(name)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] transition-colors no-underline"
+                  className="text-xs bg-[#333] text-white rounded-lg px-3 py-2 hover:bg-[#555] transition-colors no-underline min-h-[44px]"
                 >
                   导出报告
                 </a>
@@ -133,7 +152,7 @@ export default function AssessView() {
 
           {/* risk trend */}
           {trend.length > 1 && (
-            <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6">
+            <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6 shadow-sm">
               <h3 className="text-sm font-semibold text-[#333] mb-1">近90天风险评分趋势</h3>
               <p className="text-[11px] text-gray-400 mb-4">
                 最新 {trend[trend.length - 1]?.risk_score ?? '—'} 分 · 最高 {Math.max(...trend.map(d => d.risk_score))} · 最低 {Math.min(...trend.map(d => d.risk_score))}
@@ -193,25 +212,25 @@ export default function AssessView() {
           {/* metrics */}
           {fin && (
             <>
-              <div className="grid grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <Metric label="营收增长" value={`${(fin.revenue_growth * 100).toFixed(1)}%`} />
                 <Metric label="净利增长" value={`${(fin.net_profit_growth * 100).toFixed(1)}%`} />
                 <Metric label="负债率" value={`${(fin.debt_ratio * 100).toFixed(1)}%`} />
                 <Metric label="每股现金流" value={`¥${fin.cash_flow.toFixed(2)}`} />
               </div>
-              <div className="grid grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <Metric label="ROE" value={`${((fin.roe ?? 0) * 100).toFixed(1)}%`} />
                 <Metric label="净利率" value={`${((fin.net_profit_margin ?? 0) * 100).toFixed(1)}%`} />
                 <Metric label="流动比率" value={`${(fin.current_ratio ?? 0).toFixed(2)}`} />
                 <Metric label="速动比率" value={`${(fin.quick_ratio ?? 0).toFixed(2)}`} />
               </div>
-              <div className="grid grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                 <Metric label="存货周转" value={`${(fin.inventory_turnover ?? 0).toFixed(1)}`} />
                 <Metric label="应收款周转" value={`${(fin.ar_turnover_days ?? 0).toFixed(0)}天`} />
                 <Metric label="扣非占比" value={`${((fin.recurring_profit_ratio ?? 0) * 100).toFixed(1)}%`} />
                 <Metric label="产权比率" value={`${(fin.equity_ratio ?? 0).toFixed(2)}`} />
               </div>
-              <div className="grid grid-cols-3 gap-3 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                 <Metric label="营收趋势" value={fin.revenue_trend && fin.revenue_trend < 0 ? `↓ ${Math.abs(fin.revenue_trend * 100).toFixed(1)}%` : fin.revenue_trend ? '→ 稳定' : '-'} />
                 <Metric label="负债趋势" value={fin.debt_trend && fin.debt_trend > 0 ? `↑ +${(fin.debt_trend * 100).toFixed(1)}%` : fin.debt_trend ? '→ 稳定' : '-'} />
                 <Metric label="净利趋势" value={fin.net_profit_trend && fin.net_profit_trend < 0 ? `↓ ${Math.abs(fin.net_profit_trend * 100).toFixed(1)}%` : fin.net_profit_trend ? '→ 稳定' : '-'} />
@@ -219,14 +238,14 @@ export default function AssessView() {
             </>
           )}
           {!fin && (
-            <div className="grid grid-cols-4 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
               {Array(4).fill(null).map((_, i) => <Metric key={i} label="—" value="无数据" />)}
             </div>
           )}
 
           {/* risk detail */}
           <h3 className="text-sm font-semibold mb-3 text-[#555]">风险明细</h3>
-          <div className="grid grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
               <p className="font-medium mb-2 text-[#555]">司法</p>
               <Row label="诉讼" value={rd?.lawsuit_count ?? 0} />
@@ -402,7 +421,7 @@ function ExpandableSentiment({ name }: { name: string }) {
     <div className="mt-3">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left"
+        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left shadow-sm hover:shadow-md"
       >
         <span className="text-sm font-medium text-[#555]">📰 舆情分析</span>
         <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
@@ -438,7 +457,7 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
     <div className="mt-3">
       <button
         onClick={toggle}
-        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left"
+        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left shadow-sm hover:shadow-md"
       >
         <span className="text-sm font-medium text-[#555]">{title}</span>
         <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
@@ -462,7 +481,7 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white border border-[#e8e8e3] rounded-xl p-3 text-center">
+    <div className="bg-white border border-[#e8e8e3] rounded-xl p-3 text-center shadow-sm">
       <div className="text-base font-semibold">{value}</div>
       <div className="text-xs text-gray-400 mt-0.5">{label}</div>
     </div>

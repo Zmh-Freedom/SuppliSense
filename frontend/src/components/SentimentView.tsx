@@ -106,9 +106,9 @@ export default function SentimentView() {
     (detail?.sentiment_score ?? 0) > 0.2 ? '#16a34a' : '#6b7280';
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col md:flex-row h-full">
       {/* left: company list */}
-      <div className="w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0">
+      <div className="w-full md:w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0 max-h-48 md:max-h-none">
         <div className="px-4 py-3 border-b border-[#e8e8e3]">
           <h2 className="text-sm font-semibold text-[#333]">舆情监控</h2>
           <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家监控企业</p>
@@ -180,26 +180,26 @@ export default function SentimentView() {
             )}
 
             {/* summary card */}
-            <div className="grid grid-cols-5 gap-3 mb-6">
-              <div className="bg-white border border-[#e8e8e3] rounded-xl p-4 text-center">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+              <div className="bg-white border border-[#e8e8e3] rounded-xl p-4 text-center shadow-sm">
                 <div className="text-2xl font-bold" style={{ color: scoreColor }}>
                   {detail.has_data ? (detail.sentiment_score > 0 ? '+' : '') + detail.sentiment_score.toFixed(2) : '—'}
                 </div>
                 <div className="text-[11px] text-gray-400 mt-1">情感得分</div>
               </div>
-              <div className="bg-red-50 rounded-xl p-4 text-center">
+              <div className="bg-red-50 rounded-xl p-4 text-center shadow-sm">
                 <div className="text-2xl font-bold text-red-600">{detail.negative_count}</div>
                 <div className="text-[11px] text-red-400 mt-1">负面</div>
               </div>
-              <div className="bg-gray-50 rounded-xl p-4 text-center">
+              <div className="bg-gray-50 rounded-xl p-4 text-center shadow-sm">
                 <div className="text-2xl font-bold text-gray-600">{detail.neutral_count}</div>
                 <div className="text-[11px] text-gray-400 mt-1">中性</div>
               </div>
-              <div className="bg-green-50 rounded-xl p-4 text-center">
+              <div className="bg-green-50 rounded-xl p-4 text-center shadow-sm">
                 <div className="text-2xl font-bold text-green-600">{detail.positive_count}</div>
                 <div className="text-[11px] text-green-400 mt-1">正面</div>
               </div>
-              <div className="bg-white border border-[#e8e8e3] rounded-xl p-4 text-center">
+              <div className="bg-white border border-[#e8e8e3] rounded-xl p-4 text-center shadow-sm">
                 <div className="text-2xl font-bold text-[#333]">{detail.articles_count}</div>
                 <div className="text-[11px] text-gray-400 mt-1">总计</div>
               </div>
@@ -207,7 +207,7 @@ export default function SentimentView() {
 
             {/* AI summary */}
             {detail.summary && (
-              <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-6">
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-6 shadow-sm">
                 <div className="text-xs font-semibold text-amber-700 mb-1">🤖 AI 分析</div>
                 <p className="text-sm text-amber-800 leading-relaxed">{detail.summary}</p>
                 {detail.key_concerns?.length > 0 && (
@@ -261,7 +261,7 @@ export default function SentimentView() {
                 {filteredArticles.map((a, i) => {
                   const s = a.sentiment || 'neutral';
                   return (
-                    <div key={i} className="bg-white border border-[#e8e8e3] rounded-xl p-4 hover:border-[#ccc] transition-colors">
+                    <div key={i} className="bg-white border border-[#e8e8e3] rounded-xl p-4 hover:border-[#ccc] transition-colors shadow-sm hover:shadow-md">
                       <div className="flex items-start gap-3">
                         <span className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ background: SENTIMENT_COLORS[s] || '#999' }} />
                         <div className="flex-1 min-w-0">
