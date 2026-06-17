@@ -110,7 +110,7 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
   };
 
   return (
-    <aside className="w-64 h-screen border-r border-[#e8e8e3] bg-[#f5f5f0] flex flex-col text-sm relative">
+    <aside className="w-64 h-screen border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface flex flex-col text-sm relative">
       {/* mobile close */}
       {onClose && (
         <button className="md:hidden p-2 ml-auto text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">
@@ -121,9 +121,9 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
       )}
       {/* header */}
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-[#555] tracking-wide">供应商分析</h2>
+        <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] tracking-wide">供应商分析</h2>
         <button className="relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center" title="通知" aria-label="通知">
-          <svg className="w-5 h-5 text-[#555] hover:text-[#333] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-5 h-5 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
           </svg>
           {unreadCount > 0 && (
@@ -137,12 +137,12 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
       {/* stats */}
       <div className="px-4 pb-3">
         <div className="flex gap-2">
-          <div className="flex-1 bg-white rounded-xl border border-[#e8e8e3] px-3 py-2.5">
-            <div className="text-xl font-bold text-[#333]">{watchlist.length}</div>
+          <div className="flex-1 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] px-3 py-2.5">
+            <div className="text-xl font-bold text-[var(--color-text)]">{watchlist.length}</div>
             <div className="text-[11px] text-gray-400 mt-0.5">监控中</div>
           </div>
-          <div className="flex-1 bg-white rounded-xl border border-[#e8e8e3] px-3 py-2.5">
-            <div className="text-xl font-bold text-[#333]">{alertCount}</div>
+          <div className="flex-1 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] px-3 py-2.5">
+            <div className="text-xl font-bold text-[var(--color-text)]">{alertCount}</div>
             <div className="text-[11px] text-gray-400 mt-0.5">告警</div>
           </div>
         </div>
@@ -155,12 +155,12 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder="添加企业…"
-            className="flex-1 border border-[#e8e8e3] rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-[#bbb] bg-white placeholder-gray-300 min-h-[44px]"
+            className="flex-1 border border-[var(--color-border)] rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-[var(--color-border-focus)] bg-[var(--color-input-bg)] placeholder-gray-300 min-h-[44px]"
           />
           <button
             type="submit"
             disabled={addMutation.isPending || !newName.trim()}
-            className="bg-[#333] text-white rounded-lg px-3 py-2 text-xs hover:bg-[#555] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px] inline-flex items-center"
+            className="bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-2 text-xs hover:bg-[var(--color-primary-hover)] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px] inline-flex items-center"
           >
             {addMutation.isPending ? '...' : '添加'}
           </button>
@@ -169,14 +169,14 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
 
       {/* excel import */}
       <div className="px-4 pb-3">
-        <label className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 cursor-pointer hover:text-gray-500 transition-colors border border-dashed border-[#e0e0d8] rounded-lg py-2 min-h-[44px]" aria-label="导入 Excel">
+        <label className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 cursor-pointer hover:text-gray-500 transition-colors border border-dashed border-[var(--color-border)] rounded-lg py-2 min-h-[44px]" aria-label="导入 Excel">
           <span>📎 Excel 批量导入</span>
           <input type="file" accept=".xlsx" onChange={handleFile} className="hidden" />
         </label>
       </div>
 
       {/* divider */}
-      <div className="border-t border-[#e8e8e3] mx-4" />
+      <div className="border-t border-[var(--color-border)] mx-4" />
 
       {/* list header */}
       <div className="px-4 pt-3 pb-1 flex justify-between items-center">
@@ -193,12 +193,12 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
           watchlist.map(c => (
             <div
               key={c}
-              className="group flex items-center justify-between px-2 py-2 rounded-lg hover:bg-white/60 transition-colors cursor-pointer min-h-[44px]"
+              className="group flex items-center justify-between px-2 py-2 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer min-h-[44px]"
               onMouseEnter={() => setHovered(c)}
               onMouseLeave={() => setHovered(null)}
               onClick={() => onSelect?.(c)}
             >
-              <span className="text-xs text-[#444] truncate flex-1">{c}</span>
+              <span className="text-xs text-[var(--color-text)] truncate flex-1">{c}</span>
               <button
                 onClick={e => { e.stopPropagation(); remove(c); }}
                 className={`text-gray-300 hover:text-red-400 text-sm leading-none transition-all shrink-0 ml-1 p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center ${
@@ -215,19 +215,19 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
       </div>
 
       {/* actions */}
-      <div className="border-t border-[#e8e8e3] px-4 py-3 space-y-2">
+      <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-2">
         <div className="flex gap-2">
           <button
             disabled={busy}
             onClick={() => checkAllMutation.mutate()}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
+            className="flex-1 border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
           >
             {busy ? '...' : '⚡ 免费巡检'}
           </button>
           <button
             disabled={busy}
             onClick={() => refreshAllMutation.mutate()}
-            className="flex-1 border border-[#e8e8e3] bg-white rounded-lg py-2 text-xs text-[#555] hover:bg-[#f9f9f5] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
+            className="flex-1 border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
           >
             {busy ? '...' : '🔄 付费刷新'}
           </button>

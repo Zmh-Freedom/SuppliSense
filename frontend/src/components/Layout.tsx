@@ -3,12 +3,15 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import ErrorBoundary from './ErrorBoundary';
 import NetworkStatus from './NetworkStatus';
 import Sidebar from './Sidebar';
+import ThemeSwitcher from './ThemeSwitcher';
 import { TAB_ROUTES } from '../routes';
+import { useTheme } from '../hooks/useTheme';
 
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  useTheme(); // initialize theme on mount
 
   const activePath = '/' + (location.pathname.split('/')[1] || '');
   const activeTab = TAB_ROUTES.findIndex(t => t.path === activePath);
@@ -19,7 +22,7 @@ export default function Layout() {
       <ErrorBoundary>
         {/* Mobile hamburger */}
         <button
-          className="md:hidden fixed top-4 left-4 z-30 p-2 bg-white border border-[#e8e8e3] rounded-lg shadow-sm"
+          className="md:hidden fixed top-4 left-4 z-30 p-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-sm"
           onClick={() => setSidebarOpen(!sidebarOpen)}
           aria-label="菜单"
         >
@@ -61,13 +64,15 @@ export default function Layout() {
                 onClick={() => navigate(tab.path)}
                 className={`px-4 py-2 text-sm rounded-lg transition-colors min-h-[44px] flex items-center ${
                   activeTab === i
-                    ? 'bg-[#333] text-white'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-[#eee]'
+                    ? 'bg-[var(--color-primary-bg)] text-[var(--color-primary-text)]'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-[var(--color-surface-hover)]'
                 }`}
               >
                 {tab.label}
               </button>
             ))}
+            <div className="flex-1" />
+            <ThemeSwitcher />
           </div>
 
           <div className="flex-1 overflow-auto">

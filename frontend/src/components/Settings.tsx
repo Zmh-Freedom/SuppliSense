@@ -40,26 +40,26 @@ export default function Settings() {
 
   return (
     <div className="max-w-md mx-auto py-6 px-4">
-      <h2 className="text-lg font-semibold text-[#333] mb-6">账户设置</h2>
+      <h2 className="text-lg font-semibold text-[var(--color-text)] mb-6">账户设置</h2>
 
       {/* User info */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6 shadow-sm">
-        <h3 className="text-sm font-medium text-[#333] mb-3">账户信息</h3>
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 mb-6 shadow-sm">
+        <h3 className="text-sm font-medium text-[var(--color-text)] mb-3">账户信息</h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-gray-400">用户名</span>
-            <span className="text-[#333]">{user?.username || '—'}</span>
+            <span className="text-[var(--color-text)]">{user?.username || '—'}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-gray-400">角色</span>
-            <span className="text-[#333]">{user?.role || '—'}</span>
+            <span className="text-[var(--color-text)]">{user?.role || '—'}</span>
           </div>
         </div>
       </div>
 
       {/* Change password */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-[#333] mb-4">修改密码</h3>
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+        <h3 className="text-sm font-medium text-[var(--color-text)] mb-4">修改密码</h3>
         {msg && (
           <div className={`rounded-lg px-4 py-2 text-xs mb-4 ${
             msgType === 'success'
@@ -77,7 +77,7 @@ export default function Settings() {
             placeholder="原密码"
             value={oldPw}
             onChange={e => setOldPw(e.target.value)}
-            className="w-full border border-[#e8e8e3] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#999]"
+            className="w-full border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-text-muted)]"
           />
           <label htmlFor="new-password" className="sr-only">新密码</label>
           <input
@@ -86,12 +86,12 @@ export default function Settings() {
             placeholder="新密码（至少 6 位）"
             value={newPw}
             onChange={e => setNewPw(e.target.value)}
-            className="w-full border border-[#e8e8e3] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#999]"
+            className="w-full border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-text-muted)]"
           />
           <button
             onClick={changePassword}
             disabled={changePwMutation.isPending}
-            className="w-full bg-[#333] text-white rounded-lg px-4 py-2 text-sm hover:bg-[#555] disabled:opacity-50 transition-colors"
+            className="w-full bg-[var(--color-primary-bg)] text-white rounded-lg px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 transition-colors"
           >
             {changePwMutation.isPending ? '修改中…' : '修改密码'}
           </button>

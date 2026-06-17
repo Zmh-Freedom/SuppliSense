@@ -105,7 +105,7 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
     // 正在首次分析（无缓存）
     if (analyzing && !detail?.has_data) {
       return (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 text-center">
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 text-center">
           <div className="text-xs text-gray-400">🔄 正在分析舆情数据，请稍候…</div>
           <div className="mt-2 text-[11px] text-gray-300">首次分析需要 15-20 秒，之后会缓存</div>
         </div>
@@ -118,9 +118,9 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
       detail!.sentiment_score < -0.2 ? '#dc2626' : detail!.sentiment_score > 0.2 ? '#16a34a' : '#999';
 
     return (
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 space-y-4">
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-[#555]">📰 舆情分析</h3>
+          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</h3>
           <div className="flex items-center gap-2">
             {isStale && (
               <span className="text-[10px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded">
@@ -244,9 +244,9 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
   if (error) return <div className="text-xs text-red-400 p-4">舆情加载失败</div>;
 
   return (
-    <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5">
+    <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-medium text-[#555]">
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
           📰 舆情监控
           <span className="text-xs text-gray-400 ml-2">
             {dash!.analyzed_count}/{dash!.total_monitored} 家已分析
@@ -270,9 +270,9 @@ export default function SentimentPanel({ companyName }: { companyName?: string }
             return (
               <div
                 key={c.company_name}
-                className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[#f9f9f5] transition-colors"
+                className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors"
               >
-                <span className="text-sm text-[#333] flex-1 truncate">{c.company_name}</span>
+                <span className="text-sm text-[var(--color-text)] flex-1 truncate">{c.company_name}</span>
                 <span className="text-[11px] text-red-500">
                   {c.articles_count} 条新闻
                 </span>

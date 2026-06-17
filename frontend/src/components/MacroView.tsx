@@ -86,15 +86,15 @@ export default function MacroView() {
   return (
     <div className="flex h-full">
       {/* left */}
-      <div className="w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0">
-        <div className="px-4 py-3 border-b border-[#e8e8e3]">
-          <h2 className="text-sm font-semibold text-[#333]">宏观 & 替代</h2>
+      <div className="w-72 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0">
+        <div className="px-4 py-3 border-b border-[var(--color-border)]">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">宏观 & 替代</h2>
           <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家企业</p>
         </div>
 
         {/* PMI indicator */}
         {pmi && !pmi.error && (
-          <div className="px-3 py-2 border-b border-[#eee] text-xs">
+          <div className="px-3 py-2 border-b border-[var(--color-divider)] text-xs">
             <span className="text-gray-500">
               PMI(制造业): <span className={`font-semibold ${pmi.manufacturing_pmi >= 50 ? 'text-green-600' : 'text-red-500'}`}>{pmi.manufacturing_pmi}</span>
               {' '}非制造业: <span className={`font-semibold ${pmi.non_manufacturing_pmi >= 50 ? 'text-green-600' : 'text-red-500'}`}>{pmi.non_manufacturing_pmi}</span>
@@ -104,7 +104,7 @@ export default function MacroView() {
 
         {/* high risk needing alternatives */}
         {altDash && altDash.high_risk_count > 0 && (
-          <div className="px-3 py-2 border-b border-[#eee] bg-red-50">
+          <div className="px-3 py-2 border-b border-[var(--color-divider)] bg-red-50">
             <p className="text-xs text-red-600 font-medium">{altDash.high_risk_count} 家高风险需替代</p>
           </div>
         )}
@@ -113,7 +113,7 @@ export default function MacroView() {
           {companies.map(name => (
             <button key={name} onClick={() => select(name)} disabled={loading}
               className={`w-full text-left px-4 py-2.5 text-sm transition-colors disabled:opacity-50 ${
-                selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'
+                selected === name ? 'bg-[var(--color-surface-selected)] font-medium' : 'hover:bg-[var(--color-surface-hover)]'
               }`}>{name}</button>
           ))}
         </div>
@@ -127,15 +127,15 @@ export default function MacroView() {
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">加载中…</div>
         ) : (
           <div className="max-w-2xl space-y-6">
-            <h2 className="text-lg font-semibold text-[#333]">{selected}</h2>
+            <h2 className="text-lg font-semibold text-[var(--color-text)]">{selected}</h2>
 
             {/* ---- macro risk ---- */}
             {macro && (
               <div>
-                <h3 className="text-sm font-medium text-[#555] mb-3">🌐 宏观风险叠加</h3>
+                <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">🌐 宏观风险叠加</h3>
 
                 {/* total */}
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 flex items-center gap-4">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 mb-4 flex items-center gap-4">
                   <div className="text-3xl font-bold" style={{ color: LEVEL_COLOR[macro.total_level] }}>{macro.total_score}</div>
                   <div>
                     <div className="text-sm font-medium" style={{ color: LEVEL_COLOR[macro.total_level] }}>{macro.total_level}</div>
@@ -145,7 +145,7 @@ export default function MacroView() {
 
                 <div className="grid grid-cols-3 gap-3">
                   {/* industry */}
-                  <div className="bg-white border border-[#e8e8e3] rounded-xl p-4">
+                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4">
                     <div className="text-xs text-gray-400 mb-1">行业景气</div>
                     <div className="text-lg font-bold" style={{ color: LEVEL_COLOR[macro.industry_risk.risk_level] }}>
                       {macro.industry_risk.risk_score}
@@ -157,7 +157,7 @@ export default function MacroView() {
                   </div>
 
                   {/* regional */}
-                  <div className="bg-white border border-[#e8e8e3] rounded-xl p-4">
+                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4">
                     <div className="text-xs text-gray-400 mb-1">地区风险</div>
                     <div className="text-lg font-bold" style={{ color: LEVEL_COLOR[macro.regional_risk.level] }}>
                       {macro.regional_risk.score}
@@ -167,7 +167,7 @@ export default function MacroView() {
                   </div>
 
                   {/* policy */}
-                  <div className="bg-white border border-[#e8e8e3] rounded-xl p-4">
+                  <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4">
                     <div className="text-xs text-gray-400 mb-1">政策风险</div>
                     <div className="text-lg font-bold" style={{ color: macro.policy_risks.score > 20 ? '#dc2626' : '#d97706' }}>
                       {macro.policy_risks.score}
@@ -198,7 +198,7 @@ export default function MacroView() {
             {/* ---- alternatives ---- */}
             {alt && (
               <div>
-                <h3 className="text-sm font-medium text-[#555] mb-3">🔀 替代供应商建议</h3>
+                <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">🔀 替代供应商建议</h3>
                 {alt.alternatives.length === 0 ? (
                   <p className="text-xs text-gray-400">
                     {alt.source_risk_score && alt.source_risk_score < 60
@@ -208,12 +208,12 @@ export default function MacroView() {
                 ) : (
                   <div className="space-y-2">
                     {alt.alternatives.map((a, i) => (
-                      <div key={i} className="bg-white border border-[#e8e8e3] rounded-xl p-4 flex items-center gap-4 hover:border-green-200 transition-colors">
+                      <div key={i} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 flex items-center gap-4 hover:border-green-200 transition-colors">
                         <div className="flex items-center justify-center w-8 h-8 rounded-full bg-green-50 text-green-600 font-bold text-sm">
                           {i + 1}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm text-[#333] font-medium truncate">{a.company_name}</div>
+                          <div className="text-sm text-[var(--color-text)] font-medium truncate">{a.company_name}</div>
                           <div className="text-xs text-gray-400 mt-0.5">{a.industry}</div>
                         </div>
                         {a.risk_score !== null ? (

@@ -75,9 +75,9 @@ export default function AssessView() {
           onChange={e => setName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && assess()}
           placeholder="输入完整企业名称"
-          className="flex-1 border border-[#e8e8e3] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#bbb] min-h-[44px]"
+          className="flex-1 border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
         />
-        <button onClick={assess} disabled={loading} className="bg-[#333] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[#555] disabled:opacity-50 min-h-[44px] inline-flex items-center">
+        <button onClick={assess} disabled={loading} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
           {loading ? '评估中…' : '评估'}
         </button>
       </div>
@@ -86,7 +86,7 @@ export default function AssessView() {
 
       {loading && !data && (
         <div className="space-y-6">
-          <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 shadow-sm">
+          <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
             <div className="flex items-center gap-4">
               <Skeleton className="w-14 h-14 rounded-full" />
               <div className="flex-1">
@@ -105,16 +105,16 @@ export default function AssessView() {
       {data && (
         <>
           {/* score */}
-          <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 mb-4 shadow-sm" style={{ background: bg }}>
+          <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-6 mb-4 shadow-sm" style={{ background: bg }}>
             <div className="flex items-center gap-6">
               <div className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg" style={{ background: color }}>
                 {data.risk_score}
               </div>
               <span className="text-lg font-semibold" style={{ color }}>{data.risk_level}</span>
               {data.is_listed && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#e8e8e3] bg-white text-gray-500 shrink-0">上市</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-gray-500 shrink-0">上市</span>
               )}
-              <div className="flex-1 bg-[#e5e5e0] h-2 rounded-full">
+              <div className="flex-1 bg-[var(--color-border)] h-2 rounded-full">
                 <div className="h-full rounded-full transition-all duration-700" style={{ width: `${data.risk_score}%`, background: color }} />
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -142,7 +142,7 @@ export default function AssessView() {
                   href={`/api/v1/report/html/${encodeURIComponent(name)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] transition-colors no-underline inline-flex items-center min-h-[36px]"
+                  className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] transition-colors no-underline inline-flex items-center min-h-[36px]"
                 >
                   导出报告
                 </a>
@@ -152,8 +152,8 @@ export default function AssessView() {
 
           {/* risk trend */}
           {trend.length > 1 && (
-            <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-6 shadow-sm">
-              <h3 className="text-sm font-semibold text-[#333] mb-1">近90天风险评分趋势</h3>
+            <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 mb-6 shadow-sm">
+              <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">近90天风险评分趋势</h3>
               <p className="text-[11px] text-gray-400 mb-4">
                 最新 {trend[trend.length - 1]?.risk_score ?? '—'} 分 · 最高 {Math.max(...trend.map(d => d.risk_score))} · 最低 {Math.min(...trend.map(d => d.risk_score))}
               </p>
@@ -244,30 +244,30 @@ export default function AssessView() {
           )}
 
           {/* risk detail */}
-          <h3 className="text-sm font-semibold mb-3 text-[#555]">风险明细</h3>
+          <h3 className="text-sm font-semibold mb-3 text-[var(--color-text-secondary)]">风险明细</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
-              <p className="font-medium mb-2 text-[#555]">司法</p>
+              <p className="font-medium mb-2 text-[var(--color-text-secondary)]">司法</p>
               <Row label="诉讼" value={rd?.lawsuit_count ?? 0} />
               <Row label="被执行" value={rd?.executed_count ?? 0} />
               <Row label="失信" value={rd?.dishonesty_count ?? 0} />
               <Row label="重大诉讼" warn={rd?.major_lawsuit} />
             </div>
             <div>
-              <p className="font-medium mb-2 text-[#555]">经营</p>
+              <p className="font-medium mb-2 text-[var(--color-text-secondary)]">经营</p>
               <Row label="经营异常" value={rd?.abnormal_operation_count ?? 0} />
               <Row label="行政处罚" value={rd?.administrative_penalty_count ?? 0} />
               <Row label="法人频繁变更" warn={rd?.legal_person_change_frequent} />
               <Row label="环保处罚" value={rd?.env_penalty_count ?? 0} />
             </div>
             <div>
-              <p className="font-medium mb-2 text-[#555]">资金链</p>
+              <p className="font-medium mb-2 text-[var(--color-text-secondary)]">资金链</p>
               <Row label="对外担保" value={rd?.guarantee_count ?? 0} />
               <Row label="股权质押" value={rd?.pledge_count ?? 0} />
               <Row label="破产/清算" value={rd?.bankruptcy_count ?? 0} />
             </div>
             <div>
-              <p className="font-medium mb-2 text-[#555]">财务</p>
+              <p className="font-medium mb-2 text-[var(--color-text-secondary)]">财务</p>
               {fin ? (
                 <>
                   <Row label="负债率>70%" warn={fin.debt_ratio > 0.7} extra={`${(fin.debt_ratio * 100).toFixed(1)}%`} />
@@ -286,7 +286,7 @@ export default function AssessView() {
                 {(['environmental', 'social', 'governance'] as const).map(dim => {
                   const dd = d[dim];
                   return (
-                    <div key={dim} className="bg-white border border-[#e8e8e3] rounded-xl p-3">
+                    <div key={dim} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-3">
                       <div className="text-xs text-gray-500 mb-1">{dim === 'environmental' ? 'E·环境' : dim === 'social' ? 'S·社会' : 'G·治理'}</div>
                       <div className="text-lg font-bold" style={{ color: LEVEL_COLOR[dd.level] }}>{dd.score.toFixed(0)}</div>
                       <div className="text-[11px]" style={{ color: LEVEL_COLOR[dd.level] }}>{dd.level}</div>
@@ -330,9 +330,9 @@ export default function AssessView() {
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
                     {d.alternatives?.slice(0, 4).map((a, i) => (
-                      <div key={i} className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-lg px-3 py-2">
+                      <div key={i} className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-3 py-2">
                         <span className="text-xs font-bold text-green-600">#{i + 1}</span>
-                        <span className="text-xs text-[#333] truncate flex-1">{a.company_name.slice(0, 12)}</span>
+                        <span className="text-xs text-[var(--color-text)] truncate flex-1">{a.company_name.slice(0, 12)}</span>
                         {a.risk_score !== null && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: LEVEL_BG[a.risk_level], color: LEVEL_COLOR[a.risk_level] }}>
                             {a.risk_level}
@@ -421,13 +421,13 @@ function ExpandableSentiment({ name }: { name: string }) {
     <div className="mt-3">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left shadow-sm hover:shadow-md"
+        className="w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md"
       >
-        <span className="text-sm font-medium text-[#555]">📰 舆情分析</span>
+        <span className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</span>
         <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
       </button>
       {open && (
-        <div className="bg-[#fafaf8] border border-[#e8e8e3] border-t-0 rounded-b-xl p-0">
+        <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl p-0">
           <SentimentPanel companyName={name} />
         </div>
       )}
@@ -457,13 +457,13 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
     <div className="mt-3">
       <button
         onClick={toggle}
-        className="w-full flex items-center justify-between bg-white border border-[#e8e8e3] rounded-xl px-4 py-3 hover:border-[#ccc] transition-colors text-left shadow-sm hover:shadow-md"
+        className="w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md"
       >
-        <span className="text-sm font-medium text-[#555]">{title}</span>
+        <span className="text-sm font-medium text-[var(--color-text-secondary)]">{title}</span>
         <span className="text-gray-400 text-xs">{open ? '▲ 收起' : '▼ 展开'}</span>
       </button>
       {open && (
-        <div className="bg-[#fafaf8] border border-[#e8e8e3] border-t-0 rounded-b-xl px-4 py-3">
+        <div className="bg-[var(--color-page-bg)] border border-[var(--color-border)] border-t-0 rounded-b-xl px-4 py-3">
           {error ? (
             <p className="text-xs text-gray-400">暂无数据</p>
           ) : !data ? (
@@ -481,7 +481,7 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white border border-[#e8e8e3] rounded-xl p-3 text-center shadow-sm">
+    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-3 text-center shadow-sm">
       <div className="text-base font-semibold">{value}</div>
       <div className="text-xs text-gray-400 mt-0.5">{label}</div>
     </div>

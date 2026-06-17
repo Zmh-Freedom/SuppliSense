@@ -81,15 +81,15 @@ export default function ScenarioView() {
   return (
     <div className="flex h-full">
       {/* left */}
-      <div className="w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0">
-        <div className="px-4 py-3 border-b border-[#e8e8e3]">
-          <h2 className="text-sm font-semibold text-[#333]">情景 & 制裁</h2>
+      <div className="w-72 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0">
+        <div className="px-4 py-3 border-b border-[var(--color-border)]">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">情景 & 制裁</h2>
           <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家企业</p>
         </div>
         <div className="py-1">
           {companies.map(name => (
             <button key={name} onClick={() => select(name)} disabled={loading}
-              className={`w-full text-left px-4 py-2.5 text-sm disabled:opacity-50 ${selected === name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'}`}>{name}</button>
+              className={`w-full text-left px-4 py-2.5 text-sm disabled:opacity-50 ${selected === name ? 'bg-[var(--color-surface-selected)] font-medium' : 'hover:bg-[var(--color-surface-hover)]'}`}>{name}</button>
           ))}
         </div>
       </div>
@@ -102,22 +102,22 @@ export default function ScenarioView() {
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">加载中…</div>
         ) : (
           <div className="max-w-2xl space-y-6">
-            <h2 className="text-lg font-semibold text-[#333]">{selected}</h2>
+            <h2 className="text-lg font-semibold text-[var(--color-text)]">{selected}</h2>
 
             {error && <div className="bg-red-50 border border-red-100 rounded-lg px-4 py-3 text-sm text-red-600">{error}</div>}
 
             {/* ---- scenario simulator ---- */}
             <div>
-              <h3 className="text-sm font-medium text-[#555] mb-3">🎯 情景模拟</h3>
+              <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">🎯 情景模拟</h3>
 
               {/* scenario selector */}
               <div className="grid grid-cols-4 gap-2 mb-4">
                 {SCENARIOS.map(s => (
                   <button key={s.key} onClick={() => runScenario(s.key)} disabled={loading}
                     className={`text-xs p-3 rounded-xl border transition-colors text-left disabled:opacity-50 ${
-                      scenario === s.key ? 'border-[#333] bg-[#f5f5f5]' : 'border-[#e8e8e3] hover:border-[#ccc]'
+                      scenario === s.key ? 'border-[var(--color-primary-bg)] bg-[var(--color-surface-hover)]' : 'border-[var(--color-border)] hover:border-[var(--color-border-hover)]'
                     }`}>
-                    <div className="font-medium text-[#333]">{s.label}</div>
+                    <div className="font-medium text-[var(--color-text)]">{s.label}</div>
                     <div className="text-gray-400 mt-0.5">{s.desc}</div>
                   </button>
                 ))}
@@ -126,7 +126,7 @@ export default function ScenarioView() {
               {sim && (
                 <>
                   {/* impact score */}
-                  <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-4">
+                  <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 mb-4">
                     <div className="flex items-center gap-4">
                       <div className="text-4xl font-bold" style={{ color: LEVEL_COLOR[sim.impact_level] }}>{sim.impact_score}</div>
                       <div>
@@ -142,7 +142,7 @@ export default function ScenarioView() {
                   {/* impact factors */}
                   <div className="grid grid-cols-2 gap-2 mb-4">
                     {sim.impact_factors.map((f, i) => (
-                      <div key={i} className="bg-white border border-[#e8e8e3] rounded-xl p-3">
+                      <div key={i} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-3">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-gray-600">{f.factor}</span>
                           <span className="text-xs font-bold" style={{ color: LEVEL_COLOR[f.level] }}>+{f.score}</span>
@@ -155,10 +155,10 @@ export default function ScenarioView() {
                   {/* affected parties */}
                   {sim.affected_parties.length > 0 && (
                     <div className="mb-4">
-                      <div className="text-xs font-medium text-[#555] mb-2">受影响方</div>
+                      <div className="text-xs font-medium text-[var(--color-text-secondary)] mb-2">受影响方</div>
                       <div className="space-y-1">
                         {sim.affected_parties.map((p, i) => (
-                          <div key={i} className="bg-white border border-[#e8e8e3] rounded-lg px-3 py-2 text-xs flex items-center gap-2">
+                          <div key={i} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg px-3 py-2 text-xs flex items-center gap-2">
                             <span className="text-gray-700">{p.name.slice(0, 20)}</span>
                             <span className="text-gray-400">({p.role})</span>
                             {p.material && <span className="text-gray-400">{p.material}</span>}
@@ -188,9 +188,9 @@ export default function ScenarioView() {
             {/* ---- sanctions ---- */}
             {sanc && (
               <div>
-                <h3 className="text-sm font-medium text-[#555] mb-3">🛡️ 制裁筛查</h3>
+                <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">🛡️ 制裁筛查</h3>
 
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-4">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 mb-4">
                   <div className="flex items-center gap-4">
                     <div className="text-4xl font-bold" style={{ color: LEVEL_COLOR[sanc.sanctions_level] }}>{sanc.sanctions_score}</div>
                     <div>
@@ -213,7 +213,7 @@ export default function ScenarioView() {
                       }`}>
                         <span className="text-lg">{m.level === 'critical' ? '🔴' : m.level === 'high' ? '🟡' : '⚪'}</span>
                         <div className="flex-1">
-                          <div className="text-sm font-medium text-[#333]">{m.name || m.detail || m.country}</div>
+                          <div className="text-sm font-medium text-[var(--color-text)]">{m.name || m.detail || m.country}</div>
                           <div className="text-xs text-gray-500">
                             {m.program && `${m.program} · `}{m.authority && `${m.authority} · `}
                             {m.match_type && `${m.match_type} · `}

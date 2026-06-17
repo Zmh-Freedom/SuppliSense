@@ -234,14 +234,14 @@ export default function ChatView() {
         {msgs.map((m, i) => (
           <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
             <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 ${
-              m.role === 'user' ? 'bg-[#333] text-white' : 'bg-[#e8e8e3] text-[#555]'
+              m.role === 'user' ? 'bg-[var(--color-primary-bg)] text-white' : 'bg-[var(--color-surface-selected)] text-[var(--color-text-secondary)]'
             }`}>
               {m.role === 'user' ? '你' : 'AI'}
             </div>
             <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
               m.role === 'user'
-                ? 'bg-[#f0f0eb] text-[#1a1a1a]'
-                : 'bg-white border border-[#e8e8e3] text-[#2d2d2d]'
+                ? 'bg-[var(--color-code-bg)] text-[var(--color-text)]'
+                : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'
             }`}>
               <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
                 <ReactMarkdown>{m.content}</ReactMarkdown>
@@ -251,17 +251,17 @@ export default function ChatView() {
         ))}
         {loading && streamState && (
           <div className="flex gap-3">
-            <div className="w-8 h-8 rounded-full bg-[#e8e8e3] flex items-center justify-center text-xs font-semibold text-[#555] shrink-0">AI</div>
+            <div className="w-8 h-8 rounded-full bg-[var(--color-surface-selected)] flex items-center justify-center text-xs font-semibold text-[var(--color-text-secondary)] shrink-0">AI</div>
             <div className="max-w-[80%] space-y-2">
               {/* Thinking indicator */}
               {streamState.thinking && streamState.answerChunks.length === 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-gray-500 shadow-sm">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-gray-500 shadow-sm">
                   <span className="inline-block animate-pulse">{streamState.thinking}</span>
                 </div>
               )}
               {/* Execution plan (Plan-and-Execute mode) */}
               {streamState.plan && streamState.plan.length > 0 && streamState.toolCalls.length === 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs shadow-sm">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-xs shadow-sm">
                   <div className="text-gray-500 mb-2">📋 执行计划：</div>
                   <div className="space-y-1">
                     {streamState.plan.map((step, i) => (
@@ -276,7 +276,7 @@ export default function ChatView() {
               )}
               {/* Agent selection (Multi-Agent mode) */}
               {streamState.agents && streamState.agents.selected.length > 0 && streamState.toolCalls.length === 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs shadow-sm">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-xs shadow-sm">
                   <div className="text-gray-500 mb-2">🤖 Agent 分配：</div>
                   <div className="space-y-2">
                     <div className="text-gray-400 text-[11px] italic">{streamState.agents.reasoning}</div>
@@ -299,10 +299,10 @@ export default function ChatView() {
               )}
               {/* Tool calls */}
               {streamState.toolCalls.length > 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-xs space-y-2 shadow-sm">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-xs space-y-2 shadow-sm">
                   {streamState.toolCalls.map((tc, i) => (
                     <div key={i} className="flex items-start gap-2">
-                      <span className="text-[#333] font-mono">🔧 {tc.tool}</span>
+                      <span className="text-[var(--color-text)] font-mono">🔧 {tc.tool}</span>
                       <span className="text-gray-400 truncate flex-1">
                         {JSON.stringify(tc.args)}
                       </span>
@@ -315,11 +315,11 @@ export default function ChatView() {
               )}
               {/* Streaming answer */}
               {streamState.answerChunks.length > 0 && (
-                <div className="bg-white border border-[#e8e8e3] rounded-2xl px-4 py-3 text-sm text-[#2d2d2d] shadow-sm">
+                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
                   <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
                     <ReactMarkdown>{streamState.answerChunks.join('')}</ReactMarkdown>
                   </div>
-                  <span className="inline-block w-2 h-4 bg-[#333] animate-pulse ml-1" />
+                  <span className="inline-block w-2 h-4 bg-[var(--color-primary-bg)] animate-pulse ml-1" />
                 </div>
               )}
             </div>
@@ -340,7 +340,7 @@ export default function ChatView() {
             onClick={() => setMode('react')}
             className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
               mode === 'react'
-                ? 'bg-[#333] text-white'
+                ? 'bg-[var(--color-primary-bg)] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
@@ -350,7 +350,7 @@ export default function ChatView() {
             onClick={() => setMode('plan-execute')}
             className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
               mode === 'plan-execute'
-                ? 'bg-[#333] text-white'
+                ? 'bg-[var(--color-primary-bg)] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
@@ -360,7 +360,7 @@ export default function ChatView() {
             onClick={() => setMode('multi-agent')}
             className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
               mode === 'multi-agent'
-                ? 'bg-[#333] text-white'
+                ? 'bg-[var(--color-primary-bg)] text-white'
                 : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
@@ -370,7 +370,7 @@ export default function ChatView() {
             {mode === 'react' ? '逐步推理' : mode === 'plan-execute' ? '先规划后执行' : '专业Agent协作'}
           </span>
         </div>
-        <div className="flex items-center gap-2 bg-white border border-[#e8e8e3] rounded-2xl px-4 py-1 focus-within:border-[#bbb] focus-within:shadow-sm transition-shadow">
+        <div className="flex items-center gap-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-1 focus-within:border-[var(--color-border-focus)] focus-within:shadow-sm transition-shadow">
           <input
             value={input}
             onChange={e => { setInput(e.target.value); }}
@@ -381,7 +381,7 @@ export default function ChatView() {
           <button
             onClick={send}
             disabled={loading}
-            className="bg-[#333] text-white rounded-xl px-4 py-2 text-sm hover:bg-[#555] disabled:opacity-40 shrink-0 transition-colors min-h-[44px] inline-flex items-center"
+            className="bg-[var(--color-primary-bg)] text-white rounded-xl px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-40 shrink-0 transition-colors min-h-[44px] inline-flex items-center"
           >
             发送
           </button>
@@ -395,7 +395,7 @@ export default function ChatView() {
 
       {/* history panel */}
       {showHistory && (
-        <div className="absolute top-12 right-4 w-80 bg-white border border-[#e8e8e3] rounded-2xl shadow-lg max-h-96 overflow-auto z-10">
+        <div className="absolute top-12 right-4 w-80 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl shadow-lg max-h-96 overflow-auto z-10">
           <div className="p-2">
             <p className="text-xs text-gray-400 px-3 py-2">会话历史</p>
             {sessions.map(s => (
@@ -403,11 +403,11 @@ export default function ChatView() {
                 key={s.sid}
                 onClick={() => switchSession(s.sid)}
                 className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer transition-colors ${
-                  s.sid === activeSid ? 'bg-[#f0f0eb]' : 'hover:bg-[#f9f9f5]'
+                  s.sid === activeSid ? 'bg-[var(--color-code-bg)]' : 'hover:bg-[var(--color-surface-hover)]'
                 }`}
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-[#333] truncate">{s.title}</p>
+                  <p className="text-sm text-[var(--color-text)] truncate">{s.title}</p>
                   <p className="text-[11px] text-gray-400">{new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
                 </div>
                 <button
@@ -446,24 +446,24 @@ function QuickAssess() {
 
   return (
     <div className="px-4">
-      <div className="border-t border-[#eee] pt-3">
+      <div className="border-t border-[var(--color-divider)] pt-3">
         <div className="flex gap-2 items-center">
           <input
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && assess()}
             placeholder="快速查看风险详情…"
-            className="flex-1 text-xs border border-[#e8e8e3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#bbb] placeholder-gray-300"
+            className="flex-1 text-xs border border-[var(--color-border)] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[var(--color-border-focus)] placeholder-gray-300"
           />
           <button onClick={assess} disabled={assessMutation.isPending}
-            className="text-xs bg-[#333] text-white rounded-lg px-3 py-1.5 hover:bg-[#555] disabled:opacity-40">
+            className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] disabled:opacity-40">
             {assessMutation.isPending ? '查询中' : '查看'}
           </button>
         </div>
       </div>
 
       {open && data && (
-        <div className="mt-3 bg-white border border-[#e8e8e3] rounded-2xl p-4 shadow-sm">
+        <div className="mt-3 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-semibold">{name}</span>
             <button onClick={() => { setOpen(false); setName(''); }} className="text-gray-400 hover:text-gray-600 text-sm">×</button>
@@ -511,7 +511,7 @@ function QuickAssess() {
 
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-[#f9f9f5] rounded-lg p-1.5 text-center">
+    <div className="bg-[var(--color-surface-hover)] rounded-lg p-1.5 text-center">
       <div className="text-xs font-semibold">{value}</div>
       <div className="text-[10px] text-gray-400">{label}</div>
     </div>

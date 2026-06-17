@@ -32,22 +32,22 @@ export default function RiskMatrix() {
   return (
     <div className="max-w-4xl mx-auto py-6 px-4">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-[#333]">风险矩阵</h2>
+        <h2 className="text-lg font-semibold text-[var(--color-text)]">风险矩阵</h2>
         <button onClick={() => refetch()} disabled={isLoading} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">{isLoading ? '刷新中…' : '刷新'}</button>
       </div>
 
       {error ? (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-10 text-center">
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-10 text-center">
           <p className="text-gray-400 mb-3">加载失败</p>
           <button onClick={() => refetch()} className="text-sm text-blue-500 hover:text-blue-600">重试</button>
         </div>
       ) : isLoading ? (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 shadow-sm">
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <Skeleton className="h-4 w-1/3 mb-4" />
           <Skeleton className="aspect-square w-full rounded-xl" />
         </div>
       ) : (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 shadow-sm">
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
           <div className="flex items-center justify-between mb-2 text-xs text-gray-400">
             <span>← 低风险</span>
             <span>风险评分 →</span>
@@ -108,14 +108,14 @@ export default function RiskMatrix() {
             {/* tooltip */}
             {tooltip && (
               <div
-                className="absolute z-20 bg-white border border-[#e8e8e3] rounded-lg shadow-lg px-3 py-2 pointer-events-none"
+                className="absolute z-20 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg px-3 py-2 pointer-events-none"
                 style={{
                   left: `${tooltip.mouseX}px`,
                   top: `${tooltip.mouseY - 8}px`,
                   transform: 'translate(-50%, -100%)',
                 }}
               >
-                <div className="text-sm font-medium text-[#333]">{tooltip.name}</div>
+                <div className="text-sm font-medium text-[var(--color-text)]">{tooltip.name}</div>
                 <div className="text-xs text-gray-500">
                   <span className="font-semibold">{tooltip.score}/100</span>
                   <span className="ml-1">{tooltip.level}</span>

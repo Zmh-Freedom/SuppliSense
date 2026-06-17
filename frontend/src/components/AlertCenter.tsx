@@ -42,7 +42,7 @@ export default function AlertCenter() {
         <button
           onClick={() => { setChecking(true); api.post('/alert/check-all').then(() => refetch()).catch(() => {}).finally(() => setChecking(false)); }}
           disabled={checking}
-          className="bg-[#333] text-white rounded-xl px-5 py-2 text-sm hover:bg-[#555] disabled:opacity-50"
+          className="bg-[var(--color-primary-bg)] text-white rounded-xl px-5 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
         >
           {checking ? '巡检中…' : '立即巡检'}
         </button>
@@ -62,9 +62,9 @@ export default function AlertCenter() {
         return (
           <div
             key={i}
-            className={`mb-2 rounded-xl border bg-white p-4 shadow-sm ${
+            className={`mb-2 rounded-xl border bg-[var(--color-surface)] glass-surface p-4 shadow-sm ${
               isCritical ? 'border-l-[3px] border-l-[#e06060]' : 'border-l-[3px] border-l-[#d4a040]'
-            } border-[#e8e8e3]`}
+            } border-[var(--color-border)]`}
           >
             <div className="flex justify-between items-baseline">
               <span className="text-sm font-semibold">

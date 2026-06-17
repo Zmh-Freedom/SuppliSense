@@ -30,13 +30,13 @@ export default function NotificationCenter() {
     <div className="max-w-2xl mx-auto py-6 px-4">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-lg font-semibold text-[#333]">通知中心</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text)]">通知中心</h2>
           <p className="text-xs text-gray-400 mt-0.5">
             {notifs.filter(n => !n.read).length} 条未读 · 共 {notifs.length} 条
           </p>
         </div>
         <button onClick={() => markAllReadMutation.mutate()}
-          className="text-xs text-[#333] hover:underline disabled:opacity-50"
+          className="text-xs text-[var(--color-text)] hover:underline disabled:opacity-50"
           disabled={notifs.every(n => n.read) || markAllReadMutation.isPending}>
           全部标为已读
         </button>
@@ -44,7 +44,7 @@ export default function NotificationCenter() {
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <div className="w-5 h-5 border-2 border-[#333] border-t-transparent rounded-full animate-spin" />
+          <div className="w-5 h-5 border-2 border-[var(--color-primary-bg)] border-t-transparent rounded-full animate-spin" />
         </div>
       ) : notifs.length === 0 ? (
         <p className="text-sm text-gray-400 text-center py-12">暂无通知</p>
@@ -52,12 +52,12 @@ export default function NotificationCenter() {
         <div className="space-y-2">
           {notifs.map(n => (
             <div key={n._id}
-              className={`bg-white border rounded-xl p-4 transition-colors shadow-sm ${
-                n.read ? 'border-[#e8e8e3]' : 'border-[#ccc] bg-[#fafaf8]'
+              className={`bg-[var(--color-surface)] glass-surface border rounded-xl p-4 transition-colors shadow-sm ${
+                n.read ? 'border-[var(--color-border)]' : 'border-[var(--color-border-hover)] bg-[var(--color-page-bg)]'
               }`}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className={`text-sm truncate ${n.read ? 'text-gray-500' : 'text-[#333] font-medium'}`}>
+                  <p className={`text-sm truncate ${n.read ? 'text-gray-500' : 'text-[var(--color-text)] font-medium'}`}>
                     {n.title}
                   </p>
                   <p className="text-xs text-gray-400 mt-0.5">{n.message}</p>
@@ -70,7 +70,7 @@ export default function NotificationCenter() {
                     {n.created_at?.slice(0, 16).replace('T', ' ')}
                   </p>
                   {!n.read && (
-                    <span className="text-[10px] text-[#333]">● 未读</span>
+                    <span className="text-[10px] text-[var(--color-text)]">● 未读</span>
                   )}
                 </div>
               </div>

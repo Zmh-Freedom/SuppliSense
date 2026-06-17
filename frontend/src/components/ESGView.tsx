@@ -78,10 +78,10 @@ export default function ESGView() {
   return (
     <div className="flex h-full">
       {/* left list */}
-      <div className="w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0">
-        <div className="px-4 py-3 border-b border-[#e8e8e3] flex items-center justify-between">
+      <div className="w-72 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-[#333]">ESG 评分</h2>
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">ESG 评分</h2>
             <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家企业</p>
           </div>
           <button onClick={() => listQuery.refetch()} className="text-xs text-blue-500 hover:text-blue-600">刷新</button>
@@ -93,11 +93,11 @@ export default function ESGView() {
               key={c.company_name}
               onClick={() => selectCompany(c.company_name)}
               disabled={detailLoading && selectedName !== c.company_name}
-              className={`w-full text-left px-4 py-3 border-b border-[#eee] transition-colors hover:bg-[#eee] disabled:opacity-50 ${
-                selectedName === c.company_name ? 'bg-[#e8e8e3]' : ''
+              className={`w-full text-left px-4 py-3 border-b border-[var(--color-divider)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50 ${
+                selectedName === c.company_name ? 'bg-[var(--color-surface-selected)]' : ''
               }`}
             >
-              <div className="text-sm text-[#333] truncate">{c.company_name}</div>
+              <div className="text-sm text-[var(--color-text)] truncate">{c.company_name}</div>
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-xs font-semibold" style={{ color }}>{c.total_level}</span>
                 <span className="text-xs text-gray-400">{c.total_score.toFixed(0)}/100</span>
@@ -134,13 +134,13 @@ export default function ESGView() {
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">暂无数据</div>
         ) : (
           <div className="max-w-2xl">
-            <h2 className="text-lg font-semibold text-[#333] mb-1">{selected.company_name}</h2>
+            <h2 className="text-lg font-semibold text-[var(--color-text)] mb-1">{selected.company_name}</h2>
             <p className="text-xs text-gray-400 mb-6">
               评估时间：{selected.assessed_at?.slice(0, 16).replace('T', ' ') || '-'}
             </p>
 
             {/* total */}
-            <div className="bg-white border border-[#e8e8e3] rounded-2xl p-6 mb-6 text-center">
+            <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-6 mb-6 text-center">
               <div className="text-4xl font-bold" style={{ color: LEVEL_COLOR[selected.total_level] }}>
                 {selected.total_score.toFixed(0)}
               </div>
@@ -155,9 +155,9 @@ export default function ESGView() {
               {(['environmental', 'social', 'governance'] as const).map(dim => {
                 const d = selected[dim];
                 return (
-                  <div key={dim} className="bg-white border border-[#e8e8e3] rounded-2xl p-5">
+                  <div key={dim} className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5">
                     <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-sm font-medium text-[#555]">{DIM_LABELS[dim]}</h3>
+                      <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{DIM_LABELS[dim]}</h3>
                       <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: LEVEL_BG[d.level], color: LEVEL_COLOR[d.level] }}>
                         {d.level} · {d.score.toFixed(0)}分
                       </span>

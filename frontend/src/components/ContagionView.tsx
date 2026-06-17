@@ -286,15 +286,15 @@ function buildEdges(gedges: GraphEdge[]): Edge[] {
 // ---- Legend ----
 function Legend() {
   return (
-    <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur-sm rounded-2xl border border-[#e8e8e3] px-5 py-4 text-xs shadow-lg">
-      <div className="font-semibold text-[#555] mb-3">图例</div>
+    <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur-sm rounded-2xl border border-[var(--color-border)] px-5 py-4 text-xs shadow-lg">
+      <div className="font-semibold text-[var(--color-text-secondary)] mb-3">图例</div>
       {Object.entries(COLORS).map(([key, c]) => (
         <div key={key} className="flex items-center gap-2.5 py-1">
           <span className="w-3 h-3 rounded-full shrink-0" style={{ background: c.line }} />
           <span className="text-gray-500 text-[11px]">{c.label}{key === 'same_industry' ? '（虚线）' : ''}</span>
         </div>
       ))}
-      <div className="mt-3 pt-3 border-t border-[#e8e8e3] flex items-center gap-4">
+      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-4">
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-400" /><span className="text-[11px] text-gray-400">低风险</span></span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" /><span className="text-[11px] text-gray-400">中风险</span></span>
         <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-400" /><span className="text-[11px] text-gray-400">高风险</span></span>
@@ -344,16 +344,16 @@ export default function ContagionView() {
   return (
     <div className="flex flex-col md:flex-row h-full">
       {/* left panel */}
-      <div className="w-full md:w-72 border-r border-[#e8e8e3] bg-[#fafaf8] overflow-y-auto shrink-0 max-h-48 md:max-h-none">
-        <div className="px-4 py-3 border-b border-[#e8e8e3]">
-          <h2 className="text-sm font-semibold text-[#333]">风险传染图谱</h2>
+      <div className="w-full md:w-72 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0 max-h-48 md:max-h-none">
+        <div className="px-4 py-3 border-b border-[var(--color-border)]">
+          <h2 className="text-sm font-semibold text-[var(--color-text)]">风险传染图谱</h2>
           <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家监控企业</p>
         </div>
         <div className="py-1">
           {companies.map(c => (
             <button key={c.company_name} onClick={() => select(c.company_name)} disabled={loading}
               className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between transition-colors disabled:opacity-50 ${
-                selected === c.company_name ? 'bg-[#e8e8e3] font-medium' : 'hover:bg-[#eee]'
+                selected === c.company_name ? 'bg-[var(--color-surface-selected)] font-medium' : 'hover:bg-[var(--color-surface-hover)]'
               }`}>
               <span className="truncate">{c.company_name.slice(0, 16)}</span>
               <span className="text-[11px] text-gray-400 ml-2 shrink-0">
@@ -365,7 +365,7 @@ export default function ContagionView() {
       </div>
 
       {/* right: graph */}
-      <div className="flex-1 bg-[#f8fafc] relative">
+      <div className="flex-1 bg-[var(--color-page-bg)] relative">
         {!selected ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">选择企业查看风险传染图谱</div>
         ) : loading ? (
@@ -387,7 +387,7 @@ export default function ContagionView() {
             proOptions={{ hideAttribution: true }}
           >
             <Background color="#e2e8f0" gap={24} size={1} />
-            <Controls showInteractive={false} className="bg-white/80 border-[#e8e8e3] rounded-xl shadow-sm" />
+            <Controls showInteractive={false} className="bg-white/80 border-[var(--color-border)] rounded-xl shadow-sm" />
             <MiniMap
               nodeColor={(n) => riskColor((n as unknown as { risk_score?: number }).risk_score ?? 0).line}
               maskColor="rgba(248,250,252,0.6)"

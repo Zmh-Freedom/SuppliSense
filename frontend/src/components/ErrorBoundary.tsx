@@ -39,10 +39,10 @@ export default class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div className="flex items-center justify-center bg-[#fafaf8]" style={{ height: '100%' }}>
+        <div className="flex items-center justify-center bg-[var(--color-page-bg)]" style={{ height: '100%' }}>
           <div className="text-center max-w-sm px-6">
             <div className="text-5xl mb-4 text-gray-400 select-none">&#9888;</div>
-            <h1 className="text-lg font-semibold text-[#333] mb-2">
+            <h1 className="text-lg font-semibold text-[var(--color-text)] mb-2">
               页面出错了
             </h1>
             <p className="text-sm text-gray-400 mb-8 leading-relaxed">
@@ -51,13 +51,13 @@ export default class ErrorBoundary extends Component<Props, State> {
             <div className="flex gap-3 justify-center">
               <button
                 onClick={this.handleRefresh}
-                className="bg-[#333] text-white rounded-lg px-5 py-2 text-sm hover:bg-[#555] transition-colors shadow-sm"
+                className="bg-[var(--color-primary-bg)] text-white rounded-lg px-5 py-2 text-sm hover:bg-[var(--color-primary-hover)] transition-colors shadow-sm"
               >
                 刷新页面
               </button>
               <button
                 onClick={this.handleGoHome}
-                className="border border-[#e8e8e3] bg-white rounded-lg px-5 py-2 text-sm text-[#555] hover:bg-[#f5f5f0] transition-colors shadow-sm"
+                className="border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg px-5 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-page-bg)] transition-colors shadow-sm"
               >
                 回到首页
               </button>

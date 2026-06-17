@@ -39,37 +39,37 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f5f5f0]">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--color-page-bg)]">
       <div className="w-full max-w-sm">
-        <div className="bg-white rounded-2xl shadow-md border border-[#e8e8e3] p-8">
+        <div className="bg-[var(--color-surface)] glass-surface rounded-2xl shadow-md border border-[var(--color-border)] p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-[#333]">供应商风险分析</h1>
+            <h1 className="text-2xl font-bold text-[var(--color-text)]">供应商风险分析</h1>
             <p className="text-sm text-gray-400 mt-2">请登录以继续</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label htmlFor="login-username" className="block text-sm text-[#555] mb-1.5">用户名</label>
+              <label htmlFor="login-username" className="block text-sm text-[var(--color-text-secondary)] mb-1.5">用户名</label>
               <input
                 id="login-username"
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="请输入用户名"
-                className="w-full border border-[#e8e8e3] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#bbb] transition-colors"
+                className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] transition-colors"
                 autoFocus
               />
             </div>
 
             <div>
-              <label htmlFor="login-password" className="block text-sm text-[#555] mb-1.5">密码</label>
+              <label htmlFor="login-password" className="block text-sm text-[var(--color-text-secondary)] mb-1.5">密码</label>
               <input
                 id="login-password"
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="请输入密码"
-                className="w-full border border-[#e8e8e3] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[#bbb] transition-colors"
+                className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] transition-colors"
               />
             </div>
 
@@ -80,13 +80,13 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !username.trim() || !password}
-              className="w-full bg-[#333] text-white rounded-xl py-2.5 text-sm font-medium hover:bg-[#555] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="w-full bg-[var(--color-primary-bg)] text-white rounded-xl py-2.5 text-sm font-medium hover:bg-[var(--color-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? '登录中…' : '登录'}
             </button>
           </form>
 
-          <div className="mt-6 pt-4 border-t border-[#e8e8e3]">
+          <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
             <p className="text-xs text-gray-400 text-center">
               默认管理员：admin / admin123
             </p>

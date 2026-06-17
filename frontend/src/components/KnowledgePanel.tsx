@@ -99,7 +99,7 @@ export default function KnowledgePanel() {
       )}
 
       {/* Stats */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 shadow-sm">
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 mb-4 shadow-sm">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium">知识库统计</span>
           <button
@@ -112,15 +112,15 @@ export default function KnowledgePanel() {
         {stats ? (
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <div className="text-2xl font-bold text-[#333]">{stats.total_documents}</div>
+              <div className="text-2xl font-bold text-[var(--color-text)]">{stats.total_documents}</div>
               <div className="text-gray-400 text-xs">文档分块</div>
             </div>
             <div>
-              <div className="text-sm font-mono text-[#333] truncate">{stats.collection_name}</div>
+              <div className="text-sm font-mono text-[var(--color-text)] truncate">{stats.collection_name}</div>
               <div className="text-gray-400 text-xs">集合名称</div>
             </div>
             <div>
-              <div className="text-sm font-mono text-[#333] truncate">{stats.embedding_model}</div>
+              <div className="text-sm font-mono text-[var(--color-text)] truncate">{stats.embedding_model}</div>
               <div className="text-gray-400 text-xs">向量模型</div>
             </div>
           </div>
@@ -130,7 +130,7 @@ export default function KnowledgePanel() {
       </div>
 
       {/* Upload */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 shadow-sm">
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 mb-4 shadow-sm">
         <h3 className="text-sm font-medium mb-2">上传文档</h3>
         <p className="text-xs text-gray-400 mb-3">
           支持格式：PDF、Word、Excel、TXT。文档将被分块并存入向量数据库。
@@ -142,7 +142,7 @@ export default function KnowledgePanel() {
             accept=".pdf,.docx,.xlsx,.txt"
             onChange={handleUpload}
             disabled={uploadMutation.isPending}
-            className="flex-1 text-sm text-gray-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:bg-[#f0f0eb] file:text-[#333] hover:file:bg-[#e8e8e3] file:cursor-pointer disabled:opacity-50"
+            className="flex-1 text-sm text-gray-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:bg-[var(--color-code-bg)] file:text-[var(--color-text)] hover:file:bg-[var(--color-surface-selected)] file:cursor-pointer disabled:opacity-50"
           />
           {uploadMutation.isPending && <span className="text-xs text-gray-400">上传中...</span>}
         </div>
@@ -157,7 +157,7 @@ export default function KnowledgePanel() {
       </div>
 
       {/* Search */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 mb-4 shadow-sm">
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 mb-4 shadow-sm">
         <h3 className="text-sm font-medium mb-2">检索测试</h3>
         <div className="flex items-center gap-2 mb-3">
           <input
@@ -166,12 +166,12 @@ export default function KnowledgePanel() {
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             placeholder="输入查询关键词..."
-            className="flex-1 text-sm border border-[#e8e8e3] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#bbb] placeholder-gray-300"
+            className="flex-1 text-sm border border-[var(--color-border)] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[var(--color-border-focus)] placeholder-gray-300"
           />
           <button
             onClick={handleSearch}
             disabled={searchMutation.isPending || !searchQuery.trim()}
-            className="text-sm bg-[#333] text-white rounded-lg px-4 py-1.5 hover:bg-[#555] disabled:opacity-40"
+            className="text-sm bg-[var(--color-primary-bg)] text-white rounded-lg px-4 py-1.5 hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
           >
             {searchMutation.isPending ? '检索中' : '检索'}
           </button>
@@ -179,7 +179,7 @@ export default function KnowledgePanel() {
         {searchResults.length > 0 && (
           <div className="space-y-2 max-h-64 overflow-auto">
             {searchResults.map((result, i) => (
-              <div key={result.id || i} className="p-3 bg-[#f9f9f5] rounded-lg text-sm">
+              <div key={result.id || i} className="p-3 bg-[var(--color-surface-hover)] rounded-lg text-sm">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs text-gray-400">
                     {String(result.metadata?.source || 'Unknown')}
@@ -189,7 +189,7 @@ export default function KnowledgePanel() {
                     相似度: {((1 - (result.distance || 0)) * 100).toFixed(1)}%
                   </span>
                 </div>
-                <p className="text-[#333] text-xs leading-relaxed line-clamp-3">
+                <p className="text-[var(--color-text)] text-xs leading-relaxed line-clamp-3">
                   {result.content}
                 </p>
               </div>
@@ -202,7 +202,7 @@ export default function KnowledgePanel() {
       </div>
 
       {/* Clear */}
-      <div className="mt-auto pt-4 border-t border-[#e8e8e3]">
+      <div className="mt-auto pt-4 border-t border-[var(--color-border)]">
         {confirmClear ? (
           <div className="flex items-center gap-3">
             <span className="text-sm text-red-600">确定要清空知识库吗？此操作不可恢复。</span>

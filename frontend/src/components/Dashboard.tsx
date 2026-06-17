@@ -58,7 +58,7 @@ export default function Dashboard() {
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-[#333]">风险看板</h2>
+        <h2 className="text-lg font-semibold text-[var(--color-text)]">风险看板</h2>
         <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[36px] px-2 inline-flex items-center">{isRefreshing ? '刷新中…' : '刷新'}</button>
       </div>
 
@@ -72,8 +72,8 @@ export default function Dashboard() {
 
       {/* Trend Charts */}
       {alertTrend.length > 0 && (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-[#333] mb-1">近30天告警趋势</h3>
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-[var(--color-text)] mb-1">近30天告警趋势</h3>
           <p className="text-[11px] text-gray-400 mb-4">
             共 {alertTrend.reduce((s, d) => s + d.count, 0)} 次告警 · 日均 {(alertTrend.reduce((s, d) => s + d.count, 0) / alertTrend.length).toFixed(1)} 次
           </p>
@@ -116,8 +116,8 @@ export default function Dashboard() {
       )}
 
       {/* risk distribution bar */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-[#555] mb-4">风险分布</h3>
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-4">风险分布</h3>
         <div className="flex h-8 rounded-full overflow-hidden">
           {levels.filter(l => l.key !== '未知').map(l => {
             const count = data.distribution[l.key] || 0;
@@ -146,8 +146,8 @@ export default function Dashboard() {
 
       {/* predictions */}
       {predictions.filter(p => p.probability !== 'low').length > 0 && (
-        <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 mb-4 shadow-sm">
-          <h3 className="text-sm font-medium text-[#555] mb-3">
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 mb-4 shadow-sm">
+          <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">
             ⚡ 早期预警信号
             <span className="text-xs text-gray-400 ml-2">基于趋势分析，预测未来风险恶化概率</span>
           </h3>
@@ -157,7 +157,7 @@ export default function Dashboard() {
               const bg = p.probability === 'high' ? '#fef2f2' : '#fffbf0';
               return (
                 <div key={p.company_name} className="flex items-center gap-3 px-3 py-2 rounded-xl" style={{ background: bg }}>
-                  <span className="text-sm font-semibold text-[#333] flex-1 truncate">{p.company_name}</span>
+                  <span className="text-sm font-semibold text-[var(--color-text)] flex-1 truncate">{p.company_name}</span>
                   <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ color, background: `${color}15` }}>
                     {p.label}
                   </span>
@@ -175,8 +175,8 @@ export default function Dashboard() {
       <SentimentPanel />
 
       {/* company list */}
-      <div className="bg-white border border-[#e8e8e3] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-[#555] mb-3">企业详情</h3>
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">企业详情</h3>
         {data.companies.length === 0 ? (
           <p className="text-sm text-gray-300 text-center py-6">暂无监控企业</p>
         ) : (
@@ -184,8 +184,8 @@ export default function Dashboard() {
             {data.companies.map(c => {
               const levelInfo = levels.find(l => l.key === c.level) || levels[3];
               return (
-                <div key={c.name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[#f9f9f5] transition-colors min-h-[44px]">
-                  <span className="text-sm text-[#333] truncate flex-1">{c.name}</span>
+                <div key={c.name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
+                  <span className="text-sm text-[var(--color-text)] truncate flex-1">{c.name}</span>
                   {c.score !== null ? (
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: levelInfo.bg, color: levelInfo.color }}>
@@ -213,7 +213,7 @@ export default function Dashboard() {
 
 function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="bg-white border border-[#e8e8e3] rounded-2xl p-4 shadow-sm">
+    <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
       <div className="text-2xl font-bold" style={{ color }}>{value}</div>
       <div className="text-xs text-gray-400 mt-1">{label}</div>
     </div>
