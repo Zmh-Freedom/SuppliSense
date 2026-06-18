@@ -499,7 +499,7 @@ export default function ChatView() {
             className="flex-1 border-none outline-none py-2.5 text-sm bg-transparent placeholder-gray-300"
           />
           <button
-            onClick={send}
+            onClick={() => send()}
             disabled={loading}
             className="bg-[var(--color-primary-bg)] text-white rounded-xl px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-40 shrink-0 transition-colors min-h-[44px] inline-flex items-center"
           >
