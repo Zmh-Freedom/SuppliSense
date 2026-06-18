@@ -564,7 +564,7 @@ function ExpandableSentiment({ name }: { name: string }) {
               className="overflow-hidden"
             >
               <div className="border-t border-[var(--color-border)]">
-                <SentimentPanel companyName={name} />
+                <SentimentPanel companyName={name} embedded />
               </div>
             </motion.div>
           )}
