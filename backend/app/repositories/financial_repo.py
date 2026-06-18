@@ -116,24 +116,41 @@ def _fetch_a_share(code: str) -> FinancialMetrics | None:
 
 
 def _compute_trends(df) -> tuple[float, float, float]:
-    """3-year slope from annual reports (取每年年末数据)."""
+    """3-year slope from annual reports. Returns 0.0 if insufficient data."""
     try:
-        # filter to annual reports only (年底数据)
         df["dt"] = pd.to_datetime(df["报告期"], errors="coerce")
-        annual = df[df["dt"].dt.month == 12].tail(5)  # last 5 years
+        annual = df[df["dt"].dt.month == 12].tail(5)
         if len(annual) < 2:
             return 0.0, 0.0, 0.0
 
         years = (annual["dt"] - annual["dt"].min()).dt.days / 365.0
-        rev = pd.to_numeric(annual["营业总收入"], errors="coerce").values
-        profit = pd.to_numeric(annual["净利润"], errors="coerce").values
+        rev = annual["营业总收入"].apply(_parse_float).values
+        profit = annual["净利润"].apply(_parse_float).values
         debt = annual["资产负债率"].apply(_parse_pct).values
 
-        rev_slope = _slope(years.values, rev) / (abs(rev.mean()) + 1) if len(rev) > 1 else 0
-        profit_slope = _slope(years.values, profit) / (abs(profit.mean()) + 1) if len(profit) > 1 else 0
-        debt_slope = _slope(years.values, debt) if len(debt) > 1 else 0
+        # Filter out NaN
+        rev_ok = rev[~pd.isna(rev)]
+        profit_ok = profit[~pd.isna(profit)]
+        debt_ok = debt[~pd.isna(debt)]
 
-        return float(rev_slope), float(profit_slope), float(debt_slope)
+        def _safe_slope(x_arr, y_arr):
+            n = len(x_arr)
+            if n < 2:
+                return 0.0
+            x_sum = x_arr.sum()
+            y_sum = y_arr.sum()
+            xy_sum = (x_arr * y_arr).sum()
+            x2_sum = (x_arr * x_arr).sum()
+            denom = n * x2_sum - x_sum ** 2
+            if denom == 0:
+                return 0.0
+            return float((n * xy_sum - x_sum * y_sum) / denom)
+
+        rev_slope = _safe_slope(years.values[:len(rev_ok)], rev_ok) / (abs(float(rev_ok.mean())) + 1) if len(rev_ok) > 1 else 0.0
+        profit_slope = _safe_slope(years.values[:len(profit_ok)], profit_ok) / (abs(float(profit_ok.mean())) + 1) if len(profit_ok) > 1 else 0.0
+        debt_slope = _safe_slope(years.values[:len(debt_ok)], debt_ok) if len(debt_ok) > 1 else 0.0
+
+        return float(rev_slope or 0), float(profit_slope or 0), float(debt_slope or 0)
     except Exception:
         return 0.0, 0.0, 0.0
 
@@ -311,7 +328,7 @@ def _extract_stock_code(company_name: str) -> str | None:
 def _parse_pct(val) -> float:
     if val is None or val == "False" or val is False:
         return 0.0
-    s = str(val).replace("%", "").replace(",", "")
+    s = str(val).replace("%", "").replace(",", "").strip()
     try:
         return float(s) / 100
     except (ValueError, TypeError):
@@ -321,8 +338,18 @@ def _parse_pct(val) -> float:
 def _parse_float(val) -> float:
     if val is None or val == "False" or val is False:
         return 0.0
+    s = str(val).replace(",", "").strip()
+    # Handle Chinese unit suffixes
+    if s.endswith("亿"):
+        s = s[:-1]
+        multiplier = 100_000_000
+    elif s.endswith("万"):
+        s = s[:-1]
+        multiplier = 10_000
+    else:
+        multiplier = 1
     try:
-        return float(str(val).replace(",", ""))
+        return float(s) * multiplier
     except (ValueError, TypeError):
         return 0.0
 
