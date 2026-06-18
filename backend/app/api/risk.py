@@ -7,7 +7,7 @@ from app.services.risk_service import assess_risk, calculate_risk
 
 router = APIRouter()
 
-RISK_TIMEOUT_SECONDS = 60  # 风险评估超时时间
+RISK_TIMEOUT_SECONDS = 120  # 风险评估超时时间（含 AkShare + 天眼查）
 
 
 @router.post(
