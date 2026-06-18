@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import ErrorBoundary from './ErrorBoundary';
 import NetworkStatus from './NetworkStatus';
@@ -41,21 +41,22 @@ function TabIcon({ name, className }: { name: string; className?: string }) {
 }
 
 function AlertBell() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: alerts } = useAlertHistory();
   const alertList = alerts ?? [];
   const [open, setOpen] = useState(false);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [pos, setPos] = useState({ top: 0, right: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // close on outside click
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
       const target = e.target as Node;
       if (btnRef.current?.contains(target)) return;
-      if (panelRef.current && !panelRef.current.contains(target)) setOpen(false);
+      if (panelRef.current && !panelRef.current.contains(target)) { setOpen(false); setExpandedIdx(null); }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -67,6 +68,7 @@ function AlertBell() {
       setPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
     }
     setOpen(!open);
+    setExpandedIdx(null);
   };
 
   const clearMutation = useMutation({
@@ -79,7 +81,7 @@ function AlertBell() {
       {open && (
         <motion.div
           ref={panelRef}
-          className="fixed w-80 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
+          className="fixed w-[380px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
           style={{ top: pos.top, right: pos.right }}
           initial={{ opacity: 0, scale: 0.95, y: -8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -99,25 +101,41 @@ function AlertBell() {
             )}
           </div>
 
-          <div className="max-h-80 overflow-auto">
+          <div className="max-h-[70vh] overflow-auto">
             {alertList.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-8">暂无告警</p>
             ) : (
-              alertList.slice(0, 20).map((doc: AlertDoc, i: number) => {
+              alertList.slice(0, 50).map((doc: AlertDoc, i: number) => {
                 const isCritical = doc.severity === 'critical';
+                const isExpanded = expandedIdx === i;
                 return (
                   <div
                     key={i}
-                    className="px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors"
+                    onClick={() => setExpandedIdx(isExpanded ? null : i)}
+                    className={`px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer ${
+                      isExpanded ? 'bg-[var(--color-surface-hover)]' : ''
+                    }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-[var(--color-text)] truncate">{doc.company_name}</span>
-                      <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
+                      <span className="text-sm font-medium text-[var(--color-text)]">{doc.company_name}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] text-gray-400">{doc.created_at.slice(5, 16).replace('T', ' ')}</span>
+                        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1 truncate">
+                    <p className={`text-xs text-gray-500 mt-1 ${isExpanded ? '' : 'line-clamp-1'}`}>
                       {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
                     </p>
-                    <p className="text-[10px] text-gray-300 mt-1">{doc.created_at.slice(0, 16).replace('T', ' ')}</p>
+                    {isExpanded && (
+                      <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center gap-2">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setOpen(false); setExpandedIdx(null); navigate(`/assess/${encodeURIComponent(doc.company_name)}`); }}
+                          className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors"
+                        >
+                          查看详情
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })
