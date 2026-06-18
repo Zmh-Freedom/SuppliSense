@@ -1,11 +1,22 @@
 import asyncio
+import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.services.risk_service import assess_risk, calculate_risk
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _refresh_assessment(company_name: str) -> None:
+    """Background task: re-assess risk and save snapshot."""
+    try:
+        from app.schemas import RiskAssessRequest
+        assess_risk(RiskAssessRequest(company_name=company_name))
+    except Exception as e:
+        logger.warning("background_refresh_failed", company=company_name, error=str(e))
 
 RISK_TIMEOUT_SECONDS = 120  # 风险评估超时时间（含 AkShare + 天眼查）
 
@@ -45,7 +56,7 @@ async def risk_calculate(request: RiskCalculateRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def risk_assess(request: RiskAssessRequest):
+async def risk_assess(request: RiskAssessRequest, background_tasks: BackgroundTasks):
     from datetime import datetime, timedelta, timezone
     from app.db.mongo import get_db
 
@@ -62,14 +73,12 @@ async def risk_assess(request: RiskAssessRequest):
         age = datetime.now(timezone.utc) - checked.replace(tzinfo=timezone.utc) if checked.tzinfo is None else datetime.now(timezone.utc) - checked
         age_hours = round(age.total_seconds() / 3600, 1)
 
-        # Look up listed status from baseinfo
         is_listed = False
         base = db["baseinfo"].find_one({"name": request.company_name}, {"items.result.bondNum": 1, "items.result.bondName": 1})
         if base:
             r = base.get("items", {}).get("result", {})
             is_listed = bool(r.get("bondNum") or r.get("bondName"))
 
-        # Always return cached data if available (regardless of age)
         resp = {
             "risk_score": recent.get("risk_score", 0),
             "risk_level": recent.get("risk_level", "未知"),
@@ -81,29 +90,16 @@ async def risk_assess(request: RiskAssessRequest):
             "is_listed": is_listed,
         }
 
-        # Fresh cache: return immediately
+        # Fresh cache, no force: return immediately
         if age < timedelta(hours=2) and not request.force_refresh:
             return resp
 
-        # Stale or force_refresh: return cache + trigger background refresh
+        # Stale or force_refresh: return cached data, refresh in background
         if request.force_refresh or age >= timedelta(hours=2):
-            from fastapi import BackgroundTasks
-            # For stale data, rely on the next schedule; for force_refresh, do it now
-            if request.force_refresh:
-                try:
-                    fresh = await asyncio.wait_for(
-                        asyncio.to_thread(assess_risk, request),
-                        timeout=RISK_TIMEOUT_SECONDS,
-                    )
-                    fresh["cached_at"] = datetime.now(timezone.utc).isoformat()
-                    fresh["cache_age_hours"] = 0
-                    fresh["is_stale"] = False
-                    return fresh
-                except asyncio.TimeoutError:
-                    pass  # Return cached data if timeout
+            background_tasks.add_task(_refresh_assessment, request.company_name)
             return resp
 
-    # No cache at all — must compute
+    # No cache at all — must compute synchronously
     try:
         fresh = await asyncio.wait_for(
             asyncio.to_thread(assess_risk, request),
