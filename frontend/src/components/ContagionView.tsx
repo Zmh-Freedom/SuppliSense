@@ -19,6 +19,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
+import { useWatchlist } from '../hooks';
+import WatchlistPanel from './WatchlistPanel';
 
 interface GraphNode {
   id: string;
@@ -39,12 +41,6 @@ interface GraphData {
   company_name: string;
   nodes: GraphNode[];
   edges: GraphEdge[];
-}
-
-interface ContagionSummary {
-  company_name: string;
-  related_count: number;
-  high_risk_related_count: number;
 }
 
 // ---- Colors ----
@@ -311,10 +307,7 @@ export default function ContagionView() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  const listQuery = useQuery({
-    queryKey: queryKeys.contagionSummary,
-    queryFn: () => api.get<{ companies: ContagionSummary[] }>('/p2/contagion'),
-  });
+  const { companies: watchlist } = useWatchlist();
 
   const graphQuery = useQuery({
     queryKey: queryKeys.contagionGraph(selected),
@@ -322,7 +315,6 @@ export default function ContagionView() {
     enabled: !!selected,
   });
 
-  const companies = listQuery.data?.companies ?? [];
   const loading = graphQuery.isLoading && !!selected;
 
   // Sync graph data to ReactFlow state
@@ -344,24 +336,12 @@ export default function ContagionView() {
   return (
     <div className="flex flex-col md:flex-row h-full">
       {/* left panel */}
-      <div className="w-full md:w-72 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0 max-h-48 md:max-h-none">
+      <div className="w-full md:w-56 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0 max-h-48 md:max-h-none">
         <div className="px-4 py-3 border-b border-[var(--color-border)]">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">风险传染图谱</h2>
-          <p className="text-[11px] text-gray-400 mt-0.5">{companies.length} 家监控企业</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{watchlist.length} 家监控企业</p>
         </div>
-        <div className="py-1">
-          {companies.map(c => (
-            <button key={c.company_name} onClick={() => select(c.company_name)} disabled={loading}
-              className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between transition-colors disabled:opacity-50 ${
-                selected === c.company_name ? 'bg-[var(--color-surface-selected)] font-medium' : 'hover:bg-[var(--color-surface-hover)]'
-              }`}>
-              <span className="truncate">{c.company_name.slice(0, 16)}</span>
-              <span className="text-[11px] text-gray-400 ml-2 shrink-0">
-                {c.related_count}关联{c.high_risk_related_count > 0 && <span className="text-red-400 ml-0.5">{c.high_risk_related_count}⚠</span>}
-              </span>
-            </button>
-          ))}
-        </div>
+        <WatchlistPanel companies={watchlist} selected={selected} onSelect={select} variant="sidebar" />
       </div>
 
       {/* right: graph */}

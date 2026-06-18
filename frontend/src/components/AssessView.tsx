@@ -11,6 +11,7 @@ import type {
 import { queryKeys } from '../query-keys';
 import { useWatchlist } from '../hooks';
 import SentimentPanel from './SentimentPanel';
+import WatchlistPanel from './WatchlistPanel';
 import Skeleton, { SkeletonChart } from './Skeleton';
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -101,30 +102,8 @@ export default function AssessView() {
   return (
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-2xl mx-auto relative">
-        {/* Floating watchlist card — fixed vertical center, to the left of content */}
-        {watchlist.length > 0 && (
-          <div className="hidden xl:block fixed top-1/2 -translate-y-1/2 z-10"
-            style={{ left: `max(24px, calc((100vw - 672px) / 2 - 184px))` }}>
-            <div className="w-40 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-md overflow-hidden">
-              <h3 className="text-[11px] font-medium text-gray-400 px-3 pt-3 pb-2">监控清单</h3>
-              <div className="max-h-[50vh] overflow-auto px-1.5 pb-1.5">
-                {watchlist.map(c => (
-                  <button
-                    key={c}
-                    onClick={() => selectCompany(c)}
-                    className={`w-full text-left text-xs rounded-lg px-2.5 py-2 transition-colors truncate ${
-                      name === c
-                        ? 'bg-[var(--color-primary-bg)] text-white'
-                        : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
-                    }`}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Floating watchlist card */}
+        <WatchlistPanel companies={watchlist} selected={name} onSelect={selectCompany} variant="floating" />
 
         {/* search bar with autocomplete */}
         <div className="relative mb-6">
