@@ -33,6 +33,34 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
     if not base:
         return None
 
+    # 1. Try new riskInfo collection (from /services/open/risk/riskInfo/2.0)
+    risk_doc = db["riskInfo"].find_one({"name": company_name})
+    if risk_doc:
+        item = risk_doc.get("item") or risk_doc.get("items") or {}
+        result = item.get("result") or {}
+        risk_list = result.get("riskList", [])
+        if risk_list:
+            lawsuit_count = 0
+            abnormal_count = 0
+            penalty_count = 0
+            for cat in risk_list:
+                for sub in cat.get("list", []):
+                    title = sub.get("title", "")
+                    total = sub.get("total", 0) or 0
+                    if title in ("裁判文书", "开庭公告", "立案信息"):
+                        lawsuit_count += total
+                    if "经营异常" in title:
+                        abnormal_count += total
+                    if "行政处罚" in title:
+                        penalty_count += total
+            return RiskInfo(
+                lawsuit_count=lawsuit_count,
+                executed_count=0,
+                abnormal_operation_count=abnormal_count,
+                administrative_penalty_count=penalty_count,
+            )
+
+    # 2. Fallback: old individual collections
     lawsuit = db["lawSuit"].find_one({"name": company_name})
     abnormal = db["abnormal"].find_one({"name": company_name})
     punishment = db["punishmentInfo"].find_one({"name": company_name})
