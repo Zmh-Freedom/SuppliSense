@@ -542,30 +542,34 @@ function ExpandableSentiment({ name }: { name: string }) {
 
   return (
     <div className="mt-3">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`w-full flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] px-4 py-3 hover:border-[var(--color-border-hover)] transition-colors text-left shadow-sm hover:shadow-md ${open ? 'rounded-t-xl' : 'rounded-xl'}`}
-      >
-        <span className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</span>
-        <motion.span
-          className="text-gray-400 text-xs inline-block"
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
-        >▼</motion.span>
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
-            className="overflow-hidden"
-          >
-            <SentimentPanel companyName={name} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <div className={`bg-[var(--color-surface)] border border-[var(--color-border)] shadow-sm ${open ? 'rounded-xl' : 'rounded-xl'}`}>
+        <button
+          onClick={() => setOpen(!open)}
+          className={`w-full flex items-center justify-between px-4 py-3 hover:bg-[var(--color-surface-hover)] transition-colors text-left ${open ? '' : 'rounded-xl'}`}
+        >
+          <span className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</span>
+          <motion.span
+            className="text-gray-400 text-xs inline-block"
+            animate={{ rotate: open ? 180 : 0 }}
+            transition={{ duration: 0.2 }}
+          >▼</motion.span>
+        </button>
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="border-t border-[var(--color-border)]">
+                <SentimentPanel companyName={name} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
