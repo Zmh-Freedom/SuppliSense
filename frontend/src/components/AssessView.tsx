@@ -99,70 +99,52 @@ export default function AssessView() {
   ];
 
   return (
-    <div className="max-w-2xl mx-auto py-6 px-4">
-      {/* search bar with autocomplete */}
-      <div className="relative mb-3">
-        <div className="flex gap-2">
-          <div className="flex-1 relative">
-            <input
-              ref={inputRef}
-              value={name}
-              onChange={e => { setName(e.target.value); setShowSuggestions(true); }}
-              onFocus={() => setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              onKeyDown={e => e.key === 'Enter' && assess()}
-              placeholder="输入企业名称搜索…"
-              className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
-            />
-            {/* autocomplete dropdown */}
-            <AnimatePresence>
-              {showSuggestions && name.trim() && filteredSuggestions.length > 0 && (
-                <motion.div
-                  className="absolute left-0 right-0 top-full mt-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg z-10 overflow-hidden"
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.15 }}
-                >
-                  {filteredSuggestions.slice(0, 8).map(c => (
-                    <button
-                      key={c}
-                      onMouseDown={() => selectCompany(c)}
-                      className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors flex items-center gap-2"
-                    >
-                      <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                      <span>{c}</span>
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-          <button onClick={assess} disabled={loading} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
-            {loading ? '评估中…' : '评估'}
-          </button>
-        </div>
-      </div>
-
-      {/* watchlist quick-select */}
-      {watchlist.length > 0 && (
-        <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1">
-          <span className="text-[11px] text-gray-400 shrink-0">监控清单：</span>
-          {watchlist.map(c => (
-            <button
-              key={c}
-              onClick={() => selectCompany(c)}
-              className={`shrink-0 text-xs rounded-lg px-3 py-1.5 border transition-colors min-h-[32px] ${
-                name === c
-                  ? 'bg-[var(--color-primary-bg)] text-white border-[var(--color-primary-bg)]'
-                  : 'bg-white border-[var(--color-border)] text-gray-500 hover:border-[var(--color-primary-bg)]/30 hover:text-[var(--color-primary-bg)]'
-              }`}
-            >
-              {c}
+    <div className="flex h-full">
+      {/* Main content */}
+      <div className="flex-1 overflow-auto py-6 px-6">
+        <div className="max-w-2xl">
+        {/* search bar with autocomplete */}
+        <div className="relative mb-6">
+          <div className="flex gap-2">
+            <div className="flex-1 relative">
+              <input
+                ref={inputRef}
+                value={name}
+                onChange={e => { setName(e.target.value); setShowSuggestions(true); }}
+                onFocus={() => setShowSuggestions(true)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                onKeyDown={e => e.key === 'Enter' && assess()}
+                placeholder="输入企业名称搜索…"
+                className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
+              />
+              <AnimatePresence>
+                {showSuggestions && name.trim() && filteredSuggestions.length > 0 && (
+                  <motion.div
+                    className="absolute left-0 right-0 top-full mt-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg z-10 overflow-hidden"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {filteredSuggestions.slice(0, 8).map(c => (
+                      <button
+                        key={c}
+                        onMouseDown={() => selectCompany(c)}
+                        className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors flex items-center gap-2"
+                      >
+                        <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                        <span>{c}</span>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            <button onClick={() => assess()} disabled={loading} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
+              {loading ? '评估中…' : '评估'}
             </button>
-          ))}
+          </div>
         </div>
-      )}
 
       {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
 
@@ -548,6 +530,34 @@ export default function AssessView() {
           )}
         </>
       )}
+        </div>{/* max-w-2xl */}
+      </div>{/* main content */}
+
+      {/* Right panel: watchlist */}
+      <aside className="w-48 border-l border-[var(--color-border)] bg-[var(--color-page-bg)] overflow-auto shrink-0 hidden md:block">
+        <div className="px-3 pt-6 pb-4">
+          <h3 className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-3 px-1">监控清单</h3>
+          {watchlist.length === 0 ? (
+            <p className="text-[11px] text-gray-300 px-1">暂无监控企业</p>
+          ) : (
+            <div className="space-y-0.5">
+              {watchlist.map(c => (
+                <button
+                  key={c}
+                  onClick={() => selectCompany(c)}
+                  className={`w-full text-left text-sm rounded-lg px-3 py-2 transition-colors min-h-[36px] truncate ${
+                    name === c
+                      ? 'bg-[var(--color-primary-bg)] text-white'
+                      : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
