@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
 
     # Redis
+    REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 
     # Rate Limiting
