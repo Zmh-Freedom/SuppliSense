@@ -342,6 +342,9 @@ def _load_from_cache(name: str) -> FinancialMetrics | None:
         age = (datetime.now(timezone.utc) - cached_at).total_seconds()
         if age > _CACHE_TTL_SECONDS:
             return None  # expired
+    else:
+        # No cached_at timestamp → treat as expired
+        return None
     return FinancialMetrics(**doc["metrics"])
 
 
