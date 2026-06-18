@@ -49,7 +49,7 @@ async def _langgraph_supervisor_stream(session_id: str, message: str):
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "react"  # "react", "plan-execute", "multi-agent", "langgraph-react"
+    mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "langgraph-react" | "langgraph-plan-execute" | "langgraph-multi-agent"
 
 
 @router.post(
@@ -63,7 +63,24 @@ class ChatRequest(BaseModel):
 )
 async def chat_endpoint(req: ChatRequest):
     sid = req.session_id or str(uuid.uuid4())
-    reply = await asyncio.to_thread(agent_chat, sid, req.message)
+
+    # Resolve auto mode for sync endpoint (only legacy modes supported)
+    mode = req.mode
+    if mode == "auto":
+        from app.graphs.router import router as intent_router
+        intent = intent_router.route(req.message)
+        # Sync endpoint only supports legacy modes; langgraph modes fall back to react
+        if intent.value.startswith("langgraph-"):
+            mode = "react"
+        else:
+            mode = intent.value
+
+    if mode == "plan-execute":
+        reply = await asyncio.to_thread(agent_chat_stream_with_plan, sid, req.message)
+    elif mode == "multi-agent":
+        reply = await asyncio.to_thread(agent_chat_stream_with_agents, sid, req.message)
+    else:
+        reply = await asyncio.to_thread(agent_chat, sid, req.message)
     return {"reply": reply, "session_id": sid}
 
 
@@ -80,8 +97,14 @@ async def chat_stream_endpoint(req: ChatRequest):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
 
+    # Resolve mode: auto → intent router, otherwise use explicit mode
+    mode = req.mode
+    if mode == "auto":
+        from app.graphs.router import router as intent_router
+        mode = intent_router.route(req.message).value
+
     # Choose execution mode
-    if req.mode == "plan-execute":
+    if mode == "plan-execute":
         stream_fn = agent_chat_stream_with_plan
     elif req.mode == "multi-agent":
         stream_fn = agent_chat_stream_with_agents
