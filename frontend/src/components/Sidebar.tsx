@@ -77,7 +77,7 @@ function AlertBell() {
       {open && (
         <motion.div
           ref={panelRef}
-          className="fixed w-[380px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
+          className="fixed w-[380px] bg-white border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
           style={{ top: pos.top, left: pos.left }}
           initial={{ opacity: 0, scale: 0.95, x: -8 }}
           animate={{ opacity: 1, scale: 1, x: 0 }}
