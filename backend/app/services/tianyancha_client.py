@@ -24,14 +24,30 @@ TOKEN = settings.TIANYANCHA_TOKEN
 
 _ENDPOINTS: list[tuple[str, str, str]] = [
     # (collection_name, path, wrapper_key)
+    # -- 工商信息 (ic) --
     ("baseinfo", "/services/open/ic/baseinfo/normal", "items"),
+    ("holder", "/services/open/ic/holder/2.0", "items"),            # 企业股东
+    ("invest", "/services/open/ic/invest/2.0", "items"),            # 对外投资
+    ("changeInfo", "/services/open/ic/changeInfo/2.0", "items"),    # 变更记录
+    ("branch", "/services/open/ic/branch/2.0", "items"),            # 分支机构
+    # -- 司法风险 (jr) --
+    ("lawSuit", "/services/open/jr/lawSuit/3.0", "items"),          # 法律诉讼
+    ("dishonesty", "/services/open/jr/dishonesty/3.0", "items"),    # 失信被执行人
+    ("executedPerson", "/services/open/jr/executedPerson/3.0", "items"),  # 被执行人
+    ("courtAnnouncement", "/services/open/jr/courtAnnouncement/3.0", "items"),  # 开庭公告
+    ("consumptionRestriction", "/services/open/jr/consumptionRestriction/2.0", "items"),  # 限制消费令
+    # -- 经营风险 (mr) --
     ("riskInfo", "/services/open/risk/riskInfo/2.0", "item"),
-    ("lawSuit", "/services/open/jr/lawSuit/3.0", "items"),
-    ("abnormal", "/services/open/mr/abnormal/2.0", "items"),
-    ("punishmentInfo", "/services/open/mr/punishmentInfo/3.0", "items"),
-    ("illegalinfo", "/services/open/mr/illegalinfo/2.0", "items"),
+    ("abnormal", "/services/open/mr/abnormal/2.0", "items"),        # 经营异常
+    ("punishmentInfo", "/services/open/mr/punishmentInfo/3.0", "items"),  # 行政处罚
+    ("illegalinfo", "/services/open/mr/illegalinfo/2.0", "items"),  # 严重违法
+    ("equityPledge", "/services/open/mr/equityPledge/2.0", "items"),  # 股权出质
+    ("taxArrears", "/services/open/mr/taxArrears/2.0", "items"),    # 欠税公告
+    # -- 知识产权 (ipr) --
+    ("trademark", "/services/open/ipr/tm/2.0", "items"),            # 商标
+    ("patent", "/services/open/ipr/patent/2.0", "items"),           # 专利
+    # -- 新闻 --
     ("news", "/services/open/news/newsList/2.0", "items"),
-    ("branch", "/services/open/ic/branch/2.0", "items"),
 ]
 
 

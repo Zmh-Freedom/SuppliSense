@@ -338,10 +338,12 @@ def _knowledge_search(query: str, company_name: str = "") -> dict:
 
 @_register(
     "tianyancha_query",
-    "调用天眼查 API 查询企业数据。常用端点：/services/open/ic/baseinfo/normal(基本信息)、"
-    "/services/open/risk/riskInfo/2.0(风险信息)、/services/open/jr/lawSuit/3.0(法律诉讼)、"
-    "/services/open/mr/abnormal/2.0(经营异常)、/services/open/mr/punishmentInfo/3.0(行政处罚)、"
-    "/services/open/news/newsList/2.0(新闻舆情)、/services/open/ic/branch/2.0(分支机构)",
+    "调用天眼查 API 查询企业数据。工商:ic/baseinfo(基本信息)/holder(股东)/invest(对外投资)"
+    "/changeInfo(变更)/branch(分支机构)。司法:jr/lawSuit(诉讼)/dishonesty(失信)"
+    "/executedPerson(被执行)/courtAnnouncement(开庭)/consumptionRestriction(限消令)。"
+    "经营:risk/riskInfo(风险)/mr/abnormal(异常)/punishmentInfo(行政处罚)/illegalinfo(严重违法)"
+    "/equityPledge(股权出质)/taxArrears(欠税)。知产:ipr/tm(商标)/patent(专利)。"
+    "新闻:news/newsList。完整路径需前缀 /services/open/",
     parameters={
         "type": "object",
         "properties": {

@@ -383,20 +383,21 @@ def manage_scheduled_report(action: str, company_names: list[str] | None = None,
 
 @tool
 def tianyancha_query(endpoint: str, keyword: str) -> dict:
-    """调用天眼查 API 查询企业数据。
+    """调用天眼查 API 查询企业数据。可用的 endpoint 和对应功能：
 
-    常用端点：
-      /services/open/ic/baseinfo/normal   基本信息
-      /services/open/risk/riskInfo/2.0    风险信息
-      /services/open/jr/lawSuit/3.0       法律诉讼
-      /services/open/mr/abnormal/2.0       经营异常
-      /services/open/mr/punishmentInfo/3.0 行政处罚
-      /services/open/mr/illegalinfo/2.0    严重违法
-      /services/open/news/newsList/2.0     新闻舆情
-      /services/open/ic/branch/2.0         分支机构
+    工商: /services/open/ic/baseinfo/normal(基本信息) /holder/2.0(股东)
+          /invest/2.0(对外投资) /changeInfo/2.0(变更记录) /branch/2.0(分支机构)
+    司法: /services/open/jr/lawSuit/3.0(诉讼) /dishonesty/3.0(失信)
+          /executedPerson/3.0(被执行) /courtAnnouncement/3.0(开庭)
+          /consumptionRestriction/2.0(限消令)
+    经营: /services/open/risk/riskInfo/2.0(风险) /mr/abnormal/2.0(异常)
+          /mr/punishmentInfo/3.0(行政处罚) /mr/illegalinfo/2.0(严重违法)
+          /mr/equityPledge/2.0(股权出质) /mr/taxArrears/2.0(欠税)
+    知产: /services/open/ipr/tm/2.0(商标) /ipr/patent/2.0(专利)
+    新闻: /services/open/news/newsList/2.0(舆情)
 
     Args:
-        endpoint: 天眼查 API 路径
+        endpoint: 天眼查 API 完整路径
         keyword: 企业名称关键词
     """
     from app.services.tianyancha_client import query
