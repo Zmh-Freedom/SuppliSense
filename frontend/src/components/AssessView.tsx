@@ -101,12 +101,13 @@ export default function AssessView() {
   return (
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-2xl mx-auto relative">
-        {/* Floating watchlist card */}
+        {/* Floating watchlist card — fixed vertical center, to the left of content */}
         {watchlist.length > 0 && (
-          <div className="absolute right-full mr-6 top-0 w-40 hidden xl:block">
-            <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
+          <div className="hidden xl:block fixed top-1/2 -translate-y-1/2 z-10"
+            style={{ left: `max(24px, calc((100vw - 672px) / 2 - 184px))` }}>
+            <div className="w-40 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-md overflow-hidden">
               <h3 className="text-[11px] font-medium text-gray-400 px-3 pt-3 pb-2">监控清单</h3>
-              <div className="max-h-[60vh] overflow-auto px-1.5 pb-1.5">
+              <div className="max-h-[50vh] overflow-auto px-1.5 pb-1.5">
                 {watchlist.map(c => (
                   <button
                     key={c}
