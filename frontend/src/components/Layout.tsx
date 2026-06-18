@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import ErrorBoundary from './ErrorBoundary';
 import NetworkStatus from './NetworkStatus';
@@ -7,6 +9,10 @@ import Sidebar from './Sidebar';
 import ThemeSwitcher from './ThemeSwitcher';
 import { TAB_ROUTES } from '../routes';
 import { useTheme } from '../hooks/useTheme';
+import { useAlertHistory } from '../hooks';
+import { api } from '../api';
+import { queryKeys } from '../query-keys';
+import type { AlertDoc } from '../types';
 
 function TabIcon({ name, className }: { name: string; className?: string }) {
   const cls = className || 'w-4 h-4';
@@ -32,6 +38,117 @@ function TabIcon({ name, className }: { name: string; className?: string }) {
     default:
       return null;
   }
+}
+
+function AlertBell() {
+  const queryClient = useQueryClient();
+  const { data: alerts } = useAlertHistory();
+  const alertList = alerts ?? [];
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, right: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target)) return;
+      if (panelRef.current && !panelRef.current.contains(target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+    }
+    setOpen(!open);
+  };
+
+  const clearMutation = useMutation({
+    mutationFn: () => api.delete('/alert/history'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
+  });
+
+  const dropdown = (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          ref={panelRef}
+          className="fixed w-80 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
+          style={{ top: pos.top, right: pos.right }}
+          initial={{ opacity: 0, scale: 0.95, y: -8 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: -8 }}
+          transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+            <span className="text-sm font-medium text-[var(--color-text)]">告警通知</span>
+            {alertList.length > 0 && (
+              <button
+                onClick={() => clearMutation.mutate()}
+                disabled={clearMutation.isPending}
+                className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
+              >
+                {clearMutation.isPending ? '清空中…' : '清空'}
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-80 overflow-auto">
+            {alertList.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8">暂无告警</p>
+            ) : (
+              alertList.slice(0, 20).map((doc: AlertDoc, i: number) => {
+                const isCritical = doc.severity === 'critical';
+                return (
+                  <div
+                    key={i}
+                    className="px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-[var(--color-text)] truncate">{doc.company_name}</span>
+                      <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 truncate">
+                      {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
+                    </p>
+                    <p className="text-[10px] text-gray-300 mt-1">{doc.created_at.slice(0, 16).replace('T', ' ')}</p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={toggle}
+        className="relative p-2 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+        aria-label={`告警通知${alertList.length > 0 ? `，${alertList.length} 条` : ''}`}
+      >
+        <svg className="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        {alertList.length > 0 && (
+          <span className="absolute top-1.5 right-1.5 w-4.5 h-4.5 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-medium leading-none">
+            {alertList.length > 99 ? '99+' : alertList.length}
+          </span>
+        )}
+      </button>
+      {createPortal(dropdown, document.body)}
+    </>
+  );
 }
 
 export default function Layout() {
@@ -134,6 +251,7 @@ export default function Layout() {
               );
             })}
             <div className="flex-1" />
+            <AlertBell />
             <ThemeSwitcher />
           </div>
 

@@ -6,17 +6,15 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import SentimentPanel from './SentimentPanel';
 import RiskMatrix from './RiskMatrix';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { useDashboard, useWatchlist, useAlertHistory } from '../hooks';
+import { useDashboard, useWatchlist } from '../hooks';
 import { queryKeys } from '../query-keys';
-import type { Prediction, AlertDoc } from '../types';
+import type { Prediction } from '../types';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const dashQuery = useDashboard();
   const { companies: watchlist } = useWatchlist();
-  const { data: alerts } = useAlertHistory();
-  const alertList = alerts ?? [];
   const predQuery = useQuery({
     queryKey: queryKeys.predictions,
     queryFn: () => api.get<Prediction[]>('/alert/predict'),
@@ -73,11 +71,6 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     },
     onError: () => setToast('巡检失败，请重试'),
-  });
-
-  const clearAlertsMutation = useMutation({
-    mutationFn: () => api.delete('/alert/history'),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
   });
 
   const busy = checkAllMutation.isPending;
@@ -348,49 +341,6 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-
-      {/* alert list */}
-      {alertList.length > 0 && (
-        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">近期告警</h3>
-            <button
-              onClick={() => clearAlertsMutation.mutate()}
-              disabled={clearAlertsMutation.isPending}
-              className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
-            >
-              {clearAlertsMutation.isPending ? '清空中…' : '清空记录'}
-            </button>
-          </div>
-          <div className="space-y-1.5">
-            {alertList.slice(0, 5).map((doc: AlertDoc, i: number) => {
-              const isCritical = doc.severity === 'critical';
-              return (
-                <div
-                  key={i}
-                  className={`rounded-xl border bg-[var(--color-surface)] p-3 ${
-                    isCritical ? 'border-l-[3px] border-l-[#e06060]' : 'border-l-[3px] border-l-[#d4a040]'
-                  } border-[var(--color-border)]`}
-                >
-                  <div className="flex justify-between items-baseline">
-                    <span className="text-sm font-semibold">
-                      <span style={{ color: isCritical ? '#e06060' : '#d4a040' }}>● </span>
-                      {doc.company_name}
-                    </span>
-                    <span className="text-xs text-gray-400">{doc.created_at.slice(0, 16).replace('T', ' ')}</span>
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
-                  </p>
-                </div>
-              );
-            })}
-            {alertList.length > 5 && (
-              <p className="text-xs text-gray-400 text-center pt-1">还有 {alertList.length - 5} 条告警</p>
-            )}
-          </div>
-        </div>
-      )}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-xs text-red-600 z-30 shadow-md">
