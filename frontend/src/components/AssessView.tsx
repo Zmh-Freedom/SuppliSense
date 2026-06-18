@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -9,6 +9,7 @@ import type {
   ContagionResult, ScenarioResult, SanctionsResult,
 } from '../types';
 import { queryKeys } from '../query-keys';
+import { useWatchlist } from '../hooks';
 import SentimentPanel from './SentimentPanel';
 import Skeleton, { SkeletonChart } from './Skeleton';
 
@@ -29,6 +30,16 @@ export default function AssessView() {
   const initialName = companyName ? decodeURIComponent(companyName) : '';
   const [name, setName] = useState(initialName);
   const [subTab, setSubTab] = useState<SubTab>('overview');
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const { companies: watchlist } = useWatchlist();
+
+  const filteredSuggestions = useMemo(() => {
+    const q = name.trim().toLowerCase();
+    if (!q) return watchlist;
+    return watchlist.filter(c => c.toLowerCase().includes(q));
+  }, [name, watchlist]);
 
   const assessMutation = useMutation({
     mutationFn: ({ target, force }: { target: string; force?: boolean }) =>
@@ -56,10 +67,17 @@ export default function AssessView() {
     }
   }, [initialName]);
 
-  const assess = () => {
-    if (!name.trim()) return;
+  const assess = (target?: string) => {
+    const t = (target || name).trim();
+    if (!t) return;
     setSubTab('overview');
-    assessMutation.mutate({ target: name });
+    assessMutation.mutate({ target: t });
+  };
+
+  const selectCompany = (company: string) => {
+    setName(company);
+    setShowSuggestions(false);
+    assess(company);
   };
 
   const refresh = () => {
@@ -82,19 +100,69 @@ export default function AssessView() {
 
   return (
     <div className="max-w-2xl mx-auto py-6 px-4">
-      {/* search bar */}
-      <div className="flex gap-2 mb-4">
-        <input
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && assess()}
-          placeholder="输入完整企业名称"
-          className="flex-1 border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
-        />
-        <button onClick={assess} disabled={loading} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
-          {loading ? '评估中…' : '评估'}
-        </button>
+      {/* search bar with autocomplete */}
+      <div className="relative mb-3">
+        <div className="flex gap-2">
+          <div className="flex-1 relative">
+            <input
+              ref={inputRef}
+              value={name}
+              onChange={e => { setName(e.target.value); setShowSuggestions(true); }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              onKeyDown={e => e.key === 'Enter' && assess()}
+              placeholder="输入企业名称搜索…"
+              className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
+            />
+            {/* autocomplete dropdown */}
+            <AnimatePresence>
+              {showSuggestions && name.trim() && filteredSuggestions.length > 0 && (
+                <motion.div
+                  className="absolute left-0 right-0 top-full mt-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg z-10 overflow-hidden"
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -4 }}
+                  transition={{ duration: 0.15 }}
+                >
+                  {filteredSuggestions.slice(0, 8).map(c => (
+                    <button
+                      key={c}
+                      onMouseDown={() => selectCompany(c)}
+                      className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                      <span>{c}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+          <button onClick={assess} disabled={loading} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
+            {loading ? '评估中…' : '评估'}
+          </button>
+        </div>
       </div>
+
+      {/* watchlist quick-select */}
+      {watchlist.length > 0 && (
+        <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1">
+          <span className="text-[11px] text-gray-400 shrink-0">监控清单：</span>
+          {watchlist.map(c => (
+            <button
+              key={c}
+              onClick={() => selectCompany(c)}
+              className={`shrink-0 text-xs rounded-lg px-3 py-1.5 border transition-colors min-h-[32px] ${
+                name === c
+                  ? 'bg-[var(--color-primary-bg)] text-white border-[var(--color-primary-bg)]'
+                  : 'bg-white border-[var(--color-border)] text-gray-500 hover:border-[var(--color-primary-bg)]/30 hover:text-[var(--color-primary-bg)]'
+              }`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
 
