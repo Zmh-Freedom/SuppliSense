@@ -34,7 +34,7 @@ export default function WatchlistPanel({ companies, selected, onSelect, variant 
   if (variant === 'floating') {
     return (
       <div className="hidden xl:block fixed top-1/2 -translate-y-1/2 z-10"
-        style={{ left: `max(24px, calc((100vw - 672px) / 2 - 184px))` }}>
+        style={{ left: `max(248px, calc((100vw - 672px) / 2 - 184px))` }}>
         <div className="w-40 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-md overflow-hidden">
           <h3 className="text-[11px] font-medium text-gray-400 px-3 pt-3 pb-2">监控清单</h3>
           <div className="max-h-[50vh] overflow-auto px-1.5 pb-1.5">{list}</div>
