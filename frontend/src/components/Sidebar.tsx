@@ -135,19 +135,17 @@ function AlertBell() {
   return (
     <>
       <button ref={btnRef} onClick={toggle}
-        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-[var(--color-surface-hover)] rounded-lg transition-colors min-h-[40px]">
-        <div className="relative">
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-          </svg>
-          {alertList.length > 0 && (
-            <span className="absolute -top-1 -right-2 w-4 h-4 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center font-medium leading-none">
-              {alertList.length > 99 ? '99+' : alertList.length}
-            </span>
-          )}
-        </div>
-        <span className="flex-1 text-left">告警</span>
-        {alertList.length > 0 && <span className="text-[11px] text-gray-400">{alertList.length}</span>}
+        className="relative p-2 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+        aria-label={`告警通知${alertList.length > 0 ? `，${alertList.length} 条` : ''}`}
+      >
+        <svg className="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        {alertList.length > 0 && (
+          <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center font-medium leading-none">
+            {alertList.length > 99 ? '99+' : alertList.length}
+          </span>
+        )}
       </button>
       {createPortal(dropdown, document.body)}
     </>
@@ -172,10 +170,13 @@ export default function Sidebar({ onClose }: Props) {
         </button>
       )}
 
-      {/* brand */}
-      <div className="px-4 pt-5 pb-4">
-        <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">供应商风险分析</h1>
-        <p className="text-[11px] text-gray-400 mt-0.5">AI Agent 平台</p>
+      {/* brand + alert bell */}
+      <div className="px-4 pt-5 pb-3 flex items-center justify-between">
+        <div>
+          <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">供应商风险分析</h1>
+          <p className="text-[11px] text-gray-400 mt-0.5">AI Agent 平台</p>
+        </div>
+        <AlertBell />
       </div>
 
       {/* divider */}
@@ -212,8 +213,7 @@ export default function Sidebar({ onClose }: Props) {
       </nav>
 
       {/* bottom utilities */}
-      <div className="border-t border-[var(--color-border)] px-3 py-3 space-y-0.5">
-        <AlertBell />
+      <div className="border-t border-[var(--color-border)] px-3 py-3">
         <div className="px-3 py-1.5">
           <ThemeSwitcher />
         </div>
