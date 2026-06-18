@@ -199,11 +199,27 @@ def _load_a_stock_map() -> dict[str, str]:
 
 
 def resolve_full_name(keyword: str) -> str | None:
-    """将A股简称解析为全称（如'海康威视'→'杭州海康威视数字技术股份有限公司'）。"""
+    """将企业简称解析为工商全称。先试 A 股，再试联网搜索。"""
     global _A_FULL_NAME_CACHE
     if keyword in _A_FULL_NAME_CACHE:
         return _A_FULL_NAME_CACHE[keyword]
 
+    # 1. AkShare A-share lookup
+    full = _resolve_a_share(keyword)
+    if full:
+        _A_FULL_NAME_CACHE[keyword] = full
+        return full
+
+    # 2. Web search fallback
+    full = _web_resolve_full_name(keyword)
+    if full:
+        _A_FULL_NAME_CACHE[keyword] = full
+        return full
+
+    return None
+
+
+def _resolve_a_share(keyword: str) -> str | None:
     stock_map = _load_a_stock_map()
     code = None
     for name, c in stock_map.items():
@@ -220,12 +236,54 @@ def resolve_full_name(keyword: str) -> str | None:
         if col is not None and hasattr(col, 'iloc') and len(col) > 0:
             full = str(col.iloc[0])
             if full and full != "nan":
-                _A_FULL_NAME_CACHE[keyword] = full
                 return full
     except Exception:
         pass
 
     return None
+
+
+def _web_resolve_full_name(keyword: str) -> str | None:
+    """搜索网络获取企业全称（用于非 A 股企业）。"""
+    for lib in ["ddgs", "duckduckgo_search"]:
+        try:
+            mod = __import__(lib)
+            with mod.DDGS() as ddgs:
+                results = list(ddgs.text(
+                    f"{keyword} 公司全称 工商注册",
+                    region="cn-zh", max_results=5,
+                ))
+            for r in results:
+                body = r.get("body", "")
+                if not body:
+                    continue
+                # Try to find a company name matching the keyword
+                for name in _extract_names(body, keyword):
+                    if name and len(name) >= len(keyword) + 2:
+                        return name
+            return None
+        except Exception:
+            continue
+    return None
+
+
+def _extract_names(text: str, keyword: str) -> list[str]:
+    """从文本中抽取疑似企业全称。"""
+    import re
+    names = []
+    # Chinese company name suffixes (mainland + Taiwan + HK)
+    suffix = r"(?:股份有限公司|有限责任公司|有限公司|集团|合伙|企業|株式會社|公司)"
+    pattern = re.compile(r"[一-鿿（）()A-Za-z]+" + suffix)
+    for m in pattern.finditer(text):
+        name = m.group()
+        # filter noise
+        if len(name) < len(keyword) + 2:
+            continue
+        if any(x in name for x in ["爱企查", "天眼查", "企查查", "百度", "为您提供"]):
+            continue
+        if keyword in name and name not in names:
+            names.append(name)
+    return names
 
 
 def _extract_stock_code(company_name: str) -> str | None:
