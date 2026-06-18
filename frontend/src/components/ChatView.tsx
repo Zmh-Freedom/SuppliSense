@@ -95,16 +95,6 @@ export default function ChatView() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, streamState]);
 
-  // Timeout safeguard: auto-reset loading after 60s
-  useEffect(() => {
-    if (!loading) return;
-    const timeout = setTimeout(() => {
-      setLoading(false);
-      setStreamState(null);
-    }, 60000);
-    return () => clearTimeout(timeout);
-  }, [loading]);
-
   const persist = (sid: string, newMsgs: ChatMessage[]) => {
     const list = loadSessions();
     const idx = list.findIndex(s => s.sid === sid);
@@ -216,7 +206,8 @@ export default function ChatView() {
         },
       }, mode);
     } catch (err) {
-      newMsgs.push({ role: 'assistant', content: '请求失败，请重试' });
+      const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+      newMsgs.push({ role: 'assistant', content: isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试' });
       persist(sid, newMsgs);
       setStreamState(null);
       setLoading(false);

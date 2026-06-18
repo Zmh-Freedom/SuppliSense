@@ -134,24 +134,29 @@ export async function chatStream(
   callbacks: StreamCallbacks,
   mode: 'react' | 'plan-execute' | 'multi-agent' = 'react',
 ): Promise<string> {
-  const res = await fetch(`${API_BASE}/chat/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, session_id: sessionId, mode }),
-    credentials: 'same-origin',
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
 
-  if (res.status === 401) {
-    clearStoredUser();
-    window.location.reload();
-    throw new Error('登录已过期，请重新登录');
-  }
+  try {
+    const res = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, session_id: sessionId, mode }),
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
 
-  if (!res.ok || !res.body) {
-    throw new Error(`HTTP ${res.status}`);
-  }
+    if (res.status === 401) {
+      clearStoredUser();
+      window.location.reload();
+      throw new Error('登录已过期，请重新登录');
+    }
 
-  const reader = res.body.getReader();
+    if (!res.ok || !res.body) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let fullAnswer = '';
@@ -218,4 +223,7 @@ export async function chatStream(
   }
 
   return fullAnswer;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
