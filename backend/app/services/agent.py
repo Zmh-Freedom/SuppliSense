@@ -336,6 +336,29 @@ def _knowledge_search(query: str, company_name: str = "") -> dict:
     }
 
 
+@_register(
+    "tianyancha_query",
+    "调用天眼查 API 查询企业数据。常用端点：/services/open/ic/baseinfo/normal(基本信息)、"
+    "/services/open/risk/riskInfo/2.0(风险信息)、/services/open/jr/lawSuit/3.0(法律诉讼)、"
+    "/services/open/mr/abnormal/2.0(经营异常)、/services/open/mr/punishmentInfo/3.0(行政处罚)、"
+    "/services/open/news/newsList/2.0(新闻舆情)、/services/open/ic/branch/2.0(分支机构)",
+    parameters={
+        "type": "object",
+        "properties": {
+            "endpoint": {"type": "string", "description": "天眼查 API 路径"},
+            "keyword": {"type": "string", "description": "企业名称关键词"}
+        },
+        "required": ["endpoint", "keyword"]
+    },
+)
+def _tianyancha_query(endpoint: str, keyword: str) -> dict:
+    from app.services.tianyancha_client import query
+    result = query(endpoint, keyword)
+    if result is None:
+        return {"error": "API 调用失败或无数据", "endpoint": endpoint, "keyword": keyword}
+    return {"endpoint": endpoint, "keyword": keyword, "data": result}
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:

@@ -381,8 +381,35 @@ def manage_scheduled_report(action: str, company_names: list[str] | None = None,
         return {"error": f"未知操作: {action}，可选值: create, list, delete"}
 
 
+@tool
+def tianyancha_query(endpoint: str, keyword: str) -> dict:
+    """调用天眼查 API 查询企业数据。
+
+    常用端点：
+      /services/open/ic/baseinfo/normal   基本信息
+      /services/open/risk/riskInfo/2.0    风险信息
+      /services/open/jr/lawSuit/3.0       法律诉讼
+      /services/open/mr/abnormal/2.0       经营异常
+      /services/open/mr/punishmentInfo/3.0 行政处罚
+      /services/open/mr/illegalinfo/2.0    严重违法
+      /services/open/news/newsList/2.0     新闻舆情
+      /services/open/ic/branch/2.0         分支机构
+
+    Args:
+        endpoint: 天眼查 API 路径
+        keyword: 企业名称关键词
+    """
+    from app.services.tianyancha_client import query
+
+    result = query(endpoint, keyword)
+    if result is None:
+        return {"error": "API 调用失败", "endpoint": endpoint, "keyword": keyword}
+    return {"endpoint": endpoint, "keyword": keyword, "data": result}
+
+
 # 所有工具列表，供 graph 使用
 TOOLS_LIST = [
+    tianyancha_query,
     search_company,
     assess_risk,
     check_alert,

@@ -56,6 +56,21 @@ def fetch_branches(company_name: str) -> dict | None:
     return resp
 
 
+def query(endpoint: str, keyword: str) -> dict | None:
+    """调用任意天眼查 API 端点。
+
+    Args:
+        endpoint: API 路径，如 /services/open/ic/baseinfo/normal
+        keyword: 企业名称关键词
+
+    Returns:
+        API 原始响应 dict，失败返回 None
+    """
+    if not TOKEN:
+        return None
+    return _call(endpoint, keyword)
+
+
 def fetch_company(company_name: str) -> bool:
     """拉取企业全部数据并写入 MongoDB。返回 True 表示成功写入至少一条。"""
     if not TOKEN:
