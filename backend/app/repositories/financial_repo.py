@@ -51,14 +51,18 @@ def get_financial_metrics(company_name: str) -> FinancialMetrics | None:
 
     code = _extract_stock_code(company_name)
 
-    # try A-share first, then HK
-    metrics = _fetch_a_share(code) if (profile.is_listed and code) else None
+    # try A-share first (if we have a stock code, trust it over Tianyancha's is_listed)
+    if code:
+        metrics = _fetch_a_share(code)
+    else:
+        metrics = None
+
     if metrics is None:
         hk_code = _match_hk_code(company_name)
         if hk_code:
             metrics = _fetch_hk(hk_code)
 
-    if metrics is None and not profile.is_listed:
+    if metrics is None:
         return None
 
     if metrics:
@@ -177,18 +181,42 @@ def _match_hk_code(company_name: str) -> str | None:
     return None
 
 
+_A_STOCK_MAP: dict[str, str] | None = None
+
+
+def _load_a_stock_map() -> dict[str, str]:
+    """Lazy-load A-share stock name→code mapping from AkShare (cached in memory)."""
+    global _A_STOCK_MAP
+    if _A_STOCK_MAP is not None:
+        return _A_STOCK_MAP
+    try:
+        df = ak.stock_info_a_code_name()
+        _A_STOCK_MAP = dict(zip(df["name"].str.strip(), df["code"]))
+    except Exception:
+        _A_STOCK_MAP = {}
+    return _A_STOCK_MAP
+
+
 def _extract_stock_code(company_name: str) -> str | None:
+    # 1. Try Tianyancha baseinfo bondNum
     db = get_db()
     doc = db["baseinfo"].find_one({"name": company_name})
-    if not doc:
-        return None
-    items = doc.get("items") or {}
-    result = items.get("result") or {}
-    code = result.get("bondNum", "")
-    if not code:
-        return None
-    m = re.search(r"\d{6}", str(code))
-    return m.group() if m else None
+    if doc:
+        items = doc.get("items") or {}
+        result = items.get("result") or {}
+        code = result.get("bondNum", "")
+        if code:
+            m = re.search(r"\d{6}", str(code))
+            if m:
+                return m.group()
+
+    # 2. Fallback: search AkShare A-share name→code mapping
+    stock_map = _load_a_stock_map()
+    for name, code in stock_map.items():
+        if company_name in name or name in company_name:
+            return code
+
+    return None
 
 
 def _parse_pct(val) -> float:
