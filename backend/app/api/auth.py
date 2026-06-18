@@ -153,6 +153,7 @@ async def login_json(request: Request, req: LoginRequest, response: Response):
         value=tokens.access_token,
         httponly=True,
         samesite="lax",
+        secure=settings.COOKIE_SECURE,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -195,6 +196,7 @@ async def refresh_token(request: Request, req: RefreshRequest, response: Respons
         value=access_token,
         httponly=True,
         samesite="lax",
+        secure=settings.COOKIE_SECURE,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -213,7 +215,7 @@ async def refresh_token(request: Request, req: RefreshRequest, response: Respons
 @limiter.limit(settings.RATE_LIMIT_AUTH)
 async def logout(request: Request, response: Response):
     """Clear the HttpOnly cookie."""
-    response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="access_token", path="/", secure=settings.COOKIE_SECURE)
     return {"detail": "已退出登录"}
 
 

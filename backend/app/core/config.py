@@ -49,5 +49,8 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
+    # Cookie
+    COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "true").lower() == "true"
+
 
 settings = Settings()
