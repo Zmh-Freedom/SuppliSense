@@ -31,6 +31,7 @@ _ENDPOINTS: list[tuple[str, str, str]] = [
     ("punishmentInfo", "/services/open/mr/punishmentInfo/3.0", "items"),
     ("illegalinfo", "/services/open/mr/illegalinfo/2.0", "items"),
     ("news", "/services/open/news/newsList/2.0", "items"),
+    ("branch", "/services/open/ic/branch/2.0", "items"),
 ]
 
 
@@ -42,6 +43,16 @@ def fetch_news(company_name: str) -> dict | None:
     resp = _call(path, company_name)
     if resp is not None:
         _save("news", company_name, resp, "items")
+    return resp
+
+
+def fetch_branches(company_name: str) -> dict | None:
+    """拉取企业分支机构数据并写入 MongoDB。返回数据或 None。"""
+    if not TOKEN:
+        return None
+    resp = _call("/services/open/ic/branch/2.0", company_name)
+    if resp is not None:
+        _save("branch", company_name, resp, "items")
     return resp
 
 

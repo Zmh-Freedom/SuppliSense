@@ -18,11 +18,9 @@ def get_branches(company_name: str) -> list[dict]:
     db = get_db()
     doc = db["branch"].find_one({"name": company_name})
     if not doc:
-        # try fetching from API
-        from app.services.tianyancha_client import TOKEN
-        if TOKEN:
-            _fetch_branches(company_name)
-            doc = db["branch"].find_one({"name": company_name})
+        from app.services.tianyancha_client import fetch_branches
+        fetch_branches(company_name)
+        doc = db["branch"].find_one({"name": company_name})
 
     if not doc:
         return []
@@ -44,14 +42,6 @@ def get_branches(company_name: str) -> list[dict]:
         })
 
     return branches
-
-
-def _fetch_branches(company_name: str) -> None:
-    """拉取分支机构数据到 MongoDB。"""
-    from app.services.tianyancha_client import _call, _save
-    resp = _call("/services/open/ic/branch/2.0", company_name)
-    if resp is not None:
-        _save("branch", company_name, resp, "items")
 
 
 def get_supply_dependencies(company_name: str) -> list[dict]:
