@@ -563,7 +563,7 @@ function ExpandableSentiment({ name }: { name: string }) {
               transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
               className="overflow-hidden"
             >
-              <div className="border-t border-[var(--color-border)]">
+              <div className="border-t border-[var(--color-border)] p-5">
                 <SentimentPanel companyName={name} embedded />
               </div>
             </motion.div>

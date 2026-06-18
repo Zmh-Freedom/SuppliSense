@@ -119,8 +119,8 @@ export default function SentimentPanel({ companyName, embedded }: { companyName?
 
     return (
       <div className={embedded ? 'space-y-4' : 'bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 space-y-4'}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</h3>
+        <div className={`flex items-center ${embedded ? 'justify-end' : 'justify-between'}`}>
+          {!embedded && <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</h3>}
           <div className="flex items-center gap-2">
             {isStale && (
               <span className="text-[10px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded">
