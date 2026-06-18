@@ -1,182 +1,18 @@
-import { useState, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import { useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import ErrorBoundary from './ErrorBoundary';
 import NetworkStatus from './NetworkStatus';
 import Sidebar from './Sidebar';
-import ThemeSwitcher from './ThemeSwitcher';
-import { TAB_ROUTES } from '../routes';
 import { useTheme } from '../hooks/useTheme';
-import { useAlertHistory } from '../hooks';
-import { api } from '../api';
-import { queryKeys } from '../query-keys';
-import type { AlertDoc } from '../types';
-
-function TabIcon({ name, className }: { name: string; className?: string }) {
-  const cls = className || 'w-4 h-4';
-  switch (name) {
-    case 'dashboard':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>;
-    case 'assess':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>;
-    case 'alerts':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
-    case 'sentiment':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>;
-    case 'agent':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>;
-    case 'knowledge':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>;
-    case 'contagion':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v5"/><path d="M9 14l-3 4"/><path d="M15 14l3 4"/></svg>;
-    case 'settings':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>;
-    case 'sourcing':
-      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>;
-    default:
-      return null;
-  }
-}
-
-function AlertBell() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const { data: alerts } = useAlertHistory();
-  const alertList = alerts ?? [];
-  const [open, setOpen] = useState(false);
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
-  const [pos, setPos] = useState({ top: 0, right: 0 });
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (btnRef.current?.contains(target)) return;
-      if (panelRef.current && !panelRef.current.contains(target)) { setOpen(false); setExpandedIdx(null); }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  const toggle = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
-    }
-    setOpen(!open);
-    setExpandedIdx(null);
-  };
-
-  const clearMutation = useMutation({
-    mutationFn: () => api.delete('/alert/history'),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
-  });
-
-  const dropdown = (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          ref={panelRef}
-          className="fixed w-[380px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
-          style={{ top: pos.top, right: pos.right }}
-          initial={{ opacity: 0, scale: 0.95, y: -8 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: -8 }}
-          transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-        >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-            <span className="text-sm font-medium text-[var(--color-text)]">告警通知</span>
-            {alertList.length > 0 && (
-              <button
-                onClick={() => clearMutation.mutate()}
-                disabled={clearMutation.isPending}
-                className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
-              >
-                {clearMutation.isPending ? '清空中…' : '清空'}
-              </button>
-            )}
-          </div>
-
-          <div className="max-h-[70vh] overflow-auto">
-            {alertList.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-8">暂无告警</p>
-            ) : (
-              alertList.slice(0, 50).map((doc: AlertDoc, i: number) => {
-                const isCritical = doc.severity === 'critical';
-                const isExpanded = expandedIdx === i;
-                return (
-                  <div
-                    key={i}
-                    onClick={() => setExpandedIdx(isExpanded ? null : i)}
-                    className={`px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer ${
-                      isExpanded ? 'bg-[var(--color-surface-hover)]' : ''
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-[var(--color-text)]">{doc.company_name}</span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] text-gray-400">{doc.created_at.slice(5, 16).replace('T', ' ')}</span>
-                        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
-                      </div>
-                    </div>
-                    <p className={`text-xs text-gray-500 mt-1 ${isExpanded ? '' : 'line-clamp-1'}`}>
-                      {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
-                    </p>
-                    {isExpanded && (
-                      <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setOpen(false); setExpandedIdx(null); navigate(`/assess/${encodeURIComponent(doc.company_name)}`); }}
-                          className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors"
-                        >
-                          查看详情
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-
-  return (
-    <>
-      <button
-        ref={btnRef}
-        onClick={toggle}
-        className="relative p-2 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-        aria-label={`告警通知${alertList.length > 0 ? `，${alertList.length} 条` : ''}`}
-      >
-        <svg className="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-        </svg>
-        {alertList.length > 0 && (
-          <span className="absolute top-1.5 right-1.5 w-4.5 h-4.5 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-medium leading-none">
-            {alertList.length > 99 ? '99+' : alertList.length}
-          </span>
-        )}
-      </button>
-      {createPortal(dropdown, document.body)}
-    </>
-  );
-}
 
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  useTheme(); // initialize theme on mount
+  useTheme();
 
   const activePath = '/' + (location.pathname.split('/')[1] || '');
-  const activeTab = TAB_ROUTES.findIndex(t => t.path === activePath);
 
   return (
     <div className="flex h-screen">
@@ -215,16 +51,13 @@ export default function Layout() {
                 onClick={() => setSidebarOpen(false)}
               />
               <motion.div
-                className="relative w-64 h-full"
-                initial={{ x: -256 }}
+                className="relative w-56 h-full"
+                initial={{ x: -224 }}
                 animate={{ x: 0 }}
-                exit={{ x: -256 }}
+                exit={{ x: -224 }}
                 transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
               >
-                <Sidebar
-                  onSelect={(name) => { navigate(`/assess/${encodeURIComponent(name)}`); setSidebarOpen(false); }}
-                  onClose={() => setSidebarOpen(false)}
-                />
+                <Sidebar onClose={() => setSidebarOpen(false)} />
               </motion.div>
             </motion.div>
           )}
@@ -232,53 +65,17 @@ export default function Layout() {
 
         {/* Desktop sidebar */}
         <div className="hidden md:flex">
-          <Sidebar
-            onSelect={(name) => navigate(`/assess/${encodeURIComponent(name)}`)}
-          />
+          <Sidebar />
         </div>
 
+        {/* Main content */}
         <main className="flex-1 flex flex-col min-w-0 relative z-10">
-          <div className="flex items-center gap-1 px-6 pt-4 pb-0 overflow-x-auto" role="tablist">
-            {TAB_ROUTES.map((tab, i) => {
-              const isActive = activeTab === i;
-              const isAgent = tab.primary;
-              return (
-                <button
-                  key={tab.path}
-                  role="tab"
-                  aria-selected={isActive}
-                  aria-label={tab.label}
-                  onClick={() => navigate(tab.path)}
-                  className={`px-4 py-2 text-sm rounded-lg transition-colors min-h-[44px] inline-flex items-center gap-1.5 whitespace-nowrap ${
-                    isActive
-                      ? 'bg-[var(--color-primary-bg)] text-[var(--color-primary-text)] shadow-sm'
-                      : isAgent
-                        ? 'text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 font-medium'
-                        : 'text-gray-500 hover:text-gray-700 hover:bg-[var(--color-surface-hover)]'
-                  }`}
-                >
-                  <TabIcon name={tab.icon} />
-                  {tab.label}
-                  {isAgent && !isActive && (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary-bg)] opacity-40" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[var(--color-primary-bg)]" />
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-            <div className="flex-1" />
-            <AlertBell />
-            <ThemeSwitcher />
-          </div>
-
           <div className="flex-1 overflow-auto">
             <Outlet />
           </div>
         </main>
 
-        {/* Floating Agent button — hidden on Agent page and login */}
+        {/* Floating Agent button */}
         {activePath !== '/chat' && activePath !== '/login' && (
           <button
             onClick={() => {
@@ -295,7 +92,6 @@ export default function Layout() {
             <svg className="w-6 h-6 group-hover:scale-110 transition-transform duration-200" viewBox="0 0 24 24" fill="currentColor" stroke="none">
               <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
             </svg>
-            {/* pulse ring */}
             <span className="absolute inset-0 rounded-2xl bg-[var(--color-primary-bg)] opacity-30 animate-ping pointer-events-none" style={{ animationDuration: '2.5s' }} />
           </button>
         )}

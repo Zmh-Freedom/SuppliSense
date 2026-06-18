@@ -1,47 +1,168 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { AnimatePresence, motion } from 'framer-motion';
+import { useAlertHistory } from '../hooks';
 import { api } from '../api';
-import { wsClient } from '../websocket';
-import { useWatchlist } from '../hooks';
 import { queryKeys } from '../query-keys';
+import { TAB_ROUTES } from '../routes';
+import ThemeSwitcher from './ThemeSwitcher';
+import type { AlertDoc } from '../types';
 
 interface Props {
-  onSelect?: (name: string) => void;
   onClose?: () => void;
 }
 
-export default function Sidebar({ onSelect, onClose }: Props) {
+function NavIcon({ name, className }: { name: string; className?: string }) {
+  const cls = className || 'w-5 h-5';
+  switch (name) {
+    case 'dashboard':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>;
+    case 'assess':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>;
+    case 'agent':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>;
+    case 'contagion':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><path d="M12 7v5"/><path d="M9 14l-3 4"/><path d="M15 14l3 4"/></svg>;
+    case 'settings':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>;
+    case 'sourcing':
+      return <svg className={cls} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>;
+    default:
+      return null;
+  }
+}
+
+/* ---- inline alert bell for sidebar ---- */
+
+function AlertBell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { companies: watchlist } = useWatchlist();
-  const [hovered, setHovered] = useState<string | null>(null);
-
-  const unreadQuery = useQuery({
-    queryKey: queryKeys.unreadCount,
-    queryFn: () => api.get<{ unread_count: number }>('/notifications?limit=1&read=false'),
-    select: (d) => d.unread_count || 0,
-  });
-  const unreadCount = unreadQuery.data ?? 0;
+  const { data: alerts } = useAlertHistory();
+  const alertList = alerts ?? [];
+  const [open, setOpen] = useState(false);
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    wsClient.connect();
-    const unsubAlert = wsClient.on('alert_update', () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
-    });
-    const unsubNotif = wsClient.on('notification', () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.unreadCount });
-    });
-    return () => {
-      unsubAlert();
-      unsubNotif();
-      wsClient.disconnect();
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target)) return;
+      if (panelRef.current && !panelRef.current.contains(target)) { setOpen(false); setExpandedIdx(null); }
     };
-  }, [queryClient]);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const toggle = () => {
+    if (!open && btnRef.current) {
+      const rect = btnRef.current.getBoundingClientRect();
+      setPos({ top: rect.top, left: rect.right + 8 });
+    }
+    setOpen(!open);
+    setExpandedIdx(null);
+  };
+
+  const clearMutation = useMutation({
+    mutationFn: () => api.delete('/alert/history'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
+  });
+
+  const dropdown = (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          ref={panelRef}
+          className="fixed w-[380px] bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
+          style={{ top: pos.top, left: pos.left }}
+          initial={{ opacity: 0, scale: 0.95, x: -8 }}
+          animate={{ opacity: 1, scale: 1, x: 0 }}
+          exit={{ opacity: 0, scale: 0.95, x: -8 }}
+          transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+            <span className="text-sm font-medium text-[var(--color-text)]">告警通知</span>
+            {alertList.length > 0 && (
+              <button onClick={() => clearMutation.mutate()} disabled={clearMutation.isPending}
+                className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">
+                {clearMutation.isPending ? '清空中…' : '清空'}
+              </button>
+            )}
+          </div>
+          <div className="max-h-[70vh] overflow-auto">
+            {alertList.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-8">暂无告警</p>
+            ) : (
+              alertList.slice(0, 50).map((doc: AlertDoc, i: number) => {
+                const isCritical = doc.severity === 'critical';
+                const isExpanded = expandedIdx === i;
+                return (
+                  <div key={i}
+                    onClick={() => setExpandedIdx(isExpanded ? null : i)}
+                    className={`px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer ${isExpanded ? 'bg-[var(--color-surface-hover)]' : ''}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium text-[var(--color-text)]">{doc.company_name}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] text-gray-400">{doc.created_at.slice(5, 16).replace('T', ' ')}</span>
+                        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
+                      </div>
+                    </div>
+                    <p className={`text-xs text-gray-500 mt-1 ${isExpanded ? '' : 'line-clamp-1'}`}>
+                      {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
+                    </p>
+                    {isExpanded && (
+                      <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); setOpen(false); setExpandedIdx(null); navigate(`/assess/${encodeURIComponent(doc.company_name)}`); }}
+                          className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors">
+                          查看详情
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   return (
-    <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface flex flex-col text-sm relative">
+    <>
+      <button ref={btnRef} onClick={toggle}
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-500 hover:text-gray-700 hover:bg-[var(--color-surface-hover)] rounded-lg transition-colors min-h-[40px]">
+        <div className="relative">
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          {alertList.length > 0 && (
+            <span className="absolute -top-1 -right-2 w-4 h-4 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center font-medium leading-none">
+              {alertList.length > 99 ? '99+' : alertList.length}
+            </span>
+          )}
+        </div>
+        <span className="flex-1 text-left">告警</span>
+        {alertList.length > 0 && <span className="text-[11px] text-gray-400">{alertList.length}</span>}
+      </button>
+      {createPortal(dropdown, document.body)}
+    </>
+  );
+}
+
+/* ---- sidebar ---- */
+
+export default function Sidebar({ onClose }: Props) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const activePath = '/' + (location.pathname.split('/')[1] || '');
+
+  return (
+    <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface flex flex-col text-sm">
       {/* mobile close */}
       {onClose && (
         <button className="md:hidden p-2 ml-auto text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">
@@ -51,67 +172,51 @@ export default function Sidebar({ onSelect, onClose }: Props) {
         </button>
       )}
 
-      {/* header */}
-      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] tracking-wide">供应商分析</h2>
-        <button
-          className="relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
-          title="通知"
-          aria-label="通知"
-          onClick={() => navigate('/settings')}
-        >
-          <svg className="w-5 h-5 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-          </svg>
-          {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-medium">
-              {unreadCount > 9 ? '9+' : unreadCount}
-            </span>
-          )}
-        </button>
+      {/* brand */}
+      <div className="px-4 pt-5 pb-4">
+        <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">供应商风险分析</h1>
+        <p className="text-[11px] text-gray-400 mt-0.5">AI Agent 平台</p>
       </div>
 
       {/* divider */}
       <div className="border-t border-[var(--color-border)] mx-4" />
 
-      {/* list header */}
-      <div className="px-4 pt-3 pb-1">
-        <span className="text-[11px] text-gray-400 uppercase tracking-wide">
-          监控清单 {watchlist.length > 0 && `(${watchlist.length})`}
-        </span>
-      </div>
-
-      {/* company list */}
-      <div className="flex-1 overflow-auto px-2 pb-2">
-        {watchlist.length === 0 ? (
-          <p className="text-[11px] text-gray-300 text-center mt-6 px-4">暂无监控企业</p>
-        ) : (
-          watchlist.map(c => (
-            <div
-              key={c}
-              className="group flex items-center justify-between px-2 py-2 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer min-h-[44px]"
-              onMouseEnter={() => setHovered(c)}
-              onMouseLeave={() => setHovered(null)}
-              onClick={() => onSelect?.(c)}
+      {/* nav items */}
+      <nav className="flex-1 px-3 py-3 space-y-0.5">
+        {TAB_ROUTES.map((tab) => {
+          const isActive = activePath === tab.path;
+          const isAgent = tab.primary;
+          return (
+            <button
+              key={tab.path}
+              onClick={() => { navigate(tab.path); onClose?.(); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors min-h-[40px] text-left ${
+                isActive
+                  ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
+                  : isAgent
+                    ? 'text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 font-medium'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-[var(--color-surface-hover)]'
+              }`}
             >
-              <span className="text-xs text-[var(--color-text)] truncate flex-1">{c}</span>
-              {hovered === c && (
-                <button
-                  onClick={e => { e.stopPropagation(); navigate('/chat'); }}
-                  className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors shrink-0 ml-1"
-                  title="Agent 分析"
-                >
-                  分析
-                </button>
+              <NavIcon name={tab.icon} className="w-5 h-5 shrink-0" />
+              <span>{tab.label}</span>
+              {isAgent && !isActive && (
+                <span className="ml-auto relative flex h-1.5 w-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary-bg)] opacity-40" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--color-primary-bg)]" />
+                </span>
               )}
-            </div>
-          ))
-        )}
-      </div>
+            </button>
+          );
+        })}
+      </nav>
 
-      {/* footer hint */}
-      <div className="border-t border-[var(--color-border)] px-4 py-2">
-        <p className="text-[10px] text-gray-300 text-center">监控管理请前往看板页</p>
+      {/* bottom utilities */}
+      <div className="border-t border-[var(--color-border)] px-3 py-3 space-y-0.5">
+        <AlertBell />
+        <div className="px-3 py-1.5">
+          <ThemeSwitcher />
+        </div>
       </div>
     </aside>
   );
