@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 
     # JWT Auth
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-1234567890")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
@@ -22,13 +22,13 @@ class Settings(BaseSettings):
     MONGO_HOST: str = os.getenv("MONGO_HOST", "localhost")
     MONGO_PORT: int = int(os.getenv("MONGO_PORT", "27017"))
     MONGO_USER: str = os.getenv("MONGO_USER", "root")
-    MONGO_PASSWORD: str = os.getenv("MONGO_PASSWORD", "123456")
+    MONGO_PASSWORD: str = os.getenv("MONGO_PASSWORD", "")
     MONGO_AUTH_SOURCE: str = os.getenv("MONGO_AUTH_SOURCE", "admin")
     MONGO_DB: str = os.getenv("MONGO_DB", "tianyancha")
 
     # Tianyancha
     TIANYANCHA_TOKEN: str = os.getenv("TIANYANCHA_TOKEN", "")
-    TIANYANCHA_BASE_URL: str = os.getenv("TIANYANCHA_BASE_URL", "http://open.api.tianyancha.com")
+    TIANYANCHA_BASE_URL: str = os.getenv("TIANYANCHA_BASE_URL", "https://open.api.tianyancha.com")
 
     # LLM
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")

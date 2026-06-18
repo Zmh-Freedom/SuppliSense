@@ -78,9 +78,9 @@ echo ""
 echo -e "${YELLOW}[INFO]${RESET} 正在恢复数据 ..."
 
 if docker exec -i "$CONTAINER" mongorestore \
-    --username root \
-    --password 123456 \
-    --authenticationDatabase admin \
+    --username "${MONGO_USER:-root}" \
+    --password "${MONGO_PASSWORD:?请设置 MONGO_PASSWORD 环境变量}" \
+    --authenticationDatabase "${MONGO_AUTH_DB:-admin}" \
     --archive \
     --drop < "$ARCHIVE"; then
     echo ""

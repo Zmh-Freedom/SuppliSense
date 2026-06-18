@@ -7,9 +7,9 @@ set -euo pipefail
 # 配置
 # ============================================================
 DB="tianyancha"
-MONGO_USER="root"
-MONGO_PASS="123456"
-MONGO_AUTH_DB="admin"
+MONGO_USER="${MONGO_USER:-root}"
+MONGO_PASS="${MONGO_PASSWORD:?请设置 MONGO_PASSWORD 环境变量}"
+MONGO_AUTH_DB="${MONGO_AUTH_DB:-admin}"
 RETENTION_DAYS=7
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

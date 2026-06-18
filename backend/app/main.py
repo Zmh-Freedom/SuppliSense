@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -57,27 +58,60 @@ logger = get_logger(__name__)
 init_sentry()
 
 
+def _validate_config():
+    """启动前校验关键配置。"""
+    errors = []
+    if not settings.SECRET_KEY:
+        errors.append("SECRET_KEY 未设置。生成命令：python -c \"import secrets; print(secrets.token_urlsafe(48))\"")
+    if not settings.MONGO_PASSWORD:
+        errors.append("MONGO_PASSWORD 未设置。")
+    if settings.SECRET_KEY in (
+        "your-secret-key-change-in-production-1234567890",
+        "change-this-to-a-random-secret-in-production",
+        "CHANGE_ME_生成一个64位随机字符串",
+    ):
+        errors.append("SECRET_KEY 仍为占位符，请设置真实的随机密钥。")
+    if errors:
+        for e in errors:
+            logger.error("config_validation_failed", error=e)
+        raise SystemExit(1)
+
+
 def create_default_admin():
     """Create default admin user if no users exist."""
+    import secrets
+    import string
+
     from app.services.auth import create_user, list_users
     from app.schemas.user import UserCreate, UserRole
 
     users = list_users()
     if not users:
+        password = os.getenv("INITIAL_ADMIN_PASSWORD")
+        if not password:
+            alphabet = string.ascii_letters + string.digits + "!@#$%&*"
+            password = "".join(secrets.choice(alphabet) for _ in range(16))
+            logger.warning(
+                "default_admin_created_with_random_password",
+                username="admin",
+                password=password,
+                hint="请保存此密码！设置 INITIAL_ADMIN_PASSWORD 环境变量可自定义。",
+            )
         try:
             create_user(UserCreate(
                 username="admin",
                 email="admin@example.com",
-                password="admin123",
+                password=password,
                 role=UserRole.ADMIN,
             ))
             logger.info("default_admin_created", username="admin")
         except ValueError:
-            pass  # User already exists
+            pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _validate_config()
     logger.info("application_starting", version=settings.APP_VERSION)
     ensure_indexes()
     create_default_admin()
