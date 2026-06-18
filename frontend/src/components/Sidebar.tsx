@@ -173,8 +173,8 @@ export default function Sidebar({ onClose }: Props) {
       {/* brand + alert bell */}
       <div className="px-4 pt-5 pb-3 flex items-center justify-between">
         <div>
-          <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">供应商风险分析</h1>
-          <p className="text-[11px] text-gray-400 mt-0.5">AI Agent 平台</p>
+          <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">SupplierRadar</h1>
+          <p className="text-[11px] text-gray-400 mt-0.5">智能寻源 · 风险预警</p>
         </div>
         <AlertBell />
       </div>
