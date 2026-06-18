@@ -1,9 +1,25 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import { api, chatStream } from '../api';
 import type { ChatMessage, RiskResult } from '../types';
+
+const CAPABILITIES = [
+  { label: '风险评估', desc: '全面分析企业风险状况', prompt: '对 {公司名} 进行全面的风险评估' },
+  { label: '舆情分析', desc: '监测企业最新舆情动态', prompt: '分析 {公司名} 的最新舆情和新闻动态' },
+  { label: '合规筛查', desc: '制裁名单与黑名单筛查', prompt: '对 {公司名} 进行制裁名单和合规筛查' },
+  { label: '趋势预测', desc: '预测未来风险变化趋势', prompt: '预测 {公司名} 未来6-12个月的风险趋势' },
+  { label: '关系图谱', desc: '供应链关系与传染风险', prompt: '分析 {公司名} 的供应链关系和传染风险' },
+  { label: '报告生成', desc: '一键生成风险评估报告', prompt: '生成 {公司名} 的风险评估报告' },
+];
+
+const RECOMMENDED = [
+  '分析监控清单中本月风险变化趋势',
+  '对比台积电和中芯国际的综合风险差异',
+  '帮我找光电器件领域风险最低的供应商',
+];
 
 interface Session {
   sid: string;
@@ -36,6 +52,7 @@ interface StreamState {
 }
 
 export default function ChatView() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [activeSid, setActiveSid] = useState<string>(() => {
     const list = loadSessions();
@@ -44,6 +61,18 @@ export default function ChatView() {
   const [input, setInput] = useState<string>(() => {
     try { return localStorage.getItem('chat_input') || ''; } catch { return ''; }
   });
+
+  // Read ?q= param from URL and auto-populate input
+  useEffect(() => {
+    const q = searchParams.get('q');
+    if (q) {
+      setInput(q);
+      // Clear the param from URL without navigation
+      const next = new URLSearchParams(searchParams);
+      next.delete('q');
+      setSearchParams(next, { replace: true });
+    }
+  }, []); // run once on mount
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
@@ -90,21 +119,21 @@ export default function ChatView() {
     if (!activeSid) setActiveSid(sid);
   };
 
-  const send = async () => {
-    const msg = input.trim();
-    if (!msg || loading) return;
+  const send = useCallback(async (msg?: string) => {
+    const text = (msg ?? input).trim();
+    if (!text || loading) return;
     setInput('');
 
     const sid = activeSid || crypto.randomUUID();
     if (!activeSid) setActiveSid(sid);
 
-    const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: msg }];
+    const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs);
     setLoading(true);
     setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [] });
 
     try {
-      await chatStream(msg, sid, {
+      await chatStream(text, sid, {
         onSession: (sessionId) => {
           if (!activeSid) setActiveSid(sessionId);
         },
@@ -191,6 +220,14 @@ export default function ChatView() {
       setStreamState(null);
       setLoading(false);
     }
+  }, [input, loading, activeSid, msgs, mode]);
+
+  const handleCapabilityClick = (prompt: string) => {
+    setInput(prompt);
+  };
+
+  const handleRecommendedClick = (question: string) => {
+    send(question);
   };
 
   const newChat = () => {
@@ -230,7 +267,95 @@ export default function ChatView() {
       {/* messages */}
       <div className="flex-1 overflow-auto px-4 space-y-6 py-6">
         {msgs.length === 0 && !loading && (
-          <p className="text-gray-300 text-center mt-20 text-lg">输入问题开始分析…</p>
+          <div className="flex-1 flex items-center justify-center px-4">
+            <div className="w-full max-w-lg space-y-8 py-8">
+              {/* Hero */}
+              <div className="text-center space-y-2">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-[var(--color-primary-bg)]/10 mb-2">
+                  <svg className="w-7 h-7 text-[var(--color-primary-bg)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
+                  </svg>
+                </div>
+                <h2 className="text-xl font-bold text-[var(--color-text)]">AI Agent</h2>
+                <p className="text-sm text-gray-500 leading-relaxed">
+                  自主调用 20+ 数据工具，完成供应商风险分析、舆情监控、合规筛查等任务
+                </p>
+              </div>
+
+              {/* Capability cards */}
+              <div>
+                <p className="text-xs text-gray-400 mb-3 px-1">快速能力</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {CAPABILITIES.map((cap) => (
+                    <button
+                      key={cap.label}
+                      onClick={() => handleCapabilityClick(cap.prompt)}
+                      className="text-left bg-white border border-slate-200 rounded-xl p-3 hover:border-[var(--color-primary-bg)]/30 hover:shadow-sm hover:-translate-y-0.5 transition-all duration-200 group"
+                    >
+                      <p className="text-sm font-medium text-[var(--color-text)] group-hover:text-[var(--color-primary-bg)] transition-colors">{cap.label}</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5 leading-tight">{cap.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recommended questions */}
+              <div>
+                <p className="text-xs text-gray-400 mb-3 px-1">推荐问题</p>
+                <div className="space-y-1.5">
+                  {RECOMMENDED.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => handleRecommendedClick(q)}
+                      className="w-full text-left text-sm text-gray-600 bg-amber-50/50 border border-amber-100/50 rounded-lg px-4 py-2.5 hover:bg-amber-50 hover:border-amber-200 transition-colors duration-150"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Mode selector in welcome */}
+              <div>
+                <p className="text-xs text-gray-400 mb-3 px-1">推理模式</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setMode('react')}
+                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
+                      mode === 'react'
+                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
+                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-medium">标准</p>
+                    <p className="text-[11px] opacity-70 mt-0.5">单一分析任务</p>
+                  </button>
+                  <button
+                    onClick={() => setMode('plan-execute')}
+                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
+                      mode === 'plan-execute'
+                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
+                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-medium">规划执行</p>
+                    <p className="text-[11px] opacity-70 mt-0.5">复杂任务拆解</p>
+                  </button>
+                  <button
+                    onClick={() => setMode('multi-agent')}
+                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
+                      mode === 'multi-agent'
+                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
+                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-medium">多Agent</p>
+                    <p className="text-[11px] opacity-70 mt-0.5">专业分工协作</p>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
         {msgs.map((m, i) => (
           <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'flex-row-reverse' : ''}`}>
@@ -334,7 +459,8 @@ export default function ChatView() {
 
       {/* input */}
       <div className="px-4 pb-6 pt-2">
-        {/* Mode selector */}
+        {/* Mode selector — only show when chat is active */}
+        {msgs.length > 0 && (
         <div className="flex items-center gap-2 mb-2">
           <span className="text-xs text-gray-400">模式：</span>
           <button
@@ -371,6 +497,7 @@ export default function ChatView() {
             {mode === 'react' ? '逐步推理' : mode === 'plan-execute' ? '先规划后执行' : '专业Agent协作'}
           </span>
         </div>
+        )}
         <div className="flex items-center gap-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-1 focus-within:border-[var(--color-border-focus)] focus-within:shadow-sm transition-shadow">
           <input
             value={input}

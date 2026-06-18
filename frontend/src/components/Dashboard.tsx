@@ -1,15 +1,22 @@
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
 import RiskMatrix from './RiskMatrix';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { useDashboard } from '../hooks';
+import { useDashboard, useWatchlist, useAlertHistory } from '../hooks';
 import { queryKeys } from '../query-keys';
-import type { Prediction } from '../types';
+import type { Prediction, AlertDoc } from '../types';
 
 export default function Dashboard() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const dashQuery = useDashboard();
+  const { companies: watchlist } = useWatchlist();
+  const { data: alerts } = useAlertHistory();
+  const alertList = alerts ?? [];
   const predQuery = useQuery({
     queryKey: queryKeys.predictions,
     queryFn: () => api.get<Prediction[]>('/alert/predict'),
@@ -25,6 +32,67 @@ export default function Dashboard() {
   const isLoading = dashQuery.isLoading;
   const isRefreshing = dashQuery.isFetching && !dashQuery.isLoading;
   const error = dashQuery.error;
+
+  // Watchlist management
+  const [newName, setNewName] = useState('');
+  const [toast, setToast] = useState('');
+
+  const addMutation = useMutation({
+    mutationFn: (name: string) => api.post('/alert/watch', { company_name: name }),
+    onSuccess: () => {
+      setNewName('');
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    },
+    onError: () => setToast('添加失败，请重试'),
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (name: string) => api.delete('/alert/watch', { company_name: name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    },
+    onError: () => setToast('移除失败，请重试'),
+  });
+
+  const uploadMutation = useMutation({
+    mutationFn: (file: File) => api.upload('/alert/watch/upload', file),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    },
+    onError: () => setToast('导入失败，请重试'),
+  });
+
+  const checkAllMutation = useMutation({
+    mutationFn: () => api.post('/alert/check-all'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+    },
+    onError: () => setToast('巡检失败，请重试'),
+  });
+
+  const clearAlertsMutation = useMutation({
+    mutationFn: () => api.delete('/alert/history'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
+  });
+
+  const busy = checkAllMutation.isPending;
+
+  const add = () => {
+    const name = newName.trim();
+    if (!name || addMutation.isPending) return;
+    addMutation.mutate(name);
+  };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    uploadMutation.mutate(file);
+  };
 
   if (error) {
     return (
@@ -60,6 +128,29 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[var(--color-text)]">风险看板</h2>
         <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[36px] px-2 inline-flex items-center">{isRefreshing ? '刷新中…' : '刷新'}</button>
+      </div>
+
+      {/* agent suggestions */}
+      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
+        <div className="flex items-center gap-2 mb-3">
+          <svg className="w-4 h-4 text-[var(--color-primary-bg)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
+          <span className="text-sm font-medium text-[var(--color-text)]">Agent 建议</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {[
+            { label: '生成本周风险报告', q: '生成本周监控清单的风险报告' },
+            { label: '对比高风险企业', q: '对比监控清单中高风险企业的综合差异' },
+            { label: '分析本月趋势', q: '分析监控清单中本月风险变化趋势' },
+          ].map(item => (
+            <button
+              key={item.label}
+              onClick={() => navigate(`/chat?q=${encodeURIComponent(item.q)}`)}
+              className="text-left text-sm text-gray-600 bg-white border border-slate-200 rounded-xl px-4 py-2.5 hover:border-[var(--color-primary-bg)]/30 hover:shadow-sm hover:-translate-y-0.5 transition-all duration-200"
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* summary cards */}
@@ -174,36 +265,139 @@ export default function Dashboard() {
       {/* sentiment overview */}
       <SentimentPanel />
 
-      {/* company list */}
+      {/* watchlist management */}
       <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">企业详情</h3>
-        {data.companies.length === 0 ? (
-          <p className="text-sm text-gray-300 text-center py-6">暂无监控企业</p>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">监控清单管理</h3>
+
+        {/* add form */}
+        <form onSubmit={e => { e.preventDefault(); add(); }} className="flex gap-2 mb-3">
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="添加企业名称…"
+            className="flex-1 border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-border-focus)] bg-[var(--color-input-bg)] placeholder-gray-300 min-h-[44px]"
+          />
+          <button
+            type="submit"
+            disabled={addMutation.isPending || !newName.trim()}
+            className="bg-[var(--color-primary-bg)] text-white rounded-lg px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px] inline-flex items-center"
+          >
+            {addMutation.isPending ? '...' : '添加'}
+          </button>
+        </form>
+
+        {/* actions bar */}
+        <div className="flex gap-2 mb-3">
+          <label className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 cursor-pointer hover:text-gray-600 transition-colors border border-dashed border-[var(--color-border)] rounded-lg py-2 min-h-[44px]">
+            <span>Excel 批量导入</span>
+            <input type="file" accept=".xlsx" onChange={handleFile} className="hidden" />
+          </label>
+          <button
+            disabled={busy}
+            onClick={() => checkAllMutation.mutate()}
+            className="flex-1 border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors disabled:opacity-50 min-h-[44px] inline-flex items-center justify-center"
+          >
+            {busy ? '巡检中…' : '免费巡检'}
+          </button>
+        </div>
+
+        {/* company table */}
+        {watchlist.length === 0 ? (
+          <p className="text-sm text-gray-300 text-center py-4">暂无监控企业，在上方输入名称添加</p>
         ) : (
           <div className="space-y-1">
-            {data.companies.map(c => {
-              const levelInfo = levels.find(l => l.key === c.level) || levels[3];
+            {watchlist.map(name => {
+              const company = data.companies.find(c => c.name === name);
+              const score = company?.score;
+              const level = company?.level || '未知';
+              const levelColor = level === '高风险' ? '#e06060' : level === '中风险' ? '#d4a040' : level === '低风险' ? '#2d8c63' : '#999';
               return (
-                <div key={c.name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
-                  <span className="text-sm text-[var(--color-text)] truncate flex-1">{c.name}</span>
-                  {c.score !== null ? (
-                    <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: levelInfo.bg, color: levelInfo.color }}>
-                        {c.level} {c.score}/100
+                <div key={name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
+                  <button
+                    className="text-sm text-[var(--color-text)] truncate flex-1 text-left hover:text-[var(--color-primary-bg)] transition-colors"
+                    onClick={() => navigate(`/assess/${encodeURIComponent(name)}`)}
+                  >
+                    {name}
+                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {score != null ? (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${levelColor}15`, color: levelColor }}>
+                        {level} {score}/100
                       </span>
-                      <span className="text-[11px] text-gray-400">
-                        {c.last_checked?.slice(0, 16).replace('T', ' ') || ''}
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-gray-400">未评估</span>
-                  )}
+                    ) : (
+                      <span className="text-xs text-gray-400">未评估</span>
+                    )}
+                    <button
+                      onClick={() => navigate(`/chat?q=${encodeURIComponent(`对${name}进行全面的风险评估`)}`)}
+                      className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors"
+                      title="Agent 分析"
+                    >
+                      分析
+                    </button>
+                    <button
+                      onClick={() => removeMutation.mutate(name)}
+                      className="text-gray-300 hover:text-red-400 text-sm transition-colors p-1"
+                      title="移除"
+                    >
+                      ×
+                    </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {/* alert list */}
+      {alertList.length > 0 && (
+        <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">近期告警</h3>
+            <button
+              onClick={() => clearAlertsMutation.mutate()}
+              disabled={clearAlertsMutation.isPending}
+              className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
+            >
+              {clearAlertsMutation.isPending ? '清空中…' : '清空记录'}
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {alertList.slice(0, 5).map((doc: AlertDoc, i: number) => {
+              const isCritical = doc.severity === 'critical';
+              return (
+                <div
+                  key={i}
+                  className={`rounded-xl border bg-[var(--color-surface)] p-3 ${
+                    isCritical ? 'border-l-[3px] border-l-[#e06060]' : 'border-l-[3px] border-l-[#d4a040]'
+                  } border-[var(--color-border)]`}
+                >
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-sm font-semibold">
+                      <span style={{ color: isCritical ? '#e06060' : '#d4a040' }}>● </span>
+                      {doc.company_name}
+                    </span>
+                    <span className="text-xs text-gray-400">{doc.created_at.slice(0, 16).replace('T', ' ')}</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
+                  </p>
+                </div>
+              );
+            })}
+            {alertList.length > 5 && (
+              <p className="text-xs text-gray-400 text-center pt-1">还有 {alertList.length - 5} 条告警</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-xs text-red-600 z-30 shadow-md">
+          {toast}
+          <button onClick={() => setToast('')} className="ml-2 text-red-400 hover:text-red-600">&times;</button>
+        </div>
+      )}
 
       {/* risk matrix */}
       <RiskMatrix />

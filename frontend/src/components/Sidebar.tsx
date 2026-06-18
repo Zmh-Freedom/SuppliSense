@@ -1,25 +1,21 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { wsClient } from '../websocket';
-import { useWatchlist, useAlertHistory } from '../hooks';
+import { useWatchlist } from '../hooks';
 import { queryKeys } from '../query-keys';
 
 interface Props {
-  onRefresh: () => void;
   onSelect?: (name: string) => void;
   onClose?: () => void;
 }
 
-export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
+export default function Sidebar({ onSelect, onClose }: Props) {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { companies: watchlist } = useWatchlist();
-  const { data: alerts } = useAlertHistory();
-  const alertCount = alerts?.length ?? 0;
-
-  const [newName, setNewName] = useState('');
   const [hovered, setHovered] = useState<string | null>(null);
-  const [toast, setToast] = useState('');
 
   const unreadQuery = useQuery({
     queryKey: queryKeys.unreadCount,
@@ -27,55 +23,6 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
     select: (d) => d.unread_count || 0,
   });
   const unreadCount = unreadQuery.data ?? 0;
-
-  const addMutation = useMutation({
-    mutationFn: (name: string) => api.post('/alert/watch', { company_name: name }),
-    onSuccess: () => {
-      setNewName('');
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      onRefresh();
-    },
-    onError: () => setToast('操作失败，请重试'),
-  });
-
-  const removeMutation = useMutation({
-    mutationFn: (name: string) => api.delete('/alert/watch', { company_name: name }),
-    onSuccess: () => {
-      setHovered(null);
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      onRefresh();
-    },
-    onError: () => setToast('操作失败，请重试'),
-  });
-
-  const uploadMutation = useMutation({
-    mutationFn: (file: File) => api.upload('/alert/watch/upload', file),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      onRefresh();
-    },
-    onError: () => setToast('操作失败，请重试'),
-  });
-
-  const checkAllMutation = useMutation({
-    mutationFn: () => api.post('/alert/check-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
-    },
-    onError: () => setToast('操作失败，请重试'),
-  });
-
-  const refreshAllMutation = useMutation({
-    mutationFn: () => api.post('/alert/refresh-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
-    },
-    onError: () => setToast('操作失败，请重试'),
-  });
-
-  const busy = checkAllMutation.isPending || refreshAllMutation.isPending;
 
   useEffect(() => {
     wsClient.connect();
@@ -93,24 +40,8 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
     };
   }, [queryClient]);
 
-  const add = () => {
-    const name = newName.trim();
-    if (!name || addMutation.isPending) return;
-    addMutation.mutate(name);
-  };
-
-  const remove = (name: string) => {
-    removeMutation.mutate(name);
-  };
-
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    uploadMutation.mutate(file);
-  };
-
   return (
-    <aside className="w-64 h-screen border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface flex flex-col text-sm relative">
+    <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface flex flex-col text-sm relative">
       {/* mobile close */}
       {onClose && (
         <button className="md:hidden p-2 ml-auto text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">
@@ -119,10 +50,16 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
           </svg>
         </button>
       )}
+
       {/* header */}
-      <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+      <div className="px-4 pt-4 pb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] tracking-wide">供应商分析</h2>
-        <button className="relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center" title="通知" aria-label="通知">
+        <button
+          className="relative p-2 min-w-[44px] min-h-[44px] flex items-center justify-center"
+          title="通知"
+          aria-label="通知"
+          onClick={() => navigate('/settings')}
+        >
           <svg className="w-5 h-5 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
           </svg>
@@ -134,61 +71,20 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
         </button>
       </div>
 
-      {/* stats */}
-      <div className="px-4 pb-3">
-        <div className="flex gap-2">
-          <div className="flex-1 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] px-3 py-2.5">
-            <div className="text-xl font-bold text-[var(--color-text)]">{watchlist.length}</div>
-            <div className="text-[11px] text-gray-400 mt-0.5">监控中</div>
-          </div>
-          <div className="flex-1 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] px-3 py-2.5">
-            <div className="text-xl font-bold text-[var(--color-text)]">{alertCount}</div>
-            <div className="text-[11px] text-gray-400 mt-0.5">告警</div>
-          </div>
-        </div>
-      </div>
-
-      {/* add form */}
-      <div className="px-4 pb-2">
-        <form onSubmit={e => { e.preventDefault(); add(); }} className="flex gap-1.5">
-          <input
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            placeholder="添加企业…"
-            className="flex-1 border border-[var(--color-border)] rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-[var(--color-border-focus)] bg-[var(--color-input-bg)] placeholder-gray-300 min-h-[44px]"
-          />
-          <button
-            type="submit"
-            disabled={addMutation.isPending || !newName.trim()}
-            className="bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-2 text-xs hover:bg-[var(--color-primary-hover)] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px] inline-flex items-center"
-          >
-            {addMutation.isPending ? '...' : '添加'}
-          </button>
-        </form>
-      </div>
-
-      {/* excel import */}
-      <div className="px-4 pb-3">
-        <label className="flex items-center justify-center gap-1.5 text-[11px] text-gray-400 cursor-pointer hover:text-gray-500 transition-colors border border-dashed border-[var(--color-border)] rounded-lg py-2 min-h-[44px]" aria-label="导入 Excel">
-          <span>📎 Excel 批量导入</span>
-          <input type="file" accept=".xlsx" onChange={handleFile} className="hidden" />
-        </label>
-      </div>
-
       {/* divider */}
       <div className="border-t border-[var(--color-border)] mx-4" />
 
       {/* list header */}
-      <div className="px-4 pt-3 pb-1 flex justify-between items-center">
+      <div className="px-4 pt-3 pb-1">
         <span className="text-[11px] text-gray-400 uppercase tracking-wide">
           监控清单 {watchlist.length > 0 && `(${watchlist.length})`}
         </span>
       </div>
 
-      {/* list */}
+      {/* company list */}
       <div className="flex-1 overflow-auto px-2 pb-2">
         {watchlist.length === 0 ? (
-          <p className="text-[11px] text-gray-300 text-center mt-6 px-4">暂无监控企业，输入名称添加</p>
+          <p className="text-[11px] text-gray-300 text-center mt-6 px-4">暂无监控企业</p>
         ) : (
           watchlist.map(c => (
             <div
@@ -199,48 +95,24 @@ export default function Sidebar({ onRefresh, onSelect, onClose }: Props) {
               onClick={() => onSelect?.(c)}
             >
               <span className="text-xs text-[var(--color-text)] truncate flex-1">{c}</span>
-              <button
-                onClick={e => { e.stopPropagation(); remove(c); }}
-                className={`text-gray-300 hover:text-red-400 text-sm leading-none transition-all shrink-0 ml-1 p-1.5 min-w-[44px] min-h-[44px] flex items-center justify-center ${
-                  hovered === c ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                }`}
-                title="移除"
-                aria-label="移除"
-              >
-                ×
-              </button>
+              {hovered === c && (
+                <button
+                  onClick={e => { e.stopPropagation(); navigate('/chat'); }}
+                  className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors shrink-0 ml-1"
+                  title="Agent 分析"
+                >
+                  分析
+                </button>
+              )}
             </div>
           ))
         )}
       </div>
 
-      {/* actions */}
-      <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-2">
-        <div className="flex gap-2">
-          <button
-            disabled={busy}
-            onClick={() => checkAllMutation.mutate()}
-            className="flex-1 border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
-          >
-            {busy ? '...' : '⚡ 免费巡检'}
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => refreshAllMutation.mutate()}
-            className="flex-1 border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors disabled:opacity-50 min-h-[44px] flex items-center justify-center"
-          >
-            {busy ? '...' : '🔄 付费刷新'}
-          </button>
-        </div>
-        <p className="text-[10px] text-gray-300 text-center">每日 9:00 免费 · 周一 9:00 付费</p>
+      {/* footer hint */}
+      <div className="border-t border-[var(--color-border)] px-4 py-2">
+        <p className="text-[10px] text-gray-300 text-center">监控管理请前往看板页</p>
       </div>
-
-      {toast && (
-        <div className="absolute bottom-4 left-4 right-4 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600 z-20">
-          {toast}
-          <button onClick={() => setToast('')} className="float-right text-red-400 hover:text-red-600">&times;</button>
-        </div>
-      )}
     </aside>
   );
 }
