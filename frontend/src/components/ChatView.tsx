@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api, chatStream } from '../api';
 import type { ChatMessage, RiskResult } from '../types';
 
@@ -370,7 +371,7 @@ export default function ChatView() {
                 : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'
             }`}>
               <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-                <ReactMarkdown>{m.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
               </div>
             </div>
           </div>
@@ -443,7 +444,7 @@ export default function ChatView() {
               {streamState.answerChunks.length > 0 && (
                 <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
                   <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-                    <ReactMarkdown>{streamState.answerChunks.join('')}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamState.answerChunks.join('')}</ReactMarkdown>
                   </div>
                   <span className="inline-block w-2 h-4 bg-[var(--color-primary-bg)] animate-pulse ml-1" />
                 </div>
