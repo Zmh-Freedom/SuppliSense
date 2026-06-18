@@ -73,11 +73,13 @@ def cached(prefix: str, ttl: int = 3600):
 
             # Cache the result
             try:
-                cache_client.setex(
-                    key,
-                    ttl,
-                    json.dumps(result, default=str, ensure_ascii=False),
-                )
+                if hasattr(result, 'model_dump'):
+                    value = json.dumps(result.model_dump(mode='json'), ensure_ascii=False)
+                elif hasattr(result, 'dict'):
+                    value = json.dumps(result.dict(), ensure_ascii=False)
+                else:
+                    value = json.dumps(result, default=str, ensure_ascii=False)
+                cache_client.setex(key, ttl, value)
             except Exception:
                 pass  # Cache write failed, continue
 
