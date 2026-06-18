@@ -364,7 +364,7 @@ export default function ContagionView() {
             proOptions={{ hideAttribution: true }}
           >
             <Background color="#e2e8f0" gap={24} size={1} />
-            <Controls showInteractive={false} position="bottom-center" className="bg-white/80 border-[var(--color-border)] rounded-xl shadow-sm" />
+            <Controls showInteractive={false} position="bottom-right" style={{ marginRight: 220 }} className="bg-white/80 border-[var(--color-border)] rounded-xl shadow-sm" />
             <MiniMap
               nodeColor={(n) => riskColor((n as unknown as { risk_score?: number }).risk_score ?? 0).line}
               maskColor="rgba(248,250,252,0.6)"
