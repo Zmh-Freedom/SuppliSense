@@ -88,7 +88,7 @@ export default function LoginPage() {
 
           <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
             <p className="text-xs text-gray-400 text-center">
-              默认管理员：admin / admin123
+              请联系管理员获取账号
             </p>
           </div>
         </div>
