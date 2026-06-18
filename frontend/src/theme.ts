@@ -1,7 +1,8 @@
-export type ThemeName = 'light' | 'glass';
+export type ThemeName = 'light' | 'glass' | 'indigo';
 
 export const THEMES: { name: ThemeName; label: string }[] = [
   { name: 'light', label: '简约' },
+  { name: 'indigo', label: 'Indigo' },
   { name: 'glass', label: '毛玻璃' },
 ];
 

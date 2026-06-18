@@ -160,7 +160,7 @@ export default function Sidebar({ onClose }: Props) {
   const activePath = '/' + (location.pathname.split('/')[1] || '');
 
   return (
-    <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface flex flex-col text-sm">
+    <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)] glass-surface flex flex-col text-sm">
       {/* mobile close */}
       {onClose && (
         <button className="md:hidden p-2 ml-auto text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">

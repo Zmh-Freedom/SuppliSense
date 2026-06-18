@@ -26,6 +26,35 @@
   --backdrop-blur: none;
 }
 
+[data-theme="indigo"] {
+  --color-page-bg: #F8FAFC;
+  --color-surface: #FFFFFF;
+  --color-surface-hover: #F1F5F9;
+  --color-surface-selected: #EEF2FF;
+  --color-sidebar-bg: #F1F5F9;
+  --color-text: #0F172A;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94A3B8;
+  --color-border: #E2E8F0;
+  --color-border-hover: #CBD5E1;
+  --color-border-focus: #4F46E5;
+  --color-primary-bg: #4F46E5;
+  --color-primary-hover: #4338CA;
+  --color-primary-text: #FFFFFF;
+  --color-focus-ring: #4F46E5;
+  --color-scrollbar: #CBD5E1;
+  --color-divider: #E2E8F0;
+  --color-input-bg: #FFFFFF;
+  --color-code-bg: #F1F5F9;
+  --color-card-shadow: 0 1px 3px rgba(79,70,229,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --backdrop-blur: none;
+}
+
+[data-theme="indigo"] body {
+  background: #F8FAFC;
+  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
 [data-theme="glass"] {
   --color-page-bg: #eef0ff;
   --color-surface: rgba(255,255,255,0.45);

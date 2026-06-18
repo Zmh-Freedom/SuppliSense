@@ -7,7 +7,7 @@ const STORAGE_KEY = 'theme';
 function getInitialTheme(): ThemeName {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === 'light' || saved === 'glass') return saved;
+    if (saved === 'light' || saved === 'glass' || saved === 'indigo') return saved;
   } catch { /* ignore */ }
   return 'light';
 }
