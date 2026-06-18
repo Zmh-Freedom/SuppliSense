@@ -1,8 +1,8 @@
 """
 天眼查 API 客户端。
 
-从环境变量读取鉴权配置：
-  TIANYANCHA_BASE_URL  - 默认 http://open.api.tianyancha.com
+从 settings 读取鉴权配置：
+  TIANYANCHA_BASE_URL  - 默认 https://open.api.tianyancha.com
   TIANYANCHA_TOKEN     - Authorization token
 
 接口列表（路径格式：/services/open/{domain}/{endpoint}/{version}）：
@@ -14,14 +14,13 @@
   /services/open/mr/illegalinfo/2.0        严重违法
 """
 
-import os
-
 import httpx
 
+from app.core.config import settings
 from app.db.mongo import get_db
 
-BASE_URL = os.getenv("TIANYANCHA_BASE_URL", "http://open.api.tianyancha.com")
-TOKEN = os.getenv("TIANYANCHA_TOKEN", "")
+BASE_URL = settings.TIANYANCHA_BASE_URL
+TOKEN = settings.TIANYANCHA_TOKEN
 
 _ENDPOINTS: list[tuple[str, str, str]] = [
     # (collection_name, path, wrapper_key)
