@@ -339,7 +339,7 @@ export default function ContagionView() {
       <WatchlistPanel companies={watchlist} selected={selected} onSelect={select} variant="floating" />
 
       {/* graph area */}
-      <div className="flex-1 bg-white relative">
+      <div className="flex-1 relative">
         {!selected ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm gap-1">
             <span className="font-medium text-[var(--color-text)]">风险传染图谱</span>
