@@ -7,23 +7,34 @@ from app.schemas.risk import RiskInfo
 from app.services.tianyancha_client import fetch_company
 
 
-@cached("company_profile", ttl=7200)  # 2小时缓存
+@cached("company_profile", ttl=7200)
 def get_company_profile(company_name: str) -> CompanyProfile:
     profile = get_baseinfo(company_name)
     if profile is None:
         _try_fetch_from_api(company_name)
         profile = get_baseinfo(company_name)
+        # If still not found, try fuzzy search (short name → full name in DB)
+        if profile is None:
+            from app.repositories.company_repo import search_companies
+            matches = search_companies(company_name, limit=1)
+            if matches:
+                profile = get_baseinfo(matches[0])
     if profile is None:
         raise HTTPException(status_code=404, detail=f"企业 '{company_name}' 未找到")
     return profile
 
 
-@cached("company_risk", ttl=7200)  # 2小时缓存
+@cached("company_risk", ttl=7200)
 def get_company_risk(company_name: str) -> RiskInfo:
     risk = get_risk_info(company_name)
     if risk is None:
         _try_fetch_from_api(company_name)
         risk = get_risk_info(company_name)
+        if risk is None:
+            from app.repositories.company_repo import search_companies
+            matches = search_companies(company_name, limit=1)
+            if matches:
+                risk = get_risk_info(matches[0])
     if risk is None:
         raise HTTPException(status_code=404, detail=f"企业 '{company_name}' 未找到")
     return risk
@@ -31,8 +42,14 @@ def get_company_risk(company_name: str) -> RiskInfo:
 
 def _try_fetch_from_api(company_name: str) -> None:
     try:
-        fetch_company(company_name)
+        ok = fetch_company(company_name)
+        # If direct call failed, try resolving to full name
+        if not ok:
+            from app.repositories.financial_repo import resolve_full_name
+            full = resolve_full_name(company_name)
+            if full and full != company_name:
+                fetch_company(full)
     except RuntimeError:
-        pass  # TOKEN 未配置，跳过 API 调用
+        pass
     except Exception:
-        pass  # API 调用失败不影响主流程
+        pass
