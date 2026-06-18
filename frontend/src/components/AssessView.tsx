@@ -99,10 +99,32 @@ export default function AssessView() {
   ];
 
   return (
-    <div className="flex h-full">
-      {/* Main content */}
-      <div className="flex-1 overflow-auto py-6 px-6">
-        <div className="max-w-2xl">
+    <div className="h-full py-6 px-6 overflow-auto">
+      <div className="max-w-2xl mx-auto relative">
+        {/* Floating watchlist card */}
+        {watchlist.length > 0 && (
+          <div className="absolute right-full mr-6 top-0 w-40 hidden xl:block">
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-sm overflow-hidden">
+              <h3 className="text-[11px] font-medium text-gray-400 px-3 pt-3 pb-2">监控清单</h3>
+              <div className="max-h-[60vh] overflow-auto px-1.5 pb-1.5">
+                {watchlist.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => selectCompany(c)}
+                    className={`w-full text-left text-xs rounded-lg px-2.5 py-2 transition-colors truncate ${
+                      name === c
+                        ? 'bg-[var(--color-primary-bg)] text-white'
+                        : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* search bar with autocomplete */}
         <div className="relative mb-6">
           <div className="flex gap-2">
@@ -530,34 +552,7 @@ export default function AssessView() {
           )}
         </>
       )}
-        </div>{/* max-w-2xl */}
-      </div>{/* main content */}
-
-      {/* Right panel: watchlist */}
-      <aside className="w-48 border-l border-[var(--color-border)] bg-[var(--color-page-bg)] overflow-auto shrink-0 hidden md:block">
-        <div className="px-3 pt-6 pb-4">
-          <h3 className="text-[11px] font-medium text-gray-400 uppercase tracking-wide mb-3 px-1">监控清单</h3>
-          {watchlist.length === 0 ? (
-            <p className="text-[11px] text-gray-300 px-1">暂无监控企业</p>
-          ) : (
-            <div className="space-y-0.5">
-              {watchlist.map(c => (
-                <button
-                  key={c}
-                  onClick={() => selectCompany(c)}
-                  className={`w-full text-left text-sm rounded-lg px-3 py-2 transition-colors min-h-[36px] truncate ${
-                    name === c
-                      ? 'bg-[var(--color-primary-bg)] text-white'
-                      : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </aside>
+      </div>{/* max-w-2xl + relative */}
     </div>
   );
 }
