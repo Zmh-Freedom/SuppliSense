@@ -182,6 +182,7 @@ def _match_hk_code(company_name: str) -> str | None:
 
 
 _A_STOCK_MAP: dict[str, str] | None = None
+_A_FULL_NAME_CACHE: dict[str, str] = {}
 
 
 def _load_a_stock_map() -> dict[str, str]:
@@ -195,6 +196,36 @@ def _load_a_stock_map() -> dict[str, str]:
     except Exception:
         _A_STOCK_MAP = {}
     return _A_STOCK_MAP
+
+
+def resolve_full_name(keyword: str) -> str | None:
+    """将A股简称解析为全称（如'海康威视'→'杭州海康威视数字技术股份有限公司'）。"""
+    global _A_FULL_NAME_CACHE
+    if keyword in _A_FULL_NAME_CACHE:
+        return _A_FULL_NAME_CACHE[keyword]
+
+    stock_map = _load_a_stock_map()
+    code = None
+    for name, c in stock_map.items():
+        if keyword in name or name in keyword:
+            code = c
+            break
+
+    if not code:
+        return None
+
+    try:
+        profile = ak.stock_profile_cninfo(symbol=code)
+        col = profile.get("公司名称")
+        if col is not None and hasattr(col, 'iloc') and len(col) > 0:
+            full = str(col.iloc[0])
+            if full and full != "nan":
+                _A_FULL_NAME_CACHE[keyword] = full
+                return full
+    except Exception:
+        pass
+
+    return None
 
 
 def _extract_stock_code(company_name: str) -> str | None:

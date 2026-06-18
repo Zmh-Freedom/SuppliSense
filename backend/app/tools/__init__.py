@@ -11,6 +11,7 @@ def search_company(keyword: str) -> dict:
         keyword: 企业名称关键词，如'海康'、'大华'
     """
     from app.repositories.company_repo import search_companies
+    from app.repositories.financial_repo import resolve_full_name
     from app.services.tianyancha_client import fetch_company
 
     results = search_companies(keyword)
@@ -20,6 +21,18 @@ def search_company(keyword: str) -> dict:
         except Exception:
             pass
         results = search_companies(keyword)
+
+    # If still no results, try resolving short name to full name
+    if not results:
+        full_name = resolve_full_name(keyword)
+        if full_name and full_name != keyword:
+            try:
+                fetch_company(full_name)
+            except Exception:
+                pass
+            results = search_companies(keyword)
+            if not results:
+                results = search_companies(full_name)
 
     return {"keyword": keyword, "count": len(results), "results": results}
 

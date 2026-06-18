@@ -67,16 +67,27 @@ def _register(name: str, desc: str, parameters: dict | None = None):
 )
 def _search(keyword: str) -> dict:
     from app.repositories.company_repo import search_companies
+    from app.repositories.financial_repo import resolve_full_name
     from app.services.tianyancha_client import fetch_company
 
     results = search_companies(keyword)
     if not results:
-        # try API fallback with the keyword as company name
         try:
             fetch_company(keyword)
         except Exception:
             pass
         results = search_companies(keyword)
+
+    if not results:
+        full_name = resolve_full_name(keyword)
+        if full_name and full_name != keyword:
+            try:
+                fetch_company(full_name)
+            except Exception:
+                pass
+            results = search_companies(keyword)
+            if not results:
+                results = search_companies(full_name)
 
     return {"keyword": keyword, "count": len(results), "results": results}
 
