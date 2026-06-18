@@ -57,31 +57,36 @@ def cached(prefix: str, ttl: int = 3600):
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs) -> Any:
-            # Generate cache key
             key = cache_key(prefix, *args, **kwargs)
 
-            # Try to get from cache
             try:
                 cached_value = cache_client.get(key)
                 if cached_value:
-                    return json.loads(cached_value)
+                    data = json.loads(cached_value)
+                    # Reconstruct Pydantic model if type info stored
+                    if isinstance(data, dict) and '__type__' in data:
+                        type_name = data['__type__']
+                        mod_name, cls_name = type_name.rsplit('.', 1)
+                        import importlib
+                        mod = importlib.import_module(mod_name)
+                        cls = getattr(mod, cls_name)
+                        return cls(**data['data'])
+                    return data
             except Exception:
-                pass  # Cache read failed, continue to function
+                pass
 
-            # Execute function
             result = func(*args, **kwargs)
 
-            # Cache the result
             try:
                 if hasattr(result, 'model_dump'):
-                    value = json.dumps(result.model_dump(mode='json'), ensure_ascii=False)
-                elif hasattr(result, 'dict'):
-                    value = json.dumps(result.dict(), ensure_ascii=False)
+                    data = result.model_dump(mode='json')
+                    type_name = type(result).__module__ + '.' + type(result).__qualname__
+                    value = json.dumps({'__type__': type_name, 'data': data}, ensure_ascii=False)
                 else:
                     value = json.dumps(result, default=str, ensure_ascii=False)
                 cache_client.setex(key, ttl, value)
             except Exception:
-                pass  # Cache write failed, continue
+                pass
 
             return result
         return wrapper

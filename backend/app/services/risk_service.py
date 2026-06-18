@@ -168,7 +168,26 @@ def _calc_score(req: RiskCalculateRequest) -> tuple[int, dict]:
     op_score = sum(float(v.split("分")[0]) for v in op_items.values())
     breakdown["经营风险"] = {"总分": round(op_score, 1), "明细": op_items}
 
-    total = int(fin_score + jud_score + op_score)
+    # ---- soft / agent dimensions ----
+    from app.services.soft_risk import score_soft_risks
+
+    soft = score_soft_risks(req.company.company_name)
+    soft_items = {}
+    for dim in ["舆情风险", "ESG风险", "宏观风险", "管理风险"]:
+        d = soft.get("dimensions", {}).get(dim, {})
+        s = int(d.get("score", 0))
+        r = d.get("reason", "")
+        soft_items[dim] = f"{s}分 · {r}" if r else f"{s}分"
+
+    soft_score = sum(
+        int(soft.get("dimensions", {}).get(dim, {}).get("score", 0))
+        for dim in ["舆情风险", "ESG风险", "宏观风险", "管理风险"]
+    )
+    if soft.get("summary"):
+        soft_items["总结"] = soft["summary"]
+    breakdown["软指标"] = {"总分": soft_score, "明细": soft_items}
+
+    total = int(fin_score + jud_score + op_score + soft_score)
     breakdown["总计"] = min(total, 100)
     if total > 100:
         breakdown["说明"] = "实际总分超过100，已封顶"
