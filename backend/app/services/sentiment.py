@@ -395,6 +395,11 @@ def _check_negative_alert(company_name: str, result: dict) -> None:
         alert_reason = f"负面舆情激增：{prev_ratio*100:.0f}% → {neg_ratio*100:.0f}%"
 
     if should_alert:
+        # 仅当企业在监控清单中时才生成告警
+        watchlist_doc = db["watchlist"].find_one({"company_name": company_name})
+        if not watchlist_doc:
+            return
+
         risk_tags = [t["tag"] for t in result.get("risk_tags", [])[:3]]
         db["alerts"].insert_one({
             "company_name": company_name,
