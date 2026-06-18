@@ -25,6 +25,8 @@ const LEVEL_BG: Record<string, string> = {
 
 type SubTab = 'overview' | 'financial' | 'risk' | 'relations';
 
+type QueryState = 'idle' | 'loading' | 'background';
+
 export default function AssessView() {
   const { companyName } = useParams<{ companyName?: string }>();
   const navigate = useNavigate();
@@ -32,6 +34,7 @@ export default function AssessView() {
   const [name, setName] = useState(initialName);
   const [subTab, setSubTab] = useState<SubTab>('overview');
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [querying, setQuerying] = useState<QueryState>('idle');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { companies: watchlist } = useWatchlist();
@@ -43,8 +46,8 @@ export default function AssessView() {
   }, [name, watchlist]);
 
   const assessMutation = useMutation({
-    mutationFn: ({ target, force }: { target: string; force?: boolean }) =>
-      api.post<RiskResult>('/risk/assess', { company_name: target.trim(), force_refresh: !!force }),
+    mutationFn: (target: string) =>
+      api.post<RiskResult>('/risk/assess', { company_name: target.trim() }),
   });
 
   const trendQuery = useQuery({
@@ -56,34 +59,45 @@ export default function AssessView() {
   });
 
   const data = assessMutation.data ?? null;
-  const loading = assessMutation.isPending;
-  const error = assessMutation.error ? '评估失败' : '';
-  const refreshing = loading && !!data;
   const trend = trendQuery.data?.data ?? [];
+  const meta: { updatedAt: string; isStale: boolean } | null = data ? {
+    updatedAt: data.cached_at || '',
+    isStale: data.is_stale ?? false,
+  } : null;
 
   useEffect(() => {
     if (initialName) {
       setName(initialName);
-      assessMutation.mutate({ target: initialName });
+      assessMutation.mutate(initialName);
     }
   }, [initialName]);
 
+  useEffect(() => {
+    if (!assessMutation.isPending) {
+      setQuerying('idle');
+    }
+  }, [assessMutation.isPending]);
+
   const assess = (target?: string) => {
     const t = (target || name).trim();
-    if (!t) return;
+    if (!t || assessMutation.isPending) return;
     setSubTab('overview');
-    assessMutation.mutate({ target: t });
+    setQuerying(data ? 'background' : 'loading');
+    assessMutation.mutate(t);
   };
 
   const selectCompany = (company: string) => {
     setName(company);
     setShowSuggestions(false);
-    assess(company);
+    navigate(`/assess/${encodeURIComponent(company)}`, { replace: true });
+    setQuerying('loading');
+    assessMutation.mutate(company);
   };
 
-  const refresh = () => {
+  const handleRefresh = () => {
     if (!name.trim()) return;
-    assessMutation.mutate({ target: name, force: true });
+    setQuerying('background');
+    assessMutation.mutate(name);
   };
 
   const score = data?.risk_score ?? 0;
@@ -114,13 +128,13 @@ export default function AssessView() {
                 value={name}
                 onChange={e => { setName(e.target.value); setShowSuggestions(true); }}
                 onFocus={() => setShowSuggestions(true)}
-                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                onBlur={() => setShowSuggestions(false)}
                 onKeyDown={e => e.key === 'Enter' && assess()}
                 placeholder="输入企业名称搜索…"
                 className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
               />
               <AnimatePresence>
-                {showSuggestions && name.trim() && filteredSuggestions.length > 0 && (
+                {showSuggestions && filteredSuggestions.length > 0 && (
                   <motion.div
                     className="absolute left-0 right-0 top-full mt-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-lg z-10 overflow-hidden"
                     initial={{ opacity: 0, y: -4 }}
@@ -131,7 +145,7 @@ export default function AssessView() {
                     {filteredSuggestions.slice(0, 8).map(c => (
                       <button
                         key={c}
-                        onMouseDown={() => selectCompany(c)}
+                        onMouseDown={(e) => { e.preventDefault(); selectCompany(c); }}
                         className="w-full text-left px-4 py-2.5 text-sm text-[var(--color-text)] hover:bg-[var(--color-surface-hover)] transition-colors flex items-center gap-2"
                       >
                         <svg className="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -142,15 +156,17 @@ export default function AssessView() {
                 )}
               </AnimatePresence>
             </div>
-            <button onClick={() => assess()} disabled={loading} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
-              {loading ? '评估中…' : '评估'}
+            <button onClick={() => assess()} disabled={querying === 'loading'} className="bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2.5 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-50 min-h-[44px] inline-flex items-center">
+              {querying === 'loading' ? '评估中…' : '评估'}
             </button>
           </div>
         </div>
 
-      {error && <p className="text-red-400 text-sm mb-4">{error}</p>}
+      {assessMutation.error && !data && (
+        <p className="text-red-400 text-sm mb-4">评估失败，请重试</p>
+      )}
 
-      {loading && !data && (
+      {querying === 'loading' && !data && (
         <div className="space-y-6">
           <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-6 shadow-sm">
             <div className="flex items-center gap-4">
@@ -190,21 +206,20 @@ export default function AssessView() {
                   className="text-xs border border-[var(--color-primary-bg)]/30 text-[var(--color-primary-bg)] rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-bg)]/10 transition-colors inline-flex items-center gap-1 min-h-[36px]"
                 >
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
-                  Agent 深度分析
+                  Agent 分析
                 </button>
-                {data.cache_age_hours != null && (
-                  <span className={`text-[10px] whitespace-nowrap ${data.is_stale ? 'text-amber-500' : 'text-gray-400'}`}
-                    title={data.cached_at?.slice(0, 19).replace('T', ' ') ?? ''}>
-                    {data.cache_age_hours < 1
-                      ? `${Math.round(data.cache_age_hours * 60)} 分钟前`
-                      : `${data.cache_age_hours.toFixed(1)} 小时前`}
+                {meta && (
+                  <span className={`text-[10px] whitespace-nowrap ${meta.isStale ? 'text-amber-500' : 'text-gray-400'}`}>
+                    {data.cache_age_hours != null && data.cache_age_hours < 1
+                      ? `更新于 ${Math.round(data.cache_age_hours * 60)} 分钟前`
+                      : `更新于 ${data.cache_age_hours?.toFixed(1) ?? '?'} 小时前`}
+                    {meta.isStale && (
+                      <button onClick={handleRefresh} disabled={querying === 'background'}
+                        className="ml-1 text-amber-600 hover:text-amber-800 underline disabled:opacity-50">
+                        {querying === 'background' ? '刷新中…' : '刷新'}
+                      </button>
+                    )}
                   </span>
-                )}
-                {data.is_stale && (
-                  <button onClick={refresh} disabled={refreshing}
-                    className="text-xs text-amber-600 hover:text-amber-800 border border-amber-200 rounded-md px-2 py-1 disabled:opacity-50 whitespace-nowrap min-h-[36px] inline-flex items-center">
-                    {refreshing ? '刷新中…' : '刷新'}
-                  </button>
                 )}
                 <a href={`/api/v1/report/excel/${encodeURIComponent(name)}`}
                   className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors no-underline inline-flex items-center min-h-[36px]">导出 Excel</a>
