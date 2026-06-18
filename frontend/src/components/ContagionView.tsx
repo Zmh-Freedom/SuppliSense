@@ -334,20 +334,17 @@ export default function ContagionView() {
   };
 
   return (
-    <div className="flex flex-col md:flex-row h-full">
-      {/* left panel */}
-      <div className="w-full md:w-56 border-r border-[var(--color-border)] bg-[var(--color-page-bg)] glass-surface overflow-y-auto shrink-0 max-h-48 md:max-h-none">
-        <div className="px-4 py-3 border-b border-[var(--color-border)]">
-          <h2 className="text-sm font-semibold text-[var(--color-text)]">风险传染图谱</h2>
-          <p className="text-[11px] text-gray-400 mt-0.5">{watchlist.length} 家监控企业</p>
-        </div>
-        <WatchlistPanel companies={watchlist} selected={selected} onSelect={select} variant="sidebar" />
-      </div>
+    <div className="flex flex-col h-full">
+      {/* Floating watchlist */}
+      <WatchlistPanel companies={watchlist} selected={selected} onSelect={select} variant="floating" />
 
-      {/* right: graph */}
+      {/* graph area */}
       <div className="flex-1 bg-[var(--color-page-bg)] relative">
         {!selected ? (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm">选择企业查看风险传染图谱</div>
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 text-sm gap-1">
+            <span className="font-medium text-[var(--color-text)]">风险传染图谱</span>
+            <span>从左侧监控清单选择企业查看风险传染关系</span>
+          </div>
         ) : loading ? (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm">加载中…</div>
         ) : (
