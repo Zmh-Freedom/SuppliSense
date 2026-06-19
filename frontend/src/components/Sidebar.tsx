@@ -41,7 +41,15 @@ function AlertBell() {
   const queryClient = useQueryClient();
   const { data } = useAlertHistory();
   const alertList = data?.alerts ?? [];
-  const unreadCount = data?.unread_count ?? 0;
+  const alertUnread = data?.unread_count ?? 0;
+
+  const { data: notifData } = useQuery({
+    queryKey: queryKeys.notifications(1),
+    queryFn: () => api.get<{ unread_count: number }>('/notifications?limit=1'),
+    refetchInterval: 30_000,
+  });
+  const notifUnread = notifData?.unread_count ?? 0;
+  const unreadCount = alertUnread + notifUnread;
   const [open, setOpen] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -178,13 +186,6 @@ export default function Sidebar({ onClose }: Props) {
   const location = useLocation();
   const activePath = '/' + (location.pathname.split('/')[1] || '');
 
-  const { data: notifData } = useQuery({
-    queryKey: queryKeys.notifications(1),
-    queryFn: () => api.get<{ unread_count: number }>('/notifications?limit=1'),
-    refetchInterval: 30_000,
-  });
-  const unreadNotifCount = notifData?.unread_count ?? 0;
-
   return (
     <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)] glass-surface flex flex-col text-sm">
       {/* mobile close */}
@@ -213,7 +214,6 @@ export default function Sidebar({ onClose }: Props) {
         {TAB_ROUTES.map((tab) => {
           const isActive = activePath === tab.path;
           const isAgent = tab.primary;
-          const isSettings = tab.path === '/settings';
           return (
             <button
               key={tab.path}
@@ -227,12 +227,7 @@ export default function Sidebar({ onClose }: Props) {
               }`}
             >
               <NavIcon name={tab.icon} className="w-5 h-5 shrink-0" />
-              <span className="flex-1">{tab.label}</span>
-              {isSettings && unreadNotifCount > 0 && (
-                <span className="shrink-0 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-medium leading-none px-1">
-                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
-                </span>
-              )}
+              <span>{tab.label}</span>
             </button>
           );
         })}

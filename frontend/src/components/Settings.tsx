@@ -268,9 +268,16 @@ function NotificationSection() {
     queryFn: () => api.get<{notifications: {_id: string; type: string; title: string; message: string; company_name?: string; read: boolean; created_at: string}[]}>('/notifications?limit=100'),
   });
 
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
+
   const markAllReadMutation = useMutation({
     mutationFn: () => api.put('/notifications/read-all'),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.notifications() }),
+    onSuccess: () => invalidate(),
+  });
+
+  const markReadMutation = useMutation({
+    mutationFn: (id: string) => api.put(`/notifications/${id}/read`),
+    onSuccess: () => invalidate(),
   });
 
   const notifs = data?.notifications ?? [];
@@ -296,7 +303,8 @@ function NotificationSection() {
         <div className="space-y-2">
           {notifs.map(n => (
             <div key={n._id}
-              className={`bg-[var(--color-surface)] glass-surface border rounded-xl p-4 transition-colors shadow-sm ${
+              onClick={() => { if (!n.read) markReadMutation.mutate(n._id); }}
+              className={`bg-[var(--color-surface)] glass-surface border rounded-xl p-4 transition-colors shadow-sm cursor-pointer ${
                 n.read ? 'border-[var(--color-border)]' : 'border-[var(--color-border-hover)] bg-[var(--color-page-bg)]'
               }`}>
               <div className="flex items-start justify-between gap-3">
