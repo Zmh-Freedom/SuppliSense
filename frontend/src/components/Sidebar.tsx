@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAlertHistory } from '../hooks';
 import { api } from '../api';
@@ -39,8 +39,9 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
 function AlertBell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { data: alerts } = useAlertHistory();
-  const alertList = alerts ?? [];
+  const { data } = useAlertHistory();
+  const alertList = data?.alerts ?? [];
+  const unreadCount = data?.unread_count ?? 0;
   const [open, setOpen] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -67,10 +68,24 @@ function AlertBell() {
     setExpandedIdx(null);
   };
 
-  const clearMutation = useMutation({
-    mutationFn: () => api.delete('/alert/history'),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory }),
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
+
+  const markReadMutation = useMutation({
+    mutationFn: (alertId: string) => api.put(`/alert/history/${alertId}/read`),
+    onSuccess: () => invalidate(),
   });
+
+  const readAllMutation = useMutation({
+    mutationFn: () => api.put('/alert/history/read-all'),
+    onSuccess: () => invalidate(),
+  });
+
+  const handleAlertClick = (doc: AlertDoc, i: number) => {
+    setExpandedIdx(expandedIdx === i ? null : i);
+    if (!doc.read) {
+      markReadMutation.mutate(doc._id);
+    }
+  };
 
   const dropdown = (
     <AnimatePresence>
@@ -86,10 +101,10 @@ function AlertBell() {
         >
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
             <span className="text-sm font-medium text-[var(--color-text)]">告警通知</span>
-            {alertList.length > 0 && (
-              <button onClick={() => clearMutation.mutate()} disabled={clearMutation.isPending}
-                className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50">
-                {clearMutation.isPending ? '清空中…' : '清空'}
+            {unreadCount > 0 && (
+              <button onClick={() => readAllMutation.mutate()} disabled={readAllMutation.isPending}
+                className="text-xs text-[var(--color-primary-bg)] hover:opacity-80 disabled:opacity-50">
+                {readAllMutation.isPending ? '标记中…' : '一键已读'}
               </button>
             )}
           </div>
@@ -100,12 +115,16 @@ function AlertBell() {
               alertList.slice(0, 50).map((doc: AlertDoc, i: number) => {
                 const isCritical = doc.severity === 'critical';
                 const isExpanded = expandedIdx === i;
+                const isUnread = !doc.read;
                 return (
-                  <div key={i}
-                    onClick={() => setExpandedIdx(isExpanded ? null : i)}
+                  <div key={doc._id}
+                    onClick={() => handleAlertClick(doc, i)}
                     className={`px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer ${isExpanded ? 'bg-[var(--color-surface-hover)]' : ''}`}>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-[var(--color-text)]">{doc.company_name}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        {isUnread && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--color-primary-bg)]" />}
+                        <span className={`text-sm truncate ${isUnread ? 'font-semibold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'}`}>{doc.company_name}</span>
+                      </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-[10px] text-gray-400">{doc.created_at.slice(5, 16).replace('T', ' ')}</span>
                         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
@@ -136,14 +155,14 @@ function AlertBell() {
     <>
       <button ref={btnRef} onClick={toggle}
         className="relative p-2 rounded-lg hover:bg-[var(--color-surface-hover)] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-        aria-label={`告警通知${alertList.length > 0 ? `，${alertList.length} 条` : ''}`}
+        aria-label={`告警通知${unreadCount > 0 ? `，${unreadCount} 条未读` : ''}`}
       >
         <svg className="w-5 h-5 text-gray-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
         </svg>
-        {alertList.length > 0 && (
+        {unreadCount > 0 && (
           <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-[9px] rounded-full flex items-center justify-center font-medium leading-none">
-            {alertList.length > 99 ? '99+' : alertList.length}
+            {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
@@ -159,6 +178,13 @@ export default function Sidebar({ onClose }: Props) {
   const location = useLocation();
   const activePath = '/' + (location.pathname.split('/')[1] || '');
 
+  const { data: notifData } = useQuery({
+    queryKey: queryKeys.notifications(1),
+    queryFn: () => api.get<{ unread_count: number }>('/notifications?limit=1'),
+    refetchInterval: 30_000,
+  });
+  const unreadNotifCount = notifData?.unread_count ?? 0;
+
   return (
     <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)] glass-surface flex flex-col text-sm">
       {/* mobile close */}
@@ -173,8 +199,8 @@ export default function Sidebar({ onClose }: Props) {
       {/* brand + alert bell */}
       <div className="px-4 pt-5 pb-3 flex items-center justify-between">
         <div>
-          <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">SupplierRadar</h1>
-          <p className="text-[11px] text-gray-400 mt-0.5">智能寻源 · 风险预警</p>
+          <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">SuppliSense</h1>
+          <p className="text-[11px] text-gray-400 mt-0.5">AI-Powered Sourcing &amp; Risk Intelligence</p>
         </div>
         <AlertBell />
       </div>
@@ -187,6 +213,7 @@ export default function Sidebar({ onClose }: Props) {
         {TAB_ROUTES.map((tab) => {
           const isActive = activePath === tab.path;
           const isAgent = tab.primary;
+          const isSettings = tab.path === '/settings';
           return (
             <button
               key={tab.path}
@@ -200,11 +227,10 @@ export default function Sidebar({ onClose }: Props) {
               }`}
             >
               <NavIcon name={tab.icon} className="w-5 h-5 shrink-0" />
-              <span>{tab.label}</span>
-              {isAgent && !isActive && (
-                <span className="ml-auto relative flex h-1.5 w-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--color-primary-bg)] opacity-40" />
-                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-[var(--color-primary-bg)]" />
+              <span className="flex-1">{tab.label}</span>
+              {isSettings && unreadNotifCount > 0 && (
+                <span className="shrink-0 min-w-[18px] h-[18px] bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-medium leading-none px-1">
+                  {unreadNotifCount > 99 ? '99+' : unreadNotifCount}
                 </span>
               )}
             </button>
