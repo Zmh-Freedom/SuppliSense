@@ -112,31 +112,45 @@ async def alert_dashboard():
             snap = doc["doc"]
             snap_map[snap["company_name"]] = snap
 
-    # 使用聚合查询统计每个企业的告警次数
-    alert_count_map: dict = {}
+    # 计算每个企业的风险变化趋势（近30天分数变动）
+    trend_map: dict = {}
     if companies:
-        alert_pipeline = [
-            {"$match": {"company_name": {"$in": companies}}},
-            {"$group": {"_id": "$company_name", "count": {"$sum": 1}}},
-        ]
-        for doc in db["alerts"].aggregate(alert_pipeline):
-            alert_count_map[doc["_id"]] = doc["count"]
+        from datetime import datetime, timedelta, timezone
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        for name in companies:
+            prev_snaps = list(db["alert_snapshots"].find(
+                {"company_name": name, "checked_at": {"$lt": thirty_days_ago}},
+                {"risk_score": 1, "checked_at": 1},
+            ).sort("checked_at", -1).limit(1))
+            if prev_snaps:
+                trend_map[name] = prev_snaps[0].get("risk_score", 0)
+            else:
+                # fallback: use the second-latest snapshot if no 30-day-old data
+                all_snaps = list(db["alert_snapshots"].find(
+                    {"company_name": name},
+                    {"risk_score": 1},
+                ).sort("checked_at", -1).limit(2))
+                if len(all_snaps) >= 2:
+                    trend_map[name] = all_snaps[1].get("risk_score", 0)
 
     for name in companies:
         snap = snap_map.get(name)
         if snap:
             level = snap.get("risk_level", "未知")
             distribution[level] = distribution.get(level, 0) + 1
+            current_score = snap.get("risk_score", 0)
+            prev_score = trend_map.get(name)
+            risk_trend = round(current_score - prev_score, 1) if prev_score is not None else 0
             details.append({
                 "name": name,
-                "score": snap.get("risk_score", 0),
+                "score": current_score,
                 "level": level,
-                "alert_count": alert_count_map.get(name, 0),
+                "risk_trend": risk_trend,
                 "last_checked": snap["checked_at"].isoformat() if snap.get("checked_at") else None,
             })
         else:
             distribution["未知"] += 1
-            details.append({"name": name, "score": None, "level": "未知", "alert_count": 0, "last_checked": None})
+            details.append({"name": name, "score": None, "level": "未知", "risk_trend": 0, "last_checked": None})
 
     details.sort(key=lambda d: d["score"] if d["score"] is not None else -1, reverse=True)
 
