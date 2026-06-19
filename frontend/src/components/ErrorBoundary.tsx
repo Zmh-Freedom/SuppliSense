@@ -28,7 +28,6 @@ export default class ErrorBoundary extends Component<Props, State> {
   };
 
   private handleGoHome = (): void => {
-    localStorage.removeItem('active_tab');
     window.location.reload();
   };
 

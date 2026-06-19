@@ -1,13 +1,23 @@
+import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
 import Layout from './components/Layout';
 import AuthGuard from './components/AuthGuard';
-import Dashboard from './components/Dashboard';
-import AssessView from './components/AssessView';
-import ChatView from './components/ChatView';
-import ContagionView from './components/ContagionView';
-import Settings from './components/Settings';
-import SourcingPage from './components/SourcingPage';
 import LoginPage from './components/LoginPage';
+
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const AssessView = lazy(() => import('./components/AssessView'));
+const ChatView = lazy(() => import('./components/ChatView'));
+const ContagionView = lazy(() => import('./components/ContagionView'));
+const Settings = lazy(() => import('./components/Settings'));
+const SourcingPage = lazy(() => import('./components/SourcingPage'));
+
+function Lazy({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center p-8" style={{ color: '#555' }}>加载中...</div>}>
+      {children}
+    </Suspense>
+  );
+}
 
 export const TAB_ROUTES = [
   { path: '/', label: '风险看板', icon: 'dashboard' },
@@ -26,12 +36,12 @@ export const router = createBrowserRouter([
   {
     element: <AuthGuard><Layout /></AuthGuard>,
     children: [
-      { index: true, element: <Dashboard /> },
-      { path: 'assess/:companyName?', element: <AssessView /> },
-      { path: 'sourcing', element: <SourcingPage /> },
-      { path: 'chat', element: <ChatView /> },
-      { path: 'contagion', element: <ContagionView /> },
-      { path: 'settings', element: <Settings /> },
+      { index: true, element: <Lazy><Dashboard /></Lazy> },
+      { path: 'assess/:companyName?', element: <Lazy><AssessView /></Lazy> },
+      { path: 'sourcing', element: <Lazy><SourcingPage /></Lazy> },
+      { path: 'chat', element: <Lazy><ChatView /></Lazy> },
+      { path: 'contagion', element: <Lazy><ContagionView /></Lazy> },
+      { path: 'settings', element: <Lazy><Settings /></Lazy> },
     ],
   },
 ]);

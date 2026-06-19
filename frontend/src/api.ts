@@ -96,20 +96,7 @@ export const api = {
   upload: <T>(path: string, file: File, signal?: AbortSignal) => {
     const form = new FormData();
     form.append('file', file);
-
-    return fetch(`${API_BASE}${path}`, {
-      method: 'POST',
-      body: form,
-      signal,
-      credentials: 'same-origin',
-    }).then(r => {
-      if (r.status === 401) {
-        clearStoredUser();
-        window.location.reload();
-        throw new Error('登录已过期');
-      }
-      return r.json();
-    }) as Promise<T>;
+    return request<T>(path, { method: 'POST', body: form, signal });
   },
 };
 
