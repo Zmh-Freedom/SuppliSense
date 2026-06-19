@@ -65,12 +65,12 @@ def _get_industry_threshold(category: str, key: str, default: float) -> float:
 
 
 def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
-    name = request.company_name
-
     try:
-        profile = get_company_profile(name)
+        profile = get_company_profile(request.company_name)
     except HTTPException as e:
         raise e
+
+    name = profile.company_name
 
     risk = get_risk_info(name)
     indicators = get_risk_indicators(name)
