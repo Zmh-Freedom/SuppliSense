@@ -3,11 +3,11 @@
 路由策略：关键词匹配（零延迟）→ LLM 分类（兜底）→ 默认模式。
 """
 
-import os
 from enum import Enum
 
 from langchain_openai import ChatOpenAI
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger()
@@ -72,9 +72,9 @@ class IntentRouter:
     def _get_llm(self) -> ChatOpenAI:
         if self._llm is None:
             self._llm = ChatOpenAI(
-                base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-                api_key=os.getenv("LLM_API_KEY", ""),
-                model=os.getenv("LLM_MODEL", "deepseek-chat"),
+                base_url=settings.LLM_BASE_URL,
+                api_key=settings.LLM_API_KEY,
+                model=settings.LLM_MODEL,
                 temperature=0,
             )
         return self._llm

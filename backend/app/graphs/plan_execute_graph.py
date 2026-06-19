@@ -2,13 +2,13 @@
 
 import asyncio
 import json
-import os
 from typing import Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langchain_openai import ChatOpenAI
 
+from app.core.config import settings
 from app.tools import TOOLS_LIST
 
 # 工具名称到工具函数的映射
@@ -23,13 +23,14 @@ class PlanExecuteState(TypedDict):
     response: str | None  # 最终答案（完成时设置）
 
 
-def _build_llm() -> ChatOpenAI:
+def _build_llm(streaming: bool = False) -> ChatOpenAI:
     """构建 LLM 实例。"""
     return ChatOpenAI(
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-        api_key=os.getenv("LLM_API_KEY", ""),
-        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        base_url=settings.LLM_BASE_URL,
+        api_key=settings.LLM_API_KEY,
+        model=settings.LLM_MODEL,
         temperature=0,
+        streaming=streaming,
     )
 
 
@@ -178,7 +179,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, Any]:
             remaining_plan="(无)",
         )
 
-        llm = _build_llm()
+        llm = _build_llm(streaming=True)
         messages = [
             SystemMessage(content=replan_prompt),
             HumanMessage(content="所有步骤已完成，请生成最终答案。"),
@@ -296,13 +297,15 @@ async def stream_plan_execute_graph(
                     if resp:
                         full_answer = resp
 
-        # 输出最终答案
-        if full_answer:
-            for i in range(0, len(full_answer), 10):
-                chunk = full_answer[i:i + 10]
-                yield _sse_event("answer_chunk", {"text": chunk})
-                await asyncio.sleep(0.02)
+            # Capture real token streaming from LLM
+            if kind == "on_chat_model_stream" and event.get("tags") != ["planner"]:
+                chunk = event.get("data", {}).get("chunk", "")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    token = chunk.content
+                    full_answer += token
+                    yield _sse_event("answer_chunk", {"text": token})
 
+        if full_answer:
             from app.services.agent import _save_turn
             _save_turn(session_id, user_message, full_answer)
 

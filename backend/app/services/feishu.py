@@ -98,10 +98,25 @@ def send_daily_digest() -> None:
     lines = []
     alerts = list(db["alerts"].find().sort("created_at", -1).limit(10))
 
+    # batch query latest snapshots and sentiments
+    snapshots = list(db["alert_snapshots"].aggregate([
+        {"$match": {"company_name": {"$in": companies}}},
+        {"$sort": {"checked_at": -1}},
+        {"$group": {"_id": "$company_name", "doc": {"$first": "$$ROOT"}}},
+    ]))
+    snapshot_map = {s["_id"]: s["doc"] for s in snapshots}
+
+    sentiments = list(db["sentiment_results"].aggregate([
+        {"$match": {"company_name": {"$in": companies}}},
+        {"$sort": {"analyzed_at": -1}},
+        {"$group": {"_id": "$company_name", "doc": {"$first": "$$ROOT"}}},
+    ]))
+    sentiment_map = {s["_id"]: s["doc"] for s in sentiments}
+
     # summary
     distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
     for name in companies:
-        snap = db["alert_snapshots"].find_one({"company_name": name}, sort=[("checked_at", -1)])
+        snap = snapshot_map.get(name)
         level = snap.get("risk_level", "未知") if snap else "未知"
         distribution[level] = distribution.get(level, 0) + 1
 
@@ -127,7 +142,7 @@ def send_daily_digest() -> None:
     lines.append("**高风险关注**")
     high_risk = []
     for name in companies:
-        snap = db["alert_snapshots"].find_one({"company_name": name}, sort=[("checked_at", -1)])
+        snap = snapshot_map.get(name)
         if snap and snap.get("risk_score", 0) > 30:
             high_risk.append((name, snap["risk_score"], snap["risk_level"]))
     high_risk.sort(key=lambda x: x[1], reverse=True)
@@ -143,9 +158,7 @@ def send_daily_digest() -> None:
     lines.append("**舆情监控**")
     neg_companies = []
     for name in companies:
-        sent = db["sentiment_results"].find_one(
-            {"company_name": name}, sort=[("analyzed_at", -1)]
-        )
+        sent = sentiment_map.get(name)
         if sent and sent.get("sentiment_score", 0) < -0.2:
             neg_companies.append((name, sent.get("sentiment_score", 0), sent.get("negative_count", 0)))
     neg_companies.sort(key=lambda x: x[1])

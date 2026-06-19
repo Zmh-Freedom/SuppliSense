@@ -4,16 +4,16 @@ ReAct Agent with tool calling, conversation memory, and streaming support.
 
 import asyncio
 import json
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Callable
 
 from openai import OpenAI
 
+from app.core.config import settings
 from app.db.mongo import get_db
 
-MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+MODEL = settings.LLM_MODEL
 MAX_ITERATIONS = 12
 
 _client: OpenAI | None = None
@@ -23,8 +23,8 @@ def _get_client() -> OpenAI:
     global _client
     if _client is None:
         _client = OpenAI(
-            api_key=os.getenv("LLM_API_KEY", ""),
-            base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
         )
     return _client
 
@@ -431,6 +431,7 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - in_watchlist=true 表示已在监控，不要建议"加入监控"
 - 综合问题可调多个工具（ESG+风险+舆情）
 - 搜不到就告知用户
+- 不同工具返回的数据如有矛盾，直接指出差异，不要自行编造理由解释
 
 监控列表操作：
 - 查看监控列表：使用 get_watchlist
@@ -676,146 +677,4 @@ def _sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def chat_stream_with_plan(session_id: str, message: str) -> AsyncGenerator[str, None]:
-    """
-    Plan-and-Execute mode with streaming.
-    Uses planner to generate execution plan, then executor to run it.
-    """
-    from app.services.executor import execute_plan_stream
-    from app.db.mongo import get_db
 
-    try:
-        # Execute plan with streaming
-        async for event in execute_plan_stream(message, session_id):
-            event_type = event.get("type", "")
-
-            if event_type == "planning":
-                yield _sse_event("thinking", {"message": event.get("thought", "")})
-            elif event_type == "plan":
-                yield _sse_event("plan", {"steps": event.get("steps", [])})
-            elif event_type == "parallel_start":
-                yield _sse_event("thinking", {"message": f"并行执行 {event.get('count', 0)} 个任务..."})
-            elif event_type == "step_start":
-                yield _sse_event("tool_call", {
-                    "tool": event.get("tool", ""),
-                    "args": event.get("args", {}),
-                })
-            elif event_type == "step_result":
-                yield _sse_event("tool_result", {
-                    "tool": event.get("tool", ""),
-                    "result": event.get("result", {}),
-                })
-            elif event_type == "step_error":
-                yield _sse_event("error", {
-                    "message": f"{event.get('tool', '')}: {event.get('error', '')}",
-                })
-            elif event_type == "thinking":
-                yield _sse_event("thinking", {"message": event.get("message", "")})
-            elif event_type == "final_answer":
-                answer = event.get("answer", "")
-                # Save to conversation history
-                db = get_db()
-                from datetime import datetime, timezone
-                now = datetime.now(timezone.utc)
-                db["conversations"].update_one(
-                    {"session_id": session_id},
-                    {
-                        "$push": {
-                            "messages": {
-                                "$each": [
-                                    {"role": "user", "content": message},
-                                    {"role": "assistant", "content": answer},
-                                ]
-                            }
-                        },
-                        "$setOnInsert": {"session_id": session_id, "created_at": now},
-                    },
-                    upsert=True,
-                )
-                # Stream answer in chunks
-                for i in range(0, len(answer), 10):
-                    chunk = answer[i:i+10]
-                    yield _sse_event("answer_chunk", {"text": chunk})
-                    await asyncio.sleep(0.02)
-                yield _sse_event("done", {"answer": answer})
-
-    except Exception as e:
-        yield _sse_event("error", {"message": f"执行错误: {str(e)}"})
-
-
-async def chat_stream_with_agents(session_id: str, message: str) -> AsyncGenerator[str, None]:
-    """
-    Multi-Agent mode with streaming.
-    Uses coordinator to route query to specialized agents.
-    """
-    from app.agents.coordinator import coordinator
-    from app.db.mongo import get_db
-
-    try:
-        # Extract company name from message (simple heuristic)
-        context = {}
-        # Try to find company name in message
-        for keyword in ["公司", "企业", "供应商"]:
-            if keyword in message:
-                # Extract words around keyword
-                idx = message.index(keyword)
-                start = max(0, idx - 10)
-                end = min(len(message), idx + 20)
-                context["company_name"] = message[start:end].strip()
-                break
-
-        # Use coordinator to analyze
-        async for event in coordinator.analyze_with_stream(message, context):
-            event_type = event.get("type", "")
-
-            if event_type == "thinking":
-                yield _sse_event("thinking", {"message": event.get("message", "")})
-            elif event_type == "agent_selection":
-                yield _sse_event("agent_selection", {
-                    "agents": event.get("agents", []),
-                    "reasoning": event.get("reasoning", ""),
-                })
-            elif event_type == "agent_start":
-                yield _sse_event("agent_start", {
-                    "agent": event.get("agent", ""),
-                    "description": event.get("description", ""),
-                })
-            elif event_type == "agent_complete":
-                yield _sse_event("agent_complete", {
-                    "agent": event.get("agent", ""),
-                    "summary": event.get("result_summary", ""),
-                })
-            elif event_type == "agent_error":
-                yield _sse_event("error", {
-                    "message": f"{event.get('agent', '')}: {event.get('error', '')}",
-                })
-            elif event_type == "final_answer":
-                answer = event.get("answer", "")
-                # Save to conversation history
-                db = get_db()
-                from datetime import datetime, timezone
-                now = datetime.now(timezone.utc)
-                db["conversations"].update_one(
-                    {"session_id": session_id},
-                    {
-                        "$push": {
-                            "messages": {
-                                "$each": [
-                                    {"role": "user", "content": message},
-                                    {"role": "assistant", "content": answer},
-                                ]
-                            }
-                        },
-                        "$setOnInsert": {"session_id": session_id, "created_at": now},
-                    },
-                    upsert=True,
-                )
-                # Stream answer in chunks
-                for i in range(0, len(answer), 10):
-                    chunk = answer[i:i+10]
-                    yield _sse_event("answer_chunk", {"text": chunk})
-                    await asyncio.sleep(0.02)
-                yield _sse_event("done", {"answer": answer})
-
-    except Exception as e:
-        yield _sse_event("error", {"message": f"Multi-Agent 执行错误: {str(e)}"})

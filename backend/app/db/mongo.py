@@ -20,6 +20,9 @@ def get_db() -> Database:
             password=settings.MONGO_PASSWORD,
             authSource=settings.MONGO_AUTH_SOURCE,
             serverSelectionTimeoutMS=5000,
+            maxPoolSize=50,
+            minPoolSize=5,
+            maxIdleTimeMS=30000,
         )
     return _client[settings.MONGO_DB]
 

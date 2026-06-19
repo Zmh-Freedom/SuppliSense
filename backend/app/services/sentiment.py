@@ -20,23 +20,26 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
-from app.core.cache import cached, invalidate_cache
+from app.core.config import settings
+from app.core.cache import cached, invalidate_cache, cache_client
 from app.db.mongo import get_db
 
 _llm_client = None
+
+ENABLE_HTML_SCRAPING = os.getenv("ENABLE_HTML_SCRAPING", "false").lower() == "true"
 
 
 def _get_llm():
     global _llm_client
     if _llm_client is None:
         _llm_client = OpenAI(
-            api_key=os.getenv("LLM_API_KEY", ""),
-            base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
         )
     return _llm_client
 
 
-SENTIMENT_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
+SENTIMENT_MODEL = settings.LLM_MODEL
 
 # ---- LLM prompt ----
 
@@ -68,7 +71,7 @@ NEWS_SENTIMENT_PROMPT = """你是一个企业舆情分析师。请分析以下�
 
 def _call_llm(prompt: str) -> dict | None:
     """调用 LLM，返回结构化结果。"""
-    if not os.getenv("LLM_API_KEY"):
+    if not settings.LLM_API_KEY:
         return None
     try:
         resp = _get_llm().chat.completions.create(
@@ -100,8 +103,30 @@ def _short_name(company_name: str) -> str:
     return company_name
 
 
+def _cached_search(company_name: str) -> list | None:
+    key = f"sentiment_search:{company_name}"
+    cached = cache_client.get(key)
+    if cached:
+        return json.loads(cached)
+    return None
+
+
+def _cache_search(company_name: str, results: list) -> None:
+    key = f"sentiment_search:{company_name}"
+    try:
+        cache_client.setex(key, 3600, json.dumps(results, ensure_ascii=False))
+    except Exception:
+        pass
+
+
 def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     """通过 Bing 搜索公司新闻（DuckDuckGo 限流时备用）。"""
+    # check Redis cache first
+    cached = _cached_search(company_name)
+    if cached is not None:
+        logger.info("sentiment_search_cache_hit", company=company_name)
+        return cached
+
     import requests
     from bs4 import BeautifulSoup
     from urllib.parse import quote
@@ -113,61 +138,64 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     short = _short_name(company_name)
     query = f"{short} 最新新闻"
 
-    # method 1: Bing search
-    try:
-        resp = requests.get(
-            "https://www.bing.com/search",
-            params={"q": query, "setlang": "zh-Hans", "count": max_results},
-            headers=headers,
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for item in soup.select("li.b_algo"):
-                title_el = item.select_one("h2 a")
-                snippet_el = item.select_one(".b_caption p")
-                if not title_el:
-                    continue
-                title = title_el.get_text(strip=True)
-                body = snippet_el.get_text(strip=True)[:300] if snippet_el else ""
-                url = title_el.get("href", "")
-                articles.append({"title": title, "body": body, "source": "Bing", "url": url, "date": ""})
-            if articles:
-                return articles[:max_results]
-    except Exception:
-        pass
+    if ENABLE_HTML_SCRAPING:
+        # method 1: Bing search
+        try:
+            resp = requests.get(
+                "https://www.bing.com/search",
+                params={"q": query, "setlang": "zh-Hans", "count": max_results},
+                headers=headers,
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for item in soup.select("li.b_algo"):
+                    title_el = item.select_one("h2 a")
+                    snippet_el = item.select_one(".b_caption p")
+                    if not title_el:
+                        continue
+                    title = title_el.get_text(strip=True)
+                    body = snippet_el.get_text(strip=True)[:300] if snippet_el else ""
+                    url = title_el.get("href", "")
+                    articles.append({"title": title, "body": body, "source": "Bing", "url": url, "date": ""})
+                if articles:
+                    _cache_search(company_name, articles[:max_results])
+                    return articles[:max_results]
+        except Exception:
+            pass
 
-    # method 2: DDG HTML endpoint (fallback)
-    try:
-        resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": f"{short} 新闻", "iar": "news"},
-            headers=headers,
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for res in soup.select(".result__body"):
-                title_el = res.select_one(".result__title")
-                snippet_el = res.select_one(".result__snippet")
-                link_el = res.select_one(".result__url") or res.select_one("a[href]")
-                title = title_el.get_text(strip=True) if title_el else ""
-                if not title:
-                    continue
-                body = snippet_el.get_text(strip=True) if snippet_el else ""
-                url = ""
-                if link_el:
-                    url = link_el.get("href", "")
-                    if "uddg=" in url:
-                        from urllib.parse import parse_qs, urlparse
-                        parsed = urlparse(url)
-                        qs = parse_qs(parsed.query)
-                        url = qs.get("uddg", [url])[0]
-                articles.append({"title": title, "body": body[:200], "source": "", "url": url, "date": ""})
-            if articles:
-                return articles[:max_results]
-    except Exception:
-        pass
+        # method 2: DDG HTML endpoint (fallback)
+        try:
+            resp = requests.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": f"{short} 新闻", "iar": "news"},
+                headers=headers,
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, "html.parser")
+                for res in soup.select(".result__body"):
+                    title_el = res.select_one(".result__title")
+                    snippet_el = res.select_one(".result__snippet")
+                    link_el = res.select_one(".result__url") or res.select_one("a[href]")
+                    title = title_el.get_text(strip=True) if title_el else ""
+                    if not title:
+                        continue
+                    body = snippet_el.get_text(strip=True) if snippet_el else ""
+                    url = ""
+                    if link_el:
+                        url = link_el.get("href", "")
+                        if "uddg=" in url:
+                            from urllib.parse import parse_qs, urlparse
+                            parsed = urlparse(url)
+                            qs = parse_qs(parsed.query)
+                            url = qs.get("uddg", [url])[0]
+                    articles.append({"title": title, "body": body[:200], "source": "", "url": url, "date": ""})
+                if articles:
+                    _cache_search(company_name, articles[:max_results])
+                    return articles[:max_results]
+        except Exception:
+            pass
 
     # method 3: ddgs / duckduckgo_search library
     for lib in ["ddgs", "duckduckgo_search"]:
@@ -184,10 +212,13 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
                         "date": r.get("date", ""),
                     })
             if articles:
+                _cache_search(company_name, articles[:max_results])
                 return articles[:max_results]
         except Exception:
             pass
 
+    # cache empty results too (shorter TTL to allow retry)
+    _cache_search(company_name, [])
     return []
 
 
@@ -256,6 +287,28 @@ def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | 
 
     # search news
     news_articles = _search_news(company_name)
+
+    # Fallback: Tianyancha news collection
+    if not news_articles:
+        db = get_db()
+        tianyancha_news = db["news"].find_one({"name": company_name})
+        if tianyancha_news:
+            items_wrapper = tianyancha_news.get("items") or {}
+            result_wrapper = items_wrapper.get("result") or {}
+            news_list = result_wrapper.get("items") or result_wrapper.get("list") or []
+            for item in news_list[:15]:
+                title = item.get("title", "") or item.get("newsTitle", "")
+                body = item.get("content", "") or item.get("summary", "") or item.get("newsContent", "")
+                if title:
+                    news_articles.append({
+                        "title": title,
+                        "body": str(body)[:300] if body else "",
+                        "source": "天眼查",
+                        "url": item.get("newsUrl", "") or item.get("url", ""),
+                        "date": item.get("publishTime", "") or item.get("newsDate", ""),
+                    })
+            if news_articles:
+                logger.info("sentiment_tianyancha_fallback", company=company_name, count=len(news_articles))
 
     if not news_articles:
         result = {

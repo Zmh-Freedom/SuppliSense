@@ -13,14 +13,14 @@ pytest>=8.0.0
 python-jose[cryptography]>=3.3.0
 bcrypt>=4.0.0
 python-multipart>=0.0.9
-# Async tasks
-celery>=5.3.0
 redis>=5.0.0
-flower>=2.0.0
 # Observability
 structlog>=24.0.0
 prometheus-client>=0.20.0
 sentry-sdk[fastapi]>=1.40.0
+# PostgreSQL
+psycopg2-binary>=2.9.0
+pgvector>=0.3.0
 # RAG (Retrieval Augmented Generation)
 chromadb>=0.4.0
 sentence-transformers>=2.2.0
@@ -29,7 +29,6 @@ python-docx>=1.1.0
 openpyxl>=3.1.0
 ddgs>=9.0.0
 beautifulsoup4>=4.12.0
-python-multipart>=0.0.9
 # Rate limiting
 slowapi>=0.1.0
 # LangGraph agent framework

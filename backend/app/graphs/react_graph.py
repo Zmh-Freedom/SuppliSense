@@ -1,6 +1,5 @@
 """LangGraph ReAct agent graph — 替代 agent.py 中的手写 ReAct 循环。"""
 
-import os
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import SystemMessage
@@ -9,6 +8,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 
+from app.core.config import settings
 from app.tools import TOOLS_LIST
 
 SYSTEM_PROMPT = """你是采购风险分析专家。
@@ -42,6 +42,7 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - in_watchlist=true 表示已在监控，不要建议"加入监控"
 - 综合问题可调多个工具
 - 搜不到就告知用户
+- 不同工具返回的数据如有矛盾，直接指出差异，不要自行编造理由解释
 
 澄清规则（当用户意图不明确时，不要猜测，直接询问）：
 - 缺少企业名称时："请问您想分析哪家公司？"
@@ -56,9 +57,9 @@ class AgentState(TypedDict):
 
 def _build_llm() -> ChatOpenAI:
     return ChatOpenAI(
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-        api_key=os.getenv("LLM_API_KEY", ""),
-        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        base_url=settings.LLM_BASE_URL,
+        api_key=settings.LLM_API_KEY,
+        model=settings.LLM_MODEL,
         temperature=0,
     ).bind_tools(TOOLS_LIST)
 

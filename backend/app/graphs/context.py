@@ -1,11 +1,10 @@
 """对话上下文管理 — 长对话摘要压缩。"""
 
 import asyncio
-import os
-
 from langchain_core.messages import SystemMessage
 from langchain_openai import ChatOpenAI
 
+from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger()
@@ -17,9 +16,9 @@ KEEP_RECENT = 8  # 保留最近 8 条消息（4 轮）
 async def _llm_summarize(messages: list[dict]) -> str:
     """用 LLM 对对话历史生成摘要。"""
     llm = ChatOpenAI(
-        base_url=os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-        api_key=os.getenv("LLM_API_KEY", ""),
-        model=os.getenv("LLM_MODEL", "deepseek-chat"),
+        base_url=settings.LLM_BASE_URL,
+        api_key=settings.LLM_API_KEY,
+        model=settings.LLM_MODEL,
         temperature=0,
     )
 
