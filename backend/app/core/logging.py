@@ -3,6 +3,7 @@ Logging configuration with structlog.
 """
 
 import logging
+import os
 import sys
 
 import structlog
@@ -10,6 +11,15 @@ import structlog
 
 def setup_logging(log_level: str = "INFO") -> None:
     """Configure structured logging."""
+    log_format = os.getenv("LOG_FORMAT", "console")
+    if log_format == "json":
+        renderer = structlog.processors.JSONRenderer()
+    else:
+        renderer = structlog.dev.ConsoleRenderer()
+
+    log_level_name = os.getenv("LOG_LEVEL", log_level)
+    level = getattr(logging, log_level_name.upper(), logging.INFO)
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -17,11 +27,9 @@ def setup_logging(log_level: str = "INFO") -> None:
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer(),
+            renderer,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, log_level.upper(), logging.INFO)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
         cache_logger_on_first_use=False,
@@ -31,7 +39,7 @@ def setup_logging(log_level: str = "INFO") -> None:
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=log_level,
+        level=level,
     )
 
 
