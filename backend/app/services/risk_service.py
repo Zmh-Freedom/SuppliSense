@@ -6,6 +6,10 @@ from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessR
 from app.services.alert_service import save_snapshot
 from app.services.company_service import get_company_profile
 
+# ---- 评分版本 ----
+# 升级评分体系时递增此版本号，PG 和 MongoDB 中的历史数据可据此区分
+SCORING_VERSION = "v2"
+
 # ---- 归一化参数：每个维度上限 25 分，四维总计 0-100 ----
 FIN_NORM = 70   # 财务维度 11 个指标的理论上限
 JUD_NORM = 75   # 司法维度 6 个指标的理论上限
@@ -135,7 +139,25 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     )
     # add watchlist status
     response.risk_detail["in_watchlist"] = in_watchlist
+
+    # MongoDB snapshot (实时查询用)
     save_snapshot(name, response)
+
+    # PostgreSQL history (长期趋势分析用)
+    try:
+        from app.repositories.assessment_repo import save_assessment
+        save_assessment(
+            company_name=name,
+            risk_score=score,
+            risk_level=level,
+            score_breakdown=breakdown,
+            financial_data=financial.model_dump() if financial else None,
+            risk_detail=risk_detail,
+            scoring_version=SCORING_VERSION,
+        )
+    except Exception:
+        pass  # PG 不可用时不影响主流程
+
     return response
 
 

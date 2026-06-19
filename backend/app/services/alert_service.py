@@ -25,6 +25,7 @@ def _broadcast_alert_update() -> None:
 
 
 def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
+    from app.services.risk_service import SCORING_VERSION
     db = get_db()
     doc = {
         "company_name": company_name,
@@ -34,6 +35,7 @@ def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
         "risk_detail": result.risk_detail,
         "financial": result.financial.model_dump() if result.financial else None,
         "score_breakdown": result.score_breakdown,
+        "scoring_version": SCORING_VERSION,
     }
     db["alert_snapshots"].insert_one(doc)
 

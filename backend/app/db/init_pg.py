@@ -72,6 +72,7 @@ DDL_STATEMENTS = [
         score_breakdown JSONB,
         financial_data JSONB,
         risk_detail JSONB,
+        scoring_version VARCHAR(16) NOT NULL DEFAULT 'unknown',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
