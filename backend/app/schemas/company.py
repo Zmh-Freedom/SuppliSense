@@ -7,3 +7,4 @@ class CompanyProfile(BaseModel):
     registered_capital: str
     establish_time: str
     is_listed: bool
+    industry: str = ""

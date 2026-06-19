@@ -7,11 +7,61 @@ from app.services.alert_service import save_snapshot
 from app.services.company_service import get_company_profile
 
 # ---- 归一化参数：每个维度上限 25 分，四维总计 0-100 ----
-# 归一化基准值（各维度理论最大值），用于将原始分映射到 0-25
 FIN_NORM = 70   # 财务维度 11 个指标的理论上限
 JUD_NORM = 75   # 司法维度 6 个指标的理论上限
 OP_NORM = 45    # 经营维度 5 个指标的理论上限
 SOFT_NORM = 60  # 软指标 4 个维度（LLM 评估）的理论上限
+
+# ---- 行业分类与基准校准 ----
+# 行业 → 关键字匹配（按优先级顺序）
+_INDUSTRY_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("重工业",   ["钢", "铁", "矿", "能源", "石油", "化工", "水泥", "有色", "铝", "铜",
+                  "煤炭", "电力", "发电", "燃气", "天然气", "冶炼", "石化"]),
+    ("建筑地产", ["建筑", "地产", "房地产", "施工", "工程", "建材", "装修", "置业",
+                  "开发", "城建", "建设"]),
+    ("科技",     ["科技", "软件", "半导体", "互联网", "信息", "通信", "电子", "集成",
+                  "智能", "数据", "网络", "计算机", "芯片", "光电"]),
+    ("商贸服务", ["商贸", "零售", "物流", "餐饮", "旅游", "酒店", "广告", "咨询",
+                  "贸易", "进出口", "租赁", "物业", "传媒", "出版"]),
+    ("制造业",   ["制造", "机械", "设备", "汽车", "纺织", "服装", "食品", "制药",
+                  "医药", "生物", "器械", "仪器", "器材"]),
+]
+
+# 行业 → 财务阈值偏移量 (A 方案)
+# 负数 = 阈值更宽松（该行业天生该指标偏高，不那么"危险"）
+_INDUSTRY_THRESHOLDS: dict[str, dict[str, float]] = {
+    "重工业":   {"debt_ratio": +0.20, "ar_turnover": +70, "current_ratio": -0.20},
+    "建筑地产": {"debt_ratio": +0.25, "ar_turnover": +100, "current_ratio": -0.10},
+    "科技":     {"debt_ratio": -0.10, "ar_turnover": -60,  "current_ratio": +0.10},
+    "商贸服务": {"debt_ratio": +0.05, "ar_turnover": -30,  "current_ratio": -0.05},
+    "制造业":   {"debt_ratio": +0.05, "ar_turnover": 0,    "current_ratio": 0},
+}
+
+# 行业 → 财务维度归一化偏移量 (C 方案)
+# 正数 = 该行业天然风险更高，在归一化后额外加分
+_INDUSTRY_BASE_OFFSET: dict[str, float] = {
+    "重工业":   3,
+    "建筑地产": 3,
+    "科技":     -2,
+    "商贸服务": 0,
+    "制造业":   0,
+}
+
+
+def _classify_industry(industry_text: str) -> str:
+    """根据天眼查行业文本归类到五大行业。"""
+    if not industry_text:
+        return "制造业"
+    for category, keywords in _INDUSTRY_KEYWORDS:
+        for kw in keywords:
+            if kw in industry_text:
+                return category
+    return "制造业"
+
+
+def _get_industry_threshold(category: str, key: str, default: float) -> float:
+    """获取行业调整后的阈值。"""
+    return default + _INDUSTRY_THRESHOLDS.get(category, {}).get(key, 0.0)
 
 
 def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
@@ -25,6 +75,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     risk = get_risk_info(name)
     indicators = get_risk_indicators(name)
     financial = get_financial_metrics(name)
+    industry_category = _classify_industry(profile.industry)
 
     # check if in watchlist
     from app.services.alert_service import get_watchlist
@@ -44,7 +95,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         bankruptcy_count=indicators["bankruptcy_count"],
         env_penalty_count=indicators["env_penalty_count"],
     )
-    score, breakdown = _calc_score(req)
+    score, breakdown = _calc_score(req, industry_category)
     level = _score_to_level(score)
 
     risk_detail = {
@@ -76,7 +127,8 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
 
 
 def calculate_risk(request: RiskCalculateRequest) -> RiskCalculateResponse:
-    score, breakdown = _calc_score(request)
+    industry = _classify_industry(request.company.industry)
+    score, breakdown = _calc_score(request, industry)
     level = _score_to_level(score)
     return RiskCalculateResponse(risk_score=score, risk_level=level, score_breakdown=breakdown)
 
@@ -90,19 +142,26 @@ def _normalize(raw: float, norm_base: float) -> float:
     return round(min(raw / norm_base * 25, 25), 1)
 
 
-def _calc_score(req: RiskCalculateRequest) -> tuple[int, dict]:
+def _calc_score(req: RiskCalculateRequest, industry: str = "制造业") -> tuple[int, dict]:
     risk = req.risk
     fin = req.financial
 
+    # 行业校准参数
+    debt_t = _get_industry_threshold(industry, "debt_ratio", 0.4)
+    ar_t = _get_industry_threshold(industry, "ar_turnover", 180.0)
+    cur_t = _get_industry_threshold(industry, "current_ratio", 1.0)
+    base_offset = _INDUSTRY_BASE_OFFSET.get(industry, 0)
+
     breakdown = {}
+    breakdown["行业"] = industry
 
     # ==================== 财务风险 (0-25) ====================
     fin_items = {}
     fin_raw = 0
     if fin:
-        if fin.debt_ratio > 0.4:
-            pts = _clamp((fin.debt_ratio - 0.4) / 0.5 * 15, 0, 15)
-            fin_items["资产负债率"] = f"{pts:.1f}分 (当前{fin.debt_ratio*100:.1f}%)"
+        if fin.debt_ratio > debt_t:
+            pts = _clamp((fin.debt_ratio - debt_t) / 0.5 * 15, 0, 15)
+            fin_items["资产负债率"] = f"{pts:.1f}分 (当前{fin.debt_ratio*100:.1f}%, 行业阈值{debt_t*100:.0f}%)"
             fin_raw += pts
         if fin.cash_flow < 0:
             fin_items["现金流为负"] = f"8分 (每股{fin.cash_flow:.2f}元)"
@@ -115,9 +174,9 @@ def _calc_score(req: RiskCalculateRequest) -> tuple[int, dict]:
             pts = _clamp(3 + abs(fin.net_profit_growth) * 20, 0, 7)
             fin_items["净利下降"] = f"{pts:.1f}分 (增长率{fin.net_profit_growth*100:.1f}%)"
             fin_raw += pts
-        if fin.current_ratio > 0 and fin.current_ratio < 1.0:
-            pts = _clamp((1.0 - fin.current_ratio) * 10, 0, 6)
-            fin_items["流动比率过低"] = f"{pts:.1f}分 (当前{fin.current_ratio:.2f})"
+        if fin.current_ratio > 0 and fin.current_ratio < cur_t:
+            pts = _clamp((cur_t - fin.current_ratio) * 10, 0, 6)
+            fin_items["流动比率过低"] = f"{pts:.1f}分 (当前{fin.current_ratio:.2f}, 行业阈值{cur_t:.1f})"
             fin_raw += pts
         if fin.quick_ratio > 0 and fin.quick_ratio < 0.8:
             pts = _clamp((0.8 - fin.quick_ratio) * 12, 0, 5)
@@ -136,13 +195,13 @@ def _calc_score(req: RiskCalculateRequest) -> tuple[int, dict]:
         if fin.debt_trend > 0.02:
             fin_items["负债率持续上升"] = "3分 (3年趋势)"
             fin_raw += 3
-        if fin.ar_turnover_days > 180:
-            pts = _clamp((fin.ar_turnover_days - 180) / 180 * 4, 0, 4)
-            fin_items["应收款周转慢"] = f"{pts:.1f}分 ({fin.ar_turnover_days:.0f}天)"
+        if fin.ar_turnover_days > ar_t:
+            pts = _clamp((fin.ar_turnover_days - ar_t) / ar_t * 4, 0, 4)
+            fin_items["应收款周转慢"] = f"{pts:.1f}分 ({fin.ar_turnover_days:.0f}天, 行业阈值{ar_t:.0f}天)"
             fin_raw += pts
 
-    fin_norm = _normalize(fin_raw, FIN_NORM)
-    breakdown["财务风险"] = {"原始分": round(fin_raw, 1), "归一化": fin_norm, "明细": fin_items}
+    fin_norm = _clamp(_normalize(fin_raw, FIN_NORM) + base_offset, 0, 25)
+    breakdown["财务风险"] = {"原始分": round(fin_raw, 1), "归一化": fin_norm, "行业偏移": base_offset, "明细": fin_items}
 
     # ==================== 司法风险 (0-25) ====================
     jud_items = {}

@@ -24,6 +24,7 @@ def get_baseinfo(company_name: str) -> CompanyProfile | None:
         registered_capital=result.get("regCapital", ""),
         establish_time=_ts_to_date(result.get("estiblishTime")),
         is_listed=bool(result.get("bondNum") or result.get("bondName")),
+        industry=result.get("industry", ""),
     )
 
 
@@ -32,6 +33,19 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
     base = db["baseinfo"].find_one({"name": company_name})
     if not base:
         return None
+
+    def _total(doc, field="result") -> int:
+        if not doc:
+            return 0
+        items = doc.get("items") or {}
+        r = items.get(field) or {}
+        return r.get("total", 0) if isinstance(r, dict) else 0
+
+    # Always read individual collections as ground-truth supplement
+    lawsuit = db["lawSuit"].find_one({"name": company_name})
+    abnormal = db["abnormal"].find_one({"name": company_name})
+    punishment = db["punishmentInfo"].find_one({"name": company_name})
+    executed = db["executedPerson"].find_one({"name": company_name})
 
     # 1. Try new riskInfo collection (from /services/open/risk/riskInfo/2.0)
     risk_doc = db["riskInfo"].find_one({"name": company_name})
@@ -53,73 +67,90 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
                         abnormal_count += total
                     if "行政处罚" in title:
                         penalty_count += total
+            # Supplement zero counts from individual collections
+            if lawsuit_count == 0:
+                lawsuit_count = _total(lawsuit)
+            if abnormal_count == 0:
+                abnormal_count = _total(abnormal)
+            if penalty_count == 0:
+                penalty_count = _total(punishment)
             return RiskInfo(
                 lawsuit_count=lawsuit_count,
-                executed_count=0,
+                executed_count=_total(executed),
                 abnormal_operation_count=abnormal_count,
                 administrative_penalty_count=penalty_count,
             )
 
     # 2. Fallback: old individual collections
-    lawsuit = db["lawSuit"].find_one({"name": company_name})
-    abnormal = db["abnormal"].find_one({"name": company_name})
-    punishment = db["punishmentInfo"].find_one({"name": company_name})
-
-    def _total(doc, field="result") -> int:
-        if not doc:
-            return 0
-        items = doc.get("items") or {}
-        r = items.get(field) or {}
-        return r.get("total", 0) if isinstance(r, dict) else 0
-
     return RiskInfo(
         lawsuit_count=_total(lawsuit),
-        executed_count=0,
+        executed_count=_total(executed),
         abnormal_operation_count=_total(abnormal),
         administrative_penalty_count=_total(punishment),
     )
 
 
 def get_risk_indicators(company_name: str) -> dict:
-    """Return extra risk indicators from riskInfo collection."""
+    """Return extra risk indicators from riskInfo + individual collections."""
     db = get_db()
-    doc = db["riskInfo"].find_one({"name": company_name})
-    if not doc:
-        return _empty_indicators()
 
-    item = doc.get("item") or {}
-    result = item.get("result") or {}
-    risk_list = result.get("riskList", [])
+    def _total(coll: str) -> int:
+        doc = db[coll].find_one({"name": company_name})
+        if not doc:
+            return 0
+        items = doc.get("items") or {}
+        r = items.get("result") or {}
+        return r.get("total", 0) if isinstance(r, dict) else 0
 
     indicators = _empty_indicators()
 
-    for category in risk_list:
-        for sub in category.get("list", []):
-            title = sub.get("title", "")
-            total = sub.get("total", 0) or 0
+    # Read from riskInfo if available
+    doc = db["riskInfo"].find_one({"name": company_name})
+    if doc:
+        item = doc.get("item") or {}
+        result = item.get("result") or {}
+        risk_list = result.get("riskList", [])
 
-            if "被执行人" in title:
-                indicators["executed_count"] += total
-            if "失信" in title:
-                indicators["dishonesty_count"] += total
-            if title in ("裁判文书", "开庭公告", "立案信息"):
-                indicators["lawsuit_count"] += total
-            if "法定代表人变更" in title:
-                indicators["legal_person_change_frequent"] = True
-            if "对外担保" in title:
-                indicators["guarantee_count"] += total
-            if "股权质押" in title:
-                indicators["pledge_count"] += total
-            if title in ("破产案件", "清算信息", "注销备案"):
-                indicators["bankruptcy_count"] += total
-            if "环保处罚" in title:
-                indicators["env_penalty_count"] += total
+        for category in risk_list:
+            for sub in category.get("list", []):
+                title = sub.get("title", "")
+                total = sub.get("total", 0) or 0
 
-    # major_lawsuit: 裁判文书 count >= 3
-    for category in risk_list:
-        for sub in category.get("list", []):
-            if sub.get("title") == "裁判文书":
-                indicators["major_lawsuit"] = (sub.get("total", 0) or 0) >= 3
+                if "被执行人" in title:
+                    indicators["executed_count"] += total
+                if "失信" in title:
+                    indicators["dishonesty_count"] += total
+                if title in ("裁判文书", "开庭公告", "立案信息"):
+                    indicators["lawsuit_count"] += total
+                if "法定代表人变更" in title:
+                    indicators["legal_person_change_frequent"] = True
+                if "对外担保" in title:
+                    indicators["guarantee_count"] += total
+                if "股权质押" in title:
+                    indicators["pledge_count"] += total
+                if title in ("破产案件", "清算信息", "注销备案"):
+                    indicators["bankruptcy_count"] += total
+                if "环保处罚" in title:
+                    indicators["env_penalty_count"] += total
+
+        # major_lawsuit: 裁判文书 count >= 3
+        for category in risk_list:
+            for sub in category.get("list", []):
+                if sub.get("title") == "裁判文书":
+                    indicators["major_lawsuit"] = (sub.get("total", 0) or 0) >= 3
+
+    # Supplement zero counts from individual collections (only those with dedicated endpoints)
+    if indicators["lawsuit_count"] == 0:
+        indicators["lawsuit_count"] = _total("lawSuit")
+    if indicators["executed_count"] == 0:
+        indicators["executed_count"] = _total("executedPerson")
+    if indicators["dishonesty_count"] == 0:
+        indicators["dishonesty_count"] = _total("dishonesty")
+    if indicators["pledge_count"] == 0:
+        indicators["pledge_count"] = _total("equityPledge")
+    # major_lawsuit: also check individual lawsuit collection
+    if not indicators["major_lawsuit"]:
+        indicators["major_lawsuit"] = _total("lawSuit") >= 3
 
     return indicators
 
