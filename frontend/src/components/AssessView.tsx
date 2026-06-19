@@ -312,7 +312,7 @@ export default function AssessView() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   <div>
                     <p className="font-medium mb-2 text-[var(--color-text-secondary)]">司法</p>
-                    <Row label="诉讼" value={rd?.lawsuit_count ?? 0} />
+                    <SuitRow rd={rd} />
                     <Row label="被执行" value={rd?.executed_count ?? 0} />
                     <Row label="失信" value={rd?.dishonesty_count ?? 0} />
                     <Row label="重大诉讼" warn={rd?.major_lawsuit} />
@@ -387,7 +387,7 @@ export default function AssessView() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   <div>
                     <p className="font-medium mb-2 text-[var(--color-text-secondary)]">司法</p>
-                    <Row label="诉讼" value={rd?.lawsuit_count ?? 0} />
+                    <SuitRow rd={rd} />
                     <Row label="被执行" value={rd?.executed_count ?? 0} />
                     <Row label="失信" value={rd?.dishonesty_count ?? 0} />
                     <Row label="重大诉讼" warn={rd?.major_lawsuit} />
@@ -654,6 +654,24 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-base font-semibold">{value}</div>
       <div className="text-xs text-gray-400 mt-0.5">{label}</div>
     </div>
+  );
+}
+
+function SuitRow({ rd }: { rd?: { lawsuit_count: number; recent_lawsuits?: number } }) {
+  const recent = rd?.recent_lawsuits;
+  const total = rd?.lawsuit_count ?? 0;
+  return (
+    <p className="text-xs text-gray-500 py-0.5">
+      近3年诉讼{' '}
+      {recent != null ? (
+        <>
+          <span className="font-medium text-[var(--color-text)]">{recent}</span>
+          <span className="text-[var(--color-text-muted)] ml-1">(累计 {total})</span>
+        </>
+      ) : (
+        <span className="font-medium text-[var(--color-text)]">{total}</span>
+      )}
+    </p>
   );
 }
 

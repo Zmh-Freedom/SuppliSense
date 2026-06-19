@@ -258,6 +258,31 @@ def _rank_and_dedupe(names: list[str], keyword: str) -> list[str]:
     return result
 
 
+def get_recent_lawsuits(company_name: str, years: int = 3) -> int:
+    """
+    从 lawSuit_detail 获取近 N 年裁判文书数量（按 judgeTime 过滤）。
+
+    lawSuit_detail 由 tianyancha_client 翻页拉取全量后存入。
+    """
+    from datetime import datetime, timedelta, timezone
+    db = get_db()
+    doc = db["lawSuit_detail"].find_one({"name": company_name})
+    if not doc:
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=years * 365)
+    count = 0
+    for item in doc.get("items", []):
+        jt = item.get("judgeTime", "")
+        if jt:
+            try:
+                jd = datetime.strptime(jt, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                if jd >= cutoff:
+                    count += 1
+            except ValueError:
+                pass
+    return count
+
+
 def _empty_indicators() -> dict:
     return {
         "executed_count": 0,

@@ -67,10 +67,10 @@
   --color-border: rgba(255,255,255,0.45);
   --color-border-hover: rgba(255,255,255,0.65);
   --color-border-focus: rgba(99,102,241,0.5);
-  --color-primary-bg: #1e293b;
-  --color-primary-hover: #334155;
+  --color-primary-bg: #7c3aed;
+  --color-primary-hover: #6d28d9;
   --color-primary-text: #fff;
-  --color-focus-ring: #6366f1;
+  --color-focus-ring: #8b5cf6;
   --color-scrollbar: rgba(148,163,184,0.4);
   --color-divider: rgba(255,255,255,0.25);
   --color-input-bg: rgba(255,255,255,0.4);

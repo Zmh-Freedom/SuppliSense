@@ -15,6 +15,7 @@
 """
 
 import httpx
+from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.db.mongo import get_db
@@ -99,7 +100,46 @@ def fetch_company(company_name: str) -> bool:
             _save(collection, company_name, resp, wrapper_key)
             saved = True
 
+    # lawSuit 单独翻页拉取全量（含 judgeTime 用于时间衰减评分）
+    _fetch_lawsuit_paginated(company_name)
+
     return saved
+
+
+def _fetch_lawsuit_paginated(company_name: str) -> None:
+    """
+    翻页拉取 lawSuit 全量数据，保存到 lawSuit_detail 集合。
+
+    每条记录保留 judgeTime，供评分时近 3 年过滤。翻页合并后存为 flat items 列表。
+    """
+    path = "/services/open/jr/lawSuit/3.0"
+    all_items: list[dict] = []
+    page = 1
+    page_size = 20
+
+    while True:
+        resp = _call_with_page(path, company_name, page, page_size)
+        if resp is None:
+            break
+        result = resp.get("result") or {}
+        items = result.get("items", [])
+        all_items.extend(items)
+        if len(items) < page_size:
+            break
+        page += 1
+
+    if all_items:
+        db = get_db()
+        db["lawSuit_detail"].update_one(
+            {"name": company_name},
+            {"$set": {
+                "name": company_name,
+                "total": len(all_items),
+                "items": all_items,
+                "fetched_at": datetime.now(timezone.utc),
+            }},
+            upsert=True,
+        )
 
 
 def _call(path: str, company_name: str) -> dict | None:
@@ -115,6 +155,26 @@ def _call(path: str, company_name: str) -> dict | None:
         data = r.json()
         code = data.get("error_code", -1)
         if code == 0 or code == 300000:  # 0=success, 300000=no results (valid)
+            return data
+        return None
+    except Exception:
+        return None
+
+
+def _call_with_page(path: str, company_name: str, page_num: int, page_size: int) -> dict | None:
+    """翻页调用天眼查 API。"""
+    try:
+        r = httpx.get(
+            f"{BASE_URL}{path}",
+            params={"keyword": company_name, "pageNum": page_num, "pageSize": page_size},
+            headers={"Authorization": TOKEN},
+            timeout=30.0,
+        )
+        if not r.is_success:
+            return None
+        data = r.json()
+        code = data.get("error_code", -1)
+        if code == 0 or code == 300000:
             return data
         return None
     except Exception:

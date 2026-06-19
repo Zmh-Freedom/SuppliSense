@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 
-from app.repositories.company_repo import get_risk_info, get_risk_indicators
+from app.repositories.company_repo import get_risk_info, get_risk_indicators, get_recent_lawsuits
 from app.repositories.financial_repo import get_financial_metrics
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.services.alert_service import save_snapshot
@@ -117,6 +117,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
 
     risk_detail = {
         "lawsuit_count": risk.lawsuit_count,
+        "recent_lawsuits": get_recent_lawsuits(name, years=3),
         "executed_count": indicators["executed_count"] or risk.executed_count,
         "dishonesty_count": indicators["dishonesty_count"],
         "major_lawsuit": indicators["major_lawsuit"],
@@ -241,10 +242,16 @@ def _calc_score(req: RiskCalculateRequest, industry: str = "制造业") -> tuple
     # ==================== 司法风险 (0-25) ====================
     jud_items = {}
     jud_raw = 0
-    lawsuit_pts = _clamp(risk.lawsuit_count * 0.3, 0, 10)
-    if lawsuit_pts > 0:
-        jud_items["诉讼"] = f"{lawsuit_pts:.1f}分 ({risk.lawsuit_count}起)"
-        jud_raw += lawsuit_pts
+    # 诉讼：优先用 lawSuit_detail 近 3 年裁判文书（时间衰减），回退 riskInfo 汇总
+    recent = get_recent_lawsuits(req.company.company_name, years=3)
+    if recent > 0:
+        lawsuit_pts = _clamp(recent * 0.5, 0, 10)
+        jud_items["诉讼(近3年)"] = f"{lawsuit_pts:.1f}分 ({recent}起裁判文书)"
+    else:
+        lawsuit_pts = _clamp(risk.lawsuit_count * 0.05, 0, 4)
+        if lawsuit_pts > 0:
+            jud_items["诉讼(历史)"] = f"{lawsuit_pts:.1f}分 ({risk.lawsuit_count}起，近3年无新裁判文书)"
+    jud_raw += lawsuit_pts
     exec_pts = _clamp(risk.executed_count * 5, 0, 20)
     if exec_pts > 0:
         jud_items["被执行"] = f"{exec_pts:.1f}分 ({risk.executed_count}条)"

@@ -8,6 +8,7 @@ export interface CompanyProfile {
 
 export interface RiskDetail {
   lawsuit_count: number;
+  recent_lawsuits?: number;
   executed_count: number;
   dishonesty_count: number;
   major_lawsuit: boolean;
@@ -50,10 +51,12 @@ export interface RiskResult {
 }
 
 export interface AlertDoc {
+  _id: string;
   company_name: string;
   created_at: string;
   changes: { field: string; old: number | boolean; new: number | boolean }[];
   severity: 'warning' | 'critical';
+  read?: boolean;
 }
 
 export interface WatchlistData {
