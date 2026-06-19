@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAlertHistory } from '../hooks';
 import { api } from '../api';
@@ -41,15 +41,7 @@ function AlertBell() {
   const queryClient = useQueryClient();
   const { data } = useAlertHistory();
   const alertList = data?.alerts ?? [];
-  const alertUnread = data?.unread_count ?? 0;
-
-  const { data: notifData } = useQuery({
-    queryKey: queryKeys.notifications(1),
-    queryFn: () => api.get<{ unread_count: number }>('/notifications?limit=1'),
-    refetchInterval: 30_000,
-  });
-  const notifUnread = notifData?.unread_count ?? 0;
-  const unreadCount = alertUnread + notifUnread;
+  const unreadCount = data?.unread_count ?? 0;
   const [open, setOpen] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [pos, setPos] = useState({ top: 0, left: 0 });
