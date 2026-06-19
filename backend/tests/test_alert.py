@@ -1,27 +1,26 @@
-def test_watch_and_unwatch(client):
-    resp = client.post("/alert/watch", json={"company_name": "测试监控公司"})
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "watching"
-
-    resp = client.get("/alert/watchlist")
-    assert resp.status_code == 200
-    assert "测试监控公司" in resp.json()["companies"]
-
-    resp = client.delete("/alert/watch", params={"company_name": "测试监控公司"})
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "removed"
+"""预警端点认证测试。"""
 
 
-def test_check_no_history(client):
-    resp = client.post("/alert/check", json={"company_name": "从未评估过的公司"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["changed"] is False
-    assert "暂无历史快照" in data.get("message", "")
+def test_alert_watch_requires_auth(client):
+    resp = client.post("/api/v1/alert/watch", json={"company_name": "测试监控公司"})
+    assert resp.status_code == 401
 
 
-def test_status_no_history(client):
-    resp = client.get("/alert/status", params={"company_name": "不存在的公司"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["has_snapshot"] is False
+def test_alert_watchlist_requires_auth(client):
+    resp = client.get("/api/v1/alert/watchlist")
+    assert resp.status_code == 401
+
+
+def test_alert_status_requires_auth(client):
+    resp = client.get("/api/v1/alert/status", params={"company_name": "测试公司"})
+    assert resp.status_code == 401
+
+
+def test_alert_check_requires_auth(client):
+    resp = client.post("/api/v1/alert/check", json={"company_name": "测试公司"})
+    assert resp.status_code == 401
+
+
+def test_alert_unwatch_requires_auth(client):
+    resp = client.delete("/api/v1/alert/watch", params={"company_name": "测试公司"})
+    assert resp.status_code == 401

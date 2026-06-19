@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/services/feishu.py",
+]
+
+[tool.coverage.report]
+fail_under = 0
+show_missing = true
