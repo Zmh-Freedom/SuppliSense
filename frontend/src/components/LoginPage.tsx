@@ -43,8 +43,8 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="bg-[var(--color-surface)] glass-surface rounded-2xl shadow-md border border-[var(--color-border)] p-8">
           <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold text-[var(--color-text)]">供应商风险分析</h1>
-            <p className="text-sm text-gray-400 mt-2">请登录以继续</p>
+            <h1 className="text-2xl font-bold text-[var(--color-text)]">SuppliSense</h1>
+            <p className="text-sm text-gray-400 mt-2">AI-Powered Sourcing &amp; Risk Intelligence</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-4">

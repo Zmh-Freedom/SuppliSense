@@ -80,6 +80,21 @@ export default function SentimentPanel({ companyName, embedded }: { companyName?
       company_name: companyName,
       force_refresh: true,
     }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.sentimentDetail(companyName || '') });
+      const prev = queryClient.getQueryData<CompanySentiment & { analyzing?: boolean }>(
+        queryKeys.sentimentDetail(companyName || '')
+      );
+      if (prev) {
+        queryClient.setQueryData(queryKeys.sentimentDetail(companyName || ''), { ...prev, analyzing: true });
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.prev) {
+        queryClient.setQueryData(queryKeys.sentimentDetail(companyName || ''), context.prev);
+      }
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.sentimentDetail(companyName || '') }),
   });
 
@@ -88,6 +103,7 @@ export default function SentimentPanel({ companyName, embedded }: { companyName?
   const error = dashQuery.error || detailQuery.error;
   const analyzing = detail?.analyzing ?? false;
   const isStale = detail?.is_stale ?? false;
+  const isRefreshing = analyzing || analyzeMutation.isPending;
 
   // WebSocket invalidation
   useEffect(() => {
@@ -122,17 +138,17 @@ export default function SentimentPanel({ companyName, embedded }: { companyName?
         <div className={`flex items-center ${embedded ? 'justify-end' : 'justify-between'}`}>
           {!embedded && <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">📰 舆情分析</h3>}
           <div className="flex items-center gap-2">
-            {isStale && (
-              <span className="text-[10px] text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded">
-                数据已过期，后台刷新中
+            {isRefreshing && (
+              <span className="text-[10px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded animate-pulse">
+                刷新中…
               </span>
             )}
             <button
               onClick={() => analyzeMutation.mutate()}
-              disabled={analyzeMutation.isPending}
-              className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50"
+              disabled={isRefreshing}
+              className="text-xs text-blue-500 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {analyzeMutation.isPending ? '分析中…' : '刷新分析'}
+              {isRefreshing ? '刷新中…' : '刷新分析'}
             </button>
           </div>
         </div>
