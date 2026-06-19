@@ -53,4 +53,11 @@ def decode_token(token: str) -> dict[str, Any] | None:
         return None
 
 
-decode_access_token = decode_token  # backward compatibility
+def decode_access_token(token: str) -> dict[str, Any] | None:
+    """Decode an access token. Returns None for non-access tokens."""
+    payload = decode_token(token)
+    if payload is None:
+        return None
+    if payload.get("type") != "access":
+        return None
+    return payload

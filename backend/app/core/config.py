@@ -13,14 +13,14 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Application
-    APP_NAME: str = "Supplier Risk Analysis Agent"
+    APP_NAME: str = "SuppliSense"
     APP_VERSION: str = "0.3.0"
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
 
     # JWT Auth
     SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
     # MongoDB
@@ -44,6 +44,22 @@ class Settings(BaseSettings):
     FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
 
+    # PostgreSQL
+    PG_HOST: str = os.getenv("PG_HOST", "localhost")
+    PG_PORT: int = int(os.getenv("PG_PORT", "5432"))
+    PG_USER: str = os.getenv("PG_USER", "sra")
+    PG_PASSWORD: str = os.getenv("PG_PASSWORD", "")
+    PG_DB: str = os.getenv("PG_DB", "sra")
+    PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "2"))
+    PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "10"))
+
+    # Feature flags: gradual migration to PostgreSQL
+    USE_PG_USERS: bool = os.getenv("USE_PG_USERS", "false").lower() == "true"
+    USE_PGVECTOR: bool = os.getenv("USE_PGVECTOR", "false").lower() == "true"
+
+    # ChromaDB (deprecated, kept for migration period)
+    CHROMA_PATH: str = os.getenv("CHROMA_PATH", "./data/chroma")
+
     # Redis
     REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
@@ -53,7 +69,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_AUTH: str = "5/minute"
 
     # CORS
-    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
 
     # Cookie
     COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "true").lower() == "true"

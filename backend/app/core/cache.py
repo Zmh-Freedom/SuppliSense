@@ -11,10 +11,14 @@ import redis
 
 from app.core.config import settings
 
+_ALLOWED_MODELS: dict[str, str] = {
+    "app.schemas.company.CompanyProfile": "app.schemas.company:CompanyProfile",
+    "app.schemas.risk.RiskInfo": "app.schemas.risk:RiskInfo",
+}
+
 # Redis client for caching (db 2)
-cache_client = redis.Redis(
-    host=settings.MONGO_HOST if hasattr(settings, "MONGO_HOST") else "localhost",
-    port=6379,
+cache_client = redis.Redis.from_url(
+    settings.REDIS_URL,
     db=2,
     decode_responses=True,
 )
@@ -66,11 +70,13 @@ def cached(prefix: str, ttl: int = 3600):
                     # Reconstruct Pydantic model if type info stored
                     if isinstance(data, dict) and '__type__' in data:
                         type_name = data['__type__']
-                        mod_name, cls_name = type_name.rsplit('.', 1)
-                        import importlib
-                        mod = importlib.import_module(mod_name)
-                        cls = getattr(mod, cls_name)
-                        return cls(**data['data'])
+                        if type_name in _ALLOWED_MODELS:
+                            mod_name, cls_name = _ALLOWED_MODELS[type_name].rsplit(':', 1)
+                            import importlib
+                            mod = importlib.import_module(mod_name)
+                            cls = getattr(mod, cls_name)
+                            return cls(**data['data'])
+                        return data['data'] if 'data' in data else data
                     return data
             except Exception:
                 pass
