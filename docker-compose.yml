@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   mongo:
     image: mongo:8
@@ -8,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?请设置 MONGO_PASSWORD 环境变量}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?请设置 MONGO_PASSWORD}
     volumes:
       - ~/docker-volumes/mongodb:/data/db
     healthcheck:
@@ -26,17 +24,54 @@ services:
           cpus: '0.25'
     networks:
       - internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    pull_policy: missing
+    container_name: sra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-sra}
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: ${PG_DB:-sra}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-sra} -d ${PG_DB:-sra}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: '1.0'
+        reservations:
+          memory: 128m
+          cpus: '0.25'
+    networks:
+      - internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   redis:
     image: redis:7-alpine
     pull_policy: missing
     container_name: sra-redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASSWORD:-}
+    command: redis-server --requirepass ${REDIS_PASSWORD:?请设置 REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -50,6 +85,11 @@ services:
           cpus: '0.1'
     networks:
       - internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build:
@@ -64,6 +104,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -74,10 +116,19 @@ services:
           cpus: '0.5'
     volumes:
       - uploads_data:/app/uploads
-      - chroma_data:/app/data/chroma
     networks:
       - internal
       - external
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   frontend:
     build:
@@ -88,7 +139,8 @@ services:
     ports:
       - "80:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -99,12 +151,17 @@ services:
           cpus: '0.1'
     networks:
       - external
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   mongo_data:
   redis_data:
   uploads_data:
-  chroma_data:
+  pg_data:
 
 networks:
   internal:

@@ -8,6 +8,11 @@
 **/*.pid
 **/.env
 **/.env.local
+**/.env.docker
+**/backups/
+**/tests/
 .git/
 .DS_Store
 *.log
+*.md
+*.sh
