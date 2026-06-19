@@ -33,6 +33,7 @@ def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
         "risk_level": result.risk_level,
         "risk_detail": result.risk_detail,
         "financial": result.financial.model_dump() if result.financial else None,
+        "score_breakdown": result.score_breakdown,
     }
     db["alert_snapshots"].insert_one(doc)
 
