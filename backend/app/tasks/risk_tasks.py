@@ -1,18 +1,18 @@
 """
-Risk assessment and alert tasks.
+Risk assessment background tasks (plain functions, no Celery).
 """
 
-from app.core.celery_app import celery_app
+import logging
+
+logger = logging.getLogger(__name__)
 
 
-@celery_app.task(bind=True, name="assess_risk_async")
-def assess_risk_async(self, company_name: str) -> dict:
-    """Asynchronous risk assessment."""
+def assess_risk_async(company_name: str) -> dict:
+    """Run risk assessment in background."""
     from app.schemas import RiskAssessRequest
     from app.services.risk_service import assess_risk
 
     try:
-        self.update_state(state="PROGRESS", meta={"status": "评估中", "company_name": company_name})
         result = assess_risk(RiskAssessRequest(company_name=company_name))
         return {
             "status": "success",
@@ -20,6 +20,7 @@ def assess_risk_async(self, company_name: str) -> dict:
             "result": result.model_dump(),
         }
     except Exception as e:
+        logger.error("assess_risk_async_failed company=%s error=%s", company_name, e)
         return {
             "status": "error",
             "company_name": company_name,
@@ -27,17 +28,13 @@ def assess_risk_async(self, company_name: str) -> dict:
         }
 
 
-@celery_app.task(bind=True, name="refresh_company_async")
-def refresh_company_async(self, company_name: str) -> dict:
-    """Asynchronous Tianyancha refresh (paid)."""
+def refresh_company_async(company_name: str) -> dict:
+    """Run Tianyancha refresh in background (paid)."""
     from app.services.alert_service import detect_changes
     from app.services.tianyancha_client import fetch_company
 
     try:
-        self.update_state(state="PROGRESS", meta={"status": "拉取天眼查数据", "company_name": company_name})
         fetch_company(company_name)
-
-        self.update_state(state="PROGRESS", meta={"status": "检测变化", "company_name": company_name})
         changes = detect_changes(company_name)
 
         return {
@@ -46,6 +43,7 @@ def refresh_company_async(self, company_name: str) -> dict:
             "changes": changes,
         }
     except Exception as e:
+        logger.error("refresh_company_async_failed company=%s error=%s", company_name, e)
         return {
             "status": "error",
             "company_name": company_name,
@@ -53,33 +51,29 @@ def refresh_company_async(self, company_name: str) -> dict:
         }
 
 
-@celery_app.task(bind=True, name="batch_refresh_all")
-def batch_refresh_all(self) -> dict:
-    """Batch refresh all watched companies."""
+def batch_refresh_all() -> dict:
+    """Batch refresh all watched companies (paid)."""
     from app.services.alert_service import get_watchlist
 
     companies = get_watchlist()
-    task_ids = []
-
+    results = []
     for company in companies:
-        result = refresh_company_async.delay(company)
-        task_ids.append({"company": company, "task_id": result.id})
+        results.append(refresh_company_async(company))
 
     return {
-        "status": "submitted",
+        "status": "completed",
         "total": len(companies),
-        "tasks": task_ids,
+        "results": results,
     }
 
 
-@celery_app.task(bind=True, name="check_all_async")
-def check_all_async(self) -> dict:
+def check_all_async() -> dict:
     """Run financial check for all watched companies (free)."""
     from app.services.scheduler import run_financial_check
 
     try:
-        self.update_state(state="PROGRESS", meta={"status": "免费巡检中"})
         result = run_financial_check()
         return {"status": "success", "result": result}
     except Exception as e:
+        logger.error("check_all_async_failed error=%s", e)
         return {"status": "error", "error": str(e)}

@@ -242,17 +242,22 @@ async def change_password(
 ):
     """Change current user's password."""
     from app.core.security import verify_password, get_password_hash
-    from app.db.mongo import get_db
-    from bson import ObjectId
+    from app.core.config import settings
 
     if not verify_password(req.old_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
 
-    db = get_db()
-    db["users"].update_one(
-        {"_id": ObjectId(current_user.id)},
-        {"$set": {"password_hash": get_password_hash(req.new_password)}},
-    )
+    if settings.USE_PG_USERS:
+        from app.repositories.user_repo import update_user as pg_update_user
+        pg_update_user(current_user.id, password_hash=get_password_hash(req.new_password))
+    else:
+        from app.db.mongo import get_db
+        from bson import ObjectId
+        db = get_db()
+        db["users"].update_one(
+            {"_id": ObjectId(current_user.id)},
+            {"$set": {"password_hash": get_password_hash(req.new_password)}},
+        )
     return {"detail": "密码已修改"}
 
 

@@ -3,7 +3,7 @@
 import json
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 
 def _sse_event(event_type: str, data: dict) -> str:

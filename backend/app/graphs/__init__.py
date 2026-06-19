@@ -1,1 +1,1 @@
-"""LangGraph agent graphs for SupplierRiskAnalysisAgent."""
+"""LangGraph agent graphs for SuppliSense."""
