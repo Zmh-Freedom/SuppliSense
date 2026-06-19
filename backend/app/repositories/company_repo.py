@@ -155,6 +155,55 @@ def get_risk_indicators(company_name: str) -> dict:
     return indicators
 
 
+def normalize_company_name(name: str) -> str:
+    """
+    将短名规范化为全称。防止同一企业因名称不一致导致数据缺失。
+
+    规则：如果 name 是某个已知全称的真子串（如"海康威视"⊂"杭州海康威视..."），
+    且全称有完整风险数据，则返回全称。
+    """
+    if not name or len(name) < 3:
+        return name
+
+    db = get_db()
+    # 精确匹配优先
+    if db["baseinfo"].find_one({"name": name}):
+        risk_doc = db["riskInfo"].find_one({"name": name})
+        if _has_risk_data(risk_doc):
+            return name
+
+    # 模糊匹配：查找包含 name 的全称
+    candidates = list(db["baseinfo"].find(
+        {"name": {"$regex": name, "$options": "i"}},
+        {"name": 1},
+    ).limit(20))
+
+    for doc in candidates:
+        full_name = doc["name"]
+        if full_name == name:
+            continue
+        if name not in full_name:
+            continue
+        # 只有全称有风险数据时才替换
+        if _has_risk_data(db["riskInfo"].find_one({"name": full_name})):
+            return full_name
+
+    return name
+
+
+def _has_risk_data(doc: dict | None) -> bool:
+    """检查风险文档是否包含实际数据。"""
+    if not doc:
+        return False
+    item = doc.get("item", {}) or {}
+    result = item.get("result", {}) or {}
+    for cat in result.get("riskList", []):
+        for sub in cat.get("list", []):
+            if sub.get("total", 0) > 0:
+                return True
+    return False
+
+
 def search_companies(keyword: str, limit: int = 20) -> list[str]:
     db = get_db()
     regex = {"$regex": keyword, "$options": "i"}

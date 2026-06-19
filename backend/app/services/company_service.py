@@ -9,14 +9,17 @@ from app.services.tianyancha_client import fetch_company
 
 @cached("company_profile", ttl=7200)
 def get_company_profile(company_name: str) -> CompanyProfile:
-    profile = get_baseinfo(company_name)
+    from app.repositories.company_repo import normalize_company_name
+
+    name = normalize_company_name(company_name)
+    profile = get_baseinfo(name)
     if profile is None:
-        _try_fetch_from_api(company_name)
-        profile = get_baseinfo(company_name)
+        _try_fetch_from_api(name)
+        profile = get_baseinfo(name)
         # If still not found, try fuzzy search (short name → full name in DB)
         if profile is None:
             from app.repositories.company_repo import search_companies
-            matches = search_companies(company_name, limit=1)
+            matches = search_companies(name, limit=1)
             if matches:
                 profile = get_baseinfo(matches[0])
     if profile is None:

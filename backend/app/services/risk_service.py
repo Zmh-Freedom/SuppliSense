@@ -77,6 +77,19 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     financial = get_financial_metrics(name)
     industry_category = _classify_industry(profile.industry)
 
+    # 数据质量检查：已知企业但风险指标全零 → 大概率短名数据缺失
+    _risk_indicators = ["dishonesty_count", "lawsuit_count", "executed_count",
+                        "abnormal_operation_count", "administrative_penalty_count",
+                        "guarantee_count", "pledge_count", "bankruptcy_count", "env_penalty_count"]
+    _all_zero = all(indicators.get(k, 0) == 0 for k in _risk_indicators)
+    if _all_zero and not indicators.get("major_lawsuit") and risk.lawsuit_count == 0:
+        from app.core.logging import get_logger
+        _logger = get_logger(__name__)
+        _logger.warning("risk_data_suspiciously_empty",
+                         company=name,
+                         industry=industry_category,
+                         hint="所有风险指标为零，可能是短名查询数据不完整")
+
     # check if in watchlist
     from app.services.alert_service import get_watchlist
     in_watchlist = name in get_watchlist()
