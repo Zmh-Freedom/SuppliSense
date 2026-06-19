@@ -7,22 +7,48 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import get_current_user
+from app.core.logging import get_logger
 from app.db.mongo import get_db
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/trend", tags=["trend"], dependencies=[Depends(get_current_user)])
 
 
 @router.get(
     "/risk/{company_name}",
     summary="企业风险评分趋势",
-    description="获取指定企业在过去 N 天内的风险评分时间序列。数据来源于 alert_snapshots 集合。",
+    description="获取指定企业风险评分时间序列。优先从 PG 读取并按 scoring_version 过滤，确保新旧评分体系不混淆。",
     responses={500: {"description": "服务器内部错误"}},
 )
 async def risk_trend(
     company_name: str,
     days: int = Query(90, description="查询天数（默认 90 天）"),
 ):
-    """Get risk score trend for a company over N days."""
+    """
+    风险评分趋势。
+
+    优先从 PG assessment_history 读取，按最新 scoring_version 过滤。
+    PG 不可用时回退到 MongoDB alert_snapshots。
+    """
+    from app.services.risk_service import SCORING_VERSION
+
+    # 优先 PG
+    try:
+        from app.repositories.assessment_repo import get_trend as pg_get_trend
+
+        data = pg_get_trend(company_name, days=days, scoring_version=SCORING_VERSION)
+        if data:
+            return {
+                "company_name": company_name,
+                "days": days,
+                "scoring_version": SCORING_VERSION,
+                "source": "postgresql",
+                "data": data,
+            }
+    except Exception as e:
+        logger.warning("trend_pg_fallback", company=company_name, error=str(e))
+
+    # 回退 MongoDB
     db = get_db()
     since = datetime.now(timezone.utc) - timedelta(days=days)
     snapshots = list(
@@ -37,6 +63,8 @@ async def risk_trend(
     return {
         "company_name": company_name,
         "days": days,
+        "scoring_version": "unknown",
+        "source": "mongodb",
         "data": [
             {
                 "date": s["checked_at"].strftime("%Y-%m-%d"),

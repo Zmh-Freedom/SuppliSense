@@ -65,6 +65,58 @@ def get_history(
         return [_row_to_dict(columns, row) for row in rows]
 
 
+def get_trend(
+    company_name: str,
+    days: int = 90,
+    scoring_version: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    获取风险评分时间序列，按 scoring_version 过滤。
+
+    如果不指定 scoring_version，返回最新版本的数据。
+    """
+    with get_cursor() as (conn, cur):
+        if scoring_version:
+            cur.execute(
+                """SELECT risk_score, risk_level, created_at
+                   FROM assessment_history
+                   WHERE company_name = %s
+                     AND scoring_version = %s
+                     AND created_at >= NOW() - INTERVAL '%s days'
+                   ORDER BY created_at ASC""",
+                (company_name, scoring_version, days),
+            )
+        else:
+            # 找到该公司最新的评分版本
+            cur.execute(
+                """SELECT scoring_version FROM assessment_history
+                   WHERE company_name = %s
+                   ORDER BY created_at DESC LIMIT 1""",
+                (company_name,),
+            )
+            row = cur.fetchone()
+            version = row[0] if row else "unknown"
+            cur.execute(
+                """SELECT risk_score, risk_level, created_at
+                   FROM assessment_history
+                   WHERE company_name = %s
+                     AND scoring_version = %s
+                     AND created_at >= NOW() - INTERVAL '%s days'
+                   ORDER BY created_at ASC""",
+                (company_name, version, days),
+            )
+
+        rows = cur.fetchall()
+        return [
+            {
+                "date": row[2].strftime("%Y-%m-%d") if hasattr(row[2], "strftime") else str(row[2])[:10],
+                "risk_score": row[0],
+                "risk_level": row[1],
+            }
+            for row in rows
+        ]
+
+
 def _row_to_dict(columns, row) -> dict[str, Any]:
     result = dict(zip(columns, row))
     if "id" in result and hasattr(result["id"], "hex"):
