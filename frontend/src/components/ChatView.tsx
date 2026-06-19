@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api, chatStream } from '../api';
+import { getRiskColor } from '../riskColors';
 import type { ChatMessage, RiskResult } from '../types';
 
 const CAPABILITIES = [
@@ -606,7 +607,7 @@ function QuickAssess() {
 
             <div className="flex items-center gap-3 mb-3">
               <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
-                style={{ background: data.risk_score <= 30 ? '#2d8c63' : data.risk_score <= 60 ? '#d4a040' : '#e06060' }}>
+                style={{ background: getRiskColor(data.risk_score) }}>
                 {data.risk_score}
               </div>
               <span className="text-sm font-semibold">{data.risk_level}</span>

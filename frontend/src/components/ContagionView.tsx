@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { getRiskColor, getRiskLevel } from '../riskColors';
 import {
   ReactFlow,
   Controls,
@@ -51,9 +52,11 @@ const COLORS: Record<string, { line: string; bg: string; text: string; label: st
 };
 
 function riskColor(score: number) {
-  if (score >= 60) return { line: '#f87171', bg: '#fef2f2', text: '#dc2626', label: '高风险' };
-  if (score >= 30) return { line: '#fbbf24', bg: '#fffbeb', text: '#b45309', label: '中风险' };
-  return { line: '#4ade80', bg: '#f0fdf4', text: '#16a34a', label: '低风险' };
+  const text = getRiskColor(score);
+  const label = getRiskLevel(score);
+  if (score >= 60) return { line: '#f87171', bg: '#fef2f2', text, label };
+  if (score >= 30) return { line: '#fbbf24', bg: '#fffbeb', text, label };
+  return { line: '#4ade80', bg: '#f0fdf4', text, label };
 }
 
 interface NodeData {

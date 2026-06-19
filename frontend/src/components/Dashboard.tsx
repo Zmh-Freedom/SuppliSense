@@ -6,6 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import SentimentPanel from './SentimentPanel';
 import RiskMatrix from './RiskMatrix';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
+import { getRiskColor, getRiskBg, getRiskLevel } from '../riskColors';
 import { useDashboard, useWatchlist } from '../hooks';
 import { queryKeys } from '../query-keys';
 import type { Prediction } from '../types';
@@ -110,9 +111,9 @@ export default function Dashboard() {
   );
 
   const levels = [
-    { key: '高风险', color: '#e06060', bg: '#fef5f5' },
-    { key: '中风险', color: '#d4a040', bg: '#fffbf0' },
-    { key: '低风险', color: '#2d8c63', bg: '#ecfdf5' },
+    { key: '高风险', color: getRiskColor(61), bg: getRiskBg(61) },
+    { key: '中风险', color: getRiskColor(31), bg: getRiskBg(31) },
+    { key: '低风险', color: getRiskColor(0), bg: getRiskBg(0) },
     { key: '未知', color: '#999', bg: '#f5f5f5' },
   ];
 
@@ -149,9 +150,9 @@ export default function Dashboard() {
       {/* summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryCard label="监控企业" value={data.total} color="#333" />
-        <SummaryCard label="告警" value={data.alert_count} color="#e06060" />
-        <SummaryCard label="高风险" value={data.distribution['高风险'] || 0} color="#e06060" />
-        <SummaryCard label="低风险" value={data.distribution['低风险'] || 0} color="#2d8c63" />
+        <SummaryCard label="告警" value={data.alert_count} color={getRiskColor(61)} />
+        <SummaryCard label="高风险" value={data.distribution['高风险'] || 0} color={getRiskColor(61)} />
+        <SummaryCard label="低风险" value={data.distribution['低风险'] || 0} color={getRiskColor(0)} />
       </div>
 
       {/* Trend Charts */}
@@ -303,7 +304,7 @@ export default function Dashboard() {
               const company = data.companies.find(c => c.name === name);
               const score = company?.score;
               const level = company?.level || '未知';
-              const levelColor = level === '高风险' ? '#e06060' : level === '中风险' ? '#d4a040' : level === '低风险' ? '#2d8c63' : '#999';
+              const levelColor = level === '未知' ? '#999' : getRiskColor(level === '高风险' ? 61 : level === '中风险' ? 31 : 0);
               return (
                 <div key={name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
                   <button

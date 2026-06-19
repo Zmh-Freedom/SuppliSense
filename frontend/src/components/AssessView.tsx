@@ -12,15 +12,16 @@ import { queryKeys } from '../query-keys';
 import { useWatchlist } from '../hooks';
 import SentimentPanel from './SentimentPanel';
 import WatchlistPanel from './WatchlistPanel';
+import { getRiskColor, getRiskBg, getRiskLevel } from '../riskColors';
 import Skeleton, { SkeletonChart } from './Skeleton';
 
 const LEVEL_COLOR: Record<string, string> = {
-  '高风险': '#dc2626', '中风险': '#d97706', '低风险': '#16a34a',
-  '严重': '#dc2626', '中等': '#d97706', '轻微': '#16a34a',
-  'critical': '#dc2626', 'high': '#dc2626', 'medium': '#d97706', 'low': '#16a34a',
+  '高风险': getRiskColor(61), '中风险': getRiskColor(31), '低风险': getRiskColor(0),
+  '严重': getRiskColor(61), '中等': getRiskColor(31), '轻微': getRiskColor(0),
+  'critical': getRiskColor(61), 'high': getRiskColor(61), 'medium': getRiskColor(31), 'low': getRiskColor(0),
 };
 const LEVEL_BG: Record<string, string> = {
-  '高风险': '#fef2f2', '中风险': '#fffbf0', '低风险': '#ecfdf5',
+  '高风险': getRiskBg(61), '中风险': getRiskBg(31), '低风险': getRiskBg(0),
 };
 
 type SubTab = 'overview' | 'financial' | 'risk' | 'relations';
@@ -101,8 +102,8 @@ export default function AssessView() {
   };
 
   const score = data?.risk_score ?? 0;
-  const color = score <= 30 ? '#2d8c63' : score <= 60 ? '#d4a040' : '#e06060';
-  const bg = score <= 30 ? '#ecfdf5' : score <= 60 ? '#fffbf0' : '#fef5f5';
+  const color = getRiskColor(score);
+  const bg = getRiskBg(score);
   const rd = data?.risk_detail;
   const fin = data?.financial;
 
@@ -276,8 +277,8 @@ export default function AssessView() {
                         contentStyle={{background: '#fff', border: '1px solid #e8e8e3', borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.06)', fontSize: 12, padding: '8px 12px'}}
                         labelStyle={{color: '#999', marginBottom: 2}}
                         formatter={(value) => {
-                          const lvl = Number(value) >= 60 ? '高风险' : Number(value) >= 30 ? '中风险' : '低风险';
-                          const clr = Number(value) >= 60 ? '#dc2626' : Number(value) >= 30 ? '#d97706' : '#16a34a';
+                          const lvl = getRiskLevel(Number(value));
+                          const clr = getRiskColor(Number(value));
                           return [<span key={0} style={{color: clr, fontWeight: 600}}>{value} 分 · {lvl}</span>, ''];
                         }}
                       />
@@ -553,7 +554,7 @@ export default function AssessView() {
 }
 
 function ExpandableSentiment({ name }: { name: string }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
 
   return (
     <div className="mt-3">
@@ -592,19 +593,19 @@ function ExpandableSentiment({ name }: { name: string }) {
 // ---- Expandable section ----
 
 function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: string; render: (d: T) => React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState(false);
 
-  const toggle = async () => {
+  useEffect(() => {
+    if (open && !data && !error) {
+      api.get<T>(endpoint).then(setData).catch(() => setError(true));
+    }
+  }, [open, data, error, endpoint]);
+
+  const toggle = () => {
     if (open) { setOpen(false); return; }
     setOpen(true);
-    if (!data && !error) {
-      try {
-        const d = await api.get<T>(endpoint);
-        setData(d);
-      } catch { setError(true); }
-    }
   };
 
   return (

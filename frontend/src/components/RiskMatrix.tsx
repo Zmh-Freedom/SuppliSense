@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useDashboard } from '../hooks';
+import { getRiskColor } from '../riskColors';
 import Skeleton from './Skeleton';
 
 interface CompanySnap {
@@ -23,8 +24,7 @@ export default function RiskMatrix() {
   const toX = (score: number) => score;
   const toY = (trend: number) => 50 - (trend / maxAbsTrend) * 50;
 
-  const dotColor = (score: number) =>
-    score <= 30 ? '#059669' : score <= 60 ? '#d97706' : '#dc2626';
+  const dotColor = (score: number) => getRiskColor(score);
 
   const quadrants = [
     { x: 50, y: 0,  w: 50, h: 50, label: '高风险 恶化', color: '#fef2f2', border: '#fca5a5' },
