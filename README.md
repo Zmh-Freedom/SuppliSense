@@ -1,4 +1,4 @@
-# 供应商风险分析 Agent
+# SuppliSense — AI-Powered Supplier Sourcing & Risk Intelligence
 
 基于 ReAct 架构的企业供应商风险智能分析系统。覆盖**风险评估 → 预警监控 → 舆情追踪 → ESG 评分 → 替代建议 → 情景模拟**完整链路，支持自然语言交互。
 

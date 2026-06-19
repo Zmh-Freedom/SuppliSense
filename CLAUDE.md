@@ -4,12 +4,12 @@
 
 ## 项目概述
 
-供应商风险分析平台，采购分析师通过自然语言查询供应商风险数据。后端 FastAPI + MongoDB，LLM 使用 DeepSeek（OpenAI 兼容 API），前端 React。
+供应商风险分析平台，采购分析师通过自然语言查询供应商风险数据。后端 FastAPI + MongoDB + PostgreSQL(pgvector)，LLM 使用 DeepSeek（OpenAI 兼容 API），前端 React。
 
 ## 技术栈
 
 - **Web:** FastAPI, Uvicorn, Pydantic v2
-- **数据库:** MongoDB (PyMongo 同步驱动), Redis (缓存), ChromaDB (RAG 向量库)
+- **数据库:** MongoDB (PyMongo 同步驱动), PostgreSQL + pgvector (用户/知识库/审计), Redis (缓存)
 - **LLM:** DeepSeek API (openai SDK), LangGraph + langchain-openai
 - **调度:** APScheduler (定时任务)
 - **实时:** WebSocket (预警推送), SSE (对话流式)
@@ -20,31 +20,31 @@
 app/
 ├── api/           # API 路由层（FastAPI routers）
 ├── tools/         # LangGraph @tool 工具定义（包装 service 层）
-├── graphs/        # LangGraph 图定义（编排层，正在替代旧编排）
+├── graphs/        # LangGraph 图定义（编排层）
 │   └── agents/    # 子 agent 图（Multi-Agent 模式）
-├── services/      # 业务逻辑层（工具内部调用）
+├── services/      # 业务逻辑层
 ├── repositories/  # 数据访问层
 ├── schemas/       # Pydantic 模型定义
-├── agents/        # 旧 Multi-Agent 编排（正在迁移中）
 ├── db/            # 数据库连接管理
 └── core/          # 配置、认证、缓存、依赖注入
 ```
 
-## 当前状态：双架构共存期
+## 当前状态：LangGraph 架构
 
-正在从手写编排迁移到 LangGraph，两种架构通过 `mode` 参数路由共存：
+编排层已全部迁移到 LangGraph，旧手写编排代码已清理。
 
 | mode | 架构 | 状态 |
 |------|------|------|
-| `"react"` | 旧 ReAct (function calling) | 生产默认 |
-| `"langgraph-react"` | LangGraph ReAct 图 | 已实现，验证中 |
-| `"plan-execute"` | 旧 Plan-Execute | 待迁移 |
-| `"multi-agent"` | 旧 Multi-Agent | 待迁移 |
+| `"react"` / `"langgraph-react"` | LangGraph ReAct 图 | 生产默认 |
+| `"plan-execute"` / `"langgraph-plan-execute"` | LangGraph Plan-Execute 图 | 已迁移 |
+| `"multi-agent"` / `"langgraph-multi-agent"` | LangGraph Supervisor 图 | 已迁移 |
+| `"auto"` | IntentRouter → LangGraph | 自动选择 |
 
-迁移期间：
-- **不要删除旧编排代码**（`agent.py` 中的 `chat`/`chat_stream`，`planner.py`，`executor.py`，`agents/`），直到对应 LangGraph 图验证通过
+- 旧 `react`/`plan-execute`/`multi-agent` 模式名自动归一化到 LangGraph 对应图
+- `agent.py` 中的 `chat()` 作为同步端点回退保留
+- `agent.py` 中的 `_load_history`/`_save_turn`/`TOOLS` 由 LangGraph 图共享
 - **新功能优先在 LangGraph 架构上开发**（`graphs/` + `tools/`）
-- **service 层不改** — 两种架构共享同一套 service 函数
+- **service 层不改** — 保持框架无关
 
 ## 后端代码约定
 
@@ -91,21 +91,9 @@ app/
       return await asyncio.to_thread(assess_risk, req)
   ```
 
-### 工具注册（两种方式并存）
+### 工具注册
 
-```python
-# 旧方式：agent.py 中的 TOOLS dict（供旧模式使用）
-@_register("tool_name", "描述", parameters={...})
-def _tool_fn(company_name: str) -> dict: ...
-
-# 新方式：app/tools/__init__.py 中的 @tool 装饰器（供 LangGraph 使用）
-@tool
-def tool_name(company_name: str) -> dict:
-    """描述。"""
-    ...
-```
-
-新增工具必须同时注册到两处。
+新增工具在 `app/tools/__init__.py` 用 `@tool` 装饰器定义，加入 `TOOLS_LIST`。同时需要在 `app/services/agent.py` 中用 `@_register` 注册（供同步端点回退使用）。
 
 ### SSE 事件格式
 

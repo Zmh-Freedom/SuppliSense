@@ -1,371 +1,329 @@
 # 企业级升级实施计划
 
-**目标：** 将供应商风险分析系统从原型级升级至企业级标准
+**目标：** 将供应商风险分析平台从原型级升级至企业级标准
 
 **架构：** 5 阶段渐进式升级 — 安全加固优先（关闭真实漏洞），然后建立后端/前端测试基础设施，再做代码质量清理，最后改进运维。每阶段产出可部署的应用，每任务可独立提交。
 
-**技术栈：** FastAPI, MongoDB, Redis, React 19, TypeScript, Vitest, pytest, Docker Compose, structlog, Prometheus
+**技术栈：** FastAPI, MongoDB, PostgreSQL+pgvector, Redis, React 19, TypeScript, Vitest, pytest, Docker Compose, structlog, Prometheus
+
+**最后更新：** 2026-06-19（合并上线审计发现的新问题）
 
 ---
 
-## 阶段一：安全加固
+## 阶段一：安全加固（最高优先级）
 
-### 任务 1：外部化硬编码凭据
+### 已完成的任务
+
+以下任务已在当前代码中实现，无需重复执行：
+
+- [x] **配置启动校验** — `main.py:63-79` `_validate_config()` 启动时检查 SECRET_KEY / MONGO_PASSWORD
+- [x] **密码复杂度验证** — `schemas/user.py` `@field_validator("password")` 强制 8 位 + 字母 + 数字
+- [x] **默认管理员密码随机化** — `main.py:82-111` 无 INITIAL_ADMIN_PASSWORD 时随机生成 16 位密码
+- [x] **前端移除默认凭据提示** — `LoginPage.tsx` 已改为"请联系管理员获取账号"
+- [x] **CORS methods/headers 收紧** — `main.py:161-162` 已限定 methods 和 headers
+- [x] **天眼查默认 HTTPS** — config.py `TIANYANCHA_BASE_URL` 默认 https
+
+---
+
+### 新任务 1：API 全量认证加固 【CRITICAL】
+
+**背景：** 审计发现 19 个 API router 中仅 `auth`、`async_tasks`、`notifications` 有认证依赖，其余 16 个 router 的所有端点完全公开。攻击者无需登录即可调用风险评估、舆情分析（消耗 LLM 费用）、清空知识库/预警数据、上传/删除文件等。
+
+**影响的 router：** `risk`, `company`, `financial`, `sentiment`, `alert`, `chat`, `knowledge`, `upload`, `p2`, `macro`, `scenario`, `report`, `trend`, `compare`
 
 **修改文件：**
-- `backend/app/core/config.py` — 移除 `MONGO_PASSWORD` 和 `SECRET_KEY` 的硬编码默认值
-- `backend/app/db/mongo.py` — 统一使用 `settings` 而非直接读取环境变量
-- `docker-compose.yml` — 密码改为 `${MONGO_PASSWORD:?未设置}`
-- `docker-compose.dev.yml` — 同上
-- `backup.sh` — 从环境变量读取密码
-- `restore.sh` — 从环境变量读取密码
-- `.env.docker` — 将真实密钥替换为占位符
-- `backend/app/main.py` — 添加启动配置校验
+- `backend/app/api/risk.py` — 添加 `dependencies=[Depends(get_current_user)]`
+- `backend/app/api/company.py` — 同上
+- `backend/app/api/financial.py` — 同上
+- `backend/app/api/sentiment.py` — 同上
+- `backend/app/api/alert.py` — 同上
+- `backend/app/api/chat.py` — 同上
+- `backend/app/api/knowledge.py` — 同上
+- `backend/app/api/upload.py` — 同上
+- `backend/app/api/p2.py` — 同上
+- `backend/app/api/macro.py` — 同上
+- `backend/app/api/scenario.py` — 同上
+- `backend/app/api/report.py` — 同上
+- `backend/app/api/trend.py` — 同上
+- `backend/app/api/compare.py` — 同上
 
 **步骤：**
 
-1. 修改 `backend/app/core/config.py`，将两个关键配置的默认值改为空字符串：
+1. 在每个 router 文件中添加导入：
    ```python
-   # 修改前
-   SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-1234567890")
-   MONGO_PASSWORD: str = os.getenv("MONGO_PASSWORD", "123456")
-
-   # 修改后
-   SECRET_KEY: str = os.getenv("SECRET_KEY", "")
-   MONGO_PASSWORD: str = os.getenv("MONGO_PASSWORD", "")
+   from fastapi import Depends
+   from app.core.deps import get_current_user
    ```
 
-2. 修改 `backend/app/db/mongo.py`，使用 `settings` 对象替代直接的 `os.getenv` 调用：
+2. 将每个 `APIRouter()` 改为带默认依赖：
    ```python
-   # 修改前（第 15-23 行）
-   _client = MongoClient(
-       host=os.getenv("MONGO_HOST", "localhost"),
-       port=int(os.getenv("MONGO_PORT", "27017")),
-       username=os.getenv("MONGO_USER", "root"),
-       password=os.getenv("MONGO_PASSWORD", "123456"),
-       authSource=os.getenv("MONGO_AUTH_SOURCE", "admin"),
-       serverSelectionTimeoutMS=5000,
+   router = APIRouter(dependencies=[Depends(get_current_user)])
+   ```
+
+3. 对需要匿名访问的端点（如有）单独标记排除。
+
+4. 在 `main.py` 的 `api_v1.include_router` 调用中也支持传入 `dependencies`。
+
+**验证：** 不带 token 调用各端点返回 401。带有效 token 的正常请求不受影响。
+
+**提交：** `security: 所有 API 路由添加认证依赖，修复 16 个未授权端点`
+
+---
+
+### 新任务 2：Prometheus /metrics 端点保护
+
+**背景：** `/metrics` 端点在 `main.py:231-235` 完全公开，泄露内部请求量、端点名称、LLM 调用次数等敏感指标。恶意用户可构造大量不同路径造成高基数问题。
+
+**修改文件：** `backend/app/main.py`
+
+**步骤：**
+
+1. 在 `metrics_endpoint` 函数上添加认证依赖：
+   ```python
+   from app.core.deps import get_current_admin_user
+
+   @app.get("/metrics", dependencies=[Depends(get_current_admin_user)])
+   async def metrics_endpoint():
+       ...
+   ```
+   或者改为从环境变量读取 bearer token 进行简单认证：
+   ```python
+   METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+
+   @app.get("/metrics")
+   async def metrics_endpoint(request: Request):
+       token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+       if METRICS_TOKEN and token != METRICS_TOKEN:
+           raise HTTPException(status_code=401)
+       ...
+   ```
+
+**验证：** 不带 token 访问 `/metrics` 返回 401。Prometheus 配置中加上 bearer token 后可正常抓取。
+
+**提交：** `security: /metrics 端点添加认证保护`
+
+---
+
+### 新任务 3：WebSocket 认证与限流
+
+**背景：** `/ws` 端点在 `main.py:238-259` 既没有 token 验证也没有频率限制（`@limiter.exempt`），单客户端可无限开连接。
+
+**修改文件：** `backend/app/main.py`
+
+**步骤：**
+
+1. 在 WebSocket 连接时验证 token（通过 query param 或首次消息）：
+   ```python
+   @app.websocket("/ws")
+   async def websocket_endpoint(websocket: WebSocket):
+       token = websocket.query_params.get("token")
+       if not token:
+           await websocket.close(code=4001, reason="Missing token")
+           return
+       try:
+           payload = decode_token(token)
+           if payload.get("type") != "access":
+               await websocket.close(code=4001, reason="Invalid token")
+               return
+       except Exception:
+           await websocket.close(code=4001, reason="Invalid token")
+           return
+       # ... 正常连接逻辑
+   ```
+
+2. 移除 `@limiter.exempt`，改用手动限流或保留 excmpt 但限制连接数。
+
+3. 添加最大连接数限制：`ws_manager` 中维护连接计数，超过上限时拒绝新连接。
+
+**验证：** 不带 token 连接 WebSocket 被拒绝。带有效 token 正常连接。
+
+**提交：** `security: WebSocket 添加 token 认证和连接数限制`
+
+---
+
+### 新任务 4：Redis 连接修复 + 缓存反序列化安全
+
+**背景：** 
+1. `cache.py:16` 使用 `settings.MONGO_HOST` 作为 Redis 主机名，Mongo/Redis 分离部署时缓存完全失效
+2. `cache.py:67-73` 从 Redis 读取 `__type__` 后 `importlib.import_module` + `getattr` 还原模型，若 Redis 被入侵可执行任意代码
+
+**修改文件：** `backend/app/core/cache.py`
+
+**步骤：**
+
+1. 修改 Redis 连接使用 `REDIS_URL`：
+   ```python
+   # 修改前
+   cache_client = redis.Redis(
+       host=settings.MONGO_HOST if hasattr(settings, "MONGO_HOST") else "localhost",
+       port=6379,
+       db=2,
+       decode_responses=True,
    )
-   return _client[os.getenv("MONGO_DB", "tianyancha")]
 
    # 修改后
-   from app.core.config import settings
-
-   _client = MongoClient(
-       host=settings.MONGO_HOST,
-       port=settings.MONGO_PORT,
-       username=settings.MONGO_USER,
-       password=settings.MONGO_PASSWORD,
-       authSource=settings.MONGO_AUTH_SOURCE,
-       serverSelectionTimeoutMS=5000,
-   )
-   return _client[settings.MONGO_DB]
-   ```
-   删除不再需要的 `import os`（如果文件中没有其他地方使用）。
-
-3. 修改 `docker-compose.yml` 和 `docker-compose.dev.yml`，将硬编码密码替换为环境变量引用：
-   ```yaml
-   # 修改前
-   environment:
-     MONGO_INITDB_ROOT_USERNAME: root
-     MONGO_INITDB_ROOT_PASSWORD: 123456
-
-   # 修改后
-   environment:
-     MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
-     MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?请设置 MONGO_PASSWORD 环境变量}
-   ```
-
-4. 修改 `backup.sh`，将第 10-11 行改为从环境变量读取：
-   ```bash
-   # 修改前
-   MONGO_USER="root"
-   MONGO_PASS="123456"
-
-   # 修改后
-   MONGO_USER="${MONGO_USER:-root}"
-   MONGO_PASS="${MONGO_PASSWORD:?请设置 MONGO_PASSWORD 环境变量}"
-   ```
-
-5. 修改 `restore.sh`，找到硬编码的凭据（约第 81-82 行），同样改为环境变量引用。
-
-6. 修改 `.env.docker`，将所有真实密钥替换为占位符：
-   ```bash
-   # 修改前
-   MONGO_PASSWORD=123456
-   SECRET_KEY=change-this-to-a-random-secret-in-production
-   TIANYANCHA_TOKEN=87081b56-c7ff-4177-bea0-94be05a415ce
-   LLM_API_KEY=sk-bbf1ac59afe647aaa0a154e7c9bc972c
-
-   # 修改后
-   # 重要：启动前必须替换以下所有占位符
-   MONGO_PASSWORD=CHANGE_ME_设置一个强密码
-   SECRET_KEY=CHANGE_ME_生成一个64位随机字符串
-   TIANYANCHA_TOKEN=CHANGE_ME_你的天眼查API令牌
-   LLM_API_KEY=CHANGE_ME_你的LLM_API密钥
-   ```
-
-7. 在 `backend/app/main.py` 中添加启动配置校验函数，在 `lifespan` 函数开头调用：
-   ```python
-   def _validate_config():
-       """启动前校验关键配置。"""
-       errors = []
-       if not settings.SECRET_KEY:
-           errors.append("SECRET_KEY 未设置。生成命令：python -c \"import secrets; print(secrets.token_urlsafe(48))\"")
-       if not settings.MONGO_PASSWORD:
-           errors.append("MONGO_PASSWORD 未设置。")
-       if settings.SECRET_KEY in (
-           "your-secret-key-change-in-production-1234567890",
-           "change-this-to-a-random-secret-in-production",
-           "CHANGE_ME_生成一个64位随机字符串",
-       ):
-           errors.append("SECRET_KEY 仍为占位符，请设置真实的随机密钥。")
-       if errors:
-           for e in errors:
-               logger.error("config_validation_failed", error=e)
-           raise SystemExit(1)
-
-   @asynccontextmanager
-   async def lifespan(app: FastAPI):
-       _validate_config()
-       # ... 后续不变
-   ```
-
-**验证：** 不设置 `SECRET_KEY` 和 `MONGO_PASSWORD` 时，应用拒绝启动并输出明确错误信息。
-
-**提交：** `security: 外部化所有硬编码凭据，要求通过环境变量配置`
-
----
-
-### 任务 2：Cookie 安全与 CORS 收紧
-
-**修改文件：**
-- `backend/app/core/config.py` — 新增 `COOKIE_SECURE` 配置项
-- `backend/app/api/auth.py` — cookie 添加 `secure` 标志
-- `backend/app/main.py` — 收紧 CORS 策略
-
-**步骤：**
-
-1. 在 `backend/app/core/config.py` 的 `CORS_ORIGINS` 行之后添加：
-   ```python
-   COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "true").lower() == "true"
-   ```
-
-2. 在 `backend/app/api/auth.py` 中找到所有 `response.set_cookie()` 调用（`login_json` 和 `refresh_token` 端点），添加 `secure` 参数：
-   ```python
-   response.set_cookie(
-       key="access_token",
-       value=access_token,
-       httponly=True,
-       samesite="lax",
-       secure=settings.COOKIE_SECURE,  # 新增
-       max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+   cache_client = redis.Redis.from_url(
+       settings.REDIS_URL,
+       db=2,
+       decode_responses=True,
    )
    ```
-   确保文件顶部已导入 `from app.core.config import settings`。
 
-3. 修改 `backend/app/main.py` 中的 CORS 配置：
+2. 将 Pydantic 模型反序列化改为白名单方式：
    ```python
-   # 修改前
-   allow_methods=["*"],
-   allow_headers=["*"],
+   # 定义允许反序列化的类型白名单
+   _ALLOWED_MODELS = {
+       "RiskCalculateResponse": "app.schemas.risk:RiskCalculateResponse",
+       # ... 其他允许的类型
+   }
 
-   # 修改后
-   allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-   allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+   def _deserialize_value(value: dict):
+       type_path = value.pop("__type__", None)
+       if type_path and type_path in _ALLOWED_MODELS:
+           module_path, class_name = _ALLOWED_MODELS[type_path].split(":")
+           ...
+       return value
    ```
 
-**验证：** 登录后在浏览器 DevTools 中检查 `access_token` cookie，确认 `Secure` 和 `HttpOnly` 标志已设置。开发模式下 `secure=False` 以支持 localhost HTTP。
+**验证：** 缓存正常读写。`REDIS_URL` 指向不同主机时缓存正常工作。
 
-**提交：** `security: cookie 添加 secure 标志，收紧 CORS 策略`
+**提交：** `fix: Redis 改用 REDIS_URL 连接，缓存反序列化加白名单`
 
 ---
 
-### 任务 3：密码验证与默认管理员加固
+### 新任务 5：CORS Origins 可配置化
 
-**修改文件：**
-- `backend/app/schemas/user.py` — 添加密码复杂度验证
-- `backend/app/main.py` — 默认管理员密码随机化
-- `frontend/src/components/LoginPage.tsx` — 移除硬编码凭据提示
+**背景：** `config.py:72` CORS_ORIGINS 硬编码为 localhost，无环境变量覆盖。生产部署到真实域名时所有前端请求被 CORS 拦截。
+
+**修改文件：** `backend/app/core/config.py`
 
 **步骤：**
 
-1. 在 `backend/app/schemas/user.py` 的 `UserCreate` 类中添加密码验证器：
-   ```python
-   from pydantic import field_validator
+```python
+# 修改前
+CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
-   class UserCreate(UserBase):
-       password: str
+# 修改后
+CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+```
 
-       @field_validator("password")
-       @classmethod
-       def validate_password(cls, v: str) -> str:
-           if len(v) < 8:
-               raise ValueError("密码长度至少为8个字符")
-           if not any(c.isalpha() for c in v):
-               raise ValueError("密码必须包含至少一个字母")
-           if not any(c.isdigit() for c in v):
-               raise ValueError("密码必须包含至少一个数字")
-           return v
-   ```
+**验证：** 设置 `CORS_ORIGINS=https://your-domain.com` 后，前端可从该域名正常访问。
 
-2. 修改 `backend/app/main.py` 中的 `create_default_admin` 函数，从环境变量读取密码或随机生成：
-   ```python
-   import secrets
-   import string
-
-   def create_default_admin():
-       from app.services.auth import create_user, list_users
-       from app.schemas.user import UserCreate, UserRole
-
-       users = list_users()
-       if not users:
-           password = os.getenv("INITIAL_ADMIN_PASSWORD")
-           if not password:
-               alphabet = string.ascii_letters + string.digits + "!@#$%&*"
-               password = "".join(secrets.choice(alphabet) for _ in range(16))
-               logger.warning(
-                   "default_admin_created_with_random_password",
-                   username="admin",
-                   password=password,
-                   hint="请保存此密码！设置 INITIAL_ADMIN_PASSWORD 环境变量可自定义。",
-               )
-           try:
-               create_user(UserCreate(
-                   username="admin",
-                   email="admin@example.com",
-                   password=password,
-                   role=UserRole.ADMIN,
-               ))
-               logger.info("default_admin_created", username="admin")
-           except ValueError:
-               pass
-   ```
-
-3. 修改 `frontend/src/components/LoginPage.tsx`，移除硬编码凭据提示：
-   ```tsx
-   // 修改前
-   <p className="text-xs text-gray-400 text-center">
-     默认管理员：admin / admin123
-   </p>
-
-   // 修改后
-   <p className="text-xs text-gray-400 text-center">
-     请联系管理员获取账号
-   </p>
-   ```
-
-**验证：** 尝试用短密码注册用户，应返回 422 验证错误。首次启动时检查日志中输出的随机管理员密码。
-
-**提交：** `security: 强制密码复杂度，随机化默认管理员密码`
+**提交：** `fix: CORS_ORIGINS 支持环境变量覆盖`
 
 ---
 
-### 任务 4：Docker 安全加固
+### 新任务 6：访问令牌有效期缩短 + 令牌类型强制分离
+
+**背景：**
+1. 访问令牌 24 小时有效 (`ACCESS_TOKEN_EXPIRE_MINUTES=1440`)，被盗后窗口过大
+2. `decode_access_token` 实际可解码 refresh token，依赖调用方手动检查 `type` claim
 
 **修改文件：**
-- `Dockerfile.backend` — 非 root 用户运行
-- `docker-compose.yml` — 网络隔离、移除端口暴露、Redis 认证
-- `backend/app/core/config.py` — 新增 `REDIS_PASSWORD` 配置
+- `backend/app/core/config.py`
+- `backend/app/core/security.py`
 
 **步骤：**
 
-1. 修改 `Dockerfile.backend`，在 CMD 之前添加非 root 用户：
+1. 缩短 access token 有效期：
+   ```python
+   ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+   ```
+
+2. 分离 access / refresh token 解码函数，`decode_access_token` 拒绝非 access 类型：
+   ```python
+   def decode_access_token(token: str) -> dict:
+       payload = decode_token(token)
+       if payload.get("type") != "access":
+           raise InvalidTokenError("token 类型不匹配")
+       return payload
+   ```
+
+**验证：** 用 refresh token 调用 `decode_access_token` 抛出异常。登录后 30 分钟 access token 过期。
+
+**提交：** `security: 缩短 access token 有效期至 30 分钟，强制类型校验`
+
+---
+
+### 新任务 7：频率限制适配反向代理
+
+**背景：** slowapi 默认取 `remote_addr` 作为限流 key，在 nginx 反向代理后所有请求 IP 相同，全局 `60/minute` 变成所有用户共享。
+
+**修改文件：** `backend/app/core/rate_limit.py`
+
+**步骤：**
+
+```python
+from slowapi.util import get_remote_address
+
+def get_client_ip(request):
+    """获取真实客户端 IP，适配反向代理。"""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return get_remote_address(request)
+
+# 在 slowapi Limiter 初始化时使用
+limiter = Limiter(key_func=get_client_ip)
+```
+
+**验证：** 在 nginx 后面，不同客户端的 IP 应被正确识别，限流计数器按客户端独立。
+
+**提交：** `fix: 频率限制适配反向代理 X-Forwarded-For`
+
+---
+
+### 新任务 8：Docker 安全加固（含未完成部分）
+
+**背景：** 原计划任务 4 尚未完成。需补充：默认数据库密码弱、容器日志无轮转。
+
+**修改文件：**
+- `Dockerfile.backend`
+- `docker-compose.yml`
+- `docker-compose.dev.yml`
+
+**步骤：**
+
+1. `Dockerfile.backend` 添加非 root 用户：
    ```dockerfile
-   RUN useradd -r -s /bin/false appuser && \
-       chown -R appuser:appuser /app
+   RUN useradd -r -s /bin/false appuser && chown -R appuser:appuser /app
    USER appuser
-   EXPOSE 8000
-   CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
    ```
 
-2. 修改 `docker-compose.yml`，添加网络隔离并移除内部服务端口暴露：
+2. `docker-compose.yml` 中 MongoDB / Redis 密码改为强制环境变量：
    ```yaml
-   # 在文件末尾添加
-   networks:
-     internal:
-       driver: bridge
-     external:
-       driver: bridge
-
-   # mongo 服务添加
-   mongo:
-     networks:
-       - internal
-     # 删除 ports: ["27017:27017"]
-
-   # redis 服务添加
-   redis:
-     networks:
-       - internal
-     command: redis-server --requirepass ${REDIS_PASSWORD:-}
-     # 删除 ports: ["6379:6379"]
-
-   # backend 服务添加
-   backend:
-     networks:
-       - internal
-       - external
-
-   # frontend 服务添加
-   frontend:
-     networks:
-       - external
+   MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?请设置 MONGO_PASSWORD}
    ```
 
-3. 在 `backend/app/core/config.py` 中添加 Redis 密码配置：
-   ```python
-   REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
+3. Redis 添加密码认证：
+   ```yaml
+   command: redis-server --requirepass ${REDIS_PASSWORD:?请设置 REDIS_PASSWORD}
    ```
 
-4. 在 `.env.docker` 中添加：
-   ```bash
-   REDIS_PASSWORD=CHANGE_ME_redis密码
-   REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+4. 添加容器日志轮转：
+   ```yaml
+   services:
+     backend:
+       logging:
+         driver: "json-file"
+         options:
+           max-size: "10m"
+           max-file: "3"
    ```
 
-**验证：** 运行 `docker exec sra-backend whoami` 应返回 `appuser`。Redis 无密码时 `redis-cli ping` 应失败。
+5. `docker-compose.dev.yml` 默认密码改为强制要求环境变量（移除 `123456` / `sra123` 默认值）.
 
-**提交：** `security: 非 root 容器，网络隔离，Redis 认证`
+**验证：** `docker exec sra-backend whoami` 返回 `appuser`。不设置密码时 compose 拒绝启动。
 
----
-
-### 任务 5：天眼查 HTTPS
-
-**修改文件：**
-- `backend/app/core/config.py` — 默认 URL 改为 HTTPS
-- `backend/app/services/tianyancha_client.py` — 同步修改
-
-**步骤：**
-
-1. 修改 `backend/app/core/config.py`：
-   ```python
-   # 修改前
-   TIANYANCHA_BASE_URL: str = os.getenv("TIANYANCHA_BASE_URL", "http://open.api.tianyancha.com")
-
-   # 修改后
-   TIANYANCHA_BASE_URL: str = os.getenv("TIANYANCHA_BASE_URL", "https://open.api.tianyancha.com")
-   ```
-
-2. 修改 `backend/app/services/tianyancha_client.py`，将模块级 `BASE_URL` 改为使用 settings：
-   ```python
-   # 修改前
-   BASE_URL = os.getenv("TIANYANCHA_BASE_URL", "http://open.api.tianyancha.com")
-
-   # 修改后
-   from app.core.config import settings
-   BASE_URL = settings.TIANYANCHA_BASE_URL
-   ```
-
-**验证：** 天眼查 API 正常工作（天眼查支持 HTTPS）。
-
-**提交：** `security: 天眼查 API 改用 HTTPS`
+**提交：** `security: 非 root 容器运行，强制数据库密码，Redis 认证，日志轮转`
 
 ---
 
 ## 阶段二：后端测试基础设施
 
-### 任务 6：Pytest 配置与测试数据库隔离
+### 任务 9：Pytest 配置与测试数据库隔离
+
+（原任务 6，保持不变）
 
 **新建/修改文件：**
 - 新建 `backend/pyproject.toml`
@@ -393,251 +351,322 @@
    show_missing = true
    ```
 
-2. 在 `backend/requirements.txt` 末尾添加：
-   ```
-   # 测试依赖
-   pytest-cov>=4.0.0
-   pytest-asyncio>=0.23.0
-   respx>=0.21.0
-   ```
+2. 在 `backend/requirements.txt` 末尾添加测试依赖。
 
-3. 重写 `backend/tests/conftest.py`：
-   ```python
-   """共享测试 fixtures。"""
+3. 重写 `backend/tests/conftest.py`，使用测试数据库隔离。
 
-   import os
-   import pytest
-
-   # 使用测试数据库，避免污染开发数据
-   os.environ.setdefault("MONGO_DB", "tianyancha_test")
-   os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32chars!")
-   os.environ.setdefault("MONGO_PASSWORD", "test_password")
-
-   from fastapi.testclient import TestClient
-
-
-   @pytest.fixture(scope="session")
-   def app():
-       from app.main import app as fastapi_app
-       return fastapi_app
-
-
-   @pytest.fixture
-   def client(app):
-       with TestClient(app) as c:
-           yield c
-
-
-   @pytest.fixture
-   def db():
-       from app.db.mongo import get_db
-       database = get_db()
-       yield database
-       for collection_name in database.list_collection_names():
-           database[collection_name].drop()
-   ```
-
-4. 运行 `cd backend && python -m pytest -v` 确认现有 9 个测试仍然通过。
+4. 运行 `cd backend && python -m pytest -v` 确认现有测试通过。
 
 **提交：** `test: 添加 pytest 配置、测试 DB fixtures、覆盖率设置`
 
 ---
 
-### 任务 7：认证服务测试
+### 任务 10：认证服务测试
+
+（原任务 7，保持不变）
 
 **新建文件：** `backend/tests/test_auth.py`
 
-**步骤：**
-
-1. 创建测试文件，覆盖以下场景：
-   - 正确凭据登录成功
-   - 错误密码登录返回 401
-   - 不存在的用户登录返回 401
-   - 短密码被拒绝（422）
-   - 无字母密码被拒绝（422）
-   - 无数字密码被拒绝（422）
-   - 修改密码成功后新密码可登录
-   - 未认证访问 `/auth/me` 返回 401
-
-2. 运行 `cd backend && python -m pytest tests/test_auth.py -v` 确认全部通过。
+覆盖：正确登录、错误密码、不存在用户、密码复杂度、修改密码、未认证访问等场景。
 
 **提交：** `test: 添加认证服务完整测试`
 
 ---
 
-### 任务 8：外部服务 Mock
+### 任务 11：外部服务 Mock
 
-**新建文件：**
-- `backend/tests/fixtures/__init__.py`
-- `backend/tests/fixtures/mock_tianyancha.py`
-- `backend/tests/fixtures/mock_llm.py`
+（原任务 8，保持不变）
 
-**步骤：**
-
-1. 创建 mock 数据文件，包含天眼查企业信息、司法风险、LLM 响应的模拟数据。
-
-2. 运行 `cd backend && python -m pytest -v` 确认全部通过。
+**新建文件：** `backend/tests/fixtures/mock_tianyancha.py`、`mock_llm.py`
 
 **提交：** `test: 添加天眼查/LLM 可复用 mock`
 
 ---
 
-## 阶段三：前端测试基础设施
+### 新任务 12：API 认证拦截测试
 
-### 任务 9：Vitest 安装配置
+**背景：** 配合新任务 1，验证所有受保护端点的认证拦截有效。
 
-**修改/新建文件：**
-- `frontend/package.json` — 添加测试依赖和脚本
-- 新建 `frontend/vitest.config.ts`
-- 新建 `frontend/src/__tests__/setup.ts`
+**新建文件：** `backend/tests/test_auth_guard.py`
 
 **步骤：**
 
-1. 安装依赖：`cd frontend && npm install -D vitest @testing-library/react @testing-library/jest-dom @testing-library/user-event jsdom`
+1. 用 pytest 参数化测试，遍历所有非公开 endpoint，验证无 token 返回 401。
+2. 用有效 token 验证正常返回非 401。
 
-2. 在 `package.json` 的 scripts 中添加：
-   ```json
-   "test": "vitest run",
-   "test:watch": "vitest",
-   "test:coverage": "vitest run --coverage"
-   ```
+**提交：** `test: 添加全量 API 认证拦截测试`
 
-3. 创建 `frontend/vitest.config.ts`。
+---
 
-4. 创建 `frontend/src/__tests__/setup.ts`。
+## 阶段三：前端测试基础设施
 
-5. 运行 `npm test` 确认测试运行器正常工作。
+### 任务 13：Vitest 安装配置
+
+（原任务 9，保持不变）
 
 **提交：** `test: 安装配置 Vitest + Testing Library`
 
 ---
 
-### 任务 10：API 工具函数测试
+### 任务 14：API 工具函数测试
 
-**新建文件：** `frontend/src/__tests__/api.test.ts`
-
-**步骤：**
-
-1. 测试 `getStoredUser`、`setStoredUser`、`clearStoredUser`、`isAuthenticated` 等 localStorage 工具函数。
-
-2. 运行 `npm test` 确认全部通过。
+（原任务 10，保持不变）
 
 **提交：** `test: 添加 api 工具函数测试`
 
 ---
 
-### 任务 11：组件冒烟测试
+### 任务 15：组件冒烟测试
 
-**新建文件：**
-- `frontend/src/__tests__/LoginPage.test.tsx`
-- `frontend/src/__tests__/ErrorBoundary.test.tsx`
-
-**步骤：**
-
-1. 测试 LoginPage 渲染登录表单、按钮禁用状态。
-2. 测试 ErrorBoundary 正常渲染子组件、捕获错误后显示降级 UI。
+（原任务 11，保持不变）
 
 **提交：** `test: 添加核心页面组件冒烟测试`
 
 ---
 
-## 阶段四：代码质量与清理
+## 阶段四：代码质量与可靠性
 
-### 任务 12：前端死代码清理
+### 新任务 16：LLM 配置统一从 settings 读取
+
+**背景：** `agent.py`、`react_graph.py`、`supervisor_graph.py`、`plan_execute_graph.py`、`router.py`、`context.py`、`sentiment.py` 共 7 处直接使用 `os.getenv("LLM_API_KEY")` 而非 `settings.LLM_API_KEY`。配置路径不一致，`.env` 加载失败时这些组件拿到空值。
 
 **修改文件：**
-- `frontend/src/components/ErrorBoundary.tsx` — 移除无用的 `localStorage.removeItem('active_tab')`
-- `frontend/src/components/Layout.tsx` — 移除空操作的 `onRefresh` prop
-- `frontend/src/components/Sidebar.tsx` — `onRefresh` 改为可选
-- `frontend/src/api.ts` — `api.upload` 重构使用共享的 `request<T>()`
+- `backend/app/services/agent.py`
+- `backend/app/graphs/react_graph.py`
+- `backend/app/graphs/supervisor_graph.py`
+- `backend/app/graphs/plan_execute_graph.py`
+- `backend/app/graphs/router.py`
+- `backend/app/graphs/context.py`
+- `backend/app/services/sentiment.py`
 
 **步骤：**
 
-1. 在 ErrorBoundary 中删除 `localStorage.removeItem('active_tab')`。
-2. 在 Layout 中移除 `onRefresh={() => {}}`。
-3. 在 Sidebar 的 Props 接口中将 `onRefresh` 改为可选。
-4. 重构 `api.upload` 使用共享的 `request<T>()` 函数，需要先更新 `request` 函数以支持 FormData。
+1. 每个文件将 `os.getenv("LLM_API_KEY")` / `os.getenv("LLM_BASE_URL")` / `os.getenv("LLM_MODEL")` 替换为 `settings.LLM_API_KEY` / `settings.LLM_BASE_URL` / `settings.LLM_MODEL`。
+2. 确保各文件顶部 `from app.core.config import settings`。
 
-**验证：** `npm run typecheck` 无错误，`npm run build` 成功。
+**验证：** 正常对话、流式输出、舆情分析均正常工作。
+
+**提交：** `refactor: LLM 配置统一从 settings 读取，消除 os.getenv 散落`
+
+---
+
+### 新任务 17：日志格式改为 JSON + 请求 ID 中间件
+
+**背景：**
+1. `logging.py` 使用 `ConsoleRenderer()`，人类可读但不适合 ELK/Datadog 解析
+2. 没有 `X-Request-ID` 机制，无法跨服务关联日志
+
+**修改/新建文件：**
+- `backend/app/core/logging.py`
+- 新建 `backend/app/core/middleware.py`
+
+**步骤：**
+
+1. 在 `logging.py` 中根据环境变量切换 renderer：
+   ```python
+   import os
+   renderer = JSONRenderer() if os.getenv("LOG_FORMAT") == "json" else ConsoleRenderer()
+   ```
+
+2. 新建 `middleware.py`，生成并注入 `X-Request-ID`，在日志中绑定 request_id。
+
+3. 在 `main.py` 中注册请求 ID 中间件。
+
+**验证：** 设置 `LOG_FORMAT=json` 后日志为 JSON 行格式。每个请求有唯一 request_id 并出现在相关日志中。
+
+**提交：** `feat: 支持 JSON 格式日志，添加请求 ID 中间件`
+
+---
+
+### 新任务 18：Plan-Execute 真流式改造
+
+**背景：** `plan_execute_graph.py:301-303` 是假流式——先生成完整回答再按 10 字符分块 + `asyncio.sleep(0.02)` 发送。应改为真正的 LLM token 级别流式。
+
+**修改文件：** `backend/app/graphs/plan_execute_graph.py`
+
+**步骤：**
+
+1. 将 replanner node 的 LLM 调用改为 streaming 模式。
+2. 逐 token yield 到 SSE，移除 `asyncio.sleep(0.02)` 模拟延迟。
+
+**验证：** Plan-Execute 模式下对话有真正的逐 token 流式体验。
+
+**提交：** `feat: Plan-Execute 模式改为真正的 LLM token 流式`
+
+---
+
+### 新任务 19：schema 初始化失败改为硬错误
+
+**背景：** `init_pg.py:106` 中 `except Exception: logger.warning(...)` 静默忽略错误，应用正常启动后业务查询才报错。
+
+**修改文件：** `backend/app/db/init_pg.py`
+
+**步骤：**
+
+1. 在 `ensure_pg_schema()` 失败时 raise 而非 log.warning，让应用在启动阶段就暴露问题。
+
+**验证：** 模拟 PG 不可达时，应用拒绝启动并输出明确错误。
+
+**提交：** `fix: PG schema 初始化失败改为硬错误，避免静默失效`
+
+---
+
+### 新任务 20：前端 Error Boundary + 路由懒加载
+
+**背景：**
+1. 无全局 ErrorBoundary，路由组件渲染异常导致白屏
+2. `routes.tsx` 所有组件静态 import，首页加载全量 JS
+
+**修改文件：**
+- 新建 `frontend/src/components/AppErrorBoundary.tsx`
+- `frontend/src/routes.tsx`
+
+**步骤：**
+
+1. 创建全局 ErrorBoundary，捕获渲染错误后显示降级 UI + 重试按钮。
+2. 将路由组件改为 `React.lazy(() => import(...))`，用 `<Suspense>` 包裹。
+
+**验证：** 模拟组件崩溃时显示降级 UI。Network 面板确认路由切换时按需加载 chunk。
+
+**提交：** `feat: 全局 ErrorBoundary + 路由懒加载`
+
+---
+
+### 任务 21：前端死代码清理
+
+（原任务 12，保持不变）
 
 **提交：** `refactor: 清理死代码，统一 API 请求处理`
 
 ---
 
-### 任务 13：后端无用依赖清理
+### 任务 22：后端无用依赖清理
 
-**修改文件：**
-- `backend/requirements.txt` — 移除 celery、flower，去重 python-multipart
-- 删除 `backend/app/core/celery_app.py`
-
-**步骤：**
-
-1. 从 requirements.txt 中删除 `celery>=5.3.0`、`flower>=2.0.0`、重复的 `python-multipart`。
-2. 删除 `celery_app.py` 文件。
-3. 确认无其他文件引用 `celery_app`。
-
-**验证：** `pip install -r requirements.txt` 成功，应用正常启动。
+（原任务 13，保持不变）
 
 **提交：** `chore: 移除未使用的 celery/flower 依赖`
 
 ---
 
-### 任务 14：SSE 错误日志改进
+### 新任务 23：飞书通知 N+1 查询优化
 
-**修改文件：**
-- `frontend/src/api.ts` — SSE 解析错误改为 `console.warn`
-- `backend/app/core/errors.py` — 错误日志添加请求上下文
+**背景：** `feishu.py:103-105` 每日摘要为每个公司单独查询 MongoDB，100 个监控企业产生 200+ 次查询。
+
+**修改文件：** `backend/app/services/feishu.py`
 
 **步骤：**
 
-1. 在 `api.ts` 的 SSE 解析 catch 块中，将静默忽略改为警告输出。
-2. 在 `errors.py` 的未处理异常处理器中，添加请求路径和方法到日志。
+1. 使用 `$in` 查询批量获取所有公司的最新快照，替代逐公司查询。
 
-**提交：** `fix: 改进 SSE 错误日志，错误处理添加请求上下文`
+**验证：** 每日摘要推送正常，MongoDB 慢查询日志中不再出现大量单条查询。
+
+**提交：** `perf: 飞书每日摘要改为批量查询，消除 N+1`
+
+---
+
+### 新任务 24：MongoDB 连接池参数调优
+
+**背景：** `mongo.py` 未配置 `maxPoolSize`、`minPoolSize`、`maxIdleTimeMS`。
+
+**修改文件：** `backend/app/db/mongo.py`
+
+**步骤：**
+
+```python
+_client = MongoClient(
+    host=settings.MONGO_HOST,
+    ...
+    maxPoolSize=50,
+    minPoolSize=5,
+    maxIdleTimeMS=30000,
+    serverSelectionTimeoutMS=5000,
+)
+```
+
+**验证：** 高并发时连接数稳定在合理范围。
+
+**提交：** `perf: MongoDB 连接池参数调优`
 
 ---
 
 ## 阶段五：运维改进
 
-### 任务 15：请求日志中间件
+### 任务 25：.dockerignore 优化
 
-**新建文件：** `backend/app/core/middleware.py`
-**修改文件：** `backend/app/main.py`
+（原任务 16，保持不变）
 
-**步骤：**
-
-1. 创建中间件，使用 structlog 记录请求方法、路径、状态码、耗时。
-2. 在 main.py 中注册中间件。
-
-**提交：** `feat: 添加结构化请求/响应日志中间件`
+**提交：** `chore: 添加 .dockerignore 减小构建上下文`
 
 ---
 
-### 任务 16：.dockerignore 优化
+### 新任务 26：Docker Compose 健康检查 + 启动顺序
 
-**新建/修改文件：**
-- `.dockerignore`
-- `frontend/.dockerignore`
+**背景：** `docker-compose.yml` 中 backend 无 healthcheck，frontend 的 `depends_on` 无 `condition: service_healthy`，可能导致前端在 backend 就绪前返回 502。
+
+**修改文件：** `docker-compose.yml`
 
 **步骤：**
 
-1. 创建 `.dockerignore`，排除 tests、venv、.env.docker、backups、*.md、*.sh。
-2. 创建 `frontend/.dockerignore`，排除 node_modules、dist。
+1. backend 服务添加 healthcheck：
+   ```yaml
+   healthcheck:
+     test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+     interval: 10s
+     timeout: 5s
+     retries: 3
+   ```
 
-**提交：** `chore: 添加 .dockerignore 减小构建上下文`
+2. frontend 的 depends_on 加上条件：
+   ```yaml
+   depends_on:
+     backend:
+       condition: service_healthy
+   ```
+
+**验证：** `docker compose up` 后 frontend 在 backend healthcheck 通过后才开始接受请求。
+
+**提交：** `feat: Docker 健康检查 + 启动顺序保障`
+
+---
+
+### 新任务 27：舆情分析接入正规新闻 API
+
+**背景：** `sentiment.py:103-191` 通过 HTML 爬取 Bing/DuckDuckGo 搜索结果，违反 ToS，生产环境 IP 很快会被封禁。
+
+**修改文件：** `backend/app/services/sentiment.py`
+
+**步骤：**
+
+1. 调研并接入正规新闻 API（如 NewsAPI、天行数据新闻接口、聚合数据等）。
+2. 保留现有爬取逻辑作为 fallback（通过 feature flag 控制是否启用）。
+3. 添加搜索结果缓存（Redis，TTL 1 小时）。
+
+**验证：** 舆情分析正常返回结果。不再有对搜索引擎的 HTML 爬取请求。
+
+**提交：** `feat: 舆情分析接入正规新闻 API，添加搜索缓存`
 
 ---
 
 ## 执行顺序
 
 ```
-阶段一（安全）→ 阶段二（后端测试）+ 阶段三（前端测试）→ 阶段四（代码质量）+ 阶段五（运维）
+阶段一（安全：任务 1→8）───┐
+                          ├──> 阶段四（代码质量：任务 16→24）+ 阶段五（运维：任务 25→27）
+阶段二（后端测试：9→12）──┤
+                          │
+阶段三（前端测试：13→15）──┘
 ```
+
+阶段一必须最先完成，关闭所有安全漏洞。阶段二、三可并行进行。阶段四、五在所有测试通过后执行。
 
 ## 验证清单
 
-- [ ] 阶段一完成后：应用缺少必需环境变量时拒绝启动
-- [ ] 阶段二完成后：`cd backend && python -m pytest -v --cov` 全部通过
+- [ ] 阶段一完成后：所有 API 端点要求认证（除 auth/login），/metrics 受保护，WebSocket 需 token
+- [ ] 阶段一完成后：不设置必需环境变量时应用拒绝启动
+- [ ] 阶段一完成后：CORS 支持通过环境变量配置生产域名
+- [ ] 阶段二完成后：`cd backend && python -m pytest -v --cov` 全部通过，含认证拦截测试
 - [ ] 阶段三完成后：`cd frontend && npm test` 全部通过
-- [ ] 阶段四完成后：`npm run typecheck && npm run build` 无错误，UI 外观不变
-- [ ] 阶段五完成后：Docker 镜像构建更快，日志包含请求上下文
+- [ ] 阶段四完成后：`npm run typecheck && npm run build` 无错误
+- [ ] 阶段四完成后：LLM 配置全部从 settings 读取，无 os.getenv 散落
+- [ ] 阶段四完成后：日志支持 JSON 格式，每个请求有唯一 request_id
+- [ ] 阶段五完成后：Docker 镜像构建更快，容器日志自动轮转，服务有健康检查
