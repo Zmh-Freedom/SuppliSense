@@ -2,8 +2,9 @@ import asyncio
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.core.deps import get_current_user
 from app.services.esg_service import assess_all_esg, assess_esg
 from app.services.contagion import (
     add_dependency,
@@ -14,7 +15,7 @@ from app.services.contagion import (
     remove_dependency,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ---- ESG ----

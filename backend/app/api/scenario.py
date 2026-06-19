@@ -2,12 +2,13 @@ import asyncio
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.core.deps import get_current_user
 from app.services.scenario_service import simulate
 from app.services.sanctions_service import check_sanctions, get_sanctions_dashboard
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ---- scenario simulation ----

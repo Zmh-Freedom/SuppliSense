@@ -1,11 +1,12 @@
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.core.deps import get_current_user
 from app.services.macro_service import assess_macro_risk, get_industry_pmi
 from app.services.alternative_service import find_alternatives, get_alternative_dashboard
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 # ---- macro risk ----

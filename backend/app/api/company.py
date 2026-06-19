@@ -1,13 +1,14 @@
 import asyncio
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.core.deps import get_current_user
 from app.repositories.company_repo import search_companies
 from app.schemas.company import CompanyProfile
 from app.schemas.risk import RiskInfo
 from app.services.company_service import get_company_profile, get_company_risk
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get(

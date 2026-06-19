@@ -3,15 +3,13 @@ import uuid
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
+from app.core.deps import get_current_user
 from app.services.agent import chat as agent_chat
-from app.services.agent import chat_stream as agent_chat_stream
-from app.services.agent import chat_stream_with_plan as agent_chat_stream_with_plan
-from app.services.agent import chat_stream_with_agents as agent_chat_stream_with_agents
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 async def _langgraph_react_stream(session_id: str, message: str):
@@ -64,23 +62,22 @@ class ChatRequest(BaseModel):
 async def chat_endpoint(req: ChatRequest):
     sid = req.session_id or str(uuid.uuid4())
 
-    # Resolve auto mode for sync endpoint (only legacy modes supported)
+    # Resolve mode and alias legacy names to LangGraph equivalents
     mode = req.mode
+    _MODE_ALIASES_SYNC = {
+        "react": "langgraph-react",
+        "plan-execute": "langgraph-plan-execute",
+        "multi-agent": "langgraph-multi-agent",
+    }
+
     if mode == "auto":
         from app.graphs.router import router as intent_router
-        intent = intent_router.route(req.message)
-        # Sync endpoint only supports legacy modes; langgraph modes fall back to react
-        if intent.value.startswith("langgraph-"):
-            mode = "react"
-        else:
-            mode = intent.value
-
-    if mode == "plan-execute":
-        reply = await asyncio.to_thread(agent_chat_stream_with_plan, sid, req.message)
-    elif mode == "multi-agent":
-        reply = await asyncio.to_thread(agent_chat_stream_with_agents, sid, req.message)
+        mode = intent_router.route(req.message).value
     else:
-        reply = await asyncio.to_thread(agent_chat, sid, req.message)
+        mode = _MODE_ALIASES_SYNC.get(mode, mode)
+
+    # Sync endpoint uses legacy agent_chat for all modes (kept as fallback)
+    reply = await asyncio.to_thread(agent_chat, sid, req.message)
     return {"reply": reply, "session_id": sid}
 
 
@@ -103,19 +100,23 @@ async def chat_stream_endpoint(req: ChatRequest):
         from app.graphs.router import router as intent_router
         mode = intent_router.route(req.message).value
 
+    # Map legacy mode names to LangGraph equivalents
+    _MODE_ALIASES = {
+        "react": "langgraph-react",
+        "plan-execute": "langgraph-plan-execute",
+        "multi-agent": "langgraph-multi-agent",
+    }
+    mode = _MODE_ALIASES.get(mode, mode)
+
     # Choose execution mode
-    if mode == "plan-execute":
-        stream_fn = agent_chat_stream_with_plan
-    elif req.mode == "multi-agent":
-        stream_fn = agent_chat_stream_with_agents
-    elif req.mode == "langgraph-react":
+    if mode == "langgraph-react":
         stream_fn = _langgraph_react_stream
-    elif req.mode == "langgraph-plan-execute":
+    elif mode == "langgraph-plan-execute":
         stream_fn = _langgraph_plan_execute_stream
-    elif req.mode == "langgraph-multi-agent":
+    elif mode == "langgraph-multi-agent":
         stream_fn = _langgraph_supervisor_stream
     else:
-        stream_fn = agent_chat_stream
+        stream_fn = _langgraph_react_stream
 
     async def event_generator():
         # Send session_id first

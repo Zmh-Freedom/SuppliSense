@@ -2,12 +2,13 @@
 Compare API routes -- side-by-side company comparison.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from app.core.deps import get_current_user
 from app.db.mongo import get_db
 
-router = APIRouter(prefix="/compare", tags=["compare"])
+router = APIRouter(prefix="/compare", tags=["compare"], dependencies=[Depends(get_current_user)])
 
 
 class CompareRequest(BaseModel):

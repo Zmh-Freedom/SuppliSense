@@ -1,11 +1,12 @@
 import asyncio
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.core.deps import get_current_user
 from app.schemas.financial import FinancialMetrics
 from app.services.financial_service import get_financial_metrics
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get(

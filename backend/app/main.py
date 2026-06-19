@@ -4,9 +4,11 @@ load_dotenv()
 
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+import structlog
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
@@ -48,6 +50,8 @@ from app.core.metrics import (
 )
 from app.core.sentry import init_sentry
 from app.db.mongo import close_db, ensure_indexes
+from app.db.postgres import close_pool
+from app.db.init_pg import ensure_pg_schema
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Setup logging
@@ -56,6 +60,8 @@ logger = get_logger(__name__)
 
 # Initialize Sentry
 init_sentry()
+
+METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
 
 
 def _validate_config():
@@ -114,6 +120,7 @@ async def lifespan(app: FastAPI):
     _validate_config()
     logger.info("application_starting", version=settings.APP_VERSION)
     ensure_indexes()
+    ensure_pg_schema()
     create_default_admin()
     start_scheduler()
     logger.info("application_started")
@@ -121,6 +128,7 @@ async def lifespan(app: FastAPI):
     logger.info("application_shutting_down")
     stop_scheduler()
     close_db()
+    close_pool()
     logger.info("application_stopped")
 
 
@@ -128,7 +136,7 @@ app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     lifespan=lifespan,
-    description="供应商风险分析智能体 — 企业风险评估、舆情监控、关系图谱、智能对话",
+    description="SuppliSense — AI-Powered Supplier Sourcing & Risk Intelligence",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_tags=[
@@ -168,6 +176,18 @@ app.add_middleware(SlowAPIMiddleware)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
+
+
+# Request ID middleware
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    request.state.request_id = request_id
+    structlog.contextvars.bind_contextvars(request_id=request_id)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    structlog.contextvars.unbind_contextvars("request_id")
+    return response
 
 
 # Metrics middleware
@@ -225,15 +245,32 @@ async def health_check():
 
 
 @app.get("/metrics")
-async def metrics_endpoint():
-    """Prometheus metrics endpoint."""
+async def metrics_endpoint(request: Request):
+    """Prometheus metrics endpoint. Requires Bearer token if METRICS_TOKEN is set."""
+    if METRICS_TOKEN:
+        token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        if token != METRICS_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized")
     metrics_text, content_type = get_metrics()
     return PlainTextResponse(metrics_text, media_type=content_type)
 
 
 @app.websocket("/ws")
-@limiter.exempt
 async def websocket_endpoint(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing token")
+        return
+    try:
+        from app.core.security import decode_token
+        payload = decode_token(token)
+        if payload is None or payload.get("type") != "access":
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
     from app.services.ws_manager import ws_manager
 
     await websocket.accept()
@@ -242,9 +279,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # Keep connection alive, handle client messages if needed
             data = await websocket.receive_text()
-            # Client can send ping or subscription messages
             if data == "ping":
                 await websocket.send_text('{"event":"pong","data":{}}')
     except WebSocketDisconnect:

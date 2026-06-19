@@ -1,12 +1,13 @@
 from urllib.parse import quote
 from io import BytesIO
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from app.core.deps import get_current_user
 from app.services.report_service import generate_excel, generate_html_report
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 @router.get(

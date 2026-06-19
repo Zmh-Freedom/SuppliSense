@@ -5,9 +5,10 @@ Knowledge Base API: Document upload, search, and management.
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from app.core.deps import get_current_user
 from app.services.document_parser import generate_doc_id, parse_file
 from app.services.knowledge_base import (
     add_documents,
@@ -17,7 +18,7 @@ from app.services.knowledge_base import (
     search,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class SearchRequest(BaseModel):

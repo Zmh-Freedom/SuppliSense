@@ -2,8 +2,9 @@ import asyncio
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, BackgroundTasks, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
+from app.core.deps import get_current_user
 from app.services.sentiment import (
     analyze_all_sentiment,
     analyze_sentiment,
@@ -12,7 +13,7 @@ from app.services.sentiment import (
     get_sentiment_trend,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class AnalyzeRequest(BaseModel):
@@ -34,7 +35,7 @@ async def company_sentiment(company_name: str, background_tasks: BackgroundTasks
     - 有缓存：立即返回（即使已过期），后台异步刷新
     - 无缓存：立即返回 analyzing 状态，后台异步分析
     """
-    from app.services.sentiment import _get_cached_sentiment
+    from app.services.sentiment import _analyzing_locks, _get_cached_sentiment
 
     cached = _get_cached_sentiment(company_name)
 
@@ -42,7 +43,8 @@ async def company_sentiment(company_name: str, background_tasks: BackgroundTasks
         # 有缓存数据，立即返回；如果已过期则后台刷新
         if cached.get("is_stale", False):
             background_tasks.add_task(analyze_sentiment_background, company_name)
-            cached["refreshing"] = True
+        if cached.get("is_stale", False) or company_name in _analyzing_locks:
+            cached["analyzing"] = True
         return cached
 
     # 无缓存，启动后台分析，立即返回"分析中"状态

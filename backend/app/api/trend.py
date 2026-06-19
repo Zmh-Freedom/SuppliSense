@@ -4,11 +4,12 @@ Trend API routes -- risk score trend and alert frequency trend.
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from app.core.deps import get_current_user
 from app.db.mongo import get_db
 
-router = APIRouter(prefix="/trend", tags=["trend"])
+router = APIRouter(prefix="/trend", tags=["trend"], dependencies=[Depends(get_current_user)])
 
 
 @router.get(

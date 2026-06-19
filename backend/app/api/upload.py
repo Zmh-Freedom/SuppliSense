@@ -6,13 +6,14 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from app.core.deps import get_current_user
 from app.services.document_parser import parse_file, generate_doc_id
 from app.services.knowledge_base import add_documents
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 # Upload directory
 UPLOAD_DIR = "uploads"

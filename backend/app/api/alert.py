@@ -1,9 +1,12 @@
 import asyncio
 
+from bson import ObjectId
+
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Query, UploadFile
+from fastapi import APIRouter, Depends, Path, Query, UploadFile
 
+from app.core.deps import get_current_user
 from app.db.mongo import get_db
 from app.services.alert_rules import get_rules, set_rules
 from app.services.predictor import predict_all, predict_company
@@ -17,7 +20,7 @@ from app.services.alert_service import (
 )
 from app.services.scheduler import run_financial_check, run_refresh_all
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 class CompanyRequest(BaseModel):
@@ -150,24 +153,66 @@ async def alert_dashboard():
 @router.get(
     "/history",
     summary="获取告警历史记录",
-    description="按时间倒序返回告警历史记录列表。",
+    description="按时间倒序返回告警历史记录列表。支持 unread_only 筛选。",
     responses={
         400: {"description": "请求参数错误"},
         500: {"description": "服务器内部错误"},
     },
 )
-async def alert_history(limit: int = Query(50, description="最大返回数")):
+async def alert_history(
+    limit: int = Query(50, description="最大返回数"),
+    unread_only: bool = Query(False, description="仅返回未读告警"),
+):
     db = get_db()
+    filter_q = {"read": False} if unread_only else {}
     docs = list(
         db["alerts"]
-        .find({}, {"_id": 0})
+        .find(filter_q)
         .sort("created_at", -1)
         .limit(limit)
     )
+    unread_count = db["alerts"].count_documents({"read": False})
+    alerts = []
     for d in docs:
+        d["_id"] = str(d["_id"])
         if "created_at" in d:
             d["created_at"] = d["created_at"].isoformat()
-    return {"count": len(docs), "alerts": docs}
+        alerts.append(d)
+    return {"count": len(alerts), "unread_count": unread_count, "alerts": alerts}
+
+
+@router.put(
+    "/history/{alert_id}/read",
+    summary="标记单条告警已读",
+    responses={
+        404: {"description": "告警不存在"},
+        500: {"description": "服务器内部错误"},
+    },
+)
+async def mark_alert_read(alert_id: str = Path(..., description="告警 ID")):
+    db = get_db()
+    result = db["alerts"].update_one(
+        {"_id": ObjectId(alert_id)},
+        {"$set": {"read": True}},
+    )
+    if result.matched_count == 0:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="告警不存在")
+    unread_count = db["alerts"].count_documents({"read": False})
+    return {"status": "read", "unread_count": unread_count}
+
+
+@router.put(
+    "/history/read-all",
+    summary="一键已读所有告警",
+    responses={
+        500: {"description": "服务器内部错误"},
+    },
+)
+async def mark_all_alerts_read():
+    db = get_db()
+    db["alerts"].update_many({"read": False}, {"$set": {"read": True}})
+    return {"status": "all_read", "unread_count": 0}
 
 
 @router.delete(
@@ -181,7 +226,7 @@ async def alert_history(limit: int = Query(50, description="最大返回数")):
 async def clear_alerts():
     db = get_db()
     db["alerts"].delete_many({})
-    return {"status": "cleared"}
+    return {"status": "cleared", "unread_count": 0}
 
 
 @router.get(

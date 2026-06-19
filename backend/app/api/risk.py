@@ -1,13 +1,14 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from app.core.deps import get_current_user
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.services.risk_service import assess_risk, calculate_risk
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
 def _refresh_assessment(company_name: str) -> None:
@@ -108,6 +109,15 @@ async def risk_assess(request: RiskAssessRequest, background_tasks: BackgroundTa
         fresh["cached_at"] = datetime.now(timezone.utc).isoformat()
         fresh["cache_age_hours"] = 0
         fresh["is_stale"] = False
+
+        from app.services.audit_service import log_action
+        log_action(
+            action="assess_risk",
+            resource_type="company",
+            resource_id=request.company_name,
+            details={"risk_score": fresh.get("risk_score"), "risk_level": fresh.get("risk_level")},
+        )
+
         return fresh
     except asyncio.TimeoutError:
         raise HTTPException(
