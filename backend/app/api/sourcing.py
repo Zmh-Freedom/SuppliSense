@@ -16,6 +16,7 @@ from app.schemas.sourcing import (
     SourcingResultItem,
     SourcingSearchResponse,
     SupplierInput,
+    SupplierUpdateInput,
 )
 
 logger = get_logger(__name__)
@@ -136,6 +137,24 @@ async def add_supplier(body: SupplierInput):
 
     sid = await asyncio.to_thread(add_supplier_to_library, body.model_dump())
     return {"supplier_id": sid, "status": "created"}
+
+
+@router.put(
+    "/suppliers/{supplier_id}",
+    summary="编辑供应商",
+    description="编辑供应商资料，若 name/categories/regions 变更则自动重建向量。",
+)
+async def update_supplier(supplier_id: str, body: SupplierUpdateInput):
+    from app.services.sourcing_service import update_supplier_in_library
+
+    try:
+        return await asyncio.to_thread(
+            update_supplier_in_library,
+            supplier_id,
+            body.model_dump(exclude_unset=True),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get(

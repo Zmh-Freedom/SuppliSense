@@ -33,6 +33,7 @@ from app.api.p2 import router as p2_router
 from app.api.report import router as report_router
 from app.api.macro import router as macro_router
 from app.api.scenario import router as scenario_router
+from app.api.access import router as access_router
 from app.api.sourcing import router as sourcing_router
 from app.api.trend import router as trend_router
 from app.api.upload import router as upload_router
@@ -233,6 +234,7 @@ api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(upload_router, prefix="/upload", tags=["upload"])
 api_v1.include_router(report_router, prefix="/report", tags=["report"])
 api_v1.include_router(sourcing_router)
+api_v1.include_router(access_router)
 api_v1.include_router(trend_router)
 api_v1.include_router(compare_router)
 api_v1.include_router(notifications_router)

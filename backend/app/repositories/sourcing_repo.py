@@ -126,6 +126,65 @@ def create_access_application(supplier_name: str, request_id: str | None, applic
     return aid
 
 
+def get_access_application(aid: str) -> dict | None:
+    db = get_db()
+    return db["access_applications"].find_one({"_id": aid})
+
+
+def list_access_applications(
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    db = get_db()
+    filt: dict[str, Any] = {}
+    if status and status != "all":
+        filt["status"] = status
+
+    total = db["access_applications"].count_documents(filt)
+    cursor = (
+        db["access_applications"]
+        .find(filt)
+        .sort("created_at", -1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = list(cursor)
+    for item in items:
+        item["application_id"] = str(item["_id"])
+        del item["_id"]
+        if item.get("created_at"):
+            item["created_at"] = item["created_at"].isoformat()
+        if item.get("reviewed_at"):
+            item["reviewed_at"] = item["reviewed_at"].isoformat()
+
+    return {"items": items, "total": total}
+
+
+def approve_access_application(aid: str, reviewer_id: str) -> None:
+    db = get_db()
+    db["access_applications"].update_one(
+        {"_id": aid},
+        {"$set": {
+            "status": "approved",
+            "reviewer_id": reviewer_id,
+            "reviewed_at": datetime.now(timezone.utc),
+        }},
+    )
+
+
+def reject_access_application(aid: str, reviewer_id: str) -> None:
+    db = get_db()
+    db["access_applications"].update_one(
+        {"_id": aid},
+        {"$set": {
+            "status": "rejected",
+            "reviewer_id": reviewer_id,
+            "reviewed_at": datetime.now(timezone.utc),
+        }},
+    )
+
+
 def ensure_indexes() -> None:
     db = get_db()
     db["sourcing_requests"].create_index([("user_id", 1), ("created_at", -1)])

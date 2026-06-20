@@ -71,3 +71,39 @@ class SupplierInput(BaseModel):
 
 class SelectResultRequest(BaseModel):
     action: str  # watchlist | apply_access
+
+
+# ---- Access Applications ----
+
+class AccessApplicationResponse(BaseModel):
+    application_id: str
+    supplier_name: str
+    request_id: str | None = None
+    applicant_id: str
+    status: str
+    reviewer_id: str | None = None
+    reviewed_at: str | None = None
+    created_at: str
+
+
+class AccessApplicationListResponse(BaseModel):
+    items: list[AccessApplicationResponse] = []
+    total: int = 0
+
+
+class ApproveRejectRequest(BaseModel):
+    pass  # reviewer from auth token
+
+
+# ---- Supplier Update ----
+
+class SupplierUpdateInput(BaseModel):
+    name: str | None = None
+    unified_code: str | None = None
+    categories: list[str] | None = None
+    regions: list[str] | None = None
+    qualifications: list[dict] | None = None
+    scale: dict | None = None
+    contact: dict | None = None
+    status: str | None = None
+    rating: float | None = None

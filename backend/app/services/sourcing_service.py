@@ -14,11 +14,15 @@ from app.core.logging import get_logger
 from app.db.postgres import get_cursor
 from app.repositories.company_repo import get_baseinfo
 from app.repositories.sourcing_repo import (
+    approve_access_application,
     create_access_application,
     create_request,
+    get_access_application,
     get_request,
     get_result,
     get_results,
+    list_access_applications,
+    reject_access_application,
     save_result,
     update_request_status,
     update_result_action,
@@ -193,6 +197,89 @@ def add_supplier_to_library(data: dict) -> str:
     sid = add_supplier(data)
     _rebuild_supplier_vector(sid, data["name"], data)
     return sid
+
+
+# ---- access applications ----
+
+def list_access_applications_svc(status: str | None = None, page: int = 1, page_size: int = 20) -> dict:
+    return list_access_applications(status=status, page=page, page_size=page_size)
+
+
+def approve_application(aid: str, reviewer_id: str) -> dict:
+    app = get_access_application(aid)
+    if not app:
+        raise ValueError(f"准入申请不存在: {aid}")
+    if app.get("status") != "pending":
+        raise ValueError(f"该申请已处理，无法重复审批")
+    approve_access_application(aid, reviewer_id)
+    logger.info("access_application_approved", application_id=aid, reviewer=reviewer_id)
+    return {"success": True, "application_id": aid, "status": "approved"}
+
+
+def reject_application(aid: str, reviewer_id: str) -> dict:
+    app = get_access_application(aid)
+    if not app:
+        raise ValueError(f"准入申请不存在: {aid}")
+    if app.get("status") != "pending":
+        raise ValueError(f"该申请已处理，无法重复审批")
+    reject_access_application(aid, reviewer_id)
+    logger.info("access_application_rejected", application_id=aid, reviewer=reviewer_id)
+    return {"success": True, "application_id": aid, "status": "rejected"}
+
+
+# ---- supplier management ----
+
+def update_supplier_in_library(sid: str, data: dict) -> dict:
+    from app.repositories.supplier_repo import get_supplier, update_supplier
+
+    existing = get_supplier(sid)
+    if not existing:
+        raise ValueError(f"供应商不存在: {sid}")
+
+    # Build update dict from non-None values
+    update_data = {k: v for k, v in data.items() if v is not None}
+    if not update_data:
+        return existing
+
+    update_supplier(sid, update_data)
+
+    # Rebuild vector if embedding-relevant fields changed
+    if any(k in update_data for k in ("name", "categories", "regions")):
+        current = get_supplier(sid)
+        if current:
+            _rebuild_supplier_vector(sid, current.get("name", ""), current)
+
+    updated = get_supplier(sid)
+    if updated:
+        updated["_id"] = str(updated.get("_id", sid))
+    return updated or existing
+
+
+def get_top_alternatives(company_name: str, top_k: int = 3) -> list[dict]:
+    """Find Top-K alternatives without creating a sourcing request."""
+    query_text = company_name
+    candidates = _vector_search(query_text, top_k=15)
+    if not candidates:
+        return []
+
+    # Exclude self
+    candidates = [c for c in candidates
+                  if c.get("supplier_name", "").lower() != company_name.lower()]
+    if not candidates:
+        return []
+
+    risk_map = _batch_assess_risk(candidates)
+    results = []
+    for c in candidates[:top_k]:
+        name = c["supplier_name"]
+        risk = risk_map.get(name, {"risk_score": 50, "risk_level": "unknown"})
+        results.append({
+            "supplier_name": name,
+            "match_score": round(c["match_score"], 3),
+            "risk_score": risk.get("risk_score", 50),
+            "risk_level": risk.get("risk_level", "unknown"),
+        })
+    return results
 
 
 # ---- internal helpers ----
