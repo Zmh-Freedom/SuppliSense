@@ -100,6 +100,17 @@ export interface AlternativeDashboard {
 }
 
 // ---- WebSocket Events ----
+export interface AccessApplicationItem {
+  application_id: string;
+  supplier_name: string;
+  request_id: string | null;
+  applicant_id: string;
+  status: string;
+  reviewer_id: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
 export interface WSEventMap {
   alert: AlertDoc;
   alert_update: AlertDoc;
@@ -107,6 +118,18 @@ export interface WSEventMap {
   task_complete: { task_id: string; status: string; result?: unknown };
   notification: { message: string; type: string };
   sentiment_ready: { company_name: string };
+  risk_alert: { company: string; score_delta: number; changes: Array<{ field: string; old: unknown; new: unknown }> };
+  sourcing_suggestion: {
+    company: string;
+    risk_score: number;
+    level_escalated: boolean;
+    alternatives: Array<{
+      supplier_name: string;
+      match_score: number;
+      risk_score: number;
+      risk_level: string;
+    }>;
+  };
 }
 
 // ---- Sourcing ----

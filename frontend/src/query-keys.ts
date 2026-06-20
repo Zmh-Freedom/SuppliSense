@@ -26,4 +26,5 @@ export const queryKeys = {
   sourcingRequests: ['sourcing', 'requests'] as const,
   sourcingDetail: (id: string) => ['sourcing', 'requests', id] as const,
   suppliers: ['sourcing', 'suppliers'] as const,
+  accessApplications: (status?: string) => ['sourcing', 'access-applications', status] as const,
 } as const;

@@ -1,14 +1,24 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api';
+import { api, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
-import type { SupplierEntry } from '../types';
+import type { SupplierEntry, AccessApplicationItem } from '../types';
 
 export default function SupplierLibraryPage() {
   const qc = useQueryClient();
+  const user = getStoredUser();
+  const isAdmin = user?.role === 'admin';
   const [keyword, setKeyword] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', categories: '', regions: '' });
+
+  // edit state
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', categories: '', regions: '', status: '' });
+
+  // approval state
+  const [approvalStatus, setApprovalStatus] = useState<string>('pending');
+  const [showApproval, setShowApproval] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: [...queryKeys.suppliers, keyword] as const,
@@ -32,9 +42,140 @@ export default function SupplierLibraryPage() {
     },
   });
 
+  // ---- Supplier Edit ----
+  const updateMutation = useMutation({
+    mutationFn: (sid: string) =>
+      api.put(`/sourcing/suppliers/${sid}`, {
+        name: editForm.name || undefined,
+        categories: editForm.categories
+          ? editForm.categories.split(',').map(s => s.trim()).filter(Boolean)
+          : undefined,
+        regions: editForm.regions
+          ? editForm.regions.split(',').map(s => s.trim()).filter(Boolean)
+          : undefined,
+        status: editForm.status || undefined,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.suppliers });
+      setEditingId(null);
+    },
+  });
+
+  function startEdit(s: SupplierEntry) {
+    setEditingId(s._id);
+    setEditForm({
+      name: s.name,
+      categories: (s.categories ?? []).join(', '),
+      regions: (s.regions ?? []).join(', '),
+      status: s.status,
+    });
+  }
+
+  // ---- Access Applications (admin) ----
+  const appQuery = useQuery({
+    queryKey: queryKeys.accessApplications(approvalStatus),
+    queryFn: () =>
+      api.get<{ items: AccessApplicationItem[]; total: number }>(
+        `/access-applications?status=${approvalStatus}`,
+      ),
+    enabled: isAdmin && showApproval,
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (aid: string) => api.post(`/access-applications/${aid}/approve`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.accessApplications() }),
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (aid: string) => api.post(`/access-applications/${aid}/reject`, {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.accessApplications() }),
+  });
+
+  const statusLabels: Record<string, string> = { pending: '待审批', approved: '已通过', rejected: '已拒绝' };
+  const statusFilters = ['pending', 'approved', 'rejected'];
+
   return (
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-3xl mx-auto space-y-6">
+        {/* ---- 准入审批 (admin) ---- */}
+        {isAdmin && (
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+            <button
+              onClick={() => setShowApproval(!showApproval)}
+              className="flex items-center justify-between w-full text-left"
+            >
+              <h2 className="text-lg font-bold text-[var(--color-text)]">准入审批</h2>
+              <span className="text-xs text-[var(--color-text-muted)]">
+                {showApproval ? '收起' : '展开'}
+              </span>
+            </button>
+
+            {showApproval && (
+              <div className="mt-4 space-y-3">
+                <div className="flex gap-2">
+                  {statusFilters.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setApprovalStatus(s)}
+                      className={`text-xs rounded-lg px-3 py-1 transition-colors ${
+                        approvalStatus === s
+                          ? 'bg-[var(--color-primary-bg)] text-white'
+                          : 'border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'
+                      }`}
+                    >
+                      {statusLabels[s]}
+                    </button>
+                  ))}
+                </div>
+
+                {(appQuery.data?.items ?? []).length === 0 ? (
+                  <p className="text-xs text-gray-400 py-2">暂无{statusLabels[approvalStatus]}申请</p>
+                ) : (
+                  <div className="space-y-2">
+                    {appQuery.data?.items.map(app => (
+                      <div
+                        key={app.application_id}
+                        className="flex items-center justify-between bg-[var(--color-input-bg)] rounded-xl px-4 py-3 text-sm"
+                      >
+                        <div>
+                          <span className="font-medium text-[var(--color-text)]">{app.supplier_name}</span>
+                          <span className="text-[var(--color-text-muted)] ml-2 text-xs">
+                            {app.applicant_id} · {app.created_at?.slice(0, 10)}
+                          </span>
+                          {app.status !== 'pending' && (
+                            <span className="text-[var(--color-text-muted)] ml-2 text-xs">
+                              {app.reviewer_id} · {app.reviewed_at?.slice(0, 10)}
+                            </span>
+                          )}
+                        </div>
+                        {app.status === 'pending' && (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => approveMutation.mutate(app.application_id)}
+                              disabled={approveMutation.isPending}
+                              className="text-xs text-green-600 border border-green-300 rounded-lg px-3 py-1 hover:bg-green-50 disabled:opacity-40"
+                            >
+                              通过
+                            </button>
+                            <button
+                              onClick={() => rejectMutation.mutate(app.application_id)}
+                              disabled={rejectMutation.isPending}
+                              className="text-xs text-red-500 border border-red-300 rounded-lg px-3 py-1 hover:bg-red-50 disabled:opacity-40"
+                            >
+                              拒绝
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ---- 供应商管理 ---- */}
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-[var(--color-text)]">供应商主库</h2>
           <button
@@ -92,12 +233,73 @@ export default function SupplierLibraryPage() {
                   key={supplier._id}
                   className="flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-sm"
                 >
-                  <div>
-                    <span className="font-medium text-[var(--color-text)]">{supplier.name}</span>
-                    <span className="text-[var(--color-text-muted)] ml-2 text-xs">
-                      {supplier.categories?.join(', ') || '未分类'} | {supplier.status}
-                    </span>
-                  </div>
+                  {editingId === supplier._id ? (
+                    <div className="flex-1 space-y-2">
+                      <input
+                        value={editForm.name}
+                        onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))}
+                        placeholder="企业全称"
+                        className="w-full text-xs rounded-lg border border-[var(--color-border)] px-2 py-1 bg-[var(--color-input-bg)]"
+                      />
+                      <div className="flex gap-2">
+                        <input
+                          value={editForm.categories}
+                          onChange={e => setEditForm(p => ({ ...p, categories: e.target.value }))}
+                          placeholder="品类"
+                          className="flex-1 text-xs rounded-lg border border-[var(--color-border)] px-2 py-1 bg-[var(--color-input-bg)]"
+                        />
+                        <input
+                          value={editForm.regions}
+                          onChange={e => setEditForm(p => ({ ...p, regions: e.target.value }))}
+                          placeholder="地域"
+                          className="flex-1 text-xs rounded-lg border border-[var(--color-border)] px-2 py-1 bg-[var(--color-input-bg)]"
+                        />
+                        <select
+                          value={editForm.status}
+                          onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}
+                          className="text-xs rounded-lg border border-[var(--color-border)] px-2 py-1 bg-[var(--color-input-bg)]"
+                        >
+                          <option value="prospective">待考察</option>
+                          <option value="approved">已准入</option>
+                          <option value="blocked">已拉黑</option>
+                          <option value="deprecated">已停用</option>
+                        </select>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => updateMutation.mutate(supplier._id)}
+                          disabled={updateMutation.isPending}
+                          className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1 hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+                        >
+                          保存
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          className="text-xs border border-[var(--color-border)] rounded-lg px-3 py-1 text-[var(--color-text-secondary)]"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <span className="font-medium text-[var(--color-text)]">{supplier.name}</span>
+                        <span className="text-[var(--color-text-muted)] ml-2 text-xs">
+                          {supplier.categories?.join(', ') || '未分类'} | {supplier.status}
+                        </span>
+                      </div>
+                      {isAdmin && (
+                        <button
+                          onClick={() => startEdit(supplier)}
+                          className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary-bg)] px-2"
+                          title="编辑"
+                        >
+                          ✎
+                        </button>
+                      )}
+                    </>
+                  )}
                 </div>
               ))}
               {data?.total === 0 && (
