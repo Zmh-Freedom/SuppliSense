@@ -97,6 +97,11 @@ def get_results(request_id: str) -> list[dict]:
     return results
 
 
+def get_result(result_id: str) -> dict | None:
+    db = get_db()
+    return db["sourcing_results"].find_one({"_id": result_id})
+
+
 def update_result_action(result_id: str, action: str) -> None:
     db = get_db()
     db["sourcing_results"].update_one(

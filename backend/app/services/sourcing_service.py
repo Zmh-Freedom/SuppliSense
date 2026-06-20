@@ -17,6 +17,7 @@ from app.repositories.sourcing_repo import (
     create_access_application,
     create_request,
     get_request,
+    get_result,
     get_results,
     save_result,
     update_request_status,
@@ -139,17 +140,23 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
 
 
 def select_result(result_id: str, action: str, user_id: str) -> dict:
+    result = get_result(result_id)
+    if not result:
+        raise ValueError(f"寻源结果不存在: {result_id}")
+
+    supplier_name = result.get("supplier_name", "")
+    request_id = result.get("request_id")
+
     update_result_action(result_id, action)
 
     if action == "watchlist":
         from app.services.alert_service import add_to_watchlist
-        from app.repositories.sourcing_repo import get_results
-        # FIXME: need request_id to find result — for now, skip
-        return {"success": True, "action": "watchlist", "message": "已加入监控列表"}
+        add_to_watchlist(supplier_name)
+        return {"success": True, "action": "watchlist", "message": f"已将 {supplier_name} 加入监控列表"}
     elif action == "apply_access":
         aid = create_access_application(
-            supplier_name="",  # populated from result lookup
-            request_id=None,
+            supplier_name=supplier_name,
+            request_id=request_id,
             applicant_id=user_id,
         )
         return {"success": True, "action": "apply_access", "application_id": aid}
