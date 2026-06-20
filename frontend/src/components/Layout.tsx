@@ -1,16 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import ErrorBoundary from './ErrorBoundary';
 import NetworkStatus from './NetworkStatus';
 import Sidebar from './Sidebar';
 import { useTheme } from '../hooks/useTheme';
+import { wsClient } from '../websocket';
 
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   useTheme();
+
+  useEffect(() => {
+    if (Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsub = wsClient.on('sourcing_suggestion', (data) => {
+      if (Notification.permission === 'granted') {
+        new Notification(`供应商备选建议: ${data.company}`, {
+          body: `推荐: ${data.alternatives.map((a: { supplier_name: string }) => a.supplier_name).join(', ')}`,
+        });
+      }
+    });
+    return unsub;
+  }, []);
 
   const activePath = '/' + (location.pathname.split('/')[1] || '');
 

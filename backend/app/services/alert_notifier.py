@@ -1,6 +1,7 @@
 """主动预警通知服务 — 定时检查风险变化并通过 WebSocket 推送。"""
 
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 from app.db.mongo import get_db
 from app.core.logging import get_logger
@@ -10,8 +11,10 @@ logger = get_logger()
 SCORE_THRESHOLD = 10  # 风险评分变化阈值
 
 
-async def check_and_notify() -> dict:
-    """检查监控列表企业风险变化，触发 WebSocket 推送。"""
+def check_and_notify() -> dict:
+    """检查监控列表企业风险变化，触发 WebSocket 推送。
+    当风险评分变化 >= SCORE_THRESHOLD 或等级升级时，同时触发寻源替代建议（24h 限频）。
+    """
     from app.services.alert_service import detect_changes, get_watchlist
     from app.services.ws_manager import ws_manager
 
@@ -21,6 +24,7 @@ async def check_and_notify() -> dict:
 
     db = get_db()
     alerts = []
+    suggestions_sent = 0
 
     for company_name in companies:
         try:
@@ -28,43 +32,101 @@ async def check_and_notify() -> dict:
             if not changes.get("changed"):
                 continue
 
-            # 检查评分变化是否超过阈值
             score_delta = 0
+            level_escalated = False
+
             for change in changes.get("changes", []):
-                if "score" in str(change).lower():
-                    # 尝试提取分数变化
+                field = change.get("field", "")
+                if field == "风险评分":
                     try:
-                        old = change.get("old", 0)
-                        new = change.get("new", 0)
-                        if isinstance(old, (int, float)) and isinstance(new, (int, float)):
-                            score_delta = max(score_delta, abs(new - old))
-                    except (TypeError, AttributeError):
+                        old = float(change.get("old", 0))
+                        new = float(change.get("new", 0))
+                        score_delta = max(score_delta, new - old)
+                    except (TypeError, ValueError):
                         pass
+                elif field == "风险等级":
+                    new_level = change.get("new", "")
+                    if new_level in ("high", "critical"):
+                        level_escalated = True
 
-            if score_delta >= SCORE_THRESHOLD:
-                alert_doc = {
+            if score_delta < SCORE_THRESHOLD and not level_escalated:
+                continue
+
+            # ---- risk_alert notification ----
+            alert_doc = {
+                "company": company_name,
+                "score_delta": score_delta,
+                "changes": changes.get("changes", []),
+                "timestamp": datetime.now(timezone.utc),
+                "notified": True,
+            }
+            db["notifications"].insert_one(alert_doc)
+
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(ws_manager.broadcast("risk_alert", {
                     "company": company_name,
                     "score_delta": score_delta,
                     "changes": changes.get("changes", []),
-                    "timestamp": datetime.now(timezone.utc),
-                    "notified": True,
-                }
-                db["notifications"].insert_one(alert_doc)
-
-                # WebSocket 广播
-                await ws_manager.broadcast("risk_alert", {
+                }))
+            else:
+                asyncio.run(ws_manager.broadcast("risk_alert", {
                     "company": company_name,
                     "score_delta": score_delta,
                     "changes": changes.get("changes", []),
+                }))
+
+            alerts.append({"company": company_name, "score_delta": score_delta})
+            logger.warning("risk_alert_notified", company=company_name, delta=score_delta)
+
+            # ---- sourcing suggestion (24h throttled) ----
+            should_suggest = score_delta >= SCORE_THRESHOLD or level_escalated
+            if should_suggest:
+                now = datetime.now(timezone.utc)
+                cutoff = now - timedelta(hours=24)
+                existing = db["notifications"].find_one({
+                    "company": company_name,
+                    "type": "sourcing_suggestion",
+                    "timestamp": {"$gte": cutoff},
                 })
+                if not existing:
+                    try:
+                        from app.services.sourcing_service import get_top_alternatives
+                        alternatives = get_top_alternatives(company_name, top_k=3)
+                        if alternatives:
+                            suggestion_doc = {
+                                "company": company_name,
+                                "type": "sourcing_suggestion",
+                                "alternatives": alternatives,
+                                "timestamp": now,
+                                "read": False,
+                            }
+                            db["notifications"].insert_one(suggestion_doc)
 
-                alerts.append({"company": company_name, "score_delta": score_delta})
-                logger.warning("risk_alert_notified", company=company_name, delta=score_delta)
+                            if loop.is_running():
+                                loop.create_task(ws_manager.broadcast("sourcing_suggestion", {
+                                    "company": company_name,
+                                    "risk_score": score_delta,
+                                    "level_escalated": level_escalated,
+                                    "alternatives": alternatives,
+                                }))
+                            else:
+                                asyncio.run(ws_manager.broadcast("sourcing_suggestion", {
+                                    "company": company_name,
+                                    "risk_score": score_delta,
+                                    "level_escalated": level_escalated,
+                                    "alternatives": alternatives,
+                                }))
+
+                            suggestions_sent += 1
+                            logger.info("sourcing_suggestion_sent", company=company_name, alternatives=len(alternatives))
+                    except Exception as e:
+                        logger.error("sourcing_suggestion_failed", company=company_name, error=str(e))
 
         except Exception as e:
             logger.error("alert_check_failed", company=company_name, error=str(e))
 
-    return {"checked": len(companies), "alerts": alerts}
+    return {"checked": len(companies), "alerts": alerts, "suggestions_sent": suggestions_sent}
 
 
 def get_notifications(limit: int = 20) -> list[dict]:
