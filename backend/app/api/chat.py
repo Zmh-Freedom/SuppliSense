@@ -44,6 +44,14 @@ async def _langgraph_supervisor_stream(session_id: str, message: str):
         yield event
 
 
+async def _langgraph_sourcing_stream(session_id: str, message: str):
+    """LangGraph Sourcing 寻源子图流式输出。"""
+    from app.graphs.agents.sourcing import stream_sourcing_graph
+
+    async for event in stream_sourcing_graph(session_id, message):
+        yield event
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
@@ -68,6 +76,7 @@ async def chat_endpoint(req: ChatRequest):
         "react": "langgraph-react",
         "plan-execute": "langgraph-plan-execute",
         "multi-agent": "langgraph-multi-agent",
+        "sourcing": "langgraph-sourcing",
     }
 
     if mode == "auto":
@@ -105,6 +114,7 @@ async def chat_stream_endpoint(req: ChatRequest):
         "react": "langgraph-react",
         "plan-execute": "langgraph-plan-execute",
         "multi-agent": "langgraph-multi-agent",
+        "sourcing": "langgraph-sourcing",
     }
     mode = _MODE_ALIASES.get(mode, mode)
 
@@ -115,6 +125,8 @@ async def chat_stream_endpoint(req: ChatRequest):
         stream_fn = _langgraph_plan_execute_stream
     elif mode == "langgraph-multi-agent":
         stream_fn = _langgraph_supervisor_stream
+    elif mode == "langgraph-sourcing":
+        stream_fn = _langgraph_sourcing_stream
     else:
         stream_fn = _langgraph_react_stream
 

@@ -59,8 +59,8 @@ _CLASSIFY_TO_INTENT = {
     "sourcing": Intent.SOURCING,
 }
 
-# 寻源子图尚未实现时，sourcing 降级到 react
-_FALLBACK_FROM_SOURCING = Intent.RISK
+# 寻源子图已就绪，不再降级
+_FALLBACK_FROM_SOURCING = Intent.SOURCING
 
 
 class IntentRouter:

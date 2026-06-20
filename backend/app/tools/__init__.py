@@ -421,6 +421,45 @@ def tianyancha_query(endpoint: str, keyword: str) -> dict:
     return {"endpoint": endpoint, "keyword": keyword, "data": result}
 
 
+@tool
+def create_sourcing_request(title: str, category: str, spec: str) -> dict:
+    """创建采购寻源请求，后续可通过 search_suppliers 执行搜索。
+
+    Args:
+        title: 需求标题，如"摄像头采购"
+        category: 采购品类，如"安防设备"
+        spec: 规格/技术要求描述
+    """
+    from app.schemas.sourcing import SourcingRequestInput
+    from app.services.sourcing_service import create_sourcing_request as _create
+
+    rid = _create(SourcingRequestInput(title=title, category=category, spec=spec), user_id="agent")
+    return {"request_id": rid, "status": "created"}
+
+
+@tool
+def search_suppliers(request_id: str) -> dict:
+    """执行供应商搜索和风险评估排序，返回 Top-10 候选供应商结果。
+
+    Args:
+        request_id: 寻源请求 ID（由 create_sourcing_request 返回）
+    """
+    from app.services.sourcing_service import search_suppliers as _search
+    return _search(request_id)
+
+
+@tool
+def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
+    """勾选寻源结果执行动作：加入监控列表或申请准入。
+
+    Args:
+        result_id: 寻源结果 ID
+        action: 动作类型，可选值: watchlist(加入监控), apply_access(申请准入)
+    """
+    from app.services.sourcing_service import select_result as _select
+    return _select(result_id, action, user_id="agent")
+
+
 # 所有工具列表，供 graph 使用
 TOOLS_LIST = [
     tianyancha_query,
@@ -444,4 +483,7 @@ TOOLS_LIST = [
     compare_companies,
     query_financials,
     manage_scheduled_report,
+    create_sourcing_request,
+    search_suppliers,
+    select_sourcing_result,
 ]

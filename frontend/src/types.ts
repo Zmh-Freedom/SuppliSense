@@ -109,6 +109,59 @@ export interface WSEventMap {
   sentiment_ready: { company_name: string };
 }
 
+// ---- Sourcing ----
+export interface SourcingRequestInput {
+  title: string;
+  category: string;
+  spec: string;
+  budget_min?: number;
+  budget_max?: number;
+  quantity?: number;
+  region_required?: string;
+  qualifications?: string[];
+}
+
+export interface SourcingResultItem {
+  result_id: string;
+  supplier_name: string;
+  match_score: number;
+  risk_score: number | null;
+  risk_level: string;
+  final_rank: number;
+  match_reason: string;
+  risk_summary: string;
+  selected: boolean;
+  action: string | null;
+}
+
+export interface SourcingSearchResponse {
+  request_id: string;
+  status: string;
+  results: SourcingResultItem[];
+}
+
+export interface SourcingRequestDetail {
+  request_id: string;
+  user_id: string;
+  title: string;
+  category: string;
+  spec: string;
+  status: string;
+  result_count: number;
+  created_at: string;
+  completed_at: string | null;
+  results: SourcingResultItem[];
+}
+
+export interface SupplierEntry {
+  _id: string;
+  name: string;
+  unified_code?: string;
+  categories: string[];
+  regions: string[];
+  status: string;
+}
+
 // ---- AssessView Expandable ----
 export interface JudicialDetail {
   count: number;

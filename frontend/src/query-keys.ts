@@ -23,4 +23,7 @@ export const queryKeys = {
   notifications: (limit?: number, read?: boolean) =>
     ['notifications', { limit, read }] as const,
   unreadCount: ['notifications', 'unread'] as const,
+  sourcingRequests: ['sourcing', 'requests'] as const,
+  sourcingDetail: (id: string) => ['sourcing', 'requests', id] as const,
+  suppliers: ['sourcing', 'suppliers'] as const,
 } as const;

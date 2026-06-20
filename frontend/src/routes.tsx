@@ -10,6 +10,7 @@ const ChatView = lazy(() => import('./components/ChatView'));
 const ContagionView = lazy(() => import('./components/ContagionView'));
 const Settings = lazy(() => import('./components/Settings'));
 const SourcingPage = lazy(() => import('./components/SourcingPage'));
+const SupplierLibraryPage = lazy(() => import('./components/SupplierLibraryPage'));
 
 function Lazy({ children }: { children: ReactNode }) {
   return (
@@ -23,6 +24,7 @@ export const TAB_ROUTES = [
   { path: '/', label: '风险看板', icon: 'dashboard' },
   { path: '/assess', label: '企业评估', icon: 'assess' },
   { path: '/sourcing', label: '智能寻源', icon: 'sourcing' },
+  { path: '/suppliers', label: '供应商库', icon: 'sourcing' },
   { path: '/chat', label: 'Agent', icon: 'agent', primary: true },
   { path: '/contagion', label: '关系图谱', icon: 'contagion' },
   { path: '/settings', label: '设置', icon: 'settings' },
@@ -39,6 +41,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Lazy><Dashboard /></Lazy> },
       { path: 'assess/:companyName?', element: <Lazy><AssessView /></Lazy> },
       { path: 'sourcing', element: <Lazy><SourcingPage /></Lazy> },
+      { path: 'suppliers', element: <Lazy><SupplierLibraryPage /></Lazy> },
       { path: 'chat', element: <Lazy><ChatView /></Lazy> },
       { path: 'contagion', element: <Lazy><ContagionView /></Lazy> },
       { path: 'settings', element: <Lazy><Settings /></Lazy> },

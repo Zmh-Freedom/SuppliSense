@@ -61,6 +61,18 @@ DDL_STATEMENTS = [
     )
     """,
 
+    # Supplier profiles (vector search for sourcing)
+    """
+    CREATE TABLE IF NOT EXISTS supplier_profiles (
+        id UUID PRIMARY KEY,
+        supplier_name VARCHAR(255) NOT NULL,
+        content TEXT NOT NULL,
+        embedding VECTOR(384) NOT NULL,
+        metadata JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+
     # Assessment history
     """
     CREATE TABLE IF NOT EXISTS assessment_history (
@@ -87,6 +99,8 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_company ON assessment_history (company_name, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_user ON assessment_history (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_supplier_embedding ON supplier_profiles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)",
+    "CREATE INDEX IF NOT EXISTS idx_supplier_name ON supplier_profiles (supplier_name)",
 ]
 
 

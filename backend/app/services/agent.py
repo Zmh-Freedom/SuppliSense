@@ -372,6 +372,59 @@ def _tianyancha_query(endpoint: str, keyword: str) -> dict:
     return {"endpoint": endpoint, "keyword": keyword, "data": result}
 
 
+@_register(
+    "create_sourcing_request",
+    "创建采购寻源请求，后续可执行搜索。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "需求标题"},
+            "category": {"type": "string", "description": "采购品类"},
+            "spec": {"type": "string", "description": "规格/技术要求"},
+        },
+        "required": ["title", "category", "spec"],
+    },
+)
+def _create_sourcing_request(title: str, category: str, spec: str) -> dict:
+    from app.schemas.sourcing import SourcingRequestInput
+    from app.services.sourcing_service import create_sourcing_request as _create
+    rid = _create(SourcingRequestInput(title=title, category=category, spec=spec), user_id="agent")
+    return {"request_id": rid, "status": "created"}
+
+
+@_register(
+    "search_suppliers",
+    "执行供应商搜索、风险评估和排序，返回 Top-10 候选。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "request_id": {"type": "string", "description": "寻源请求 ID"},
+        },
+        "required": ["request_id"],
+    },
+)
+def _search_suppliers(request_id: str) -> dict:
+    from app.services.sourcing_service import search_suppliers as _search
+    return _search(request_id)
+
+
+@_register(
+    "select_sourcing_result",
+    "勾选寻源结果：加入监控列表或申请准入。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "result_id": {"type": "string", "description": "寻源结果 ID"},
+            "action": {"type": "string", "description": "watchlist 或 apply_access"},
+        },
+        "required": ["result_id"],
+    },
+)
+def _select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
+    from app.services.sourcing_service import select_result as _select
+    return _select(result_id, action, user_id="agent")
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:

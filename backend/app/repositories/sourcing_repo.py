@@ -1,0 +1,130 @@
+"""Sourcing repository — MongoDB CRUD for sourcing_requests and sourcing_results."""
+
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from bson import ObjectId
+
+from app.db.mongo import get_db
+
+
+def create_request(data: dict) -> str:
+    db = get_db()
+    rid = str(uuid.uuid4())
+    doc = {
+        "_id": rid,
+        "user_id": data["user_id"],
+        "title": data["title"],
+        "category": data["category"],
+        "spec": data.get("spec", ""),
+        "budget_min": data.get("budget_min"),
+        "budget_max": data.get("budget_max"),
+        "quantity": data.get("quantity"),
+        "region_required": data.get("region_required"),
+        "qualifications_required": data.get("qualifications", []),
+        "status": "draft",
+        "result_count": 0,
+        "created_at": datetime.now(timezone.utc),
+        "completed_at": None,
+        "conversation_id": data.get("conversation_id"),
+    }
+    db["sourcing_requests"].insert_one(doc)
+    return rid
+
+
+def get_request(rid: str) -> dict | None:
+    db = get_db()
+    return db["sourcing_requests"].find_one({"_id": rid})
+
+
+def update_request_status(rid: str, status: str, result_count: int = 0) -> None:
+    db = get_db()
+    update: dict[str, Any] = {"status": status, "result_count": result_count}
+    if status == "done":
+        update["completed_at"] = datetime.now(timezone.utc)
+    db["sourcing_requests"].update_one({"_id": rid}, {"$set": update})
+
+
+def list_requests(
+    user_id: str | None = None,
+    status: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> dict[str, Any]:
+    db = get_db()
+    filt: dict[str, Any] = {}
+    if user_id:
+        filt["user_id"] = user_id
+    if status:
+        filt["status"] = status
+
+    total = db["sourcing_requests"].count_documents(filt)
+    cursor = (
+        db["sourcing_requests"]
+        .find(filt)
+        .sort("created_at", -1)
+        .skip((page - 1) * page_size)
+        .limit(page_size)
+    )
+    items = list(cursor)
+    for item in items:
+        item["request_id"] = str(item["_id"])
+        del item["_id"]
+
+    return {"items": items, "total": total}
+
+
+def save_result(result_id: str, data: dict) -> None:
+    db = get_db()
+    data["_id"] = result_id
+    data["created_at"] = datetime.now(timezone.utc)
+    db["sourcing_results"].insert_one(data)
+
+
+def get_results(request_id: str) -> list[dict]:
+    db = get_db()
+    cursor = (
+        db["sourcing_results"]
+        .find({"request_id": request_id})
+        .sort("final_rank", -1)
+        .limit(10)
+    )
+    results = list(cursor)
+    for r in results:
+        r["result_id"] = str(r["_id"])
+        del r["_id"]
+    return results
+
+
+def update_result_action(result_id: str, action: str) -> None:
+    db = get_db()
+    db["sourcing_results"].update_one(
+        {"_id": result_id},
+        {"$set": {"selected": True, "action": action}},
+    )
+
+
+def create_access_application(supplier_name: str, request_id: str | None, applicant_id: str) -> str:
+    db = get_db()
+    aid = str(uuid.uuid4())
+    db["access_applications"].insert_one({
+        "_id": aid,
+        "supplier_name": supplier_name,
+        "request_id": request_id,
+        "applicant_id": applicant_id,
+        "status": "pending",
+        "reviewer_id": None,
+        "reviewed_at": None,
+        "created_at": datetime.now(timezone.utc),
+    })
+    return aid
+
+
+def ensure_indexes() -> None:
+    db = get_db()
+    db["sourcing_requests"].create_index([("user_id", 1), ("created_at", -1)])
+    db["sourcing_requests"].create_index("status")
+    db["sourcing_results"].create_index([("request_id", 1), ("final_rank", -1)])
+    db["sourcing_results"].create_index("request_id")
+    db["access_applications"].create_index([("status", 1), ("created_at", -1)])
