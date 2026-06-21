@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
@@ -65,6 +65,13 @@ export default function SupplierLibraryPage() {
     e.target.value = '';
   };
 
+  useEffect(() => {
+    if (importResult) {
+      const t = setTimeout(() => setImportResult(null), 8000);
+      return () => clearTimeout(t);
+    }
+  }, [importResult]);
+
   // ---- Supplier Edit ----
   const updateMutation = useMutation({
     mutationFn: (sid: string) =>
@@ -116,6 +123,13 @@ export default function SupplierLibraryPage() {
 
   const statusLabels: Record<string, string> = { pending: '待审批', approved: '已通过', rejected: '已拒绝' };
   const statusFilters = ['pending', 'approved', 'rejected'];
+
+  const suppStatusColor: Record<string, string> = {
+    approved: 'text-green-600 bg-green-50',
+    prospective: 'text-blue-500 bg-blue-50',
+    blocked: 'text-red-500 bg-red-50',
+    deprecated: 'text-gray-400 bg-gray-100',
+  };
 
   return (
     <div className="h-full py-6 px-6 overflow-auto">
@@ -200,7 +214,10 @@ export default function SupplierLibraryPage() {
 
         {/* ---- 供应商管理 ---- */}
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-bold text-[var(--color-text)]">供应商主库</h2>
+          <h2 className="text-lg font-bold text-[var(--color-text)]">
+            供应商主库
+            {data?.total !== undefined && <span className="text-sm font-normal text-gray-400 ml-2">{data.total} 家</span>}
+          </h2>
           <div className="flex gap-2">
             {canManage && (
               <label className="text-sm border border-[var(--color-border)] rounded-xl px-4 py-2 cursor-pointer hover:bg-[var(--color-surface-hover)] transition-colors">
@@ -326,7 +343,10 @@ export default function SupplierLibraryPage() {
                       <div>
                         <span className="font-medium text-[var(--color-text)]">{supplier.name}</span>
                         <span className="text-[var(--color-text-muted)] ml-2 text-xs">
-                          {supplier.categories?.join(', ') || '未分类'} | {supplier.status}
+                          {supplier.categories?.join(', ') || '未分类'}
+                        </span>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ml-1.5 ${suppStatusColor[supplier.status] || 'text-gray-400 bg-gray-100'}`}>
+                          {supplier.status === 'prospective' ? '待考察' : supplier.status === 'approved' ? '已准入' : supplier.status === 'blocked' ? '已拉黑' : supplier.status === 'deprecated' ? '已停用' : supplier.status}
                         </span>
                       </div>
                       {canManage && (
