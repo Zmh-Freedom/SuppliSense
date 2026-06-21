@@ -418,3 +418,13 @@ async def predict_one(company_name: str):
 )
 async def unwatch_company(company_name: str = Query(..., description="企业名称")):
     return remove_from_watchlist(company_name)
+
+
+@router.get(
+    "/tianyancha-stats",
+    summary="天眼查 API 调用统计",
+    description="查询天眼查 API 累计调用次数、按接口/企业的分布。",
+)
+async def tianyancha_stats():
+    from app.services.tianyancha_client import get_api_stats
+    return get_api_stats()

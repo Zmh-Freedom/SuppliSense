@@ -12,6 +12,10 @@
   /services/open/mr/abnormal/2.0           经营异常
   /services/open/mr/punishmentInfo/3.0     行政处罚
   /services/open/mr/illegalinfo/2.0        严重违法
+
+API 调用计数：
+  每次 _call / _call_with_page 都会记录到 api_call_logs 集合。
+  可通过 get_api_stats() 查询累计/当日/按接口维度的统计数据。
 """
 
 import httpx
@@ -143,6 +147,7 @@ def _fetch_lawsuit_paginated(company_name: str) -> None:
 
 
 def _call(path: str, company_name: str) -> dict | None:
+    result = None
     try:
         r = httpx.get(
             f"{BASE_URL}{path}",
@@ -150,19 +155,20 @@ def _call(path: str, company_name: str) -> dict | None:
             headers={"Authorization": TOKEN},
             timeout=30.0,
         )
-        if not r.is_success:
-            return None
-        data = r.json()
-        code = data.get("error_code", -1)
-        if code == 0 or code == 300000:  # 0=success, 300000=no results (valid)
-            return data
-        return None
+        if r.is_success:
+            data = r.json()
+            code = data.get("error_code", -1)
+            if code == 0 or code == 300000:
+                result = data
     except Exception:
-        return None
+        pass
+    _record_call(path, company_name, result is not None)
+    return result
 
 
 def _call_with_page(path: str, company_name: str, page_num: int, page_size: int) -> dict | None:
     """翻页调用天眼查 API。"""
+    result = None
     try:
         r = httpx.get(
             f"{BASE_URL}{path}",
@@ -170,15 +176,70 @@ def _call_with_page(path: str, company_name: str, page_num: int, page_size: int)
             headers={"Authorization": TOKEN},
             timeout=30.0,
         )
-        if not r.is_success:
-            return None
-        data = r.json()
-        code = data.get("error_code", -1)
-        if code == 0 or code == 300000:
-            return data
-        return None
+        if r.is_success:
+            data = r.json()
+            code = data.get("error_code", -1)
+            if code == 0 or code == 300000:
+                result = data
     except Exception:
-        return None
+        pass
+    _record_call(path, company_name, result is not None)
+    return result
+
+
+# ---- API call tracking ----
+
+def _record_call(path: str, company: str, success: bool) -> None:
+    """记录一次 API 调用到 MongoDB。"""
+    from datetime import datetime, timezone
+    try:
+        db = get_db()
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        db["api_call_logs"].insert_one({
+            "path": path,
+            "company": company,
+            "success": success,
+            "created_at": datetime.now(timezone.utc),
+            "date": today,
+        })
+    except Exception:
+        pass  # logging failure should never break the main flow
+
+
+def get_api_stats() -> dict:
+    """查询天眼查 API 调用统计。"""
+    from datetime import datetime, timezone
+    db = get_db()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    total = db["api_call_logs"].count_documents({})
+    today_count = db["api_call_logs"].count_documents({"date": today})
+    success_count = db["api_call_logs"].count_documents({"success": True})
+    fail_count = total - success_count
+
+    # Per-endpoint breakdown
+    pipeline = [
+        {"$group": {"_id": "$path", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]
+    by_endpoint = list(db["api_call_logs"].aggregate(pipeline))
+
+    # Per-company breakdown (top 20)
+    pipeline2 = [
+        {"$group": {"_id": "$company", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 20},
+    ]
+    by_company = list(db["api_call_logs"].aggregate(pipeline2))
+
+    return {
+        "total": total,
+        "today": today_count,
+        "success": success_count,
+        "fail": fail_count,
+        "by_endpoint": [{"path": e["_id"], "count": e["count"]} for e in by_endpoint],
+        "top_companies": [{"company": c["_id"], "count": c["count"]} for c in by_company],
+    }
 
 
 def _save(collection: str, name: str, data: dict, wrapper_key: str) -> None:
