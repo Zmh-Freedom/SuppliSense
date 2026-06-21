@@ -91,14 +91,11 @@ async def stream_sourcing_graph(session_id: str, message: str):
 
     from app.services.agent import _load_history, _save_turn
     from app.graphs.streaming import _sse_event
+    from app.graphs.context import build_input_messages
 
     history = _load_history(session_id)
-    msgs = (
-        [SystemMessage(content=SOURCING_SYSTEM)]
-        + [HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
-           for m in history]
-        + [HumanMessage(content=message)]
-    )
+    msgs = await build_input_messages(history or [], message)
+    msgs.insert(0, SystemMessage(content=SOURCING_SYSTEM))
 
     graph = build_sourcing_graph()
     full_answer = ""

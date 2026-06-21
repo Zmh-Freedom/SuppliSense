@@ -297,12 +297,9 @@ async def stream_supervisor_graph(
             answer_chunk, done, error
     """
     from app.services.agent import _save_turn
+    from app.graphs.context import build_input_messages
 
-    input_messages: list = []
-    if history:
-        for m in history:
-            input_messages.append(HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"]))
-    input_messages.append(HumanMessage(content=user_message))
+    input_messages = await build_input_messages(history or [], user_message)
 
     graph = build_supervisor_graph()
     full_answer = ""

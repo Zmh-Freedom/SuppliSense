@@ -3,8 +3,6 @@
 import json
 from typing import AsyncGenerator
 
-from langchain_core.messages import HumanMessage, SystemMessage
-
 
 def _sse_event(event_type: str, data: dict) -> str:
     """Format data as SSE event string."""
@@ -21,17 +19,8 @@ async def stream_react_graph(
 
     Events: thinking, tool_call, tool_result, answer_chunk, done, error
     """
-    # 构建输入消息（长对话自动摘要）
-    input_messages = []
-    if history:
-        from app.graphs.context import build_context_messages
-        context = await build_context_messages(history)
-        for m in context:
-            if m.get("role") == "system":
-                input_messages.append(SystemMessage(content=m["content"]))
-            else:
-                input_messages.append({"role": m["role"], "content": m["content"]})
-    input_messages.append(HumanMessage(content=user_message))
+    from app.graphs.context import build_input_messages
+    input_messages = await build_input_messages(history or [], user_message)
 
     full_answer = ""
     tool_call_count = 0

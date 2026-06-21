@@ -61,3 +61,24 @@ async def build_context_messages(history: list[dict]) -> list[dict]:
         {"role": "system", "content": f"对话历史摘要：{summary}"},
         *history[-KEEP_RECENT:],
     ]
+
+
+async def build_input_messages(history: list[dict], user_message: str) -> list:
+    """构建 LangChain 输入消息列表，长对话自动摘要。
+
+    所有图的 stream 函数统一使用此 helper，确保上下文窗口管理一致。
+    """
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    input_messages: list = []
+    if history:
+        context = await build_context_messages(history)
+        for m in context:
+            if m.get("role") == "system":
+                input_messages.append(SystemMessage(content=m["content"]))
+            elif m.get("role") == "user":
+                input_messages.append(HumanMessage(content=m["content"]))
+            else:
+                input_messages.append({"role": m["role"], "content": m["content"]})
+    input_messages.append(HumanMessage(content=user_message))
+    return input_messages

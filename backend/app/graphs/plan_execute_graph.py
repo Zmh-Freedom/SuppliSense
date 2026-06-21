@@ -258,14 +258,23 @@ async def stream_plan_execute_graph(
 
     Events: thinking, plan, tool_call, tool_result, answer_chunk, done, error
     """
+    from app.graphs.context import build_context_messages
+
     graph = build_plan_execute_graph()
     full_answer = ""
+
+    input_text = user_message
+    if history:
+        context = await build_context_messages(history)
+        if any(m.get("role") == "system" for m in context):
+            summary = next(m["content"] for m in context if m["role"] == "system")
+            input_text = f"{summary}\n\n当前问题：{user_message}"
 
     try:
         yield _sse_event("thinking", {"message": "正在分析问题并制定执行计划..."})
 
         async for event in graph.astream_events(
-            {"input": user_message, "plan": [], "past_steps": [], "response": None},
+            {"input": input_text, "plan": [], "past_steps": [], "response": None},
             version="v2",
         ):
             kind = event.get("event", "")
