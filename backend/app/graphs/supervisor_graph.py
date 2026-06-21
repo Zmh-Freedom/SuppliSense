@@ -310,9 +310,9 @@ async def stream_supervisor_graph(
         input_messages.insert(0, SystemMessage(content=preference_context))
 
     graph = build_supervisor_graph()
-    full_answer = ""
     current_agent: str | None = None
-    agent_answer_accumulator: dict[str, str] = {}
+    agent_answers: dict[str, str] = {}  # accumulated answers per agent
+    all_text = ""  # everything shown to user
 
     try:
         async for event in graph.astream_events(
@@ -344,7 +344,6 @@ async def stream_supervisor_graph(
             ):
                 agent_name = event["name"].replace("_agent", "")
                 current_agent = agent_name
-                agent_answer_accumulator[agent_name] = ""
                 yield _sse_event("agent_start", {"agent": agent_name})
 
             # ---- 子 Agent LLM 节点完成 ----
@@ -352,35 +351,35 @@ async def stream_supervisor_graph(
                 "risk_agent", "sentiment_agent", "compliance_agent",
             ):
                 agent_name = event["name"].replace("_agent", "")
-                accumulated = agent_answer_accumulator.get(agent_name, "")
-                if accumulated:
-                    full_answer = accumulated
-                yield _sse_event("agent_complete", {"agent": agent_name})
-                current_agent = None  # reset so supervisor events don't interfere
+                answer = agent_answers.get(agent_name, "")
+                if answer:
+                    yield _sse_event("agent_complete", {"agent": agent_name, "summary": answer[:200]})
+                current_agent = None
 
             # ---- LLM 流式 token（仅子 agent）----
             elif kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and chunk.content and current_agent:
-                    agent_answer_accumulator[current_agent] = \
-                        agent_answer_accumulator.get(current_agent, "") + chunk.content
-                    yield _sse_event("answer_chunk", {"text": chunk.content})
+                    text = chunk.content
+                    agent_answers[current_agent] = agent_answers.get(current_agent, "") + text
+                    all_text += text
+                    yield _sse_event("answer_chunk", {"text": text})
 
             # ---- LLM 完整响应（非流式兜底，仅子 agent）----
             elif kind == "on_chat_model_end":
                 if current_agent:
                     output = event.get("data", {}).get("output")
-                    content = output.content if output and hasattr(output, "content") else ""
-                    if content and not full_answer:
-                        agent_answer_accumulator[current_agent] = content
-                        full_answer = content
-                        yield _sse_event("answer_chunk", {"text": content})
+                    text = output.content if output and hasattr(output, "content") else ""
+                    if text:
+                        agent_answers[current_agent] = text
+                        all_text += text
+                        yield _sse_event("answer_chunk", {"text": text})
 
-        # 保存对话历史
-        if full_answer:
-            _save_turn(session_id, user_message, full_answer)
+        # 保存对话历史（只保存 agent 回答，不保存 supervisor 路由决策）
+        if all_text:
+            _save_turn(session_id, user_message, all_text)
 
-        yield _sse_event("done", {"answer": full_answer})
+        yield _sse_event("done", {"answer": all_text})
 
     except Exception as e:
         yield _sse_event("error", {"message": f"Supervisor 图执行错误: {str(e)}"})
