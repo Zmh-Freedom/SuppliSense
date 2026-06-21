@@ -25,6 +25,8 @@ async def stream_react_graph(
     full_answer = ""
     tool_call_count = 0
 
+    yield _sse_event("thinking", {"message": "正在分析您的问题..."})
+
     try:
         async for event in graph.astream_events(
             {"messages": input_messages},

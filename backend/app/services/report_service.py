@@ -8,6 +8,11 @@ from app.repositories.financial_repo import get_financial_metrics
 from app.services.company_service import get_company_profile
 
 
+def _has_val(v) -> bool:
+    """Return True if value is not None and not 0.0 (sentinel for missing data)."""
+    return v is not None and v != 0.0
+
+
 def generate_excel(company_name: str) -> bytes:
     profile = get_company_profile(company_name)
     risk = get_risk_info(company_name)
@@ -73,10 +78,10 @@ def generate_excel(company_name: str) -> bytes:
             ("净利率", f"{fin.net_profit_margin * 100:.1f}%" if fin.net_profit_margin else "—", "净利润/营收"),
             ("流动比率", f"{fin.current_ratio:.2f}" if fin.current_ratio else "—", "流动资产/流动负债"),
             ("速动比率", f"{fin.quick_ratio:.2f}" if fin.quick_ratio else "—", "速动资产/流动负债"),
-            ("存货周转率", f"{fin.inventory_turnover:.1f}" if fin.inventory_turnover else "—", ""),
-            ("应收款周转天数", f"{fin.ar_turnover_days:.0f}天" if fin.ar_turnover_days else "—", ""),
-            ("扣非利润占比", f"{fin.recurring_profit_ratio * 100:.1f}%" if fin.recurring_profit_ratio else "—", ""),
-            ("产权比率", f"{fin.equity_ratio:.2f}" if fin.equity_ratio else "—", ""),
+            ("存货周转率", f"{fin.inventory_turnover:.1f}" if _has_val(fin.inventory_turnover) else "—", ""),
+            ("应收款周转天数", f"{fin.ar_turnover_days:.0f}天" if _has_val(fin.ar_turnover_days) else "—", ""),
+            ("扣非利润占比", f"{fin.recurring_profit_ratio * 100:.1f}%" if _has_val(fin.recurring_profit_ratio) else "—", ""),
+            ("产权比率", f"{fin.equity_ratio:.2f}" if _has_val(fin.equity_ratio) else "—", ""),
             ("营收趋势", "下滑" if fin.revenue_trend and fin.revenue_trend < 0 else "稳定", "近3年"),
             ("负债趋势", "上升" if fin.debt_trend and fin.debt_trend > 0 else "稳定", "近3年"),
             ("净利趋势", "下滑" if fin.net_profit_trend and fin.net_profit_trend < 0 else "稳定", "近3年"),
