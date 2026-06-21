@@ -35,6 +35,8 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 对比企业：用 compare_companies
 - 查财务：用 query_financials
 - 定时报告：用 manage_scheduled_report
+- 找供应商/寻源：用 create_sourcing_request 创建需求，再用 search_suppliers 搜索候选
+- 勾选结果：用 select_sourcing_result（watchlist 加入监控 / apply_access 申请准入）
 
 业务规则：
 - assess_risk 已含财报数据，上市公司要分析财报
