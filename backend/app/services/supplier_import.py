@@ -129,6 +129,11 @@ def import_suppliers_from_excel(file_content: bytes, filename: str) -> dict:
                 logger.error("supplier_import_error", sheet=sheet_name, row=row_idx, error=str(e))
 
     logger.info("supplier_import_done", filename=filename, imported=imported, skipped=skipped)
+
+    # Enrich with Tianyancha data
+    if imported > 0:
+        _enrich_imported(db)
+
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
@@ -221,7 +226,46 @@ def import_from_tianyancha_search(
         page += 1
 
     logger.info("tianyancha_import_done", keyword=keyword, industry=industry, imported=imported, skipped=skipped)
+
+    if imported > 0:
+        _enrich_imported(db)
+
     return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
+def _enrich_imported(db) -> None:
+    """为新导入的供应商补充天眼查工商信息。"""
+    from app.services.tianyancha_client import fetch_company
+    # Find recently imported suppliers without unified_code
+    cursor = db["suppliers"].find(
+        {"source": {"$in": ["excel_import", "tianyancha_search"]}, "unified_code": None},
+        {"name": 1},
+    ).limit(50)
+    names = [doc["name"] for doc in cursor]
+    if names:
+        logger.info("enriching_suppliers", count=len(names))
+        for name in names:
+            try:
+                fetch_company(name)
+            except Exception:
+                pass
+        # Now write enriched fields back
+        for name in names:
+            base = db["baseinfo"].find_one({"name": name})
+            if base:
+                updates = {}
+                if base.get("regNumber"):
+                    updates["unified_code"] = base["regNumber"]
+                if base.get("legalPersonName"):
+                    updates["legal_person"] = base["legalPersonName"]
+                if base.get("regCapital"):
+                    updates["registered_capital"] = base["regCapital"]
+                if base.get("startDate"):
+                    updates["establish_time"] = base["startDate"]
+                if updates:
+                    updates["updated_at"] = __import__("datetime").datetime.now()
+                    db["suppliers"].update_one({"name": name}, {"$set": updates})
+        logger.info("enriching_done", updated=len(names))
 
 
 def _cell(row, idx: int | None) -> str:

@@ -110,3 +110,45 @@ def ensure_indexes() -> None:
     db["suppliers"].create_index("categories")
     db["suppliers"].create_index("status")
     db["suppliers"].create_index("name")
+
+
+def enrich_supplier_from_tianyancha(sid: str) -> dict | None:
+    """用天眼查数据补全供应商工商信息。
+
+    从 baseinfo 集合读取注册资本、法人、成立时间等，
+    写入 suppliers 文档。失败返回 None。
+    """
+    db = get_db()
+    supplier = db["suppliers"].find_one({"_id": sid})
+    if not supplier:
+        return None
+
+    name = supplier["name"]
+    base = db["baseinfo"].find_one({"name": name})
+    if not base:
+        # Try fetching from Tianyancha
+        from app.services.tianyancha_client import fetch_company
+        fetch_company(name)
+        base = db["baseinfo"].find_one({"name": name})
+    if not base:
+        return None
+
+    updates: dict[str, Any] = {}
+    if base.get("regNumber"):
+        updates["unified_code"] = base["regNumber"]
+    if base.get("legalPersonName"):
+        updates["legal_person"] = base["legalPersonName"]
+    if base.get("regCapital"):
+        updates["registered_capital"] = base["regCapital"]
+    if base.get("startDate"):
+        updates["establish_time"] = base["startDate"]
+    if base.get("regStatus"):
+        updates["reg_status"] = base["regStatus"]
+    if base.get("regInstitute"):
+        updates["reg_institute"] = base["regInstitute"]
+
+    if updates:
+        updates["updated_at"] = datetime.now(timezone.utc)
+        db["suppliers"].update_one({"_id": sid}, {"$set": updates})
+
+    return supplier

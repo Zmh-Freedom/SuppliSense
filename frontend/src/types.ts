@@ -180,9 +180,14 @@ export interface SupplierEntry {
   _id: string;
   name: string;
   unified_code?: string;
+  legal_person?: string;
+  registered_capital?: string;
+  establish_time?: string;
+  reg_status?: string;
   categories: string[];
   regions: string[];
   status: string;
+  source?: string;
 }
 
 // ---- AssessView Expandable ----

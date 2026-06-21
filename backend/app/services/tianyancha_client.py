@@ -289,9 +289,12 @@ def get_api_stats() -> dict:
 
 
 def _save(collection: str, name: str, data: dict, wrapper_key: str) -> None:
+    from app.repositories.supplier_repo import resolve_supplier_id
+
     db = get_db()
+    sid = resolve_supplier_id(name, auto_create=True)
     db[collection].update_one(
         {"name": name},
-        {"$set": {"name": name, wrapper_key: data}},
+        {"$set": {"name": name, "supplier_id": sid, wrapper_key: data}},
         upsert=True,
     )

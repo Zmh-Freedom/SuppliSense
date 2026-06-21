@@ -408,13 +408,19 @@ export default function SupplierLibraryPage() {
                   ) : (
                     <>
                       <div>
-                        <span className="font-medium text-[var(--color-text)]">{supplier.name}</span>
-                        <span className="text-[var(--color-text-muted)] ml-2 text-xs">
-                          {supplier.categories?.join(', ') || '未分类'}
-                        </span>
-                        <span className={`text-xs px-1.5 py-0.5 rounded-full ml-1.5 ${suppStatusColor[supplier.status] || 'text-gray-400 bg-gray-100'}`}>
-                          {supplier.status === 'prospective' ? '待考察' : supplier.status === 'approved' ? '已准入' : supplier.status === 'blocked' ? '已拉黑' : supplier.status === 'deprecated' ? '已停用' : supplier.status}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-[var(--color-text)]">{supplier.name}</span>
+                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${suppStatusColor[supplier.status] || 'text-gray-400 bg-gray-100'}`}>
+                            {supplier.status === 'prospective' ? '待考察' : supplier.status === 'approved' ? '已准入' : supplier.status === 'blocked' ? '已拉黑' : supplier.status === 'deprecated' ? '已停用' : supplier.status}
+                          </span>
+                        </div>
+                        <div className="text-[var(--color-text-muted)] text-xs mt-0.5 space-x-3">
+                          <span>{supplier.categories?.join(', ') || '未分类'}</span>
+                          {supplier.legal_person && <span>法人: {supplier.legal_person}</span>}
+                          {supplier.registered_capital && <span>注册资本: {supplier.registered_capital}</span>}
+                          {supplier.establish_time && <span>成立: {supplier.establish_time}</span>}
+                        </div>
+                        {supplier.unified_code && <div className="text-gray-400 text-[10px] mt-0.5">{supplier.unified_code}</div>}
                       </div>
                       {canManage && (
                         <button
