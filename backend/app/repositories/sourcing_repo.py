@@ -7,27 +7,30 @@ from typing import Any
 from bson import ObjectId
 
 from app.db.mongo import get_db
+from app.schemas.documents import SourcingRequestDocument, SourcingResultDocument, AccessApplicationDocument
+
+
+def _validate_sourcing_req(data: dict) -> dict:
+    return SourcingRequestDocument(**data).model_dump()
+
+
+def _validate_sourcing_result(data: dict) -> dict:
+    return SourcingResultDocument(**data).model_dump()
+
+
+def _validate_access_app(data: dict) -> dict:
+    return AccessApplicationDocument(**data).model_dump()
 
 
 def create_request(data: dict) -> str:
+    validated = _validate_sourcing_req(data)
     db = get_db()
     rid = str(uuid.uuid4())
     doc = {
         "_id": rid,
-        "user_id": data["user_id"],
-        "title": data["title"],
-        "category": data["category"],
-        "spec": data.get("spec", ""),
-        "budget_min": data.get("budget_min"),
-        "budget_max": data.get("budget_max"),
-        "quantity": data.get("quantity"),
-        "region_required": data.get("region_required"),
-        "qualifications_required": data.get("qualifications", []),
-        "status": "draft",
-        "result_count": 0,
+        **validated,
         "created_at": datetime.now(timezone.utc),
         "completed_at": None,
-        "conversation_id": data.get("conversation_id"),
     }
     db["sourcing_requests"].insert_one(doc)
     return rid
@@ -76,10 +79,11 @@ def list_requests(
 
 
 def save_result(result_id: str, data: dict) -> None:
+    validated = _validate_sourcing_result(data)
     db = get_db()
-    data["_id"] = result_id
-    data["created_at"] = datetime.now(timezone.utc)
-    db["sourcing_results"].insert_one(data)
+    validated["_id"] = result_id
+    validated["created_at"] = datetime.now(timezone.utc)
+    db["sourcing_results"].insert_one(validated)
 
 
 def get_results(request_id: str) -> list[dict]:
@@ -113,20 +117,18 @@ def update_result_action(result_id: str, action: str) -> None:
 def create_access_application(supplier_name: str, request_id: str | None, applicant_id: str) -> str:
     from app.repositories.supplier_repo import resolve_supplier_id
 
-    db = get_db()
-    aid = str(uuid.uuid4())
     supplier_id = resolve_supplier_id(supplier_name, auto_create=True)
-    db["access_applications"].insert_one({
-        "_id": aid,
+    validated = _validate_access_app({
         "supplier_name": supplier_name,
         "supplier_id": supplier_id,
         "request_id": request_id,
         "applicant_id": applicant_id,
-        "status": "pending",
-        "reviewer_id": None,
-        "reviewed_at": None,
-        "created_at": datetime.now(timezone.utc),
     })
+    db = get_db()
+    aid = str(uuid.uuid4())
+    validated["_id"] = aid
+    validated["created_at"] = datetime.now(timezone.utc)
+    db["access_applications"].insert_one(validated)
     return aid
 
 

@@ -5,6 +5,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db.mongo import get_db
+from app.schemas.documents import SupplierDocument
+
+
+def _validate_doc(doc: dict) -> dict:
+    """用 Pydantic 校验文档。校验通过返回 dict，失败 raise ValidationError。"""
+    return SupplierDocument(**doc).model_dump()
 
 
 def resolve_supplier_id(name: str, auto_create: bool = False) -> str | None:
@@ -33,21 +39,13 @@ def resolve_supplier_id(name: str, auto_create: bool = False) -> str | None:
 
 
 def add_supplier(data: dict) -> str:
+    validated = _validate_doc(data)
     db = get_db()
     sid = str(uuid.uuid4())
     doc = {
         "_id": sid,
-        "name": data["name"],
-        "unified_code": data.get("unified_code"),
-        "categories": data.get("categories", []),
-        "regions": data.get("regions", []),
-        "qualifications": data.get("qualifications", []),
-        "scale": data.get("scale") or {},
-        "contact": data.get("contact") or {},
-        "status": data.get("status", "prospective"),
-        "rating": data.get("rating"),
-        "source": "manual",
-        "embedding_dirty": True,
+        **validated,
+        "source": data.get("source", "manual"),
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
     }
@@ -56,15 +54,17 @@ def add_supplier(data: dict) -> str:
 
 
 def update_supplier(sid: str, data: dict) -> None:
+    validated = _validate_doc({**data, "name": data.get("name", "") or ""})
     db = get_db()
-    # 先查旧值用于审计
     old = db["suppliers"].find_one({"_id": sid})
-    data["updated_at"] = datetime.now(timezone.utc)
-    data["embedding_dirty"] = True
-    db["suppliers"].update_one({"_id": sid}, {"$set": data})
-    # 记录变更
+    update_data = {**validated, "updated_at": datetime.now(timezone.utc), "embedding_dirty": True}
+    # 只更新传入的字段
+    update_set = {k: v for k, v in update_data.items() if k in data}
+    update_set["updated_at"] = update_data["updated_at"]
+    update_set["embedding_dirty"] = True
+    db["suppliers"].update_one({"_id": sid}, {"$set": update_set})
     if old:
-        changed = {k: {"old": old.get(k), "new": v} for k, v in data.items()
+        changed = {k: {"old": old.get(k), "new": v} for k, v in update_set.items()
                    if k not in ("updated_at", "embedding_dirty") and old.get(k) != v}
         if changed:
             db["supplier_changelog"].insert_one({
