@@ -192,6 +192,18 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+# Request logging middleware (skip health/metrics probes)
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in ("/health", "/metrics", "/docs", "/redoc", "/openapi.json"):
+        return await call_next(request)
+    logger.info("http_request", method=request.method, path=path, query=str(request.query_params))
+    response = await call_next(request)
+    logger.info("http_response", method=request.method, path=path, status_code=response.status_code)
+    return response
+
+
 # Metrics middleware
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
