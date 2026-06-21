@@ -20,6 +20,30 @@ export default function SupplierLibraryPage() {
   const [approvalStatus, setApprovalStatus] = useState<string>('pending');
   const [showApproval, setShowApproval] = useState(false);
 
+  // tianyancha search state
+  const [tycKeyword, setTycKeyword] = useState('');
+  const [tycIndustry, setTycIndustry] = useState('');
+  const [tycRegion, setTycRegion] = useState('');
+  const [tycResult, setTycResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
+
+  const tycMutation = useMutation({
+    mutationFn: () => api.post<{ imported: number; skipped: number; errors: string[] }>(
+      `/sourcing/suppliers/import-tianyancha?keyword=${encodeURIComponent(tycKeyword)}&industry=${encodeURIComponent(tycIndustry)}&region=${encodeURIComponent(tycRegion)}&max_results=50`,
+    ),
+    onSuccess: (data) => {
+      setTycResult(data);
+      qc.invalidateQueries({ queryKey: queryKeys.suppliers });
+    },
+    onError: () => setTycResult({ imported: 0, skipped: 0, errors: ['请求失败'] }),
+  });
+
+  useEffect(() => {
+    if (tycResult) {
+      const t = setTimeout(() => setTycResult(null), 10000);
+      return () => clearTimeout(t);
+    }
+  }, [tycResult]);
+
   const { data, isLoading } = useQuery({
     queryKey: [...queryKeys.suppliers, keyword] as const,
     queryFn: () =>
@@ -240,6 +264,49 @@ export default function SupplierLibraryPage() {
             {importResult.errors.length > 0 && (
               <div className="mt-1 text-red-500">{importResult.errors.join('；')}</div>
             )}
+          </div>
+        )}
+
+        {tycResult && (
+          <div className={`text-xs rounded-xl px-4 py-3 ${tycResult.errors.length > 0 ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
+            天眼查导入完成：新增 {tycResult.imported} 家，跳过 {tycResult.skipped} 家
+            {tycResult.errors.length > 0 && (
+              <div className="mt-1 text-red-500">{tycResult.errors.join('；')}</div>
+            )}
+          </div>
+        )}
+
+        {/* 天眼查搜索导入 */}
+        {canManage && (
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-sm space-y-3">
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">天眼查批量导入</h3>
+            <div className="grid grid-cols-3 gap-2">
+              <input
+                value={tycKeyword}
+                onChange={e => setTycKeyword(e.target.value)}
+                placeholder="关键词：电机制造"
+                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
+              />
+              <input
+                value={tycIndustry}
+                onChange={e => setTycIndustry(e.target.value)}
+                placeholder="行业：电气机械"
+                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
+              />
+              <input
+                value={tycRegion}
+                onChange={e => setTycRegion(e.target.value)}
+                placeholder="地域：浙江"
+                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
+              />
+            </div>
+            <button
+              onClick={() => tycMutation.mutate()}
+              disabled={(!tycKeyword && !tycIndustry) || tycMutation.isPending}
+              className="text-sm bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2 hover:bg-[var(--color-primary-hover)] disabled:opacity-40 transition-colors"
+            >
+              {tycMutation.isPending ? '搜索中...' : '搜索并导入'}
+            </button>
           </div>
         )}
 

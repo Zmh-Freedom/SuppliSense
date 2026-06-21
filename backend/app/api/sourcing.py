@@ -197,3 +197,26 @@ async def import_suppliers(
     from app.services.supplier_import import import_suppliers_from_excel
 
     return await asyncio.to_thread(import_suppliers_from_excel, content, file.filename)
+
+
+@router.post(
+    "/suppliers/import-tianyancha",
+    summary="从天眼查搜索导入",
+    description="按关键词/行业/地域从天眼查搜索企业并批量导入。仅管理员和分析师可操作。",
+)
+async def import_from_tianyancha(
+    keyword: str = Query("", description="搜索关键词"),
+    industry: str = Query("", description="行业分类"),
+    region: str = Query("", description="地域"),
+    max_results: int = Query(50, ge=1, le=100, description="最大导入数"),
+    _current_user=Depends(require_admin_or_analyst),
+):
+    from app.services.supplier_import import import_from_tianyancha_search
+
+    return await asyncio.to_thread(
+        import_from_tianyancha_search,
+        keyword=keyword,
+        industry=industry,
+        region=region,
+        max_results=max_results,
+    )

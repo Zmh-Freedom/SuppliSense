@@ -56,6 +56,52 @@ _ENDPOINTS: list[tuple[str, str, str]] = [
 ]
 
 
+def search_companies(
+    keyword: str = "",
+    industry: str = "",
+    region: str = "",
+    page_size: int = 20,
+    page_num: int = 1,
+) -> dict | None:
+    """按关键词/行业/地域搜索企业列表。
+
+    接口: /services/open/search/v2/company（天眼查企业搜索 V2）
+
+    Returns:
+        {"items": [...], "total": N} or None
+    """
+    if not TOKEN:
+        return None
+    try:
+        params: dict = {"pageSize": min(page_size, 50), "pageNum": page_num}
+        if keyword:
+            params["keyword"] = keyword
+        if industry:
+            params["industry"] = industry
+        if region:
+            params["region"] = region
+
+        r = httpx.get(
+            f"{BASE_URL}/services/open/search/v2/company",
+            params=params,
+            headers={"Authorization": TOKEN},
+            timeout=30.0,
+        )
+        _record_call("/services/open/search/v2/company", f"{keyword}|{industry}", r.is_success)
+        if not r.is_success:
+            return None
+        data = r.json()
+        code = data.get("error_code", -1)
+        if code != 0:
+            return None
+        result = data.get("result", {})
+        items = result.get("items", [])
+        total = result.get("total", 0)
+        return {"items": items, "total": total}
+    except Exception:
+        return None
+
+
 def fetch_news(company_name: str) -> dict | None:
     """拉取企业新闻数据并写入 MongoDB。返回新闻数据或 None。"""
     if not TOKEN:

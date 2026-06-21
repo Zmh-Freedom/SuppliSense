@@ -132,6 +132,98 @@ def import_suppliers_from_excel(file_content: bytes, filename: str) -> dict:
     return {"imported": imported, "skipped": skipped, "errors": errors}
 
 
+def import_from_tianyancha_search(
+    keyword: str = "",
+    industry: str = "",
+    region: str = "",
+    max_results: int = 50,
+) -> dict:
+    """从天眼查搜索企业并批量导入供应商库。
+
+    自动翻页拉取搜索结果，逐个写入 MongoDB + PG 向量表。
+    已存在的企业（同名）自动跳过。
+    """
+    from app.services.tianyancha_client import search_companies
+
+    db = get_db()
+    imported = 0
+    skipped = 0
+    errors: list[str] = []
+    page = 1
+
+    while imported < max_results:
+        resp = search_companies(
+            keyword=keyword,
+            industry=industry,
+            region=region,
+            page_size=min(20, max_results - imported),
+            page_num=page,
+        )
+        if resp is None:
+            errors.append("天眼查 API 调用失败，请检查 TOKEN 配置")
+            break
+
+        items = resp.get("items", [])
+        if not items:
+            break
+
+        for item in items:
+            name = (item.get("name") or "").strip()
+            if not name:
+                skipped += 1
+                continue
+
+            # Skip if already exists
+            if db["suppliers"].find_one({"name": name}):
+                skipped += 1
+                continue
+
+            try:
+                sid = str(uuid.uuid4())
+                categories = [industry] if industry else []
+                region_str = item.get("base", "") or item.get("regLocation", "")
+
+                # PG vector
+                content_parts = [name]
+                if categories:
+                    content_parts.extend(categories)
+                if region_str:
+                    content_parts.append(region_str)
+                embedding = encode_single(" ".join(content_parts))
+                vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+                with get_cursor() as (conn, cur):
+                    cur.execute(
+                        """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
+                           VALUES (%s, %s, %s, %s::vector, %s)""",
+                        (sid, name, " ".join(content_parts), vec_str, "{}"),
+                    )
+
+                # MongoDB
+                db["suppliers"].insert_one({
+                    "_id": sid,
+                    "name": name,
+                    "unified_code": item.get("regNumber") or item.get("unifiedSocialCreditCode"),
+                    "categories": categories,
+                    "regions": [region] if region else [],
+                    "status": "prospective",
+                    "source": "tianyancha_search",
+                    "embedding_dirty": False,
+                })
+
+                imported += 1
+            except Exception as e:
+                errors.append(f"{name}: {str(e)}")
+                logger.error("tianyancha_import_error", company=name, error=str(e))
+
+        total = resp.get("total", 0)
+        if imported >= max_results or page * 20 >= total:
+            break
+        page += 1
+
+    logger.info("tianyancha_import_done", keyword=keyword, industry=industry, imported=imported, skipped=skipped)
+    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+
 def _cell(row, idx: int | None) -> str:
     if idx is None or idx >= len(row):
         return ""
