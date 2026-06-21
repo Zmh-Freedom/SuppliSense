@@ -16,7 +16,7 @@ def create_user(username: str, email: str, password_hash: str, role: str, user_i
         cur.execute(
             """INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, %s)
-               RETURNING id, username, email, role, is_active, created_at, updated_at""",
+               RETURNING id, username, email, password_hash, role, is_active, created_at, updated_at""",
             (uid, username, email, password_hash, role, now, now),
         )
         row = cur.fetchone()
