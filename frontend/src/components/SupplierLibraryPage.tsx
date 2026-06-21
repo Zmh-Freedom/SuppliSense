@@ -7,7 +7,7 @@ import type { SupplierEntry, AccessApplicationItem } from '../types';
 export default function SupplierLibraryPage() {
   const qc = useQueryClient();
   const user = getStoredUser();
-  const isAdmin = user?.role === 'admin';
+  const canManage = user?.role === 'admin' || user?.role === 'analyst';
   const [keyword, setKeyword] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', categories: '', regions: '' });
@@ -41,6 +41,29 @@ export default function SupplierLibraryPage() {
       setShowForm(false);
     },
   });
+
+  // ---- Excel Import ----
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
+
+  const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const res = await fetch('/api/v1/sourcing/suppliers/import', {
+        method: 'POST',
+        body: formData,
+        headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` },
+      });
+      const data = await res.json();
+      setImportResult(data);
+      qc.invalidateQueries({ queryKey: queryKeys.suppliers });
+    } catch {
+      setImportResult({ imported: 0, skipped: 0, errors: ['上传失败'] });
+    }
+    e.target.value = '';
+  };
 
   // ---- Supplier Edit ----
   const updateMutation = useMutation({
@@ -78,7 +101,7 @@ export default function SupplierLibraryPage() {
       api.get<{ items: AccessApplicationItem[]; total: number }>(
         `/access-applications?status=${approvalStatus}`,
       ),
-    enabled: isAdmin && showApproval,
+    enabled: canManage && showApproval,
   });
 
   const approveMutation = useMutation({
@@ -98,7 +121,7 @@ export default function SupplierLibraryPage() {
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-3xl mx-auto space-y-6">
         {/* ---- 准入审批 (admin) ---- */}
-        {isAdmin && (
+        {canManage && (
           <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
             <button
               onClick={() => setShowApproval(!showApproval)}
@@ -178,13 +201,30 @@ export default function SupplierLibraryPage() {
         {/* ---- 供应商管理 ---- */}
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-bold text-[var(--color-text)]">供应商主库</h2>
-          <button
-            onClick={() => setShowForm(!showForm)}
-            className="text-sm bg-[var(--color-primary-bg)] text-white rounded-xl px-4 py-2 hover:bg-[var(--color-primary-hover)] transition-colors"
-          >
-            {showForm ? '取消' : '录入供应商'}
-          </button>
+          <div className="flex gap-2">
+            {canManage && (
+              <label className="text-sm border border-[var(--color-border)] rounded-xl px-4 py-2 cursor-pointer hover:bg-[var(--color-surface-hover)] transition-colors">
+                批量导入
+                <input type="file" accept=".xlsx,.xls" onChange={handleFileImport} className="hidden" />
+              </label>
+            )}
+            <button
+              onClick={() => setShowForm(!showForm)}
+              className="text-sm bg-[var(--color-primary-bg)] text-white rounded-xl px-4 py-2 hover:bg-[var(--color-primary-hover)] transition-colors"
+            >
+              {showForm ? '取消' : '录入供应商'}
+            </button>
+          </div>
         </div>
+
+        {importResult && (
+          <div className={`text-xs rounded-xl px-4 py-3 ${importResult.errors.length > 0 ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
+            导入完成：新增 {importResult.imported} 家，跳过 {importResult.skipped} 家（重复）
+            {importResult.errors.length > 0 && (
+              <div className="mt-1 text-red-500">{importResult.errors.join('；')}</div>
+            )}
+          </div>
+        )}
 
         {showForm && (
           <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3">
@@ -289,7 +329,7 @@ export default function SupplierLibraryPage() {
                           {supplier.categories?.join(', ') || '未分类'} | {supplier.status}
                         </span>
                       </div>
-                      {isAdmin && (
+                      {canManage && (
                         <button
                           onClick={() => startEdit(supplier)}
                           className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-primary-bg)] px-2"

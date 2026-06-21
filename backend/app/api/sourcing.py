@@ -4,10 +4,10 @@ import asyncio
 import json
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_admin_or_analyst
 from app.core.logging import get_logger
 from app.schemas.sourcing import (
     SelectResultRequest,
@@ -171,3 +171,29 @@ async def list_suppliers(
     from app.repositories.supplier_repo import list_suppliers as _list
 
     return await asyncio.to_thread(_list, keyword, status, page, page_size)
+
+
+@router.post(
+    "/suppliers/import",
+    summary="批量导入供应商",
+    description="上传 Excel 文件批量导入供应商。仅管理员和分析师可操作。",
+)
+async def import_suppliers(
+    file: UploadFile = File(...),
+    _current_user=Depends(require_admin_or_analyst),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="未选择文件")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ("xlsx", "xls"):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx / .xls 格式")
+
+    try:
+        content = await file.read()
+    except Exception:
+        raise HTTPException(status_code=400, detail="文件读取失败")
+
+    from app.services.supplier_import import import_suppliers_from_excel
+
+    return await asyncio.to_thread(import_suppliers_from_excel, content, file.filename)
