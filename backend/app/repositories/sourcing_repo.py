@@ -111,11 +111,15 @@ def update_result_action(result_id: str, action: str) -> None:
 
 
 def create_access_application(supplier_name: str, request_id: str | None, applicant_id: str) -> str:
+    from app.repositories.supplier_repo import resolve_supplier_id
+
     db = get_db()
     aid = str(uuid.uuid4())
+    supplier_id = resolve_supplier_id(supplier_name, auto_create=True)
     db["access_applications"].insert_one({
         "_id": aid,
         "supplier_name": supplier_name,
+        "supplier_id": supplier_id,
         "request_id": request_id,
         "applicant_id": applicant_id,
         "status": "pending",
@@ -171,6 +175,8 @@ def approve_access_application(aid: str, reviewer_id: str) -> None:
             "reviewed_at": datetime.now(timezone.utc),
         }},
     )
+    # 联动：同步更新供应商主库状态
+    _sync_supplier_status(aid, "approved")
 
 
 def reject_access_application(aid: str, reviewer_id: str) -> None:
@@ -183,6 +189,19 @@ def reject_access_application(aid: str, reviewer_id: str) -> None:
             "reviewed_at": datetime.now(timezone.utc),
         }},
     )
+    # 联动：同步更新供应商主库状态
+    _sync_supplier_status(aid, "blocked")
+
+
+def _sync_supplier_status(application_id: str, new_status: str) -> None:
+    """审批联动：根据准入申请结果更新供应商主库状态。"""
+    db = get_db()
+    app = db["access_applications"].find_one({"_id": application_id})
+    if app and app.get("supplier_id"):
+        db["suppliers"].update_one(
+            {"_id": app["supplier_id"]},
+            {"$set": {"status": new_status, "updated_at": datetime.now(timezone.utc)}},
+        )
 
 
 def ensure_indexes() -> None:

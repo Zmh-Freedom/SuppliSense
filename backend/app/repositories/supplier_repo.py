@@ -7,6 +7,31 @@ from typing import Any
 from app.db.mongo import get_db
 
 
+def resolve_supplier_id(name: str, auto_create: bool = False) -> str | None:
+    """根据企业名称查找 supplier_id。如果不存在且 auto_create=True 则自动创建。
+
+    统一入口：所有需要引用供应商的地方用此函数获取 supplier_id。
+    """
+    db = get_db()
+    doc = db["suppliers"].find_one({"name": name}, {"_id": 1})
+    if doc:
+        return str(doc["_id"])
+    if auto_create:
+        sid = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        db["suppliers"].insert_one({
+            "_id": sid,
+            "name": name,
+            "status": "prospective",
+            "source": "auto",
+            "embedding_dirty": True,
+            "created_at": now,
+            "updated_at": now,
+        })
+        return sid
+    return None
+
+
 def add_supplier(data: dict) -> str:
     db = get_db()
     sid = str(uuid.uuid4())

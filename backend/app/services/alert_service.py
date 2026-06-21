@@ -26,9 +26,12 @@ def _broadcast_alert_update() -> None:
 
 def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
     from app.services.risk_service import SCORING_VERSION
+    from app.repositories.supplier_repo import resolve_supplier_id
+
     db = get_db()
     doc = {
         "company_name": company_name,
+        "supplier_id": resolve_supplier_id(company_name, auto_create=True),
         "checked_at": datetime.now(timezone.utc),
         "risk_score": result.risk_score,
         "risk_level": result.risk_level,
@@ -142,14 +145,21 @@ def detect_changes(company_name: str) -> dict:
 
 
 def add_to_watchlist(company_name: str) -> dict:
+    from app.repositories.supplier_repo import resolve_supplier_id
+
     db = get_db()
+    sid = resolve_supplier_id(company_name, auto_create=True)
     db["watchlist"].update_one(
         {"company_name": company_name},
-        {"$set": {"company_name": company_name, "added_at": datetime.now(timezone.utc)}},
+        {"$set": {
+            "company_name": company_name,
+            "supplier_id": sid,
+            "added_at": datetime.now(timezone.utc),
+        }},
         upsert=True,
     )
     _broadcast_alert_update()
-    return {"company_name": company_name, "status": "watching"}
+    return {"company_name": company_name, "supplier_id": sid, "status": "watching"}
 
 
 def remove_from_watchlist(company_name: str) -> dict:
