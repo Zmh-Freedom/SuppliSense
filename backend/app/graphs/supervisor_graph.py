@@ -357,20 +357,22 @@ async def stream_supervisor_graph(
                     full_answer = accumulated
                 yield _sse_event("agent_complete", {"agent": agent_name})
 
-            # ---- LLM 流式 token（所有顶层 LLM 节点均可见）----
+            # ---- LLM 流式 token（仅子 agent 节点，跳过 supervisor 的 token）----
             elif kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
-                if chunk and chunk.content:
-                    if current_agent and current_agent in agent_answer_accumulator:
-                        agent_answer_accumulator[current_agent] += chunk.content
-                    full_answer = chunk.content  # also track globally
+                if chunk and chunk.content and current_agent:
+                    # Only accumulate from sub-agents, not supervisor routing
+                    if current_agent not in agent_answer_accumulator:
+                        agent_answer_accumulator[current_agent] = ""
+                    agent_answer_accumulator[current_agent] += chunk.content
                     yield _sse_event("answer_chunk", {"text": chunk.content})
 
             # ---- LLM 完整响应（非流式兜底）----
             elif kind == "on_chat_model_end":
-                if not full_answer:
+                if current_agent and not full_answer:
                     output = event.get("data", {}).get("output")
                     if output and hasattr(output, "content") and output.content:
+                        agent_answer_accumulator[current_agent] = output.content
                         full_answer = output.content
                         yield _sse_event("answer_chunk", {"text": full_answer})
 
