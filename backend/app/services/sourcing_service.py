@@ -32,7 +32,8 @@ from app.services.embedding import encode_single
 
 logger = get_logger(__name__)
 
-RISK_TIMEOUT = 30  # seconds per supplier
+RISK_TIMEOUT = 15  # seconds per supplier (reduced from 30)
+SEARCH_TIMEOUT = 45  # total search timeout
 
 
 def create_sourcing_request(req: SourcingRequestInput, user_id: str) -> str:
@@ -69,14 +70,22 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         query_parts.append(req_doc["region_required"])
     query_text = " ".join(p for p in query_parts if p)
 
-    # 2. 向量检索
-    candidates = _vector_search(query_text, top_k=20)
+    # 2. 向量检索 (limit to top_k=10 for speed)
+    candidates = _vector_search(query_text, top_k=10)
     if not candidates:
         update_request_status(request_id, "done", 0)
         return {"request_id": request_id, "status": "done", "results": [], "message": "本地供应商库未找到匹配结果"}
 
-    # 3. 并发风险评估
-    risk_map = _batch_assess_risk(candidates)
+    # 3. 并发风险评估（带总超时保护）
+    try:
+        risk_map = asyncio.run(asyncio.wait_for(
+            _batch_async(candidates), timeout=SEARCH_TIMEOUT
+        ))
+    except asyncio.TimeoutError:
+        logger.warning("sourcing_search_timeout", request_id=request_id, candidates=len(candidates))
+        # Return what we have so far with default risk
+        risk_map = {c["supplier_name"]: {"risk_score": 50, "risk_level": "unknown", "summary": "评估超时"}
+                    for c in candidates}
 
     # 4. 排序
     results = []
@@ -268,7 +277,11 @@ def get_top_alternatives(company_name: str, top_k: int = 3) -> list[dict]:
     if not candidates:
         return []
 
-    risk_map = _batch_assess_risk(candidates)
+    try:
+        risk_map = asyncio.run(asyncio.wait_for(_batch_async(candidates), timeout=SEARCH_TIMEOUT))
+    except asyncio.TimeoutError:
+        risk_map = {c["supplier_name"]: {"risk_score": 50, "risk_level": "unknown", "summary": "评估超时"}
+                    for c in candidates}
     results = []
     for c in candidates[:top_k]:
         name = c["supplier_name"]
@@ -305,8 +318,8 @@ def _vector_search(query_text: str, top_k: int = 20) -> list[dict[str, Any]]:
         ]
 
 
-def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
-    """并发评估候选供应商的风险，单家 30s 超时降级。"""
+async def _batch_async(candidates: list[dict]) -> dict[str, dict]:
+    """Async: 并发评估候选供应商的风险，单家超时降级。"""
 
     async def _assess_one(name: str) -> tuple[str, dict | None]:
         try:
@@ -325,15 +338,10 @@ def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
         except (asyncio.TimeoutError, Exception):
             return name, None
 
-    async def _batch():
-        tasks = [_assess_one(c["supplier_name"]) for c in candidates]
-        results = await asyncio.gather(*tasks)
-        return dict(results)
+    tasks = [_assess_one(c["supplier_name"]) for c in candidates]
+    raw = dict(await asyncio.gather(*tasks))
 
-    raw = asyncio.run(_batch())
-
-    # 降级处理
-    out = {}
+    out: dict[str, dict] = {}
     for name, info in raw.items():
         if info is None:
             out[name] = {"risk_score": 50, "risk_level": "unknown", "summary": "暂未获取"}
@@ -341,6 +349,11 @@ def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
         else:
             out[name] = info
     return out
+
+
+def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
+    """同步包装：并发评估候选供应商的风险。"""
+    return asyncio.run(_batch_async(candidates))
 
 
 def _rebuild_supplier_vector(sid: str, name: str, data: dict) -> None:
