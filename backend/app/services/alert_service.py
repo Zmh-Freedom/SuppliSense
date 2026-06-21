@@ -105,8 +105,10 @@ def detect_changes(company_name: str) -> dict:
 
         if triggered:
             final_severity = "critical" if any(t["severity"] == "critical" for t in triggered) else "warning"
+            from app.repositories.supplier_repo import resolve_supplier_id
             db["alerts"].insert_one({
                 "company_name": company_name,
+                "supplier_id": resolve_supplier_id(company_name),
                 "created_at": datetime.now(timezone.utc),
                 "changes": triggered,
                 "severity": final_severity,

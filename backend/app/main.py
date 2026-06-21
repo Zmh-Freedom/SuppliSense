@@ -79,6 +79,8 @@ def _validate_config():
         "CHANGE_ME_生成一个64位随机字符串",
     ):
         errors.append("SECRET_KEY 仍为占位符，请设置真实的随机密钥。")
+    if not settings.USE_PG_USERS:
+        logger.warning("USE_PG_USERS=false 已废弃，用户系统仅支持 PostgreSQL。将强制使用 PG。")
     if errors:
         for e in errors:
             logger.error("config_validation_failed", error=e)

@@ -53,9 +53,9 @@ class Settings(BaseSettings):
     PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "2"))
     PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "10"))
 
-    # Feature flags: gradual migration to PostgreSQL
-    USE_PG_USERS: bool = os.getenv("USE_PG_USERS", "false").lower() == "true"
-    USE_PGVECTOR: bool = os.getenv("USE_PGVECTOR", "false").lower() == "true"
+    # PG 用户存储（默认启用，MongoDB 路径已废弃）
+    USE_PG_USERS: bool = os.getenv("USE_PG_USERS", "true").lower() == "true"
+    USE_PGVECTOR: bool = os.getenv("USE_PGVECTOR", "true").lower() == "true"
 
     # ChromaDB (deprecated, kept for migration period)
     CHROMA_PATH: str = os.getenv("CHROMA_PATH", "./data/chroma")
