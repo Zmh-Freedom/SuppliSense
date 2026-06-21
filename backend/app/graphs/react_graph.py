@@ -89,8 +89,12 @@ def _build_graph() -> StateGraph:
     return graph
 
 
-def build_react_graph():
-    """编译 ReAct 图（带 system prompt 注入）。"""
+def build_react_graph(preference_context: str = ""):
+    """编译 ReAct 图（带 system prompt 注入，可选偏好上下文）。"""
+    prompt = SYSTEM_PROMPT
+    if preference_context:
+        prompt = preference_context + "\n\n" + SYSTEM_PROMPT
+
     graph = _build_graph().compile()
 
     class ReactGraphWithSystemPrompt:
@@ -101,9 +105,8 @@ def build_react_graph():
 
         async def astream_events(self, input_data, **kwargs):
             messages = input_data.get("messages", [])
-            # 如果第一条不是 system message，注入 system prompt
             if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+                messages = [SystemMessage(content=prompt)] + messages
                 input_data = {**input_data, "messages": messages}
             async for event in self._graph.astream_events(input_data, **kwargs):
                 yield event
@@ -111,7 +114,7 @@ def build_react_graph():
         async def ainvoke(self, input_data, **kwargs):
             messages = input_data.get("messages", [])
             if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=SYSTEM_PROMPT)] + messages
+                messages = [SystemMessage(content=prompt)] + messages
                 input_data = {**input_data, "messages": messages}
             return await self._graph.ainvoke(input_data, **kwargs)
 

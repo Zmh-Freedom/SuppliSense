@@ -253,6 +253,7 @@ async def stream_plan_execute_graph(
     user_message: str,
     session_id: str,
     history: list[dict] | None = None,
+    preference_context: str = "",
 ):
     """运行 Plan-Execute 图并 yield SSE 事件。
 
@@ -264,11 +265,13 @@ async def stream_plan_execute_graph(
     full_answer = ""
 
     input_text = user_message
+    if preference_context:
+        input_text = preference_context + "\n\n" + input_text
     if history:
         context = await build_context_messages(history)
         if any(m.get("role") == "system" for m in context):
             summary = next(m["content"] for m in context if m["role"] == "system")
-            input_text = f"{summary}\n\n当前问题：{user_message}"
+            input_text = f"{summary}\n\n当前问题：{input_text}"
 
     try:
         yield _sse_event("thinking", {"message": "正在分析问题并制定执行计划..."})

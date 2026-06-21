@@ -86,7 +86,7 @@ def _route_after_agent(state: SourcingState):
     return END
 
 
-async def stream_sourcing_graph(session_id: str, message: str):
+async def stream_sourcing_graph(session_id: str, message: str, preference_context: str = ""):
     """SSE stream wrapper for the sourcing subgraph."""
 
     from app.services.agent import _load_history, _save_turn
@@ -95,6 +95,8 @@ async def stream_sourcing_graph(session_id: str, message: str):
 
     history = _load_history(session_id)
     msgs = await build_input_messages(history or [], message)
+    if preference_context:
+        msgs.insert(0, SystemMessage(content=preference_context))
     msgs.insert(0, SystemMessage(content=SOURCING_SYSTEM))
 
     graph = build_sourcing_graph()

@@ -290,6 +290,7 @@ async def stream_supervisor_graph(
     user_message: str,
     session_id: str,
     history: list[dict] | None = None,
+    preference_context: str = "",
 ) -> AsyncGenerator[str, None]:
     """运行 supervisor 图并 yield SSE 事件。
 
@@ -300,6 +301,9 @@ async def stream_supervisor_graph(
     from app.graphs.context import build_input_messages
 
     input_messages = await build_input_messages(history or [], user_message)
+
+    if preference_context:
+        input_messages.insert(0, SystemMessage(content=preference_context))
 
     graph = build_supervisor_graph()
     full_answer = ""

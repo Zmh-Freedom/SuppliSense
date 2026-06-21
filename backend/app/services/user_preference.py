@@ -50,6 +50,24 @@ def update_preference(user_id: str, data: dict) -> dict:
     return {"user_id": user_id, **data}
 
 
+def build_preference_context(user_id: str) -> str:
+    """构建用户偏好上下文字符串，用于注入 system prompt。"""
+    pref = get_preference(user_id)
+    parts = []
+    if pref.get("focused_industries"):
+        parts.append(f"关注行业：{'、'.join(pref['focused_industries'])}")
+    if pref.get("preferred_metrics"):
+        parts.append(f"偏好指标：{'、'.join(pref['preferred_metrics'])}")
+    if pref.get("report_format"):
+        parts.append(f"报告格式：{pref['report_format']}")
+    if pref.get("recent_companies"):
+        recent = pref["recent_companies"][:5]
+        parts.append(f"最近查询：{'、'.join(recent)}")
+    if not parts:
+        return ""
+    return "[用户偏好]\n" + "\n".join(parts) + "\n"
+
+
 def add_recent_company(user_id: str, company_name: str) -> dict:
     """将企业添加到最近查询列表（最多 MAX_RECENT 个）。"""
     db = get_db()

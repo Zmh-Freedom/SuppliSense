@@ -3,7 +3,7 @@ import uuid
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import get_current_user
@@ -12,43 +12,43 @@ from app.services.agent import chat as agent_chat
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-async def _langgraph_react_stream(session_id: str, message: str):
+async def _langgraph_react_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph ReAct 模式流式输出。"""
     from app.graphs.react_graph import build_react_graph
     from app.graphs.streaming import stream_react_graph
     from app.services.agent import _load_history
 
-    graph = build_react_graph()
+    graph = build_react_graph(preference_context)
     history = _load_history(session_id)
     async for event in stream_react_graph(graph, message, session_id, history):
         yield event
 
 
-async def _langgraph_plan_execute_stream(session_id: str, message: str):
+async def _langgraph_plan_execute_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Plan-Execute 模式流式输出。"""
     from app.graphs.plan_execute_graph import stream_plan_execute_graph
     from app.services.agent import _load_history
 
     history = _load_history(session_id)
-    async for event in stream_plan_execute_graph(message, session_id, history):
+    async for event in stream_plan_execute_graph(message, session_id, history, preference_context):
         yield event
 
 
-async def _langgraph_supervisor_stream(session_id: str, message: str):
+async def _langgraph_supervisor_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Supervisor 多智能体模式流式输出。"""
     from app.graphs.supervisor_graph import stream_supervisor_graph
     from app.services.agent import _load_history
 
     history = _load_history(session_id)
-    async for event in stream_supervisor_graph(message, session_id, history):
+    async for event in stream_supervisor_graph(message, session_id, history, preference_context):
         yield event
 
 
-async def _langgraph_sourcing_stream(session_id: str, message: str):
+async def _langgraph_sourcing_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Sourcing 寻源子图流式输出。"""
     from app.graphs.agents.sourcing import stream_sourcing_graph
 
-    async for event in stream_sourcing_graph(session_id, message):
+    async for event in stream_sourcing_graph(session_id, message, preference_context):
         yield event
 
 
@@ -99,9 +99,12 @@ async def chat_endpoint(req: ChatRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def chat_stream_endpoint(req: ChatRequest):
+async def chat_stream_endpoint(req: ChatRequest, request: Request):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
+    user_id = getattr(request.state, "user_id", "")
+    from app.services.user_preference import build_preference_context
+    pref_ctx = build_preference_context(user_id) if user_id else ""
 
     # Resolve mode: auto → intent router, otherwise use explicit mode
     mode = req.mode
@@ -133,8 +136,16 @@ async def chat_stream_endpoint(req: ChatRequest):
     async def event_generator():
         # Send session_id first
         yield f"event: session\ndata: {sid}\n\n"
+
+        # Programmatic clarification check
+        from app.services.clarification import detect_clarification_needed
+        clar = detect_clarification_needed(req.message)
+        if clar:
+            yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing}, ensure_ascii=False)}\n\n"
+            return
+
         # Stream the chat response
-        async for event in stream_fn(sid, req.message):
+        async for event in stream_fn(sid, req.message, pref_ctx):
             yield event
 
     return StreamingResponse(
