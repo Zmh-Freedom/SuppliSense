@@ -5,6 +5,8 @@ import { queryKeys } from '../query-keys';
 import { getRiskColor } from '../riskColors';
 import type { SourcingResultItem, SourcingRequestDetail } from '../types';
 
+type Step = { label: string; done: boolean };
+
 export default function SourcingPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState({ title: '', category: '', spec: '', region: '', quantity: '' });
@@ -12,8 +14,9 @@ export default function SourcingPage() {
   const [results, setResults] = useState<SourcingResultItem[]>([]);
   const [error, setError] = useState('');
   const [currentRequestId, setCurrentRequestId] = useState('');
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [selectMsg, setSelectMsg] = useState('');
 
-  // 寻源历史
   const historyQuery = useQuery({
     queryKey: queryKeys.sourcingRequests,
     queryFn: () => api.get<{ items: SourcingRequestDetail[]; total: number }>('/sourcing/requests'),
@@ -38,6 +41,7 @@ export default function SourcingPage() {
     setSearching(true);
     setError('');
     setResults([]);
+    setSteps([{ label: '检索中', done: false }, { label: '评估中', done: false }, { label: '排序中', done: false }]);
 
     const token = localStorage.getItem('token') || '';
     try {
@@ -67,12 +71,20 @@ export default function SourcingPage() {
           } else if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              if (eventType === 'sourcing_result' && data.results) {
+              if (eventType === 'retrieving') {
+                setSteps(prev => prev.map((s, i) => i === 0 ? { ...s, done: true } : s));
+              } else if (eventType === 'assessing') {
+                setSteps(prev => prev.map((s, i) => i <= 1 ? { ...s, done: true } : s));
+              } else if (eventType === 'ranking') {
+                setSteps(prev => prev.map(s => ({ ...s, done: true })));
+              } else if (eventType === 'sourcing_result' && data.results) {
                 setResults(data.results);
+              } else if (eventType === 'done') {
+                setSteps(prev => prev.map(s => ({ ...s, done: true })));
               } else if (eventType === 'error') {
                 setError(data.message || '搜索失败');
               }
-            } catch { /* ignore parse errors */ }
+            } catch { /* ignore */ }
           }
         }
       }
@@ -87,15 +99,20 @@ export default function SourcingPage() {
   const selectMutation = useMutation({
     mutationFn: ({ resultId, action }: { resultId: string; action: string }) =>
       api.post(`/sourcing/results/${resultId}/select`, { action }),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.sourcingRequests });
       setResults(prev => prev.map(r =>
-        r.result_id === selectMutation.variables?.resultId ? { ...r, selected: true } : r
+        r.result_id === vars.resultId ? { ...r, selected: true } : r
       ));
+      setSelectMsg(vars.action === 'watchlist' ? '已加入监控列表' : '已提交准入申请');
+      setTimeout(() => setSelectMsg(''), 3000);
     },
   });
 
   const canSubmit = form.category && form.spec;
+  const hasResults = results.length > 0;
+  const hasHistory = historyQuery.data && historyQuery.data.items.length > 0;
+  const showEmpty = !searching && !error && currentRequestId && !hasResults;
 
   return (
     <div className="h-full py-6 px-6 overflow-auto">
@@ -162,11 +179,33 @@ export default function SourcingPage() {
             {searching || createMutation.isPending ? '提交中...' : '提交采购需求'}
           </button>
 
-          {error && <p className="text-xs text-red-500">{error}</p>}
+          {error && (
+            <p className="text-xs text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+          )}
+          {selectMsg && (
+            <p className="text-xs text-green-600 bg-green-50 border border-green-200 rounded-lg px-3 py-2">{selectMsg}</p>
+          )}
         </div>
 
+        {/* 搜索进度 */}
+        {searching && steps.length > 0 && (
+          <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+            <div className="flex items-center gap-4">
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs text-white transition-colors ${s.done ? 'bg-green-500' : 'bg-[var(--color-primary-bg)] animate-pulse'}`}>
+                    {s.done ? '✓' : i + 1}
+                  </span>
+                  <span className={`text-xs ${s.done ? 'text-green-600' : 'text-[var(--color-text-secondary)]'}`}>{s.label}</span>
+                  {i < steps.length - 1 && <span className="text-gray-300 mx-1">→</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 搜索结果 */}
-        {results.length > 0 && (
+        {hasResults && (
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">
               候选供应商 ({results.length})
@@ -181,8 +220,16 @@ export default function SourcingPage() {
           </div>
         )}
 
+        {/* 空结果 */}
+        {showEmpty && (
+          <div className="text-center py-12 space-y-2">
+            <p className="text-sm text-gray-400">本地供应商库未找到匹配结果</p>
+            <p className="text-xs text-gray-300">建议扩充供应商库或调整搜索条件</p>
+          </div>
+        )}
+
         {/* 历史记录 */}
-        {historyQuery.data && historyQuery.data.items.length > 0 && (
+        {hasHistory && (
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">历史寻源</h3>
             {historyQuery.data.items.slice(0, 10).map(item => (
@@ -190,19 +237,25 @@ export default function SourcingPage() {
                 key={item.request_id}
                 className="flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-sm"
               >
-                <div>
+                <div className="flex items-center gap-3">
                   <span className="font-medium text-[var(--color-text)]">{item.title || item.category}</span>
-                  <span className="text-[var(--color-text-muted)] ml-2">{item.status === 'done' ? `${item.result_count} 个结果` : item.status}</span>
+                  <StatusBadge status={item.status} count={item.result_count} />
                 </div>
-                <button
-                  onClick={() => {
-                    setCurrentRequestId(item.request_id);
-                    startSearch(item.request_id);
-                  }}
-                  className="text-xs text-[var(--color-primary-bg)] hover:underline"
-                >
-                  重新搜索
-                </button>
+                <div className="flex items-center gap-3">
+                  {item.created_at && (
+                    <span className="text-xs text-gray-400">{item.created_at.slice(0, 10)}</span>
+                  )}
+                  <button
+                    onClick={() => {
+                      setCurrentRequestId(item.request_id);
+                      startSearch(item.request_id);
+                    }}
+                    disabled={searching}
+                    className="text-xs text-[var(--color-primary-bg)] hover:underline disabled:opacity-40"
+                  >
+                    重新搜索
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -212,42 +265,67 @@ export default function SourcingPage() {
   );
 }
 
+function StatusBadge({ status, count }: { status: string; count: number }) {
+  if (status === 'done') return <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">{count} 个结果</span>;
+  if (status === 'searching') return <span className="text-xs text-blue-500 animate-pulse">搜索中</span>;
+  if (status === 'draft') return <span className="text-xs text-gray-400">草稿</span>;
+  return <span className="text-xs text-gray-400">{status}</span>;
+}
+
 function SourcingResultCard({ result, onSelect }: {
   result: SourcingResultItem;
   onSelect: (action: string) => void;
 }) {
   const color = getRiskColor(result.risk_score ?? 50);
+  const matchPct = (result.match_score * 100).toFixed(0);
+  const rankPct = (result.final_rank * 100).toFixed(0);
+
   return (
     <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <h4 className="font-semibold text-[var(--color-text)]">{result.supplier_name}</h4>
-          <div className="flex gap-4 mt-1 text-xs text-[var(--color-text-muted)]">
-            <span>匹配分: {(result.match_score * 100).toFixed(0)}%</span>
-            <span style={{ color }}>风险: {result.risk_score ?? '?'} ({result.risk_level})</span>
-            <span>综合: {(result.final_rank * 100).toFixed(0)}%</span>
+      <div className="flex items-start justify-between">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="font-semibold text-[var(--color-text)]">{result.supplier_name}</h4>
+            {result.risk_level && result.risk_level !== 'unknown' && (
+              <span className="text-xs px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: color }}>
+                {result.risk_level}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
+            <span title="向量语义匹配度">
+              匹配 {matchPct}%
+            </span>
+            <span title="综合风险评分" style={{ color }}>
+              风险 {result.risk_score ?? '—'}分
+            </span>
+            <span title="综合推荐度（匹配+风险加权）">
+              推荐 {rankPct}%
+            </span>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => onSelect('watchlist')}
-            disabled={result.selected}
-            className="text-xs border border-[var(--color-border)] rounded-lg px-3 py-1.5 hover:bg-[var(--color-surface-hover)] disabled:opacity-40 transition-colors"
-          >
-            加入监控
-          </button>
-          <button
-            onClick={() => onSelect('apply_access')}
-            disabled={result.selected}
-            className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] disabled:opacity-40 transition-colors"
-          >
-            申请准入
-          </button>
-        </div>
+
+        {result.selected ? (
+          <span className="text-xs text-green-600 bg-green-50 px-3 py-1.5 rounded-lg">
+            {result.action === 'watchlist' ? '已加入监控' : '已申请准入'}
+          </span>
+        ) : (
+          <div className="flex gap-2 shrink-0 ml-4">
+            <button
+              onClick={() => onSelect('watchlist')}
+              className="text-xs border border-[var(--color-border)] rounded-lg px-3 py-1.5 hover:bg-[var(--color-surface-hover)] transition-colors"
+            >
+              加入监控
+            </button>
+            <button
+              onClick={() => onSelect('apply_access')}
+              className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] transition-colors"
+            >
+              申请准入
+            </button>
+          </div>
+        )}
       </div>
-      {result.match_reason && (
-        <p className="text-xs text-[var(--color-text-secondary)] mt-1">{result.match_reason}</p>
-      )}
     </div>
   );
 }
