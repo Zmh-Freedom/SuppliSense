@@ -5,9 +5,7 @@ Sourcing service — 智能寻源业务逻辑。
 同步函数，异步并发在内部用 asyncio.run() 包装。
 """
 
-import asyncio
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from app.core.logging import get_logger
@@ -32,8 +30,6 @@ from app.services.embedding import encode_single
 
 logger = get_logger(__name__)
 
-RISK_TIMEOUT = 15  # seconds per supplier (reduced from 30)
-SEARCH_TIMEOUT = 45  # total search timeout
 
 
 def create_sourcing_request(req: SourcingRequestInput, user_id: str) -> str:
@@ -76,16 +72,8 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         update_request_status(request_id, "done", 0)
         return {"request_id": request_id, "status": "done", "results": [], "message": "本地供应商库未找到匹配结果"}
 
-    # 3. 并发风险评估（带总超时保护）
-    try:
-        risk_map = asyncio.run(asyncio.wait_for(
-            _batch_async(candidates), timeout=SEARCH_TIMEOUT
-        ))
-    except asyncio.TimeoutError:
-        logger.warning("sourcing_search_timeout", request_id=request_id, candidates=len(candidates))
-        # Return what we have so far with default risk
-        risk_map = {c["supplier_name"]: {"risk_score": 50, "risk_level": "unknown", "summary": "评估超时"}
-                    for c in candidates}
+    # 3. 快速风险查分（MongoDB 快照，不调外部 API）
+    risk_map = _batch_assess_risk(candidates)
 
     # 4. 排序
     results = []
@@ -277,11 +265,7 @@ def get_top_alternatives(company_name: str, top_k: int = 3) -> list[dict]:
     if not candidates:
         return []
 
-    try:
-        risk_map = asyncio.run(asyncio.wait_for(_batch_async(candidates), timeout=SEARCH_TIMEOUT))
-    except asyncio.TimeoutError:
-        risk_map = {c["supplier_name"]: {"risk_score": 50, "risk_level": "unknown", "summary": "评估超时"}
-                    for c in candidates}
+    risk_map = _batch_assess_risk(candidates)
     results = []
     for c in candidates[:top_k]:
         name = c["supplier_name"]
@@ -318,42 +302,32 @@ def _vector_search(query_text: str, top_k: int = 20) -> list[dict[str, Any]]:
         ]
 
 
-async def _batch_async(candidates: list[dict]) -> dict[str, dict]:
-    """Async: 并发评估候选供应商的风险，单家超时降级。"""
-
-    async def _assess_one(name: str) -> tuple[str, dict | None]:
-        try:
-            from app.schemas import RiskAssessRequest
-            from app.services.risk_service import assess_risk
-
-            result = await asyncio.wait_for(
-                asyncio.to_thread(assess_risk, RiskAssessRequest(company_name=name)),
-                timeout=RISK_TIMEOUT,
-            )
-            return name, {
-                "risk_score": result.risk_score,
-                "risk_level": result.risk_level,
-                "summary": result.risk_level,
-            }
-        except (asyncio.TimeoutError, Exception):
-            return name, None
-
-    tasks = [_assess_one(c["supplier_name"]) for c in candidates]
-    raw = dict(await asyncio.gather(*tasks))
-
-    out: dict[str, dict] = {}
-    for name, info in raw.items():
-        if info is None:
-            out[name] = {"risk_score": 50, "risk_level": "unknown", "summary": "暂未获取"}
-            logger.warning("sourcing_risk_timeout", supplier=name)
-        else:
-            out[name] = info
-    return out
-
-
 def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
-    """同步包装：并发评估候选供应商的风险。"""
-    return asyncio.run(_batch_async(candidates))
+    """从 MongoDB 快照快速读取已有风险数据（不调外部 API）。
+
+    对寻源场景，避免 DeepSeek/Tianyancha API 调用导致超时。
+    从未评估过的供应商返回默认值 50/unknown。
+    """
+    from app.db.mongo import get_db
+
+    db = get_db()
+    out: dict[str, dict] = {}
+    for c in candidates:
+        name = c["supplier_name"]
+        snap = db["alert_snapshots"].find_one(
+            {"company_name": name},
+            sort=[("checked_at", -1)],
+            projection={"risk_score": 1, "risk_level": 1},
+        )
+        if snap:
+            out[name] = {
+                "risk_score": snap.get("risk_score", 50),
+                "risk_level": snap.get("risk_level", "unknown"),
+                "summary": snap.get("risk_level", "未知"),
+            }
+        else:
+            out[name] = {"risk_score": 50, "risk_level": "unknown", "summary": "未评估"}
+    return out
 
 
 def _rebuild_supplier_vector(sid: str, name: str, data: dict) -> None:
