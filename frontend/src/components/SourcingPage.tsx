@@ -16,6 +16,9 @@ export default function SourcingPage() {
   const [currentRequestId, setCurrentRequestId] = useState('');
   const [steps, setSteps] = useState<Step[]>([]);
   const [selectMsg, setSelectMsg] = useState('');
+  // Track which results have been watchlisted / applied
+  const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
+  const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
 
   const historyQuery = useQuery({
     queryKey: queryKeys.sourcingRequests,
@@ -101,10 +104,13 @@ export default function SourcingPage() {
       api.post(`/sourcing/results/${resultId}/select`, { action }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.sourcingRequests });
-      setResults(prev => prev.map(r =>
-        r.result_id === vars.resultId ? { ...r, selected: true } : r
-      ));
-      setSelectMsg(vars.action === 'watchlist' ? '已加入监控列表' : '已提交准入申请');
+      if (vars.action === 'watchlist') {
+        setWatchedIds(prev => new Set(prev).add(vars.resultId));
+        setSelectMsg('已加入监控列表');
+      } else {
+        setAppliedIds(prev => new Set(prev).add(vars.resultId));
+        setSelectMsg('已提交准入申请');
+      }
       setTimeout(() => setSelectMsg(''), 3000);
     },
   });
@@ -214,6 +220,8 @@ export default function SourcingPage() {
               <SourcingResultCard
                 key={r.result_id}
                 result={r}
+                watched={watchedIds.has(r.result_id)}
+                applied={appliedIds.has(r.result_id)}
                 onSelect={action => selectMutation.mutate({ resultId: r.result_id, action })}
               />
             ))}
@@ -272,8 +280,10 @@ function StatusBadge({ status, count }: { status: string; count: number }) {
   return <span className="text-xs text-gray-400">{status}</span>;
 }
 
-function SourcingResultCard({ result, onSelect }: {
+function SourcingResultCard({ result, watched, applied, onSelect }: {
   result: SourcingResultItem;
+  watched: boolean;
+  applied: boolean;
   onSelect: (action: string) => void;
 }) {
   const color = getRiskColor(result.risk_score ?? 50);
@@ -291,6 +301,8 @@ function SourcingResultCard({ result, onSelect }: {
                 {result.risk_level}
               </span>
             )}
+            {watched && <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">已监控</span>}
+            {applied && <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full">已申请</span>}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
             <span title="向量语义匹配度">
@@ -305,26 +317,28 @@ function SourcingResultCard({ result, onSelect }: {
           </div>
         </div>
 
-        {result.selected ? (
-          <span className="text-xs text-green-600 bg-green-50 px-3 py-1.5 rounded-lg">
-            {result.action === 'watchlist' ? '已加入监控' : '已申请准入'}
-          </span>
-        ) : (
-          <div className="flex gap-2 shrink-0 ml-4">
+        <div className="flex gap-2 shrink-0 ml-4">
+          {watched ? (
+            <span className="text-xs text-blue-400 border border-blue-200 rounded-lg px-3 py-1.5">✓ 已监控</span>
+          ) : (
             <button
               onClick={() => onSelect('watchlist')}
               className="text-xs border border-[var(--color-border)] rounded-lg px-3 py-1.5 hover:bg-[var(--color-surface-hover)] transition-colors"
             >
               加入监控
             </button>
+          )}
+          {applied ? (
+            <span className="text-xs text-green-500 border border-green-200 rounded-lg px-3 py-1.5">✓ 已申请</span>
+          ) : (
             <button
               onClick={() => onSelect('apply_access')}
               className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] transition-colors"
             >
               申请准入
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
