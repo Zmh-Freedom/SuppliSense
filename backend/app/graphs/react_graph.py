@@ -36,6 +36,7 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 查财务：用 query_financials
 - 定时报告：用 manage_scheduled_report
 - 找供应商/寻源：用 create_sourcing_request 创建需求，再用 search_suppliers 搜索候选
+- 供应商不足时：用 expand_supplier_library 从天眼查搜索并导入更多供应商
 - 勾选结果：用 select_sourcing_result（watchlist 加入监控 / apply_access 申请准入）
 
 业务规则：

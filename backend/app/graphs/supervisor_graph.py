@@ -29,7 +29,7 @@ SUPERVISOR_SYSTEM_PROMPT = (
 _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "search_company", "assess_risk", "esg_assessment", "predict_risk", "macro_risk",
     "create_sourcing_request", "search_suppliers", "select_sourcing_result",
-    "find_alternatives",
+    "find_alternatives", "expand_supplier_library",
 )]
 
 _SENTIMENT_TOOLS = [t for t in TOOLS_LIST if t.name in (
@@ -47,7 +47,8 @@ RISK_PROMPT = """你是风险评估与寻源专家。
 2. 使用 search_company 确认企业全称后调用 assess_risk
 3. 上市公司要分析财报，debt_ratio=0 表示数据缺失不要解读为低负债
 4. 用户需要找供应商时，用 create_sourcing_request 创建需求，再调用 search_suppliers 搜索
-5. 回答简洁，300 字以内，中文"""
+5. 本地库找不到或结果太少时，可先用 expand_supplier_library 从天眼查扩充供应商库
+6. 回答简洁，300 字以内，中文"""
 
 SENTIMENT_PROMPT = """你是舆情分析专家。
 

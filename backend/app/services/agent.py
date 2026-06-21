@@ -425,6 +425,25 @@ def _select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
     return _select(result_id, action, user_id="agent")
 
 
+@_register(
+    "expand_supplier_library",
+    "从天眼查按关键词/行业/地域搜索企业并自动导入供应商主库。"
+    "当地供应商库数量不足或找不到特定品类时使用。",
+    parameters={
+        "type": "object",
+        "properties": {
+            "keyword": {"type": "string", "description": "搜索关键词，如 电机制造、伺服电机"},
+            "industry": {"type": "string", "description": "行业分类，如 电气机械和器材制造业"},
+            "region": {"type": "string", "description": "地域，如 浙江、广东"}
+        },
+        "required": []
+    },
+)
+def _expand_supplier_library(keyword: str = "", industry: str = "", region: str = "") -> dict:
+    from app.services.supplier_import import import_from_tianyancha_search
+    return import_from_tianyancha_search(keyword=keyword, industry=industry, region=region, max_results=50)
+
+
 # ---- history ----
 
 def _load_history(session_id: str) -> list[dict]:

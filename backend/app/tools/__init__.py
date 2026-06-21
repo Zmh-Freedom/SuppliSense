@@ -460,8 +460,47 @@ def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
     return _select(result_id, action, user_id="agent")
 
 
+@tool
+def expand_supplier_library(keyword: str = "", industry: str = "", region: str = "") -> dict:
+    """从天眼查搜索企业并自动导入供应商主库。当用户要寻找某类供应商但本地库找不到时使用。
+
+    Args:
+        keyword: 搜索关键词，如 "电机制造"、"伺服电机"、"包装印刷"
+        industry: 行业分类，如 "电气机械和器材制造业"、"软件和信息技术服务业"
+        region: 地域，如 "浙江"、"广东"、"华东"
+    """
+    from app.services.supplier_import import import_from_tianyancha_search
+    return import_from_tianyancha_search(keyword=keyword, industry=industry, region=region, max_results=50)
+
+
 # 所有工具列表，供 graph 使用
 TOOLS_LIST = [
+    tianyancha_query,
+    search_company,
+    assess_risk,
+    check_alert,
+    get_watchlist,
+    add_to_watchlist,
+    remove_from_watchlist,
+    esg_assessment,
+    contagion_analysis,
+    sentiment_analysis,
+    predict_risk,
+    macro_risk,
+    find_alternatives,
+    scenario_simulate,
+    check_sanctions,
+    knowledge_search,
+    generate_report,
+    analyze_trend,
+    compare_companies,
+    query_financials,
+    manage_scheduled_report,
+    create_sourcing_request,
+    search_suppliers,
+    select_sourcing_result,
+    expand_supplier_library,
+]
     tianyancha_query,
     search_company,
     assess_risk,
