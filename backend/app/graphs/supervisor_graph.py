@@ -356,25 +356,25 @@ async def stream_supervisor_graph(
                 if accumulated:
                     full_answer = accumulated
                 yield _sse_event("agent_complete", {"agent": agent_name})
+                current_agent = None  # reset so supervisor events don't interfere
 
-            # ---- LLM 流式 token（仅子 agent 节点，跳过 supervisor 的 token）----
+            # ---- LLM 流式 token（仅子 agent）----
             elif kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and chunk.content and current_agent:
-                    # Only accumulate from sub-agents, not supervisor routing
-                    if current_agent not in agent_answer_accumulator:
-                        agent_answer_accumulator[current_agent] = ""
-                    agent_answer_accumulator[current_agent] += chunk.content
+                    agent_answer_accumulator[current_agent] = \
+                        agent_answer_accumulator.get(current_agent, "") + chunk.content
                     yield _sse_event("answer_chunk", {"text": chunk.content})
 
-            # ---- LLM 完整响应（非流式兜底）----
+            # ---- LLM 完整响应（非流式兜底，仅子 agent）----
             elif kind == "on_chat_model_end":
-                if current_agent and not full_answer:
+                if current_agent:
                     output = event.get("data", {}).get("output")
-                    if output and hasattr(output, "content") and output.content:
-                        agent_answer_accumulator[current_agent] = output.content
-                        full_answer = output.content
-                        yield _sse_event("answer_chunk", {"text": full_answer})
+                    content = output.content if output and hasattr(output, "content") else ""
+                    if content and not full_answer:
+                        agent_answer_accumulator[current_agent] = content
+                        full_answer = content
+                        yield _sse_event("answer_chunk", {"text": content})
 
         # 保存对话历史
         if full_answer:
