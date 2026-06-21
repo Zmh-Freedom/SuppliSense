@@ -57,9 +57,22 @@ def add_supplier(data: dict) -> str:
 
 def update_supplier(sid: str, data: dict) -> None:
     db = get_db()
+    # 先查旧值用于审计
+    old = db["suppliers"].find_one({"_id": sid})
     data["updated_at"] = datetime.now(timezone.utc)
     data["embedding_dirty"] = True
     db["suppliers"].update_one({"_id": sid}, {"$set": data})
+    # 记录变更
+    if old:
+        changed = {k: {"old": old.get(k), "new": v} for k, v in data.items()
+                   if k not in ("updated_at", "embedding_dirty") and old.get(k) != v}
+        if changed:
+            db["supplier_changelog"].insert_one({
+                "supplier_id": sid,
+                "supplier_name": old.get("name", ""),
+                "changed": changed,
+                "changed_at": datetime.now(timezone.utc),
+            })
 
 
 def get_supplier(sid: str) -> dict | None:
@@ -107,9 +120,11 @@ def mark_embedding_clean(sid: str) -> None:
 def ensure_indexes() -> None:
     db = get_db()
     db["suppliers"].create_index("unified_code", unique=True, sparse=True)
+    db["suppliers"].create_index("name", unique=True)  # 名称唯一，防止重复录入
+    db["suppliers"].create_index("supplier_id")
     db["suppliers"].create_index("categories")
     db["suppliers"].create_index("status")
-    db["suppliers"].create_index("name")
+    db["supplier_changelog"].create_index([("supplier_id", 1), ("changed_at", -1)])
 
 
 def enrich_supplier_from_tianyancha(sid: str) -> dict | None:

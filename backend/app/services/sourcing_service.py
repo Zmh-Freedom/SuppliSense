@@ -2,7 +2,7 @@
 Sourcing service — 智能寻源业务逻辑。
 
 框架无关，service 层不引入 LangGraph 依赖。
-同步函数，异步并发在内部用 asyncio.run() 包装。
+风险评估改用 MongoDB alert_snapshots 快速查分，不再调外部 API。
 """
 
 import uuid
@@ -10,7 +10,6 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.db.postgres import get_cursor
-from app.repositories.company_repo import get_baseinfo
 from app.repositories.sourcing_repo import (
     approve_access_application,
     create_access_application,
