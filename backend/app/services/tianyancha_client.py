@@ -289,7 +289,7 @@ def get_api_stats() -> dict:
 
 
 def _save(collection: str, name: str, data: dict, wrapper_key: str) -> None:
-    from app.repositories.supplier_repo import resolve_supplier_id
+    from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
     sid = resolve_supplier_id(name, auto_create=True)

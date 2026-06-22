@@ -1,6 +1,6 @@
 from unittest.mock import MagicMock, patch
 
-from app.services.sourcing_service import (
+from app.domains.sourcing.service import (
     approve_application,
     reject_application,
 )
@@ -11,7 +11,7 @@ def test_nonexistent_approve_raises(monkeypatch):
     mock_repo = MagicMock()
     mock_repo.get_access_application.return_value = None
     monkeypatch.setattr(
-        "app.services.sourcing_service.get_access_application",
+        "app.domains.sourcing.service.get_access_application",
         mock_repo.get_access_application,
     )
     try:
@@ -26,7 +26,7 @@ def test_nonexistent_reject_raises(monkeypatch):
     mock_repo = MagicMock()
     mock_repo.get_access_application.return_value = None
     monkeypatch.setattr(
-        "app.services.sourcing_service.get_access_application",
+        "app.domains.sourcing.service.get_access_application",
         mock_repo.get_access_application,
     )
     try:
@@ -41,7 +41,7 @@ def test_already_processed_approve_raises(monkeypatch):
     mock_repo = MagicMock()
     mock_repo.get_access_application.return_value = {"status": "approved"}
     monkeypatch.setattr(
-        "app.services.sourcing_service.get_access_application",
+        "app.domains.sourcing.service.get_access_application",
         mock_repo.get_access_application,
     )
     try:

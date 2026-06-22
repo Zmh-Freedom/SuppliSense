@@ -15,7 +15,7 @@ from app.tools.analysis import (
 from app.tools.alert_tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist
 from app.tools.report_tools import generate_report, manage_scheduled_report
 from app.tools.knowledge_tools import knowledge_search
-from app.tools.sourcing_tools import (
+from app.domains.sourcing.tools import (
     create_sourcing_request,
     search_suppliers,
     select_sourcing_result,

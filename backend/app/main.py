@@ -33,8 +33,8 @@ from app.api.p2 import router as p2_router
 from app.api.report import router as report_router
 from app.api.macro import router as macro_router
 from app.api.scenario import router as scenario_router
-from app.api.access import router as access_router
-from app.api.sourcing import router as sourcing_router
+from app.domains.sourcing.api import router as sourcing_router
+from app.domains.sourcing.api_access import router as access_router
 from app.api.trend import router as trend_router
 from app.api.upload import router as upload_router
 from app.core.config import settings

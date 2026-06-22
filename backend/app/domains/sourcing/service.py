@@ -10,7 +10,7 @@ from typing import Any
 
 from app.core.logging import get_logger
 from app.db.postgres import get_cursor
-from app.repositories.sourcing_repo import (
+from app.domains.sourcing.repo import (
     approve_access_application,
     create_access_application,
     create_request,
@@ -184,12 +184,12 @@ def get_request_detail(request_id: str) -> dict | None:
 
 
 def list_sourcing_requests(user_id: str | None, page: int = 1, page_size: int = 20) -> dict:
-    from app.repositories.sourcing_repo import list_requests
+    from app.domains.sourcing.repo import list_requests
     return list_requests(user_id=user_id, page=page, page_size=page_size)
 
 
 def add_supplier_to_library(data: dict) -> str:
-    from app.repositories.supplier_repo import add_supplier
+    from app.domains.sourcing.supplier_repo import add_supplier
     sid = add_supplier(data)
     _rebuild_supplier_vector(sid, data["name"], data)
     return sid
@@ -226,7 +226,7 @@ def reject_application(aid: str, reviewer_id: str) -> dict:
 # ---- supplier management ----
 
 def update_supplier_in_library(sid: str, data: dict) -> dict:
-    from app.repositories.supplier_repo import get_supplier, update_supplier
+    from app.domains.sourcing.supplier_repo import get_supplier, update_supplier
 
     existing = get_supplier(sid)
     if not existing:

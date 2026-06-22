@@ -28,7 +28,7 @@ async def list_applications(
     page_size: int = Query(20, ge=1, le=100),
     _current_user=Depends(require_admin),
 ):
-    from app.services.sourcing_service import list_access_applications_svc
+    from app.domains.sourcing.service import list_access_applications_svc
 
     return await asyncio.to_thread(list_access_applications_svc, status, page, page_size)
 
@@ -38,7 +38,7 @@ async def list_applications(
     summary="通过准入申请",
 )
 async def approve(application_id: str, _body: ApproveRejectRequest, request: Request):
-    from app.services.sourcing_service import approve_application
+    from app.domains.sourcing.service import approve_application
 
     reviewer_id = getattr(request.state, "user_id", "admin")
     try:
@@ -52,7 +52,7 @@ async def approve(application_id: str, _body: ApproveRejectRequest, request: Req
     summary="拒绝准入申请",
 )
 async def reject(application_id: str, _body: ApproveRejectRequest, request: Request):
-    from app.services.sourcing_service import reject_application
+    from app.domains.sourcing.service import reject_application
 
     reviewer_id = getattr(request.state, "user_id", "admin")
     try:

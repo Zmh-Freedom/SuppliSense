@@ -30,7 +30,7 @@ router = APIRouter(prefix="/sourcing", tags=["sourcing"], dependencies=[Depends(
     description="提交采购需求，创建寻源请求。返回 request_id 用于后续搜索。",
 )
 async def create_request(req: SourcingRequestInput, request: Request):
-    from app.services.sourcing_service import create_sourcing_request
+    from app.domains.sourcing.service import create_sourcing_request
 
     user_id = getattr(request.state, "user_id", "anonymous")
     rid = await asyncio.to_thread(create_sourcing_request, req, user_id)
@@ -43,8 +43,8 @@ async def create_request(req: SourcingRequestInput, request: Request):
     description="流式返回寻源进度和结果。事件: retrieving / assessing / ranking / sourcing_result / done / error。",
 )
 async def search_stream(request_id: str):
-    from app.services.sourcing_service import search_suppliers
-    from app.repositories.sourcing_repo import get_request as _get_req
+    from app.domains.sourcing.service import search_suppliers
+    from app.domains.sourcing.repo import get_request as _get_req
 
     req = _get_req(request_id)
     if not req:
@@ -95,7 +95,7 @@ async def list_requests(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    from app.services.sourcing_service import list_sourcing_requests
+    from app.domains.sourcing.service import list_sourcing_requests
 
     user_id = getattr(request.state, "user_id", None)
     return await asyncio.to_thread(list_sourcing_requests, user_id, page, page_size)
@@ -107,7 +107,7 @@ async def list_requests(
     description="获取单次寻源请求的详情和结果列表。",
 )
 async def get_request_detail(request_id: str):
-    from app.services.sourcing_service import get_request_detail as _detail
+    from app.domains.sourcing.service import get_request_detail as _detail
 
     result = await asyncio.to_thread(_detail, request_id)
     if not result:
@@ -121,7 +121,7 @@ async def get_request_detail(request_id: str):
     description="对寻源结果执行动作: watchlist(加入监控) / apply_access(申请准入)。",
 )
 async def select_result(result_id: str, body: SelectResultRequest, request: Request):
-    from app.services.sourcing_service import select_result as _select
+    from app.domains.sourcing.service import select_result as _select
 
     user_id = getattr(request.state, "user_id", "anonymous")
     return await asyncio.to_thread(_select, result_id, body.action, user_id)
@@ -133,7 +133,7 @@ async def select_result(result_id: str, body: SelectResultRequest, request: Requ
     description="手动录入供应商到本地供应商库。",
 )
 async def add_supplier(body: SupplierInput):
-    from app.services.sourcing_service import add_supplier_to_library
+    from app.domains.sourcing.service import add_supplier_to_library
 
     sid = await asyncio.to_thread(add_supplier_to_library, body.model_dump())
     return {"supplier_id": sid, "status": "created"}
@@ -145,7 +145,7 @@ async def add_supplier(body: SupplierInput):
     description="编辑供应商资料，若 name/categories/regions 变更则自动重建向量。",
 )
 async def update_supplier(supplier_id: str, body: SupplierUpdateInput):
-    from app.services.sourcing_service import update_supplier_in_library
+    from app.domains.sourcing.service import update_supplier_in_library
 
     try:
         return await asyncio.to_thread(
@@ -168,7 +168,7 @@ async def list_suppliers(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
 ):
-    from app.repositories.supplier_repo import list_suppliers as _list
+    from app.domains.sourcing.supplier_repo import list_suppliers as _list
 
     return await asyncio.to_thread(_list, keyword, status, page, page_size)
 
@@ -194,7 +194,7 @@ async def import_suppliers(
     except Exception:
         raise HTTPException(status_code=400, detail="文件读取失败")
 
-    from app.services.supplier_import import import_suppliers_from_excel
+    from app.domains.sourcing.import_service import import_suppliers_from_excel
 
     return await asyncio.to_thread(import_suppliers_from_excel, content, file.filename)
 
@@ -211,7 +211,7 @@ async def import_from_tianyancha(
     max_results: int = Query(50, ge=1, le=100, description="最大导入数"),
     _current_user=Depends(require_admin_or_analyst),
 ):
-    from app.services.supplier_import import import_from_tianyancha_search
+    from app.domains.sourcing.import_service import import_from_tianyancha_search
 
     return await asyncio.to_thread(
         import_from_tianyancha_search,

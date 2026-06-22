@@ -26,7 +26,7 @@ def _broadcast_alert_update() -> None:
 
 def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
     from app.services.risk_service import SCORING_VERSION
-    from app.repositories.supplier_repo import resolve_supplier_id
+    from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
     doc = {
@@ -105,7 +105,7 @@ def detect_changes(company_name: str) -> dict:
 
         if triggered:
             final_severity = "critical" if any(t["severity"] == "critical" for t in triggered) else "warning"
-            from app.repositories.supplier_repo import resolve_supplier_id
+            from app.domains.sourcing.supplier_repo import resolve_supplier_id
             db["alerts"].insert_one({
                 "company_name": company_name,
                 "supplier_id": resolve_supplier_id(company_name),
@@ -147,7 +147,7 @@ def detect_changes(company_name: str) -> dict:
 
 
 def add_to_watchlist(company_name: str) -> dict:
-    from app.repositories.supplier_repo import resolve_supplier_id
+    from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
     sid = resolve_supplier_id(company_name, auto_create=True)

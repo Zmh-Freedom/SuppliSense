@@ -91,7 +91,7 @@ def check_and_notify() -> dict:
                 })
                 if not existing:
                     try:
-                        from app.services.sourcing_service import get_top_alternatives
+                        from app.domains.sourcing.service import get_top_alternatives
                         alternatives = get_top_alternatives(company_name, top_k=3)
                         if alternatives:
                             suggestion_doc = {

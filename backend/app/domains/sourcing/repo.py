@@ -115,7 +115,7 @@ def update_result_action(result_id: str, action: str) -> None:
 
 
 def create_access_application(supplier_name: str, request_id: str | None, applicant_id: str) -> str:
-    from app.repositories.supplier_repo import resolve_supplier_id
+    from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     supplier_id = resolve_supplier_id(supplier_name, auto_create=True)
     validated = _validate_access_app({

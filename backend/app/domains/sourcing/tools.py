@@ -12,7 +12,7 @@ def create_sourcing_request(title: str, category: str, spec: str) -> dict:
         spec: 规格/技术要求描述
     """
     from app.schemas.sourcing import SourcingRequestInput
-    from app.services.sourcing_service import create_sourcing_request as _create
+    from app.domains.sourcing.service import create_sourcing_request as _create
 
     rid = _create(SourcingRequestInput(title=title, category=category, spec=spec), user_id="agent")
     return {"request_id": rid, "status": "created"}
@@ -25,7 +25,7 @@ def search_suppliers(request_id: str) -> dict:
     Args:
         request_id: 寻源请求 ID（由 create_sourcing_request 返回）
     """
-    from app.services.sourcing_service import search_suppliers as _search
+    from app.domains.sourcing.service import search_suppliers as _search
     return _search(request_id)
 
 
@@ -37,7 +37,7 @@ def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
         result_id: 寻源结果 ID
         action: 动作类型，可选值: watchlist(加入监控), apply_access(申请准入)
     """
-    from app.services.sourcing_service import select_result as _select
+    from app.domains.sourcing.service import select_result as _select
     return _select(result_id, action, user_id="agent")
 
 
@@ -50,5 +50,5 @@ def expand_supplier_library(keyword: str = "", industry: str = "", region: str =
         industry: 行业分类，如 "电气机械和器材制造业"、"软件和信息技术服务业"
         region: 地域，如 "浙江"、"广东"、"华东"
     """
-    from app.services.supplier_import import import_from_tianyancha_search
+    from app.domains.sourcing.import_service import import_from_tianyancha_search
     return import_from_tianyancha_search(keyword=keyword, industry=industry, region=region, max_results=50)
