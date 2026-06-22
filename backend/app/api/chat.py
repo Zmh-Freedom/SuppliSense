@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 
 from pydantic import BaseModel
@@ -7,7 +6,6 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import get_current_user
-from app.services.agent import chat as agent_chat
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
@@ -56,38 +54,6 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
     mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "langgraph-react" | "langgraph-plan-execute" | "langgraph-multi-agent"
-
-
-@router.post(
-    "/",
-    summary="AI 智能对话（同步）",
-    description="提交消息给 AI 智能体进行对话。支持三种执行模式：ReAct（默认）、Plan-Execute（先规划后执行）和 Multi-Agent（多智能体协作）。",
-    responses={
-        400: {"description": "请求参数错误"},
-        500: {"description": "服务器内部错误"},
-    },
-)
-async def chat_endpoint(req: ChatRequest):
-    sid = req.session_id or str(uuid.uuid4())
-
-    # Resolve mode and alias legacy names to LangGraph equivalents
-    mode = req.mode
-    _MODE_ALIASES_SYNC = {
-        "react": "langgraph-react",
-        "plan-execute": "langgraph-plan-execute",
-        "multi-agent": "langgraph-multi-agent",
-        "sourcing": "langgraph-sourcing",
-    }
-
-    if mode == "auto":
-        from app.graphs.router import router as intent_router
-        mode = intent_router.route(req.message).value
-    else:
-        mode = _MODE_ALIASES_SYNC.get(mode, mode)
-
-    # Sync endpoint uses legacy agent_chat for all modes (kept as fallback)
-    reply = await asyncio.to_thread(agent_chat, sid, req.message)
-    return {"reply": reply, "session_id": sid}
 
 
 @router.post(
