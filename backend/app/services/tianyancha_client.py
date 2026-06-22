@@ -25,6 +25,7 @@ from app.core.config import settings
 from app.db.mongo import get_db
 
 BASE_URL = settings.TIANYANCHA_BASE_URL
+SEARCH_URL = "https://api.tianyancha.com"  # 搜索接口使用不同的 base URL
 TOKEN = settings.TIANYANCHA_TOKEN
 
 _ENDPOINTS: list[tuple[str, str, str]] = [
@@ -65,7 +66,7 @@ def search_companies(
 ) -> dict | None:
     """按关键词/行业/地域搜索企业列表。
 
-    接口: /services/open/search/v2/company（天眼查企业搜索 V2）
+    接口: /open/search/v2/company（天眼查企业搜索 V2）
 
     Returns:
         {"items": [...], "total": N} or None
@@ -82,12 +83,12 @@ def search_companies(
             params["region"] = region
 
         r = httpx.get(
-            f"{BASE_URL}/services/open/search/v2/company",
+            f"{SEARCH_URL}/open/search/v2/company",
             params=params,
             headers={"Authorization": TOKEN},
             timeout=30.0,
         )
-        _record_call("/services/open/search/v2/company", f"{keyword}|{industry}", r.is_success)
+        _record_call("/open/search/v2/company", f"{keyword}|{industry}", r.is_success)
         if not r.is_success:
             return None
         data = r.json()
