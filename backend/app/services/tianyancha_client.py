@@ -25,7 +25,6 @@ from app.core.config import settings
 from app.db.mongo import get_db
 
 BASE_URL = settings.TIANYANCHA_BASE_URL
-SEARCH_URL = "https://api.tianyancha.com"  # 搜索接口使用不同的 base URL
 TOKEN = settings.TIANYANCHA_TOKEN
 
 _ENDPOINTS: list[tuple[str, str, str]] = [
@@ -64,9 +63,11 @@ def search_companies(
     page_size: int = 20,
     page_num: int = 1,
 ) -> dict | None:
-    """按关键词/行业/地域搜索企业列表。
+    """按行业/地域搜索企业列表。
 
-    接口: /open/search/v2/company（天眼查企业搜索 V2）
+    使用 tagSearch 接口（免费套餐可用）。
+    行业代码为 GB/T 4754-2017 数字编码（如 381=电机制造, 401=电子器件）。
+    地区代码为天眼查 areaCode（如 330100=杭州）。
 
     Returns:
         {"items": [...], "total": N} or None
@@ -74,28 +75,32 @@ def search_companies(
     if not TOKEN:
         return None
     try:
-        params: dict = {"pageSize": min(page_size, 50), "pageNum": page_num}
+        params: dict = {
+            "tagName": "存续",
+            "pageNum": page_num,
+            "pageSize": min(page_size, 50),
+        }
+        if industry:
+            params["categoryGuobiao"] = industry
+        if region:
+            params["areaCode"] = region
         if keyword:
             params["keyword"] = keyword
-        if industry:
-            params["industry"] = industry
-        if region:
-            params["region"] = region
 
         r = httpx.get(
-            f"{SEARCH_URL}/open/search/v2/company",
+            f"{BASE_URL}/services/open/tagSearch",
             params=params,
             headers={"Authorization": TOKEN},
             timeout=30.0,
         )
-        _record_call("/open/search/v2/company", f"{keyword}|{industry}", r.is_success)
+        _record_call("/services/open/tagSearch", f"{keyword}|{industry}", r.is_success)
         if not r.is_success:
             return None
         data = r.json()
         code = data.get("error_code", -1)
         if code != 0:
             return None
-        result = data.get("result", {})
+        result = data.get("result") or {}
         items = result.get("items", [])
         total = result.get("total", 0)
         return {"items": items, "total": total}

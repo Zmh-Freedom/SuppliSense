@@ -281,28 +281,43 @@ export default function SupplierLibraryPage() {
           <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-sm space-y-3">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">天眼查批量导入</h3>
             <div className="grid grid-cols-3 gap-2">
-              <input
-                value={tycKeyword}
-                onChange={e => setTycKeyword(e.target.value)}
-                placeholder="关键词：电机制造"
-                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
-              />
-              <input
+              <select
                 value={tycIndustry}
                 onChange={e => setTycIndustry(e.target.value)}
-                placeholder="行业：电气机械"
                 className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
-              />
+              >
+                <option value="">选择行业...</option>
+                <option value="381">电机制造</option>
+                <option value="382">输配电及控制设备</option>
+                <option value="401">电子器件</option>
+                <option value="402">电子元件</option>
+                <option value="356">电子专用设备</option>
+                <option value="651">软件开发</option>
+                <option value="652">信息技术服务</option>
+                <option value="292">塑料制品</option>
+                <option value="223">纸制品</option>
+                <option value="231">印刷</option>
+                <option value="359">环保设备</option>
+                <option value="342">金属加工机械</option>
+                <option value="345">通用零部件</option>
+              </select>
               <input
                 value={tycRegion}
                 onChange={e => setTycRegion(e.target.value)}
-                placeholder="地域：浙江"
+                placeholder="地域代码：330100(杭州)"
+                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
+              />
+              <input
+                value={tycKeyword}
+                onChange={e => setTycKeyword(e.target.value)}
+                placeholder="公司名关键词（可选）"
                 className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
               />
             </div>
+            <p className="text-[10px] text-gray-400">选择行业代码（GB/T 4754-2017），可选填地域代码缩小范围。每次最多导入 50 家。</p>
             <button
               onClick={() => tycMutation.mutate()}
-              disabled={(!tycKeyword && !tycIndustry) || tycMutation.isPending}
+              disabled={!tycIndustry || tycMutation.isPending}
               className="text-sm bg-[var(--color-primary-bg)] text-white rounded-xl px-6 py-2 hover:bg-[var(--color-primary-hover)] disabled:opacity-40 transition-colors"
             >
               {tycMutation.isPending ? '搜索中...' : '搜索并导入'}
