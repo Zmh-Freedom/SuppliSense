@@ -39,13 +39,18 @@ def detect_clarification_needed(message: str) -> ClarificationNeeded | None:
     if has_company:
         return None
 
-    # Skip if it looks like a company name (3-8 chars, possibly with city prefix)
-    # This handles cases like "海康威视的风险" where no company suffix exists
-    words = msg.replace("的", " ").replace("，", " ").replace(",", " ").split()
-    for w in words:
-        if 3 <= len(w) <= 8 and not any(kw in w for kw in _ANALYSIS_KEYWORDS):
-            # Check if this looks like a proper name (Chinese chars only)
-            if all('一' <= c <= '鿿' for c in w):
+    # Check if the message contains what looks like a company name
+    # Strategy 1: Full company suffix pattern
+    # Strategy 2: Short Chinese word (3-10 chars) that's not a keyword
+    msg_clean = msg.replace("的", " ").replace("，", " ").replace(",", " ").replace("了", " ")
+    # Also remove common company suffixes to extract the core name
+    for suffix in ["股份有限公司", "有限公司", "有限责任公司"]:
+        msg_clean = msg_clean.replace(suffix, " ")
+    for w in msg_clean.split():
+        if 3 <= len(w) <= 10 and all('一' <= c <= '鿿' for c in w):
+            # Looks like a company name abbreviation
+            has_analysis_kw = any(kw in w for kw in _ANALYSIS_KEYWORDS)
+            if not has_analysis_kw:
                 return None
 
     # Message has analysis intent but no identifiable company name
