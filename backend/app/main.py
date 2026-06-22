@@ -17,25 +17,26 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api.alert import router as alert_router
 from app.api.async_tasks import router as async_tasks_router
-from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
-from app.api.company import router as company_router
-from app.api.compare import router as compare_router
-from app.api.financial import router as financial_router
 from app.api.health import router as health_router
-from app.api.knowledge import router as knowledge_router
-from app.api.notifications import router as notifications_router
-from app.api.risk import router as risk_router
-from app.api.sentiment import router as sentiment_router
 from app.api.p2 import router as p2_router
-from app.api.report import router as report_router
-from app.api.macro import router as macro_router
-from app.api.scenario import router as scenario_router
+from app.api.upload import router as upload_router
+from app.domains.alert.api import router as alert_router
+from app.domains.alert.api_notifications import router as notifications_router
+from app.domains.auth.api import router as auth_router
+from app.domains.knowledge.api import router as knowledge_router
+from app.domains.risk.api_risk import router as risk_router
+from app.domains.risk.api_company import router as company_router
+from app.domains.risk.api_compare import router as compare_router
+from app.domains.risk.api_financial import router as financial_router
+from app.domains.risk.api_report import router as report_router
+from app.domains.risk.api_macro import router as macro_router
+from app.domains.risk.api_scenario import router as scenario_router
+from app.domains.risk.api_sentiment import router as sentiment_router
+from app.domains.risk.api_trend import router as trend_router
 from app.domains.sourcing.api import router as sourcing_router
 from app.domains.sourcing.api_access import router as access_router
-from app.api.trend import router as trend_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.errors import (
@@ -92,7 +93,7 @@ def create_default_admin():
     import secrets
     import string
 
-    from app.services.auth import create_user, list_users
+    from app.domains.auth.service import create_user, list_users
     from app.schemas.user import UserCreate, UserRole
 
     users = list_users()

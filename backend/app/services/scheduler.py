@@ -5,9 +5,9 @@ logging.basicConfig(level=logging.INFO)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from app.repositories.company_repo import get_baseinfo
-from app.repositories.financial_repo import get_financial_metrics
-from app.services.alert_service import (
+from app.domains.risk.repo_company import get_baseinfo
+from app.domains.risk.repo_financial import get_financial_metrics
+from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
     get_watchlist,
@@ -79,7 +79,7 @@ def run_refresh_all() -> dict:
     """Paid: call Tianyancha API for all watched companies."""
     from app.services.tianyancha_client import fetch_company
     from app.schemas import RiskAssessRequest
-    from app.services.risk_service import assess_risk
+    from app.domains.risk.service import assess_risk
 
     companies = get_watchlist()
     if not companies:
@@ -119,12 +119,12 @@ def _scheduled_digest() -> None:
 
 
 def _scheduled_notify() -> None:
-    from app.services.alert_notifier import check_and_notify
+    from app.domains.alert.notifier import check_and_notify
     check_and_notify()
 
 
 def _scheduled_sentiment() -> None:
-    from app.services.sentiment import analyze_all_sentiment
+    from app.domains.risk.sentiment import analyze_all_sentiment
     analyze_all_sentiment()
 
 

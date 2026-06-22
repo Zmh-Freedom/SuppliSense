@@ -69,7 +69,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
     user_id = getattr(request.state, "user_id", "")
-    from app.services.user_preference import build_preference_context
+    from app.domains.auth.preferences import build_preference_context
     pref_ctx = build_preference_context(user_id) if user_id else ""
 
     # Resolve mode: auto → intent router, otherwise use explicit mode

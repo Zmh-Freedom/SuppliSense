@@ -8,7 +8,7 @@ import openpyxl
 from app.core.logging import get_logger
 from app.db.mongo import get_db
 from app.db.postgres import get_cursor
-from app.services.embedding import encode_single
+from app.domains.knowledge.embedding import encode_single
 
 logger = get_logger()
 

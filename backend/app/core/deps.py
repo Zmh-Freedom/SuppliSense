@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer
 
 from app.core.security import decode_token
 from app.schemas.user import UserInDB, UserRole
-from app.services.auth import get_user_by_id
+from app.domains.auth.service import get_user_by_id
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 

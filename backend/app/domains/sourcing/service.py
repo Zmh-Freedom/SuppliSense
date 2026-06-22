@@ -25,7 +25,7 @@ from app.domains.sourcing.repo import (
     update_result_action,
 )
 from app.schemas.sourcing import SourcingRequestInput
-from app.services.embedding import encode_single
+from app.domains.knowledge.embedding import encode_single
 
 logger = get_logger(__name__)
 
@@ -150,7 +150,7 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
     update_result_action(result_id, action)
 
     if action == "watchlist":
-        from app.services.alert_service import add_to_watchlist
+        from app.domains.alert.service import add_to_watchlist
         add_to_watchlist(supplier_name)
         return {"success": True, "action": "watchlist", "message": f"已将 {supplier_name} 加入监控列表"}
     elif action == "apply_access":

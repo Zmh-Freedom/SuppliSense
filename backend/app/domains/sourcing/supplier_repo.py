@@ -138,7 +138,7 @@ def _extract_enrich_fields(data: dict) -> dict:
 def _rebuild_vector(sid: str, data: dict) -> None:
     """为新创建的供应商构建 PG 向量。"""
     try:
-        from app.services.embedding import encode_single
+        from app.domains.knowledge.embedding import encode_single
         from app.db.postgres import get_cursor
         parts = [data.get("name", "")]
         parts.extend(data.get("categories", []))

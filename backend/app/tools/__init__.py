@@ -1,8 +1,8 @@
-"""LangGraph 工具定义 — 按领域拆分，统一注册。"""
+"""LangGraph 工具定义 — 从各领域导入，统一注册。"""
 
-from app.tools.search import search_company, tianyancha_query
-from app.tools.risk import assess_risk, predict_risk, macro_risk, scenario_simulate
-from app.tools.analysis import (
+from app.domains.risk.tools_search import search_company, tianyancha_query
+from app.domains.risk.tools_risk import assess_risk, predict_risk, macro_risk, scenario_simulate
+from app.domains.risk.tools_analysis import (
     esg_assessment,
     contagion_analysis,
     sentiment_analysis,
@@ -12,9 +12,9 @@ from app.tools.analysis import (
     analyze_trend,
     query_financials,
 )
-from app.tools.alert_tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist
-from app.tools.report_tools import generate_report, manage_scheduled_report
-from app.tools.knowledge_tools import knowledge_search
+from app.domains.risk.tools_report import generate_report, manage_scheduled_report
+from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist
+from app.domains.knowledge.tools import knowledge_search
 from app.domains.sourcing.tools import (
     create_sourcing_request,
     search_suppliers,

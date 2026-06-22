@@ -1,0 +1,50 @@
+"""报告工具。"""
+from langchain_core.tools import tool
+
+
+@tool
+def generate_report(company_name: str, report_type: str = "excel") -> dict:
+    """生成企业风险评估报告（Excel 或 HTML 格式）。
+
+    Args:
+        company_name: 企业全称
+        report_type: 报告格式，可选值: excel, html
+    """
+    from app.domains.risk.report_service import generate_excel, generate_html_report
+
+    if report_type == "html":
+        content = generate_html_report(company_name)
+        return {"company_name": company_name, "format": "html", "length": len(content), "content": content}
+    else:
+        content = generate_excel(company_name)
+        return {"company_name": company_name, "format": "excel", "size_bytes": len(content), "message": "Excel 报告已生成"}
+
+
+@tool
+def manage_scheduled_report(action: str, company_names: list[str] | None = None, cron: str = "weekly", report_type: str = "excel") -> dict:
+    """管理定时报告任务（创建/查看/删除）。
+
+    Args:
+        action: 操作类型，可选值: create, list, delete
+        company_names: 监控企业列表（create 时必填）
+        cron: 定时表达式，如 weekly, daily（create 时使用）
+        report_type: 报告格式，可选值: excel, html
+    """
+    from app.domains.risk.scheduled_report import (
+        create_scheduled_report,
+        list_scheduled_reports,
+        delete_scheduled_report,
+    )
+
+    if action == "create":
+        if not company_names:
+            return {"error": "创建定时报告需要指定企业列表"}
+        return create_scheduled_report(company_names, cron, report_type)
+    elif action == "list":
+        return {"reports": list_scheduled_reports()}
+    elif action == "delete":
+        if not company_names:
+            return {"error": "删除定时报告需要指定 task_id（通过 company_names 传入）"}
+        return delete_scheduled_report(company_names[0])
+    else:
+        return {"error": f"未知操作: {action}，可选值: create, list, delete"}

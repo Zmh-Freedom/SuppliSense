@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app.core.deps import get_current_user
-from app.services.document_parser import parse_file, generate_doc_id
-from app.services.knowledge_base import add_documents
+from app.domains.knowledge.parser import parse_file, generate_doc_id
+from app.domains.knowledge.service import add_documents
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 

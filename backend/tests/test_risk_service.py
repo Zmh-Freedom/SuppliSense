@@ -1,5 +1,5 @@
-from app.services.risk_service import _clamp, _score_to_level
-from app.repositories.financial_repo import _parse_float
+from app.domains.risk.service import _clamp, _score_to_level
+from app.domains.risk.repo_financial import _parse_float
 
 
 class TestClamp:

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 def assess_risk_async(company_name: str) -> dict:
     """Run risk assessment in background."""
     from app.schemas import RiskAssessRequest
-    from app.services.risk_service import assess_risk
+    from app.domains.risk.service import assess_risk
 
     try:
         result = assess_risk(RiskAssessRequest(company_name=company_name))
@@ -30,7 +30,7 @@ def assess_risk_async(company_name: str) -> dict:
 
 def refresh_company_async(company_name: str) -> dict:
     """Run Tianyancha refresh in background (paid)."""
-    from app.services.alert_service import detect_changes
+    from app.domains.alert.service import detect_changes
     from app.services.tianyancha_client import fetch_company
 
     try:
@@ -53,7 +53,7 @@ def refresh_company_async(company_name: str) -> dict:
 
 def batch_refresh_all() -> dict:
     """Batch refresh all watched companies (paid)."""
-    from app.services.alert_service import get_watchlist
+    from app.domains.alert.service import get_watchlist
 
     companies = get_watchlist()
     results = []

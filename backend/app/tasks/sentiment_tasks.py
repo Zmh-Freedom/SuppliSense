@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def analyze_sentiment_async(company_name: str, force_refresh: bool = True) -> dict:
     """Run sentiment analysis in background."""
-    from app.services.sentiment import analyze_sentiment
+    from app.domains.risk.sentiment import analyze_sentiment
 
     try:
         result = analyze_sentiment(company_name, force_refresh=force_refresh)
@@ -29,7 +29,7 @@ def analyze_sentiment_async(company_name: str, force_refresh: bool = True) -> di
 
 def analyze_all_sentiment_async() -> dict:
     """Analyze sentiment for all watched companies."""
-    from app.services.sentiment import analyze_all_sentiment
+    from app.domains.risk.sentiment import analyze_all_sentiment
 
     try:
         results = analyze_all_sentiment()
