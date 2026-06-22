@@ -253,7 +253,12 @@ def _enrich_imported(db) -> None:
         for name in names:
             base = db["baseinfo"].find_one({"name": name})
             if base:
-                result = base.get("items", {}).get("result", {})
+                items = base.get("items")
+                result = None
+                if isinstance(items, dict) and items.get("result"):
+                    result = items["result"]
+                elif isinstance(base.get("result"), dict):
+                    result = base["result"]
                 if result:
                     updates = {}
                     if result.get("regNumber"):

@@ -28,6 +28,15 @@ cursor = db["suppliers"].find(
 )
 entries = [(doc["_id"], doc["name"]) for doc in cursor]
 
+# 手动映射——这些企业名称格式特殊，自动推测不出
+_MANUAL_MAP = {
+    "中芯国际集成电路制造有限公司": "中芯国际集成电路制造(上海)有限公司",
+    "深圳市立创电子有限公司": "深圳市立创电子商务有限公司",
+    "东莞晶导微电子股份有限公司": "山东晶导微电子股份有限公司",
+    "江苏永冠新材料科技股份有限公司": "上海永冠众诚新材料科技(集团)股份有限公司",
+    "固安捷工业品有限公司": "固安捷贸易有限公司",
+}
+
 if not entries:
     print("所有供应商已有完整工商信息")
     sys.exit(0)
@@ -44,9 +53,19 @@ for i, (sid, name) in enumerate(entries, 1):
         lookup_name = name
         base = None
 
+        # Step 0: 手动映射
+        if name in _MANUAL_MAP:
+            candidate = _MANUAL_MAP[name]
+            print(f"  → 手动映射: {candidate}")
+            fetch_company(candidate)
+            base = db["baseinfo"].find_one({"name": candidate})
+            if base:
+                lookup_name = candidate
+
         # Step 1: 精确匹配
-        fetch_company(name)
-        base = db["baseinfo"].find_one({"name": name})
+        if not base:
+            fetch_company(name)
+            base = db["baseinfo"].find_one({"name": name})
 
         # Step 2: 尝试常见城市前缀（天眼查要求全称）
         if not base or not base.get("items") or not (base.get("items") or {}).get("result"):
@@ -87,7 +106,14 @@ for i, (sid, name) in enumerate(entries, 1):
             failed += 1
             continue
 
-        result = base.get("items", {}).get("result") if isinstance(base.get("items"), dict) else None
+        # 天眼查两种返回格式：1) items.result 嵌套  2) result 直接平铺
+        items = base.get("items")
+        if isinstance(items, dict) and items.get("result"):
+            result = items["result"]
+        elif isinstance(base.get("result"), dict):
+            result = base["result"]
+        else:
+            result = None
         if not result:
             print("  ❌ 返回数据为空")
             failed += 1

@@ -148,8 +148,12 @@ def enrich_supplier_from_tianyancha(sid: str) -> dict | None:
     if not base:
         return None
 
-    result = base.get("items", {}).get("result", {})
-    if not result:
+    items = base.get("items")
+    if isinstance(items, dict) and items.get("result"):
+        result = items["result"]
+    elif isinstance(base.get("result"), dict):
+        result = base["result"]
+    else:
         return None
 
     updates: dict[str, Any] = {}
