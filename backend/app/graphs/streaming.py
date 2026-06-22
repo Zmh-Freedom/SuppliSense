@@ -58,14 +58,14 @@ async def stream_react_graph(
                     result = json.dumps(output, ensure_ascii=False, default=str)
                 yield _sse_event("tool_result", {"tool": tool_name, "result": result})
 
-            # LLM 完成（非流式 chunk 的完整响应）
+            # LLM 完成（非流式响应或工具调用后的回答）
             elif kind == "on_chat_model_end":
-                # 如果没有通过 stream 拿到 content，从 end event 取
-                if not full_answer:
-                    output = event.get("data", {}).get("output")
-                    if output and hasattr(output, "content") and output.content:
-                        full_answer = output.content
-                        yield _sse_event("answer_chunk", {"text": full_answer})
+                output = event.get("data", {}).get("output")
+                content = output.content if output and hasattr(output, "content") else ""
+                if content:
+                    # 总是更新 full_answer，确保工具调用后的最终回答不被丢失
+                    full_answer = content
+                    yield _sse_event("answer_chunk", {"text": content})
 
         # 保存对话历史
         if full_answer:
