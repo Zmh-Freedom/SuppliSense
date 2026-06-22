@@ -1,16 +1,20 @@
 import logging
 
 from pymongo import MongoClient
+from pymongo.asynchronous.mongo_client import AsyncMongoClient
 from pymongo.database import Database
+from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 _client: MongoClient | None = None
+_async_client: AsyncMongoClient | None = None
 
 
 def get_db() -> Database:
+    """同步 MongoDB 连接（兼容旧代码）。"""
     global _client
     if _client is None:
         _client = MongoClient(
@@ -27,13 +31,37 @@ def get_db() -> Database:
     return _client[settings.MONGO_DB]
 
 
+def get_async_db() -> AsyncDatabase:
+    """异步 MongoDB 连接 — 用于 FastAPI 异步端点。
+
+    无需 asyncio.to_thread 包装，直接在 async handler 中 await。
+    """
+    global _async_client
+    if _async_client is None:
+        _async_client = AsyncMongoClient(
+            host=settings.MONGO_HOST,
+            port=settings.MONGO_PORT,
+            username=settings.MONGO_USER,
+            password=settings.MONGO_PASSWORD,
+            authSource=settings.MONGO_AUTH_SOURCE,
+            serverSelectionTimeoutMS=5000,
+            maxPoolSize=50,
+            minPoolSize=5,
+            maxIdleTimeMS=30000,
+        )
+    return _async_client[settings.MONGO_DB]
+
+
 def close_db() -> None:
     """优雅关闭 MongoDB 连接。"""
-    global _client
+    global _client, _async_client
     if _client is not None:
         _client.close()
         _client = None
-        logger.info("MongoDB connection closed")
+    if _async_client is not None:
+        _async_client.close()
+        _async_client = None
+    logger.info("MongoDB connections closed")
 
 
 def ensure_indexes() -> None:
