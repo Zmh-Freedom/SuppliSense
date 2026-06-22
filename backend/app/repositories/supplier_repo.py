@@ -1,6 +1,7 @@
 """Supplier repository — MongoDB CRUD for local supplier library."""
 
 import uuid
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,28 +15,146 @@ def _validate_doc(doc: dict) -> dict:
 
 
 def resolve_supplier_id(name: str, auto_create: bool = False) -> str | None:
-    """根据企业名称查找 supplier_id。如果不存在且 auto_create=True 则自动创建。
+    """根据企业名称查找 supplier_id，自动验证名称并补全工商信息。
 
-    统一入口：所有需要引用供应商的地方用此函数获取 supplier_id。
+    统一入口：所有需要引用供应商的地方用此函数。
+
+    1. 先精确查找
+    2. auto_create=True 时，尝试天眼查验证名称
+    3. 自动拉取工商信息写入 supplier 文档
     """
     db = get_db()
     doc = db["suppliers"].find_one({"name": name}, {"_id": 1})
     if doc:
         return str(doc["_id"])
-    if auto_create:
-        sid = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
-        db["suppliers"].insert_one({
-            "_id": sid,
-            "name": name,
-            "status": "prospective",
-            "source": "auto",
-            "embedding_dirty": True,
-            "created_at": now,
-            "updated_at": now,
-        })
-        return sid
+    if not auto_create:
+        return None
+
+    # 尝试从天眼查验证/修正名称
+    verified_name = name
+    enriched: dict[str, Any] = {}
+    base = _fetch_baseinfo(name)
+    if not base:
+        verified_name, base = _search_tianyancha(name)
+
+    if base:
+        verified_name = base.get("name", name)
+        enriched = _extract_enrich_fields(base)
+
+    # 创建供应商
+    sid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    doc_data = {
+        "_id": sid,
+        "name": verified_name,
+        "status": "prospective",
+        "source": "auto",
+        "embedding_dirty": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    if enriched:
+        doc_data.update(enriched)
+    db["suppliers"].insert_one(doc_data)
+    _rebuild_vector(sid, doc_data)
+    return sid
+
+
+def _fetch_baseinfo(name: str) -> dict | None:
+    """从天眼查拉取 baseinfo，返回聚合并的公司数据 dict。"""
+    from app.services.tianyancha_client import fetch_company
+    db = get_db()
+    base = db["baseinfo"].find_one({"name": name})
+    if not base:
+        fetch_company(name)
+        base = db["baseinfo"].find_one({"name": name})
+    return _parse_baseinfo(base)
+
+
+def _search_tianyancha(name: str) -> tuple[str | None, dict | None]:
+    """尝试前缀搜索找到正确的公司名称。返回 (正确名称, 解析后的数据)。"""
+    from app.services.tianyancha_client import _call
+    import time
+
+    core = name
+    for s in ["股份有限公司", "有限公司", "有限责任公司"]:
+        core = core.replace(s, "")
+    core = core.strip()
+
+    prefixes = [
+        "杭州", "深圳", "广州", "上海", "北京", "苏州", "南京", "东莞",
+        "武汉", "成都", "重庆", "天津", "西安", "长沙", "青岛", "厦门",
+        "宁波", "无锡", "佛山", "合肥", "郑州", "济南", "沈阳", "大连",
+        "浙江", "广东", "江苏", "山东", "福建",
+    ]
+    for prefix in prefixes:
+        if core.startswith(prefix):
+            continue
+        candidate = f"{prefix}{core}有限公司"
+        resp = _call("/services/open/ic/baseinfo/normal", candidate)
+        if resp and resp.get("error_code") == 0 and resp.get("result"):
+            time.sleep(0.3)
+            from app.services.tianyancha_client import fetch_company
+            fetch_company(candidate)
+            base = db["baseinfo"].find_one({"name": candidate})
+            parsed = _parse_baseinfo(base)
+            if parsed:
+                return candidate, parsed
+    return None, None
+
+
+def _parse_baseinfo(base: dict | None) -> dict | None:
+    """解析 baseinfo 文档，统一两种格式返回聚合数据。"""
+    if not base:
+        return None
+    items = base.get("items")
+    if isinstance(items, dict) and items.get("result"):
+        company_data = items["result"]
+        if isinstance(company_data, dict):
+            if company_data.get("items") and isinstance(company_data["items"], dict):
+                return company_data["items"].get("result") or company_data
+            return company_data
+    if isinstance(base.get("result"), dict):
+        return base["result"]
     return None
+
+
+def _extract_enrich_fields(data: dict) -> dict:
+    """从 baseinfo 解析结果中提取工商字段。"""
+    enriched: dict[str, Any] = {}
+    if data.get("regNumber"):
+        enriched["unified_code"] = str(data["regNumber"])
+    if data.get("legalPersonName"):
+        enriched["legal_person"] = data["legalPersonName"]
+    if data.get("regCapital"):
+        enriched["registered_capital"] = data["regCapital"]
+    if data.get("estiblishTime"):
+        enriched["establish_time"] = str(data["estiblishTime"])
+    if data.get("regStatus"):
+        enriched["reg_status"] = data["regStatus"]
+    return enriched
+
+
+def _rebuild_vector(sid: str, data: dict) -> None:
+    """为新创建的供应商构建 PG 向量。"""
+    try:
+        from app.services.embedding import encode_single
+        from app.db.postgres import get_cursor
+        parts = [data.get("name", "")]
+        parts.extend(data.get("categories", []))
+        parts.extend(data.get("regions", []))
+        embedding = encode_single(" ".join(p for p in parts if p))
+        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+        with get_cursor() as (conn, cur):
+            cur.execute(
+                """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
+                   VALUES (%s, %s, %s, %s::vector, %s)
+                   ON CONFLICT (id) DO UPDATE SET
+                   content = EXCLUDED.content, embedding = EXCLUDED.embedding""",
+                (sid, data.get("name", ""), " ".join(parts), vec_str, "{}"),
+            )
+    except Exception:
+        pass  # 向量写入失败不阻塞主流程
 
 
 def add_supplier(data: dict) -> str:
