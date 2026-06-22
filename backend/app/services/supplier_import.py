@@ -253,18 +253,21 @@ def _enrich_imported(db) -> None:
         for name in names:
             base = db["baseinfo"].find_one({"name": name})
             if base:
-                updates = {}
-                if base.get("regNumber"):
-                    updates["unified_code"] = base["regNumber"]
-                if base.get("legalPersonName"):
-                    updates["legal_person"] = base["legalPersonName"]
-                if base.get("regCapital"):
-                    updates["registered_capital"] = base["regCapital"]
-                if base.get("startDate"):
-                    updates["establish_time"] = base["startDate"]
-                if updates:
-                    updates["updated_at"] = __import__("datetime").datetime.now()
-                    db["suppliers"].update_one({"name": name}, {"$set": updates})
+                result = base.get("items", {}).get("result", {})
+                if result:
+                    updates = {}
+                    if result.get("regNumber"):
+                        updates["unified_code"] = str(result["regNumber"])
+                    if result.get("legalPersonName"):
+                        updates["legal_person"] = result["legalPersonName"]
+                    if result.get("regCapital"):
+                        updates["registered_capital"] = result["regCapital"]
+                    if result.get("estiblishTime"):
+                        updates["establish_time"] = str(result["estiblishTime"])
+                    if updates:
+                        from datetime import datetime
+                        updates["updated_at"] = datetime.now()
+                        db["suppliers"].update_one({"name": name}, {"$set": updates})
         logger.info("enriching_done", updated=len(names))
 
 

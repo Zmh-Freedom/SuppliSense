@@ -148,19 +148,21 @@ def enrich_supplier_from_tianyancha(sid: str) -> dict | None:
     if not base:
         return None
 
+    result = base.get("items", {}).get("result", {})
+    if not result:
+        return None
+
     updates: dict[str, Any] = {}
-    if base.get("regNumber"):
-        updates["unified_code"] = base["regNumber"]
-    if base.get("legalPersonName"):
-        updates["legal_person"] = base["legalPersonName"]
-    if base.get("regCapital"):
-        updates["registered_capital"] = base["regCapital"]
-    if base.get("startDate"):
-        updates["establish_time"] = base["startDate"]
-    if base.get("regStatus"):
-        updates["reg_status"] = base["regStatus"]
-    if base.get("regInstitute"):
-        updates["reg_institute"] = base["regInstitute"]
+    if result.get("regNumber"):
+        updates["unified_code"] = str(result["regNumber"])
+    if result.get("legalPersonName"):
+        updates["legal_person"] = result["legalPersonName"]
+    if result.get("regCapital"):
+        updates["registered_capital"] = result["regCapital"]
+    if result.get("estiblishTime"):  # API 拼写错误
+        updates["establish_time"] = str(result["estiblishTime"])
+    if result.get("regStatus"):
+        updates["reg_status"] = result["regStatus"]
 
     if updates:
         updates["updated_at"] = datetime.now(timezone.utc)
