@@ -3,6 +3,23 @@
 import io
 import uuid
 
+# GB/T 4754-2017 行业代码 → 名称映射
+_INDUSTRY_CODES: dict[str, str] = {
+    "381": "电机制造",
+    "382": "输配电及控制设备制造",
+    "401": "电子器件制造",
+    "402": "电子元件制造",
+    "356": "电子专用设备制造",
+    "651": "软件开发",
+    "652": "信息技术服务",
+    "292": "塑料制品",
+    "223": "纸制品制造",
+    "231": "印刷",
+    "359": "环保设备制造",
+    "342": "金属加工机械制造",
+    "345": "通用零部件制造",
+}
+
 import openpyxl
 
 from app.core.logging import get_logger
@@ -185,7 +202,7 @@ def import_from_tianyancha_search(
 
             try:
                 sid = str(uuid.uuid4())
-                categories = [industry] if industry else []
+                categories = [_INDUSTRY_CODES.get(industry, industry)] if industry else []
                 region_str = item.get("base", "") or item.get("regLocation", "")
 
                 # PG vector
