@@ -50,8 +50,8 @@ class Settings(BaseSettings):
     PG_USER: str = os.getenv("PG_USER", "sra")
     PG_PASSWORD: str = os.getenv("PG_PASSWORD", "")
     PG_DB: str = os.getenv("PG_DB", "sra")
-    PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "2"))
-    PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "10"))
+    PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "4"))
+    PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "20"))
 
     # PG 用户存储（默认启用，MongoDB 路径已废弃）
     USE_PG_USERS: bool = os.getenv("USE_PG_USERS", "true").lower() == "true"

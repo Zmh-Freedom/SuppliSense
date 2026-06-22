@@ -109,11 +109,16 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m
-          cpus: '2.0'
+          memory: 1g
+          cpus: '4.0'
         reservations:
-          memory: 128m
-          cpus: '0.5'
+          memory: 256m
+          cpus: '1.0'
+    environment:
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-2}
+      - PG_POOL_MIN=4
+      - PG_POOL_MAX=20
     volumes:
       - uploads_data:/app/uploads
     networks:
