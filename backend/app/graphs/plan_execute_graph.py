@@ -6,7 +6,7 @@ from typing import Any, TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
-from langchain_openai import ChatOpenAI
+from app.graphs import build_shared_llm
 
 from app.core.config import settings
 from app.tools import TOOLS_LIST
@@ -25,11 +25,11 @@ class PlanExecuteState(TypedDict):
 
 def _build_llm(streaming: bool = False) -> ChatOpenAI:
     """构建 LLM 实例。"""
-    return ChatOpenAI(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=0,
+    return build_shared_llm(
+        
+        
+        
+        
         streaming=streaming,
     )
 

@@ -8,7 +8,7 @@ import json
 from typing import Annotated, Any, AsyncGenerator, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from app.graphs import build_shared_llm
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -84,11 +84,11 @@ class SupervisorState(TypedDict):
 # ---------------------------------------------------------------------------
 
 def _build_domain_llm() -> ChatOpenAI:
-    return ChatOpenAI(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=0,
+    return build_shared_llm(
+        
+        
+        
+        
     )
 
 

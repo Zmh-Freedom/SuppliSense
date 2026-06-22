@@ -49,13 +49,13 @@ def build_sourcing_graph():
 
 
 def _sourcing_agent(state: SourcingState):
-    from langchain_openai import ChatOpenAI
+    from app.graphs import build_shared_llm
 
-    llm = ChatOpenAI(
-        model=settings.LLM_MODEL,
-        api_key=settings.LLM_API_KEY,
-        base_url=settings.LLM_BASE_URL,
-        temperature=0,
+    llm = build_shared_llm(
+        
+        
+        
+        
     )
 
     from app.tools import create_sourcing_request, search_suppliers, select_sourcing_result

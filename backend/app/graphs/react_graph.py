@@ -6,9 +6,8 @@ from langchain_core.messages import SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
 
-from app.core.config import settings
+from app.graphs import build_shared_llm
 from app.tools import TOOLS_LIST
 
 SYSTEM_PROMPT = """你是采购风险分析专家。
@@ -58,18 +57,13 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-def _build_llm() -> ChatOpenAI:
-    return ChatOpenAI(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=0,
-    ).bind_tools(TOOLS_LIST)
+def build_react_graph(preference_context: str = ""):
+    """编译 ReAct 图（带 system prompt 注入，可选偏好上下文）。"""
+    prompt = SYSTEM_PROMPT
+    if preference_context:
+        prompt = preference_context + "\n\n" + SYSTEM_PROMPT
 
-
-def _build_graph() -> StateGraph:
-    """构建 ReAct 图。"""
-    llm = _build_llm()
+    llm = build_shared_llm().bind_tools(TOOLS_LIST)
     tool_node = ToolNode(TOOLS_LIST)
 
     async def agent(state: AgentState):
@@ -89,22 +83,11 @@ def _build_graph() -> StateGraph:
     graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
     graph.add_edge("tools", "agent")
 
-    return graph
-
-
-def build_react_graph(preference_context: str = ""):
-    """编译 ReAct 图（带 system prompt 注入，可选偏好上下文）。"""
-    prompt = SYSTEM_PROMPT
-    if preference_context:
-        prompt = preference_context + "\n\n" + SYSTEM_PROMPT
-
-    graph = _build_graph().compile()
+    compiled = graph.compile()
 
     class ReactGraphWithSystemPrompt:
-        """包装图，自动注入 system prompt。"""
-
-        def __init__(self, compiled_graph):
-            self._graph = compiled_graph
+        def __init__(self, g):
+            self._graph = g
 
         async def astream_events(self, input_data, **kwargs):
             messages = input_data.get("messages", [])
@@ -121,4 +104,4 @@ def build_react_graph(preference_context: str = ""):
                 input_data = {**input_data, "messages": messages}
             return await self._graph.ainvoke(input_data, **kwargs)
 
-    return ReactGraphWithSystemPrompt(graph)
+    return ReactGraphWithSystemPrompt(compiled)

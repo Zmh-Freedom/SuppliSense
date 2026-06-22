@@ -5,7 +5,7 @@
 
 from enum import Enum
 
-from langchain_openai import ChatOpenAI
+from app.graphs import build_shared_llm
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -73,11 +73,11 @@ class IntentRouter:
 
     def _get_llm(self) -> ChatOpenAI:
         if self._llm is None:
-            self._llm = ChatOpenAI(
-                base_url=settings.LLM_BASE_URL,
-                api_key=settings.LLM_API_KEY,
-                model=settings.LLM_MODEL,
-                temperature=0,
+            self._llm = build_shared_llm(
+                
+                
+                
+                
             )
         return self._llm
 

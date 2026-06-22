@@ -2,7 +2,7 @@
 
 import asyncio
 from langchain_core.messages import SystemMessage
-from langchain_openai import ChatOpenAI
+from app.graphs import build_shared_llm
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -15,11 +15,11 @@ KEEP_RECENT = 8  # 保留最近 8 条消息（4 轮）
 
 async def _llm_summarize(messages: list[dict]) -> str:
     """用 LLM 对对话历史生成摘要。"""
-    llm = ChatOpenAI(
-        base_url=settings.LLM_BASE_URL,
-        api_key=settings.LLM_API_KEY,
-        model=settings.LLM_MODEL,
-        temperature=0,
+    llm = build_shared_llm(
+        
+        
+        
+        
     )
 
     history_text = "\n".join(
