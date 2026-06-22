@@ -25,3 +25,14 @@ def encode(texts: list[str]) -> list[list[float]]:
 
 def encode_single(text: str) -> list[float]:
     return encode([text])[0]
+
+
+def warmup() -> None:
+    """预加载 embedding 模型，避免首次调用时长时间阻塞。"""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("warming up embedding model")
+    get_model()
+    # Run a test encoding to fully initialize
+    encode_single("test")
+    logger.info("embedding model ready")

@@ -127,6 +127,9 @@ async def lifespan(app: FastAPI):
     ensure_indexes()
     ensure_pg_schema()
     create_default_admin()
+    # 预热 embedding 模型，避免首次调用阻塞 30s+
+    from app.domains.knowledge.embedding import warmup as warmup_embedding
+    warmup_embedding()
     start_scheduler()
     logger.info("application_started")
     yield

@@ -208,17 +208,22 @@ def search_companies(keyword: str, limit: int = 20) -> list[str]:
     db = get_db()
     regex = {"$regex": keyword, "$options": "i"}
     cursor = db["baseinfo"].find({"name": regex}).limit(50)
-    names = [doc["name"] for doc in cursor]
+    names = [_clean_company_name(doc["name"]) for doc in cursor]
 
-    # non-contiguous fallback: "宝钢" → regex "宝.*钢" → matches "宝山钢铁"
     if len(keyword) >= 2:
         fuzzy = ".*".join(keyword)
         cursor2 = db["baseinfo"].find({"name": {"$regex": fuzzy, "$options": "i"}}).limit(50)
         for doc in cursor2:
-            if doc["name"] not in names:
-                names.append(doc["name"])
+            cleaned = _clean_company_name(doc["name"])
+            if cleaned not in names:
+                names.append(cleaned)
 
     return _rank_and_dedupe(names, keyword)[:limit]
+
+
+def _clean_company_name(name: str) -> str:
+    """去除天眼查返回的标记前缀（× 注销, ※ 异常等）。"""
+    return name.lstrip("×※*#").strip()
 
 
 _listed_cache: tuple[set[str], float] | None = None
