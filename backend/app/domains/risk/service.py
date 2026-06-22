@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 
+from app.core.cache import cached
 from app.domains.risk.repo_company import get_risk_info, get_risk_indicators, get_recent_lawsuits
 from app.domains.risk.repo_financial import get_financial_metrics
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
@@ -68,6 +69,7 @@ def _get_industry_threshold(category: str, key: str, default: float) -> float:
     return default + _INDUSTRY_THRESHOLDS.get(category, {}).get(key, 0.0)
 
 
+@cached("assess_risk", ttl=7200)  # 2 hours
 def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     try:
         profile = get_company_profile(request.company_name)
