@@ -39,6 +39,20 @@ class UserUpdate(BaseModel):
     email: str | None = None
     role: UserRole | None = None
     is_active: bool | None = None
+    password: str | None = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if len(v) < 8:
+            raise ValueError("密码长度至少为8个字符")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("密码必须包含至少一个字母")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("密码必须包含至少一个数字")
+        return v
 
 
 class UserInDB(UserBase):

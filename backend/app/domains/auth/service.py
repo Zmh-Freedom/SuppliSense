@@ -116,6 +116,8 @@ def _update_user_pg(user_id: str, update_data: UserUpdate) -> UserInDB | None:
         fields["role"] = update_data.role.value
     if update_data.is_active is not None:
         fields["is_active"] = update_data.is_active
+    if update_data.password is not None:
+        fields["password_hash"] = get_password_hash(update_data.password)
 
     if not fields:
         doc = find_by_id(user_id)
@@ -224,6 +226,8 @@ def _update_user_mongo(user_id: str, update_data: UserUpdate) -> UserInDB | None
         update_dict["role"] = update_data.role.value
     if update_data.is_active is not None:
         update_dict["is_active"] = update_data.is_active
+    if update_data.password is not None:
+        update_dict["password_hash"] = get_password_hash(update_data.password)
 
     if not update_dict:
         return _get_user_by_id_mongo(user_id)
