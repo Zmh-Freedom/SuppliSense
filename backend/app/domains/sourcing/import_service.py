@@ -334,7 +334,12 @@ def _enrich_imported(db) -> None:
                 elif isinstance(base.get("result"), dict):
                     result = base["result"]
                 if result:
+                    from app.domains.sourcing.supplier_repo import _resolve_category
+
                     updates = {}
+                    category = _resolve_category(result)
+                    if category:
+                        updates["categories"] = [category]
                     if result.get("regNumber"):
                         updates["unified_code"] = str(result["regNumber"])
                     if result.get("legalPersonName"):

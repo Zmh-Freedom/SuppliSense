@@ -6,7 +6,162 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.db.mongo import get_db
+from app.core.logging import get_logger
 from app.schemas.documents import SupplierDocument
+
+logger = get_logger(__name__)
+
+# GB/T 4754-2017 大类代码 → 品类名称（2位代码覆盖全部 20 门类 97 大类）
+_INDUSTRY_CODES: dict[str, str] = {
+    # A 农、林、牧、渔业
+    "01": "农业", "02": "林业", "03": "畜牧业", "04": "渔业", "05": "农林牧渔专业及辅助性活动",
+    # B 采矿业
+    "06": "煤炭开采和洗选业", "07": "石油和天然气开采业", "08": "黑色金属矿采选业",
+    "09": "有色金属矿采选业", "10": "非金属矿采选业", "11": "开采专业及辅助性活动", "12": "其他采矿业",
+    # C 制造业
+    "13": "农副食品加工业", "14": "食品制造业", "15": "酒饮料和精制茶制造业",
+    "16": "烟草制品业", "17": "纺织业", "18": "纺织服装服饰业",
+    "19": "皮革毛皮羽毛及其制品和制鞋业", "20": "木材加工和木竹藤棕草制品业",
+    "21": "家具制造业", "22": "造纸和纸制品业", "23": "印刷和记录媒介复制业",
+    "24": "文教工美体育和娱乐用品制造业", "25": "石油煤炭及其他燃料加工业",
+    "26": "化学原料和化学制品制造业", "27": "医药制造业", "28": "化学纤维制造业",
+    "29": "橡胶和塑料制品业", "30": "非金属矿物制品业",
+    "31": "黑色金属冶炼和压延加工业", "32": "有色金属冶炼和压延加工业",
+    "33": "金属制品业", "34": "通用设备制造业", "35": "专用设备制造业",
+    "36": "汽车制造业", "37": "铁路船舶航空航天和其他运输设备制造业",
+    "38": "电气机械和器材制造业", "39": "计算机通信和其他电子设备制造业",
+    "40": "仪器仪表制造业", "41": "其他制造业", "42": "废弃资源综合利用业",
+    "43": "金属制品机械和设备修理业",
+    # D 电力、热力、燃气及水生产和供应业
+    "44": "电力热力生产和供应业", "45": "燃气生产和供应业", "46": "水的生产和供应业",
+    # E 建筑业
+    "47": "房屋建筑业", "48": "土木工程建筑业", "49": "建筑安装业", "50": "建筑装饰装修和其他建筑业",
+    # F 批发和零售业
+    "51": "批发业", "52": "零售业",
+    # G 交通运输、仓储和邮政业
+    "53": "铁路运输业", "54": "道路运输业", "55": "水上运输业", "56": "航空运输业",
+    "57": "管道运输业", "58": "多式联运和运输代理业", "59": "装卸搬运和仓储业", "60": "邮政业",
+    # H 住宿和餐饮业
+    "61": "住宿业", "62": "餐饮业",
+    # I 信息传输、软件和信息技术服务业
+    "63": "电信广播电视和卫星传输服务", "64": "互联网和相关服务", "65": "软件和信息技术服务业",
+    # J 金融业
+    "66": "货币金融服务", "67": "资本市场服务", "68": "保险业", "69": "其他金融业",
+    # K 房地产业
+    "70": "房地产业",
+    # L 租赁和商务服务业
+    "71": "租赁业", "72": "商务服务业",
+    # M 科学研究和技术服务业
+    "73": "研究和试验发展", "74": "专业技术服务业", "75": "科技推广和应用服务业",
+    # N 水利、环境和公共设施管理业
+    "76": "水利管理业", "77": "生态保护和环境治理业", "78": "公共设施管理业", "79": "土地管理业",
+    # O 居民服务、修理和其他服务业
+    "80": "居民服务业", "81": "机动车电子产品和日用产品修理业", "82": "其他服务业",
+    # P 教育
+    "83": "教育",
+    # Q 卫生和社会工作
+    "84": "卫生", "85": "社会工作",
+    # R 文化、体育和娱乐业
+    "86": "新闻和出版业", "87": "广播电视电影和录音制作业", "88": "文化艺术业",
+    "89": "体育", "90": "娱乐业",
+    # S 公共管理、社会保障和社会组织
+    "91": "中国共产党机关", "92": "国家机构", "93": "人民政协民主党派",
+    "94": "社会保障", "95": "群众团体社会团体和其他成员组织", "96": "基层群众自治组织及其他组织",
+    # T 国际组织
+    "97": "国际组织",
+}
+
+
+def _resolve_category(result: dict) -> str | None:
+    """从天眼查 baseinfo result 中提取行业信息，映射为 GB/T 品类名称。"""
+    industry_all = result.get("industryAll")
+    if isinstance(industry_all, dict):
+        code = industry_all.get("categoryCodeThird", "")
+        # 精确匹配（3位中类代码）
+        name = _INDUSTRY_CODES.get(code)
+        if name:
+            return name
+        # 前缀匹配（2位大类代码，兼容非制造业）
+        if len(code) >= 2:
+            name = _INDUSTRY_CODES.get(code[:2])
+            if name:
+                return name
+        # 回退到天眼查自带名称
+        return industry_all.get("categoryMiddle") or industry_all.get("categoryBig")
+    # 回退：直接用 industry 字段
+    return result.get("industry")
+
+
+def enrich_bare_suppliers(limit: int = 100) -> dict:
+    """批量补全缺少品类 / 法人等字段的供应商。
+
+    对 source=auto 且无品类的供应商，拉取天眼查 baseinfo
+    补全 categories、legal_person、registered_capital 等字段。
+    """
+    db = get_db()
+    from app.services.tianyancha_client import fetch_company
+
+    cursor = db["suppliers"].find(
+        {
+            "$or": [
+                {"categories": {"$exists": False}},
+                {"categories": []},
+            ],
+        },
+        {"name": 1},
+    ).limit(limit)
+    names = [doc["name"] for doc in cursor]
+
+    logger.info("enrich_bare_suppliers_start", count=len(names))
+    enriched = 0
+    skipped = 0
+
+    for name in names:
+        base = db["baseinfo"].find_one({"name": name})
+        if not base:
+            try:
+                fetch_company(name)
+                base = db["baseinfo"].find_one({"name": name})
+            except Exception:
+                pass
+        if not base:
+            skipped += 1
+            continue
+
+        items = base.get("items")
+        result = None
+        if isinstance(items, dict) and items.get("result"):
+            result = items["result"]
+        elif isinstance(base.get("result"), dict):
+            result = base["result"]
+        if not result:
+            skipped += 1
+            continue
+
+        updates: dict[str, Any] = {}
+        category = _resolve_category(result)
+        if category:
+            updates["categories"] = [category]
+        if result.get("regNumber"):
+            updates["unified_code"] = str(result["regNumber"])
+        if result.get("legalPersonName"):
+            updates["legal_person"] = result["legalPersonName"]
+        if result.get("regCapital"):
+            updates["registered_capital"] = result["regCapital"]
+        if result.get("estiblishTime"):
+            updates["establish_time"] = str(result["estiblishTime"])
+        if result.get("regStatus"):
+            updates["reg_status"] = result["regStatus"]
+
+        if updates:
+            updates["updated_at"] = datetime.now(timezone.utc)
+            db["suppliers"].update_one({"name": name}, {"$set": updates})
+            enriched += 1
+        else:
+            skipped += 1
+
+    logger.info("enrich_bare_suppliers_done", enriched=enriched, skipped=skipped)
+    return {"enriched": enriched, "skipped": skipped, "total": len(names)}
 
 
 def _validate_doc(doc: dict) -> dict:
@@ -283,6 +438,9 @@ def enrich_supplier_from_tianyancha(sid: str) -> dict | None:
         return None
 
     updates: dict[str, Any] = {}
+    category = _resolve_category(result)
+    if category:
+        updates["categories"] = [category]
     if result.get("regNumber"):
         updates["unified_code"] = str(result["regNumber"])
     if result.get("legalPersonName"):
