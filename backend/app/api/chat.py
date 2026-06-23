@@ -73,12 +73,6 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
     from app.domains.auth.preferences import build_preference_context
     pref_ctx = build_preference_context(user_id) if user_id else ""
 
-    # Resolve mode: auto → intent router, otherwise use explicit mode
-    mode = req.mode
-    if mode == "auto":
-        from app.graphs.router import router as intent_router
-        mode = intent_router.route(req.message).value
-
     # Map legacy mode names to LangGraph equivalents
     _MODE_ALIASES = {
         "react": "langgraph-react",
@@ -86,23 +80,29 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         "multi-agent": "langgraph-multi-agent",
         "sourcing": "langgraph-sourcing",
     }
-    mode = _MODE_ALIASES.get(mode, mode)
-
-    # Choose execution mode
-    if mode == "langgraph-react":
-        stream_fn = _langgraph_react_stream
-    elif mode == "langgraph-plan-execute":
-        stream_fn = _langgraph_plan_execute_stream
-    elif mode == "langgraph-multi-agent":
-        stream_fn = _langgraph_supervisor_stream
-    elif mode == "langgraph-sourcing":
-        stream_fn = _langgraph_sourcing_stream
-    else:
-        stream_fn = _langgraph_react_stream
 
     async def event_generator():
-        # Send session_id first
+        # Send session_id first (before any blocking routing/classification)
         yield f"event: session\ndata: {sid}\n\n"
+
+        # Resolve mode: auto → intent router, otherwise use explicit mode
+        mode = req.mode
+        if mode == "auto":
+            from app.graphs.router import router as intent_router
+            mode = intent_router.route(req.message).value
+        mode = _MODE_ALIASES.get(mode, mode)
+
+        # Choose execution mode
+        if mode == "langgraph-react":
+            stream_fn = _langgraph_react_stream
+        elif mode == "langgraph-plan-execute":
+            stream_fn = _langgraph_plan_execute_stream
+        elif mode == "langgraph-multi-agent":
+            stream_fn = _langgraph_supervisor_stream
+        elif mode == "langgraph-sourcing":
+            stream_fn = _langgraph_sourcing_stream
+        else:
+            stream_fn = _langgraph_react_stream
 
         # Programmatic clarification check
         from app.services.clarification import detect_clarification_needed

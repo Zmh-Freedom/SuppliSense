@@ -30,7 +30,7 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 知识库检索：用 knowledge_search
 - 要对比多家：先 get_watchlist，再逐个 assess_risk
 - 生成报告：用 generate_report
-- 查趋势：用 analyze_trend
+- 查趋势：指定企业用 analyze_trend，查监控清单全部趋势用 analyze_watchlist_trend
 - 对比企业：用 compare_companies
 - 查财务：用 query_financials
 - 定时报告：用 manage_scheduled_report

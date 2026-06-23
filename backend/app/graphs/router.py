@@ -22,6 +22,12 @@ class Intent(str, Enum):
 
 # 关键词 → 意图映射（优先级：先匹配先胜）
 _KEYWORD_RULES: list[tuple[list[str], Intent]] = [
+    # 监控清单 / 趋势类 → react（单步工具即可完成）
+    (
+        ["监控清单", "风险变化", "变化趋势", "趋势分析", "本月风险", "风险趋势",
+         "监控趋势", "清单趋势", "预警趋势", "预警变化"],
+        Intent.RISK,
+    ),
     # 复杂规划类 → plan-execute
     (
         ["制定方案", "全面分析", "全面评估", "综合评估", "综合分析", "帮我规划", "分步骤", "制定计划", "深度分析", "深度评估"],
@@ -69,16 +75,14 @@ class IntentRouter:
     """意图路由器。"""
 
     def __init__(self):
-        self._llm: ChatOpenAI | None = None
+        self._llm = None
 
-    def _get_llm(self) -> ChatOpenAI:
+    def _get_llm(self):
         if self._llm is None:
-            self._llm = build_shared_llm(
-                
-                
-                
-                
-            )
+            self._llm = build_shared_llm()
+            # 覆盖为路由专用配置：短超时、不重试（分类失败有兜底）
+            self._llm.max_retries = 0
+            self._llm.request_timeout = 5
         return self._llm
 
     def route(self, message: str) -> Intent:
