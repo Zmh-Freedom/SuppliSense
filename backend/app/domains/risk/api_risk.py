@@ -106,9 +106,9 @@ async def risk_assess(request: RiskAssessRequest, background_tasks: BackgroundTa
             asyncio.to_thread(assess_risk, request),
             timeout=RISK_TIMEOUT_SECONDS,
         )
-        fresh["cached_at"] = datetime.now(timezone.utc).isoformat()
-        fresh["cache_age_hours"] = 0
-        fresh["is_stale"] = False
+        fresh.cached_at = datetime.now(timezone.utc).isoformat()
+        fresh.cache_age_hours = 0
+        fresh.is_stale = False
 
         from app.domains.auth.audit import log_action
         log_action(

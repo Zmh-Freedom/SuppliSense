@@ -169,30 +169,46 @@ def list_access_applications(
 
 def approve_access_application(aid: str, reviewer_id: str) -> None:
     db = get_db()
-    db["access_applications"].update_one(
-        {"_id": aid},
-        {"$set": {
-            "status": "approved",
-            "reviewer_id": reviewer_id,
-            "reviewed_at": datetime.now(timezone.utc),
-        }},
-    )
-    # 联动：同步更新供应商主库状态
-    _sync_supplier_status(aid, "approved")
+    old = db["access_applications"].find_one({"_id": aid}) or {}
+    try:
+        db["access_applications"].update_one(
+            {"_id": aid},
+            {"$set": {
+                "status": "approved",
+                "reviewer_id": reviewer_id,
+                "reviewed_at": datetime.now(timezone.utc),
+            }},
+        )
+        _sync_supplier_status(aid, "approved")
+    except Exception:
+        if old.get("status"):
+            db["access_applications"].update_one(
+                {"_id": aid},
+                {"$set": {"status": old["status"], "reviewer_id": old.get("reviewer_id"), "reviewed_at": old.get("reviewed_at")}},
+            )
+        raise
 
 
 def reject_access_application(aid: str, reviewer_id: str) -> None:
     db = get_db()
-    db["access_applications"].update_one(
-        {"_id": aid},
-        {"$set": {
-            "status": "rejected",
-            "reviewer_id": reviewer_id,
-            "reviewed_at": datetime.now(timezone.utc),
-        }},
-    )
-    # 联动：同步更新供应商主库状态
-    _sync_supplier_status(aid, "blocked")
+    old = db["access_applications"].find_one({"_id": aid}) or {}
+    try:
+        db["access_applications"].update_one(
+            {"_id": aid},
+            {"$set": {
+                "status": "rejected",
+                "reviewer_id": reviewer_id,
+                "reviewed_at": datetime.now(timezone.utc),
+            }},
+        )
+        _sync_supplier_status(aid, "blocked")
+    except Exception:
+        if old.get("status"):
+            db["access_applications"].update_one(
+                {"_id": aid},
+                {"$set": {"status": old["status"], "reviewer_id": old.get("reviewer_id"), "reviewed_at": old.get("reviewed_at")}},
+            )
+        raise
 
 
 def _sync_supplier_status(application_id: str, new_status: str) -> None:

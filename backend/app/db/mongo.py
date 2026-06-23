@@ -100,6 +100,20 @@ def ensure_indexes() -> None:
         db["notifications"].create_index(
             [("read", 1), ("created_at", -1)], background=True
         )
+        # 天眼查数据集合（按企业名查询，之前缺失）
+        _tianyancha_collections = [
+            "riskInfo", "lawSuit", "abnormal", "punishmentInfo", "executedPerson",
+            "dishonesty", "equityPledge", "branch", "news", "alert_rules",
+        ]
+        for col in _tianyancha_collections:
+            try:
+                db[col].create_index([("name", 1)], background=True)
+            except Exception:
+                pass
+        # alerts: 按企业名+时间
+        db["alerts"].create_index([("company_name", 1), ("created_at", -1)], background=True)
+        # api_call_logs: 按日期+时间
+        db["api_call_logs"].create_index([("date", 1), ("created_at", -1)], background=True)
         logger.info("MongoDB indexes ensured")
     except Exception as e:
         logger.warning("Failed to ensure indexes: %s", e)

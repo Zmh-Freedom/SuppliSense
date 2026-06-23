@@ -311,20 +311,28 @@ def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
 
     db = get_db()
     out: dict[str, dict] = {}
-    for c in candidates:
-        name = c["supplier_name"]
-        snap = db["alert_snapshots"].find_one(
-            {"company_name": name},
-            sort=[("checked_at", -1)],
-            projection={"risk_score": 1, "risk_level": 1},
-        )
-        if snap:
+    names = [c["supplier_name"] for c in candidates]
+
+    # 批量查询：一次 aggregate 取所有候选企业的最近快照
+    pipeline = [
+        {"$match": {"company_name": {"$in": names}}},
+        {"$sort": {"checked_at": -1}},
+        {"$group": {"_id": "$company_name", "risk_score": {"$first": "$risk_score"}, "risk_level": {"$first": "$risk_level"}}},
+    ]
+    try:
+        for doc in db["alert_snapshots"].aggregate(pipeline):
+            name = doc["_id"]
             out[name] = {
-                "risk_score": snap.get("risk_score", 50),
-                "risk_level": snap.get("risk_level", "unknown"),
-                "summary": snap.get("risk_level", "未知"),
+                "risk_score": doc.get("risk_score", 50),
+                "risk_level": doc.get("risk_level", "unknown"),
+                "summary": doc.get("risk_level", "未知"),
             }
-        else:
+    except Exception:
+        pass  # 聚合失败则降级为默认值
+
+    # 未找到快照的补充默认值
+    for name in names:
+        if name not in out:
             out[name] = {"risk_score": 50, "risk_level": "unknown", "summary": "未评估"}
     return out
 

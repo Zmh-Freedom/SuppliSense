@@ -33,7 +33,21 @@ def _get_pool() -> ThreadedConnectionPool:
 
 
 def get_conn() -> PgConnection:
-    return _get_pool().getconn()
+    pool = _get_pool()
+    conn = pool.getconn()
+    # 健康检查：跳过死连接
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.close()
+    except Exception:
+        # 连接已死，关闭并从池中获取新连接
+        try:
+            pool.putconn(conn, close=True)
+        except Exception:
+            pass
+        conn = pool.getconn()
+    return conn
 
 
 def put_conn(conn: PgConnection) -> None:

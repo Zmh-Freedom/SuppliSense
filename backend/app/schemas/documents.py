@@ -39,7 +39,7 @@ class SourcingRequestDocument(BaseModel):
     budget_max: float | None = None
     quantity: int | None = None
     region_required: str | None = None
-    qualifications_required: list[str] = Field(default_factory=list)
+    qualifications: list[str] = Field(default_factory=list)
     status: str = "draft"
     result_count: int = 0
     created_at: datetime | None = None

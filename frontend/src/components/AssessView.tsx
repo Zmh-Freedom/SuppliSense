@@ -598,10 +598,13 @@ function Expandable<T>({ title, endpoint, render }: { title: string; endpoint: s
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    if (open && !data && !error) {
-      api.get<T>(endpoint).then(setData).catch(() => setError(true));
-    }
-  }, [open, data, error, endpoint]);
+    if (!open) return;
+    let cancelled = false;
+    api.get<T>(endpoint)
+      .then(d => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setError(true); });
+    return () => { cancelled = true; };
+  }, [open, endpoint]);
 
   const toggle = () => {
     if (open) { setOpen(false); return; }
