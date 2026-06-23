@@ -1,6 +1,6 @@
 """LangGraph 工具定义 — 从各领域导入，统一注册。"""
 
-from app.domains.risk.tools_search import search_company, tianyancha_query
+from app.domains.risk.tools_search import search_company
 from app.domains.risk.tools_risk import assess_risk, predict_risk, macro_risk, scenario_simulate
 from app.domains.risk.tools_analysis import (
     esg_assessment,
@@ -23,7 +23,6 @@ from app.domains.sourcing.tools import (
 )
 
 TOOLS_LIST = [
-    tianyancha_query,
     search_company,
     assess_risk,
     check_alert,

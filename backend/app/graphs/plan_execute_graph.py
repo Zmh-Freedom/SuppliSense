@@ -58,6 +58,7 @@ PLANNER_PROMPT = """你是采购风险分析的规划专家。根据用户问题
 - get_watchlist: 获取监控清单
 - add_to_watchlist: 将企业加入监控清单
 - remove_from_watchlist: 将企业从监控清单移除
+- analyze_watchlist_trend: 分析监控清单中所有企业的风险变化趋势
 - esg_assessment: 评估ESG风险
 - contagion_analysis: 分析风险传染路径
 - sentiment_analysis: 分析舆情情感
@@ -72,19 +73,33 @@ PLANNER_PROMPT = """你是采购风险分析的规划专家。根据用户问题
 - compare_companies: 对比多家企业风险状况
 - query_financials: 查询企业财务指标
 - manage_scheduled_report: 管理定时报告任务
+- create_sourcing_request: 创建采购寻源请求
+- search_suppliers: 执行供应商搜索
+- select_sourcing_result: 勾选寻源结果
+- expand_supplier_library: 从天眼查扩充供应商库
 
 规则：
 1. 如果用户问的是某企业风险，先搜索确认全称，再评估风险
-2. 步骤描述要具体，包含工具名和参数
+2. 步骤描述要具体，包含工具名和参数关键词。后续步骤可以用"该企业"代词，
+   executor 会从已完成步骤的 search_company 结果中提取企业全称
 3. 输出纯 JSON 格式: {"steps": ["步骤1描述", "步骤2描述"]}
+4. 控制在 8 步以内，聚焦用户问题
 
 示例输入：海康威视的风险怎么样
-示例输出：{"steps": ["用 search_company 搜索'海康威视'获取企业全称", "用 assess_risk 评估该企业的综合风险"]}"""
+示例输出：{"steps": ["用 search_company 搜索'海康威视'获取企业全称", "用 assess_risk 评估该企业的综合风险", "用 predict_risk 预测该企业未来风险恶化概率"]}"""
 
-EXECUTOR_PROMPT = """你是一个工具执行助手。根据步骤描述，确定要调用的工具和参数。
+EXECUTOR_PROMPT = """你是一个工具执行助手。根据步骤描述、用户原始问题和已完成步骤的结果，确定要调用的工具和参数。
 
 可用工具列表：
 {tools_desc}
+
+关键规则：
+1. 如果步骤描述中含"该企业/该公司/该供应商"等代词，从已完成步骤的 search_company 结果中
+   提取企业全称作为 company_name 参数（取 results 列表第一个）
+2. 如果步骤描述中已显式包含企业名，直接使用
+3. 如果用户原始问题中含企业全称，直接使用
+4. 必须输出有效参数，不允许 company_name 等必填字段为空
+5. 工具不存在时输出 {{"tool": "skip", "args": {{}}}}
 
 请输出纯 JSON 格式: {{"tool": "工具名", "args": {{"参数名": "参数值"}}}}"""
 
@@ -135,11 +150,24 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
     )
     executor_prompt = EXECUTOR_PROMPT.format(tools_desc=tools_desc)
 
+    # 构建上下文：用户原始问题 + 已完成步骤结果，让 LLM 能解析代词和提取企业全称
+    past_steps_text = "\n".join(
+        f"步骤: {step}\n结果: {result[:500]}"
+        for step, result in state["past_steps"]
+    ) or "(无已完成步骤)"
+
+    user_content = (
+        f"用户原始问题：{state['input']}\n\n"
+        f"已完成步骤：\n{past_steps_text}\n\n"
+        f"当前要执行的步骤：{current_step}\n\n"
+        f"请输出工具调用 JSON。"
+    )
+
     # 用 LLM 确定工具和参数
     llm = _build_llm()
     messages = [
         SystemMessage(content=executor_prompt),
-        HumanMessage(content=f"步骤：{current_step}"),
+        HumanMessage(content=user_content),
     ]
     response = await llm.ainvoke(messages)
 
@@ -149,6 +177,14 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
         tool_args = parsed.get("args", {})
     except (json.JSONDecodeError, KeyError):
         result = f"工具调用解析失败: {response.content}"
+        return {
+            "plan": remaining_plan,
+            "past_steps": state["past_steps"] + [(current_step, result)],
+        }
+
+    # 跳过不存在的工具（planner 误规划时）
+    if tool_name == "skip":
+        result = "步骤已跳过"
         return {
             "plan": remaining_plan,
             "past_steps": state["past_steps"] + [(current_step, result)],
@@ -283,6 +319,7 @@ async def stream_plan_execute_graph(
         async for event in graph.astream_events(
             {"input": input_text, "plan": [], "past_steps": [], "response": None},
             version="v2",
+            config={"recursion_limit": 50},
         ):
             kind = event.get("event", "")
 
@@ -312,14 +349,14 @@ async def stream_plan_execute_graph(
                     resp = output.get("response")
                     if resp:
                         full_answer = resp
+                        # replanner 的最终答案是 JSON {"response": "..."}，
+                        # 不能直接流式 on_chat_model_stream（会下发原始 JSON），
+                        # 这里一次性下发解析后的纯文本
+                        yield _sse_event("answer_chunk", {"text": resp})
 
-            # Capture real token streaming from LLM
-            if kind == "on_chat_model_stream" and event.get("tags") != ["planner"]:
-                chunk = event.get("data", {}).get("chunk", "")
-                if chunk and hasattr(chunk, "content") and chunk.content:
-                    token = chunk.content
-                    full_answer += token
-                    yield _sse_event("answer_chunk", {"text": token})
+            # 注意：plan-execute 的 on_chat_model_stream 会包含 planner/executor/replanner
+            # 的原始 JSON（计划、工具调用、响应包装），下发会污染用户视图，
+            # 因此这里不监听 on_chat_model_stream，最终答案从 on_chain_end 取。
 
         if full_answer:
             from app.services.agent import _save_turn
