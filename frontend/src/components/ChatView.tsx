@@ -78,7 +78,6 @@ export default function ChatView() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
-  const [mode, setMode] = useState<'react' | 'plan-execute' | 'multi-agent' | 'sourcing'>('react');
   const bottomRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
@@ -210,7 +209,7 @@ export default function ChatView() {
           setStreamState(null);
           setLoading(false);
         },
-      }, mode);
+      }, 'auto');
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       newMsgs.push({ role: 'assistant', content: isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试' });
@@ -218,7 +217,7 @@ export default function ChatView() {
       setStreamState(null);
       setLoading(false);
     }
-  }, [input, loading, activeSid, msgs, mode]);
+  }, [input, loading, activeSid, msgs]);
 
   const handleCapabilityClick = (prompt: string) => {
     setInput(prompt);
@@ -313,56 +312,6 @@ export default function ChatView() {
                 </div>
               </div>
 
-              {/* Mode selector in welcome */}
-              <div>
-                <p className="text-xs text-gray-400 mb-3 px-1">推理模式</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setMode('react')}
-                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
-                      mode === 'react'
-                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-medium">标准</p>
-                    <p className="text-[11px] opacity-70 mt-0.5">单一分析任务</p>
-                  </button>
-                  <button
-                    onClick={() => setMode('plan-execute')}
-                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
-                      mode === 'plan-execute'
-                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-medium">规划执行</p>
-                    <p className="text-[11px] opacity-70 mt-0.5">复杂任务拆解</p>
-                  </button>
-                  <button
-                    onClick={() => setMode('multi-agent')}
-                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
-                      mode === 'multi-agent'
-                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-medium">多Agent</p>
-                    <p className="text-[11px] opacity-70 mt-0.5">专业分工协作</p>
-                  </button>
-                  <button
-                    onClick={() => setMode('sourcing')}
-                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
-                      mode === 'sourcing'
-                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
-                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
-                    }`}
-                  >
-                    <p className="text-sm font-medium">寻源</p>
-                    <p className="text-[11px] opacity-70 mt-0.5">采购寻源推荐</p>
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -468,55 +417,6 @@ export default function ChatView() {
 
       {/* input */}
       <div className="px-4 pb-6 pt-2">
-        {/* Mode selector — only show when chat is active */}
-        {msgs.length > 0 && (
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs text-gray-400">模式：</span>
-          <button
-            onClick={() => setMode('react')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
-              mode === 'react'
-                ? 'bg-[var(--color-primary-bg)] text-white'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-          >
-            标准
-          </button>
-          <button
-            onClick={() => setMode('plan-execute')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
-              mode === 'plan-execute'
-                ? 'bg-[var(--color-primary-bg)] text-white'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-          >
-            规划执行
-          </button>
-          <button
-            onClick={() => setMode('multi-agent')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
-              mode === 'multi-agent'
-                ? 'bg-[var(--color-primary-bg)] text-white'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-          >
-            多Agent
-          </button>
-          <button
-            onClick={() => setMode('sourcing')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
-              mode === 'sourcing'
-                ? 'bg-[var(--color-primary-bg)] text-white'
-                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
-          >
-            寻源
-          </button>
-          <span className="text-xs text-gray-400 ml-1">
-            {mode === 'react' ? '逐步推理' : mode === 'plan-execute' ? '先规划后执行' : mode === 'multi-agent' ? '专业Agent协作' : '采购寻源'}
-          </span>
-        </div>
-        )}
         <div className="flex items-center gap-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-1 focus-within:border-[var(--color-border-focus)] focus-within:shadow-sm transition-shadow">
           <input
             value={input}

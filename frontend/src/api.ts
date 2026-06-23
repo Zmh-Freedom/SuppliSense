@@ -119,7 +119,7 @@ export async function chatStream(
   message: string,
   sessionId: string,
   callbacks: StreamCallbacks,
-  mode: 'react' | 'plan-execute' | 'multi-agent' | 'sourcing' = 'react',
+  mode: string = 'auto',
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
