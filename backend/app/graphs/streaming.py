@@ -56,6 +56,9 @@ async def stream_react_graph(
                     result = output
                 else:
                     result = json.dumps(output, ensure_ascii=False, default=str)
+                # 截断过长结果，避免内存压力
+                if len(result) > 2000:
+                    result = result[:2000] + "...(截断)"
                 yield _sse_event("tool_result", {"tool": tool_name, "result": result})
 
             # LLM 完成（非流式响应或工具调用后的回答）

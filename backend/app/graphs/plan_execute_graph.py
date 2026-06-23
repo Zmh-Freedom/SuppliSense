@@ -23,15 +23,19 @@ class PlanExecuteState(TypedDict):
     response: str | None  # 最终答案（完成时设置）
 
 
-def _build_llm(streaming: bool = False) -> ChatOpenAI:
-    """构建 LLM 实例。"""
-    return build_shared_llm(
-        
-        
-        
-        
-        streaming=streaming,
-    )
+_llm_cache = None
+_stream_llm_cache = None
+
+
+def _build_llm(streaming: bool = False):
+    global _llm_cache, _stream_llm_cache
+    if streaming:
+        if _stream_llm_cache is None:
+            _stream_llm_cache = build_shared_llm(streaming=True)
+        return _stream_llm_cache
+    if _llm_cache is None:
+        _llm_cache = build_shared_llm()
+    return _llm_cache
 
 
 def _parse_json_from_response(content: str) -> dict:

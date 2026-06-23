@@ -78,9 +78,10 @@ export default function ChatView() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
-  const [mode, setMode] = useState<'react' | 'plan-execute' | 'multi-agent'>('react');
+  const [mode, setMode] = useState<'react' | 'plan-execute' | 'multi-agent' | 'sourcing'>('react');
   const bottomRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
+  const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
 
   // Debounced localStorage save for chat input
   useEffect(() => {
@@ -123,6 +124,7 @@ export default function ChatView() {
     persist(sid, newMsgs);
     setLoading(true);
     setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [] });
+    answerAccRef.current = '';
 
     try {
       await chatStream(text, sid, {
@@ -187,13 +189,16 @@ export default function ChatView() {
           });
         },
         onAnswerChunk: (data) => {
+          answerAccRef.current += data.text;
           setStreamState(prev => prev ? {
             ...prev,
             answerChunks: [...prev.answerChunks, data.text]
           } : null);
         },
         onDone: (data) => {
-          newMsgs.push({ role: 'assistant', content: data.answer });
+          const finalAnswer = answerAccRef.current || data.answer;
+          newMsgs.push({ role: 'assistant', content: finalAnswer });
+          answerAccRef.current = '';
           persist(sid, newMsgs);
           setStreamState(null);
           setLoading(false);
@@ -345,6 +350,17 @@ export default function ChatView() {
                     <p className="text-sm font-medium">多Agent</p>
                     <p className="text-[11px] opacity-70 mt-0.5">专业分工协作</p>
                   </button>
+                  <button
+                    onClick={() => setMode('sourcing')}
+                    className={`flex-1 text-left rounded-xl px-3 py-2.5 transition-all duration-200 ${
+                      mode === 'sourcing'
+                        ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
+                        : 'bg-white border border-slate-200 text-gray-500 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-medium">寻源</p>
+                    <p className="text-[11px] opacity-70 mt-0.5">采购寻源推荐</p>
+                  </button>
                 </div>
               </div>
             </div>
@@ -486,8 +502,18 @@ export default function ChatView() {
           >
             多Agent
           </button>
+          <button
+            onClick={() => setMode('sourcing')}
+            className={`text-xs px-3 py-1.5 rounded-md transition-colors min-h-[36px] inline-flex items-center ${
+              mode === 'sourcing'
+                ? 'bg-[var(--color-primary-bg)] text-white'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            寻源
+          </button>
           <span className="text-xs text-gray-400 ml-1">
-            {mode === 'react' ? '逐步推理' : mode === 'plan-execute' ? '先规划后执行' : '专业Agent协作'}
+            {mode === 'react' ? '逐步推理' : mode === 'plan-execute' ? '先规划后执行' : mode === 'multi-agent' ? '专业Agent协作' : '采购寻源'}
           </span>
         </div>
         )}

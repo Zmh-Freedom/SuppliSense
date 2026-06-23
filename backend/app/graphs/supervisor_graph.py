@@ -80,16 +80,17 @@ class SupervisorState(TypedDict):
 
 
 # ---------------------------------------------------------------------------
-# LLM builder
+# LLM builder (module-level singleton)
 # ---------------------------------------------------------------------------
 
-def _build_domain_llm() -> ChatOpenAI:
-    return build_shared_llm(
-        
-        
-        
-        
-    )
+_domain_llm = None
+
+
+def _build_domain_llm():
+    global _domain_llm
+    if _domain_llm is None:
+        _domain_llm = build_shared_llm()
+    return _domain_llm
 
 
 # ---------------------------------------------------------------------------

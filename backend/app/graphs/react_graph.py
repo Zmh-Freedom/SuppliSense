@@ -57,13 +57,24 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 
+# 模块级 LLM 单例，避免每次请求创建新连接
+_llm_instance = None
+
+
+def _get_llm():
+    global _llm_instance
+    if _llm_instance is None:
+        _llm_instance = build_shared_llm().bind_tools(TOOLS_LIST)
+    return _llm_instance
+
+
 def build_react_graph(preference_context: str = ""):
     """编译 ReAct 图（带 system prompt 注入，可选偏好上下文）。"""
     prompt = SYSTEM_PROMPT
     if preference_context:
         prompt = preference_context + "\n\n" + SYSTEM_PROMPT
 
-    llm = build_shared_llm().bind_tools(TOOLS_LIST)
+    llm = _get_llm()
     tool_node = ToolNode(TOOLS_LIST)
 
     async def agent(state: AgentState):
