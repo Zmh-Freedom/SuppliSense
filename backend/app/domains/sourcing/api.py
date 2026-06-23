@@ -160,17 +160,18 @@ async def update_supplier(supplier_id: str, body: SupplierUpdateInput):
 @router.get(
     "/suppliers",
     summary="供应商列表",
-    description="查询本地供应商库。",
+    description="查询本地供应商库。hide_bare 默认 true，隐藏 source=auto 且无品类/地域的空壳记录。",
 )
 async def list_suppliers(
     keyword: str | None = Query(None),
     status: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    hide_bare: bool = Query(True, description="是否隐藏自动创建且无品类/地域的空壳记录"),
 ):
     from app.domains.sourcing.supplier_repo import list_suppliers as _list
 
-    return await asyncio.to_thread(_list, keyword, status, page, page_size)
+    return await asyncio.to_thread(_list, keyword, status, page, page_size, hide_bare)
 
 
 @router.post(

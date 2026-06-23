@@ -301,9 +301,18 @@ def import_from_tianyancha_search(
 def _enrich_imported(db) -> None:
     """为新导入的供应商补充天眼查工商信息。"""
     from app.services.tianyancha_client import fetch_company
-    # Find recently imported suppliers without unified_code
     cursor = db["suppliers"].find(
-        {"source": {"$in": ["excel_import", "tianyancha_search"]}, "unified_code": None},
+        {
+            "source": {"$in": ["excel_import", "tianyancha_search", "auto"]},
+            "$or": [
+                {"unified_code": None},
+                {"unified_code": {"$exists": False}},
+                {"legal_person": None},
+                {"legal_person": {"$exists": False}},
+                {"registered_capital": None},
+                {"registered_capital": {"$exists": False}},
+            ],
+        },
         {"name": 1},
     ).limit(50)
     names = [doc["name"] for doc in cursor]

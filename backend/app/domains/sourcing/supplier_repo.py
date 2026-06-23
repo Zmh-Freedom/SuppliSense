@@ -209,6 +209,7 @@ def list_suppliers(
     status: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    hide_bare: bool = True,
 ) -> dict[str, Any]:
     db = get_db()
     filt: dict[str, Any] = {}
@@ -216,6 +217,12 @@ def list_suppliers(
         filt["name"] = {"$regex": keyword, "$options": "i"}
     if status:
         filt["status"] = status
+    if hide_bare:
+        filt["$or"] = [
+            {"source": {"$ne": "auto"}},
+            {"categories": {"$exists": True, "$not": {"$size": 0}}},
+            {"regions": {"$exists": True, "$not": {"$size": 0}}},
+        ]
 
     total = db["suppliers"].count_documents(filt)
     cursor = db["suppliers"].find(filt).sort("created_at", -1).skip((page - 1) * page_size).limit(page_size)

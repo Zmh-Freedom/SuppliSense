@@ -25,6 +25,7 @@ export default function SupplierLibraryPage() {
   const canManage = user?.role === 'admin' || user?.role === 'analyst';
   const [keyword, setKeyword] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [form, setForm] = useState({ name: '', categories: '', regions: '' });
 
   // edit state
@@ -70,10 +71,10 @@ export default function SupplierLibraryPage() {
   }, [tycResult]);
 
   const { data, isLoading } = useQuery({
-    queryKey: [...queryKeys.suppliers, keyword] as const,
+    queryKey: [...queryKeys.suppliers, keyword, showAll] as const,
     queryFn: () =>
       api.get<{ items: SupplierEntry[]; total: number }>(
-        `/sourcing/suppliers?keyword=${encodeURIComponent(keyword)}`,
+        `/sourcing/suppliers?keyword=${encodeURIComponent(keyword)}&hide_bare=${!showAll}`,
       ),
   });
 
@@ -258,7 +259,22 @@ export default function SupplierLibraryPage() {
             供应商主库
             {data?.total !== undefined && <span className="text-sm font-normal text-gray-400 ml-2">{data.total} 家</span>}
           </h2>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {!showAll ? (
+              <button
+                onClick={() => setShowAll(true)}
+                className="text-xs text-[var(--color-text-muted)] border border-[var(--color-border)] rounded-lg px-2 py-1 hover:bg-[var(--color-surface-hover)]"
+              >
+                显示全部
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowAll(false)}
+                className="text-xs text-blue-500 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1 hover:bg-blue-100"
+              >
+                ✓ 显示全部
+              </button>
+            )}
             {canManage && (
               <label className="text-sm border border-[var(--color-border)] rounded-xl px-4 py-2 cursor-pointer hover:bg-[var(--color-surface-hover)] transition-colors">
                 批量导入
