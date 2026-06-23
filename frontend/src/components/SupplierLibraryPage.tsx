@@ -21,14 +21,23 @@ export default function SupplierLibraryPage() {
   const [showApproval, setShowApproval] = useState(false);
 
   // tianyancha search state
-  const [tycKeyword, setTycKeyword] = useState('');
   const [tycIndustry, setTycIndustry] = useState('');
+  const [tycIndustryOpen, setTycIndustryOpen] = useState(false);
+  const [tycIndustryFilter, setTycIndustryFilter] = useState('');
   const [tycRegion, setTycRegion] = useState('');
   const [tycResult, setTycResult] = useState<{ imported: number; skipped: number; errors: string[] } | null>(null);
 
+  const INDUSTRIES: [string, string][] = [
+    ["131","谷物磨制"],["132","饲料加工"],["133","植物油加工"],["134","制糖业"],["135","屠宰及肉类加工"],["136","水产品加工"],["137","蔬菜菌类水果坚果加工"],["139","其他农副食品加工"],["141","焙烤食品"],["142","糖果巧克力及蜜饯"],["143","方便食品"],["144","乳制品"],["145","罐头食品"],["146","调味品及发酵制品"],["149","其他食品制造"],["151","酒的制造"],["152","饮料制造"],["153","精制茶加工"],["161","烟叶复烤"],["162","卷烟制造"],["169","其他烟草制品"],["171","棉纺织及印染"],["172","毛纺织及染整"],["173","麻纺织及染整"],["174","丝绢纺织及印染"],["175","化纤织造及印染"],["176","针织或钩针编织物"],["177","家用纺织制成品"],["178","产业用纺织制成品"],["181","机织服装"],["182","针织或钩针编织服装"],["183","服饰制造"],["191","皮革鞣制加工"],["192","皮革制品"],["193","毛皮鞣制及制品"],["194","羽毛加工及制品"],["195","制鞋业"],["201","木材加工"],["202","人造板制造"],["203","木质制品"],["204","竹藤棕草制品"],["211","家具制造"],["212","竹藤家具"],["213","金属家具"],["214","塑料家具"],["219","其他家具"],["221","纸浆制造"],["222","造纸"],["223","纸制品制造"],["231","印刷"],["232","装订及印刷相关服务"],["241","文教办公用品"],["242","乐器制造"],["243","工艺美术及礼仪用品"],["244","体育用品"],["245","玩具制造"],["246","游艺器材及娱乐用品"],["251","精炼石油产品"],["252","煤炭加工"],["253","核燃料加工"],["261","基础化学原料"],["262","肥料制造"],["263","农药制造"],["264","涂料油墨颜料及类似产品"],["265","合成材料"],["266","专用化学产品"],["267","炸药火工及焰火产品"],["268","日用化学产品"],["271","化学药品原料药"],["272","化学药品制剂"],["273","中药饮片加工"],["274","中成药生产"],["275","兽用药品"],["276","生物药品制品"],["277","卫生材料及医药用品"],["278","药用辅料及包装材料"],["281","纤维素纤维原料及纤维"],["282","合成纤维"],["291","橡胶制品"],["292","塑料制品"],["301","水泥石灰和石膏"],["302","石膏水泥制品及类似制品"],["303","砖瓦石材等建筑材料"],["304","玻璃制造"],["305","玻璃制品"],["306","玻璃纤维和玻璃纤维增强塑料"],["307","陶瓷制品"],["308","耐火材料制品"],["309","石墨及其他非金属矿物制品"],["311","炼铁"],["312","炼钢"],["313","钢压延加工"],["314","铁合金冶炼"],["321","常用有色金属冶炼"],["322","贵金属冶炼"],["323","稀有稀土金属冶炼"],["324","有色金属合金"],["325","有色金属压延加工"],["331","结构性金属制品"],["332","金属工具制造"],["333","集装箱及金属包装容器"],["334","金属丝绳及其制品"],["335","建筑安全用金属制品"],["336","金属表面处理及热处理"],["337","搪瓷制品"],["338","金属制日用品"],["339","铸造及其他金属制品"],["341","锅炉及原动设备"],["342","金属加工机械"],["343","物料搬运设备"],["344","泵阀门压缩机及类似机械"],["345","轴承齿轮和传动部件"],["346","烘炉风机包装等设备"],["347","文化办公用机械"],["348","通用零部件"],["349","其他通用设备"],["351","采矿冶金建筑专用设备"],["352","化工木材非金属加工专用设备"],["353","食品饮料烟草及饲料生产专用设备"],["354","印刷制药日化及日用品生产专用设备"],["355","纺织服装和皮革加工专用设备"],["356","电子和电工机械专用设备"],["357","农林牧渔专用机械"],["358","医疗仪器设备及器械"],["359","环保邮政社会公共服务专用设备"],["361","汽车整车"],["362","汽车用发动机制造"],["363","改装汽车"],["364","低速汽车"],["365","电车制造"],["366","汽车车身挂车"],["367","汽车零部件及配件"],["371","铁路运输设备"],["372","城市轨道交通设备"],["373","船舶及相关装置"],["374","航空装备"],["375","航天器及运载火箭"],["376","海洋工程装备"],["377","摩托车"],["378","自行车和残疾人座车"],["379","非公路休闲车及零配件"],["381","电机制造"],["382","输配电及控制设备"],["383","电线电缆光缆及电工器材"],["384","电池制造"],["385","家用电力器具"],["386","非电力家用器具"],["387","照明器具"],["389","其他电气机械及器材"],["391","计算机"],["392","通信设备"],["393","广播电视设备"],["394","雷达及配套设备"],["395","非专业视听设备"],["396","智能消费设备"],["397","电子器件"],["398","电子元件"],["399","其他电子设备"],["401","通用仪器仪表"],["402","专用仪器仪表"],["403","钟表与计时仪器"],["404","光学仪器"],["405","衡器"],["409","其他仪器仪表"],["411","日用杂品"],["412","煤制品"],["413","核辐射加工"],["419","其他未列明制造业"],["421","金属废料和碎屑加工处理"],["422","非金属废料和碎屑加工处理"],
+  ];
+
+  const filteredIndustries = INDUSTRIES.filter(([code, name]) =>
+    !tycIndustryFilter || name.includes(tycIndustryFilter) || code.startsWith(tycIndustryFilter)
+  );
+
   const tycMutation = useMutation({
     mutationFn: () => api.post<{ imported: number; skipped: number; errors: string[] }>(
-      `/sourcing/suppliers/import-tianyancha?keyword=${encodeURIComponent(tycKeyword)}&industry=${encodeURIComponent(tycIndustry)}&region=${encodeURIComponent(tycRegion)}&max_results=50`,
+      `/sourcing/suppliers/import-tianyancha?industry=${encodeURIComponent(tycIndustry)}&region=${encodeURIComponent(tycRegion)}&max_results=50`,
     ),
     onSuccess: (data) => {
       setTycResult(data);
@@ -280,41 +289,38 @@ export default function SupplierLibraryPage() {
         {canManage && (
           <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-sm space-y-3">
             <h3 className="text-sm font-semibold text-[var(--color-text)]">天眼查批量导入</h3>
-            <div className="grid grid-cols-3 gap-2">
-              <select
-                value={tycIndustry}
-                onChange={e => setTycIndustry(e.target.value)}
-                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
-              >
-                <option value="">选择行业...</option>
-                <option value="381">电机制造</option>
-                <option value="382">输配电及控制设备</option>
-                <option value="401">电子器件</option>
-                <option value="402">电子元件</option>
-                <option value="356">电子专用设备</option>
-                <option value="651">软件开发</option>
-                <option value="652">信息技术服务</option>
-                <option value="292">塑料制品</option>
-                <option value="223">纸制品</option>
-                <option value="231">印刷</option>
-                <option value="359">环保设备</option>
-                <option value="342">金属加工机械</option>
-                <option value="345">通用零部件</option>
-              </select>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="relative">
+                <input
+                  value={tycIndustry ? (INDUSTRIES.find(([c]) => c === tycIndustry)?.[1] || tycIndustry) : tycIndustryFilter}
+                  onChange={e => { setTycIndustryFilter(e.target.value); setTycIndustry(''); setTycIndustryOpen(true); }}
+                  onFocus={() => setTycIndustryOpen(true)}
+                  onBlur={() => setTimeout(() => setTycIndustryOpen(false), 200)}
+                  placeholder="搜索行业..."
+                  className="w-full text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
+                />
+                {tycIndustryOpen && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto bg-white border border-[var(--color-border)] rounded-lg shadow-lg">
+                    {filteredIndustries.slice(0, 50).map(([code, name]) => (
+                      <div
+                        key={code}
+                        onMouseDown={() => { setTycIndustry(code); setTycIndustryFilter(''); setTycIndustryOpen(false); }}
+                        className={`px-3 py-1.5 text-xs cursor-pointer hover:bg-[var(--color-surface-hover)] ${tycIndustry === code ? 'bg-blue-50' : ''}`}
+                      >
+                        <span className="text-gray-400 mr-2">{code}</span>{name}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <input
                 value={tycRegion}
                 onChange={e => setTycRegion(e.target.value)}
-                placeholder="地域代码：330100(杭州)"
-                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
-              />
-              <input
-                value={tycKeyword}
-                onChange={e => setTycKeyword(e.target.value)}
-                placeholder="公司名关键词（可选）"
-                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]"
+                placeholder="地域代码（可选）：330100"
+                className="text-xs rounded-lg border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
               />
             </div>
-            <p className="text-[10px] text-gray-400">选择行业代码（GB/T 4754-2017），可选填地域代码缩小范围。每次最多导入 50 家。</p>
+            <p className="text-[10px] text-gray-400">支持搜索（输入关键词过滤）+ 下拉选择。制造业31个大类，每次最多导入50家。</p>
             <button
               onClick={() => tycMutation.mutate()}
               disabled={!tycIndustry || tycMutation.isPending}
