@@ -18,8 +18,8 @@ from app.tools import TOOLS_LIST
 
 SUPERVISOR_SYSTEM_PROMPT = (
     "你是任务分配专家。根据用户查询，选择最合适的分析 Agent。\n"
-    "可用 Agent：risk（风险评估与寻源推荐）、sentiment（舆情分析）、compliance（合规检查）。\n"
-    "采购寻源、找供应商、推荐替代等需求路由到 risk。\n"
+    "可用 Agent：risk（风险评估、趋势分析、监控清单、寻源推荐）、sentiment（舆情分析）、compliance（合规检查）。\n"
+    "采购寻源、风险趋势、监控清单、找供应商等需求路由到 risk。\n"
     '输出 JSON：{"next": "agent_name"} 或 {"next": "FINISH"}。\n'
     "简单问候返回 FINISH。"
 )
@@ -30,6 +30,8 @@ _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "search_company", "assess_risk", "esg_assessment", "predict_risk", "macro_risk",
     "create_sourcing_request", "search_suppliers", "select_sourcing_result",
     "find_alternatives", "expand_supplier_library",
+    "analyze_trend", "analyze_watchlist_trend", "compare_companies",
+    "get_watchlist", "check_alert",
 )]
 
 _SENTIMENT_TOOLS = [t for t in TOOLS_LIST if t.name in (
@@ -48,7 +50,8 @@ RISK_PROMPT = """你是风险评估与寻源专家。
 3. 上市公司要分析财报，debt_ratio=0 表示数据缺失不要解读为低负债
 4. 用户需要找供应商时，用 create_sourcing_request 创建需求，再调用 search_suppliers 搜索
 5. 本地库找不到或结果太少时，可先用 expand_supplier_library 从天眼查扩充供应商库
-6. 回答简洁，300 字以内，中文"""
+6. 监控清单相关：趋势分析调用 analyze_watchlist_trend，查看清单调用 get_watchlist
+7. 回答简洁，300 字以内，中文"""
 
 SENTIMENT_PROMPT = """你是舆情分析专家。
 
@@ -384,4 +387,5 @@ async def stream_supervisor_graph(
         yield _sse_event("done", {"answer": all_text})
 
     except Exception as e:
-        yield _sse_event("error", {"message": f"Supervisor 图执行错误: {str(e)}"})
+        from app.graphs import format_llm_error
+        yield _sse_event("error", {"message": format_llm_error(e)})

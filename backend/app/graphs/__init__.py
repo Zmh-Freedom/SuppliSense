@@ -11,6 +11,22 @@ LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
 LLM_MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "10"))
 
 
+def format_llm_error(e: Exception) -> str:
+    """将 LLM API 错误翻译为中文提示。"""
+    msg = str(e)
+    if "Insufficient Balance" in msg or "402" in msg:
+        return "LLM API 余额不足，请联系管理员充值"
+    if "Rate limit" in msg or "429" in msg or "rate_limit" in msg:
+        return "请求过于频繁，请稍后重试"
+    if "timeout" in msg.lower() or "timed out" in msg.lower():
+        return "LLM 服务响应超时，请重试"
+    if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
+        return "LLM API 认证失败，请检查配置"
+    if "Connection" in msg or "connect" in msg.lower():
+        return "LLM 服务连接失败，请检查网络"
+    return f"LLM 服务异常: {msg}"
+
+
 def build_shared_llm(streaming: bool = False) -> ChatOpenAI:
     """统一 LLM 工厂，所有 graph 共用。
 

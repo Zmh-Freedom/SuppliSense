@@ -78,4 +78,5 @@ async def stream_react_graph(
         yield _sse_event("done", {"answer": full_answer})
 
     except Exception as e:
-        yield _sse_event("error", {"message": f"LangGraph 执行错误: {str(e)}"})
+        from app.graphs import format_llm_error
+        yield _sse_event("error", {"message": format_llm_error(e)})

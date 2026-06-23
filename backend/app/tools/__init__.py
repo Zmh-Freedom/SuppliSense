@@ -13,7 +13,7 @@ from app.domains.risk.tools_analysis import (
     query_financials,
 )
 from app.domains.risk.tools_report import generate_report, manage_scheduled_report
-from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist
+from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist, analyze_watchlist_trend
 from app.domains.knowledge.tools import knowledge_search
 from app.domains.sourcing.tools import (
     create_sourcing_request,
@@ -28,6 +28,7 @@ TOOLS_LIST = [
     assess_risk,
     check_alert,
     get_watchlist,
+    analyze_watchlist_trend,
     add_to_watchlist,
     remove_from_watchlist,
     esg_assessment,

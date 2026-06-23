@@ -126,7 +126,8 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
                 yield _sse_event("tool_result", {"tool": event["name"], "result": str(event["data"].get("output", ""))[:500]})
 
     except Exception as e:
-        yield _sse_event("error", {"message": str(e)})
+        from app.graphs import format_llm_error
+        yield _sse_event("error", {"message": format_llm_error(e)})
         return
 
     yield _sse_event("done", {"answer": full_answer})

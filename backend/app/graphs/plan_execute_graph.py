@@ -328,4 +328,5 @@ async def stream_plan_execute_graph(
         yield _sse_event("done", {"answer": full_answer})
 
     except Exception as e:
-        yield _sse_event("error", {"message": f"Plan-Execute 执行错误: {str(e)}"})
+        from app.graphs import format_llm_error
+        yield _sse_event("error", {"message": format_llm_error(e)})
