@@ -248,6 +248,15 @@ def _get_listed_companies() -> set[str]:
 def _rank_and_dedupe(names: list[str], keyword: str) -> list[str]:
     listed = _get_listed_companies()
 
+    # 先去重完全相同的名称（保留首次出现顺序）
+    seen: set[str] = set()
+    unique: list[str] = []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            unique.append(n)
+    names = unique
+
     names = sorted(names, key=lambda n: (
         n in listed,
         keyword in n,

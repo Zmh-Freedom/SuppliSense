@@ -1,10 +1,8 @@
 """对话上下文管理 — 长对话摘要压缩。"""
 
-import asyncio
 from langchain_core.messages import SystemMessage
 from app.graphs import build_shared_llm
 
-from app.core.config import settings
 from app.core.logging import get_logger
 
 logger = get_logger()
@@ -15,12 +13,7 @@ KEEP_RECENT = 8  # 保留最近 8 条消息（4 轮）
 
 async def _llm_summarize(messages: list[dict]) -> str:
     """用 LLM 对对话历史生成摘要。"""
-    llm = build_shared_llm(
-        
-        
-        
-        
-    )
+    llm = build_shared_llm()
 
     history_text = "\n".join(
         f"{m['role']}: {m['content']}" for m in messages
