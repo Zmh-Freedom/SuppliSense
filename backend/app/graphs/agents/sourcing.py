@@ -1,14 +1,11 @@
 """Sourcing subgraph — 智能寻源流程编排。"""
 
-import json
-from typing import Annotated, Any
+from typing import Annotated
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import TypedDict
-
-from app.core.config import settings
 
 
 class SourcingState(TypedDict):
@@ -32,6 +29,26 @@ SOURCING_SYSTEM = """你是一个采购寻源助手。用户想通过自然语�
 如果无匹配结果，告知用户并建议扩充供应商库。"""
 
 
+_SOURCING_TOOLS = None
+
+
+def _get_sourcing_tools():
+    """延迟初始化寻源工具子集，避免模块导入时拉起完整工具链。"""
+    global _SOURCING_TOOLS
+    if _SOURCING_TOOLS is None:
+        from app.tools import (
+            create_sourcing_request,
+            search_suppliers,
+            select_sourcing_result,
+        )
+        _SOURCING_TOOLS = [
+            create_sourcing_request,
+            search_suppliers,
+            select_sourcing_result,
+        ]
+    return _SOURCING_TOOLS
+
+
 def build_sourcing_graph():
     graph = StateGraph(SourcingState)
 
@@ -48,33 +65,24 @@ def build_sourcing_graph():
     return graph.compile()
 
 
-def _sourcing_agent(state: SourcingState):
+async def _sourcing_agent(state: SourcingState):
     from app.graphs import build_shared_llm
 
-    llm = build_shared_llm(
-        
-        
-        
-        
-    )
-
-    from app.tools import create_sourcing_request, search_suppliers, select_sourcing_result
-    sourcing_tools = [create_sourcing_request, search_suppliers, select_sourcing_result]
-    llm_with_tools = llm.bind_tools(sourcing_tools)
+    llm = build_shared_llm()
+    llm_with_tools = llm.bind_tools(_get_sourcing_tools())
 
     msgs = list(state["messages"])
     if not any(isinstance(m, SystemMessage) for m in msgs):
         msgs = [SystemMessage(content=SOURCING_SYSTEM)] + msgs
 
-    response = llm_with_tools.invoke(msgs)
+    response = await llm_with_tools.ainvoke(msgs)
     return {"messages": [response]}
 
 
 def _sourcing_tools(state: SourcingState):
     from langgraph.prebuilt import ToolNode
-    from app.tools import create_sourcing_request, search_suppliers, select_sourcing_result
 
-    node = ToolNode([create_sourcing_request, search_suppliers, select_sourcing_result])
+    node = ToolNode(_get_sourcing_tools())
     return node.invoke(state)
 
 
@@ -114,6 +122,15 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
                 if hasattr(chunk, "content") and chunk.content:
                     full_answer += chunk.content
                     yield _sse_event("answer_chunk", {"text": chunk.content})
+
+            elif kind == "on_chat_model_end":
+                # streaming=False 时 token 不会通过 on_chat_model_stream 下发，
+                # 需要从 end 事件取完整内容
+                output = event.get("data", {}).get("output")
+                content = output.content if output and hasattr(output, "content") else ""
+                if content:
+                    full_answer = content
+                    yield _sse_event("answer_chunk", {"text": content})
 
             elif kind == "on_tool_start":
                 tool_name = event["name"]
