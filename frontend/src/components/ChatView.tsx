@@ -76,7 +76,6 @@ export default function ChatView() {
     }
   }, []); // run once on mount
   const [loading, setLoading] = useState(false);
-  const [showHistory, setShowHistory] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -229,13 +228,11 @@ export default function ChatView() {
 
   const newChat = () => {
     setActiveSid('');
-    setShowHistory(false);
     setStreamState(null);
   };
 
   const switchSession = (sid: string) => {
     setActiveSid(sid);
-    setShowHistory(false);
     setStreamState(null);
   };
 
@@ -250,17 +247,55 @@ export default function ChatView() {
   };
 
   return (
-    <div className="flex flex-col h-full max-w-full md:max-w-3xl mx-auto relative">
-      {/* top bar */}
-      <div className="flex justify-end px-4 pt-3 pb-0">
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
-        >
-          历史 {sessions.length > 0 ? `(${sessions.length})` : ''}
-        </button>
-      </div>
+    <div className="flex h-full max-w-full">
+      {/* History card — left column, persistent on lg+ screens */}
+      <aside className="hidden lg:flex w-52 shrink-0 flex-col pt-6 pl-4 pr-2">
+        <div className="flex-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-md overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between px-3 pt-3 pb-2">
+            <h3 className="text-[11px] font-medium text-gray-400">会话历史</h3>
+            <button onClick={newChat} className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors">+ 新建</button>
+          </div>
+          {sessions.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center pb-6">
+              <p className="text-[11px] text-gray-300 px-3">暂无会话</p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-auto px-1.5 pb-3">
+              <div className="space-y-0.5">
+                {sessions.map(s => (
+                  <div
+                    key={s.sid}
+                    onClick={() => switchSession(s.sid)}
+                    className={`group flex items-center rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+                      s.sid === activeSid
+                        ? 'bg-[var(--color-primary-bg)] text-white'
+                        : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
+                    }`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm truncate">{s.title}</p>
+                      <p className={`text-[11px] ${s.sid === activeSid ? 'text-white/60' : 'text-gray-400'}`}>
+                        {new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => deleteSession(s.sid, e)}
+                      className={`shrink-0 text-xs opacity-0 group-hover:opacity-100 transition-opacity ml-1 ${
+                        s.sid === activeSid ? 'text-white/60 hover:text-white' : 'text-gray-300 hover:text-red-400'
+                      }`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </aside>
 
+      {/* Main chat */}
+      <div className="flex-1 flex flex-col min-w-0 max-w-3xl mx-auto h-full">
       {/* messages */}
       <div className="flex-1 overflow-auto px-4 space-y-6 py-6">
         {msgs.length === 0 && !loading && (
@@ -439,58 +474,7 @@ export default function ChatView() {
           </button>
         </div>
       </div>
-
-      {/* history panel — left-side floating card */}
-      <AnimatePresence>
-        {showHistory && (
-          <motion.div
-            className="fixed left-4 top-24 z-20 w-56 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-md overflow-hidden"
-            initial={{ opacity: 0, x: -16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -16 }}
-            transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-          >
-            <div className="flex items-center justify-between px-3 pt-3 pb-2">
-              <h3 className="text-[11px] font-medium text-gray-400">会话历史</h3>
-              <button onClick={newChat} className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors">+ 新建</button>
-            </div>
-            {sessions.length === 0 ? (
-              <p className="text-[11px] text-gray-300 px-3 pb-3">暂无历史会话</p>
-            ) : (
-              <div className="max-h-[60vh] overflow-auto px-1.5 pb-3">
-                <div className="space-y-0.5">
-                  {sessions.map(s => (
-                    <div
-                      key={s.sid}
-                      onClick={() => switchSession(s.sid)}
-                      className={`group flex items-center rounded-lg px-3 py-2 cursor-pointer transition-colors ${
-                        s.sid === activeSid
-                          ? 'bg-[var(--color-primary-bg)] text-white'
-                          : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
-                      }`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{s.title}</p>
-                        <p className={`text-[11px] ${s.sid === activeSid ? 'text-white/60' : 'text-gray-400'}`}>
-                          {new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </p>
-                      </div>
-                      <button
-                        onClick={(e) => deleteSession(s.sid, e)}
-                        className={`shrink-0 text-xs opacity-0 group-hover:opacity-100 transition-opacity ml-1 ${
-                          s.sid === activeSid ? 'text-white/60 hover:text-white' : 'text-gray-300 hover:text-red-400'
-                        }`}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      </div>
     </div>
   );
 }
