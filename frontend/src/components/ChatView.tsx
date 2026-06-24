@@ -440,39 +440,54 @@ export default function ChatView() {
         </div>
       </div>
 
-      {/* history panel */}
+      {/* history panel — left-side floating card */}
       <AnimatePresence>
         {showHistory && (
           <motion.div
-            className="absolute top-12 right-4 w-80 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl shadow-lg max-h-96 overflow-auto z-10"
-            initial={{ opacity: 0, scale: 0.95, y: -8 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: -8 }}
+            className="fixed left-4 top-24 z-20 w-56 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl shadow-md overflow-hidden"
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
             transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
           >
-            <div className="p-2">
-              <p className="text-xs text-gray-400 px-3 py-2">会话历史</p>
-              {sessions.map(s => (
-                <div
-                  key={s.sid}
-                  onClick={() => switchSession(s.sid)}
-                  className={`flex items-center justify-between px-3 py-2 rounded-xl cursor-pointer transition-colors ${
-                    s.sid === activeSid ? 'bg-[var(--color-code-bg)]' : 'hover:bg-[var(--color-surface-hover)]'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[var(--color-text)] truncate">{s.title}</p>
-                    <p className="text-[11px] text-gray-400">{new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
-                  </div>
-                  <button
-                    onClick={(e) => deleteSession(s.sid, e)}
-                    className="text-gray-300 hover:text-red-400 text-sm ml-2 shrink-0"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+            <div className="flex items-center justify-between px-3 pt-3 pb-2">
+              <h3 className="text-[11px] font-medium text-gray-400">会话历史</h3>
+              <button onClick={newChat} className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors">+ 新建</button>
             </div>
+            {sessions.length === 0 ? (
+              <p className="text-[11px] text-gray-300 px-3 pb-3">暂无历史会话</p>
+            ) : (
+              <div className="max-h-[60vh] overflow-auto px-1.5 pb-3">
+                <div className="space-y-0.5">
+                  {sessions.map(s => (
+                    <div
+                      key={s.sid}
+                      onClick={() => switchSession(s.sid)}
+                      className={`group flex items-center rounded-lg px-3 py-2 cursor-pointer transition-colors ${
+                        s.sid === activeSid
+                          ? 'bg-[var(--color-primary-bg)] text-white'
+                          : 'text-[var(--color-text)] hover:bg-[var(--color-surface-hover)]'
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{s.title}</p>
+                        <p className={`text-[11px] ${s.sid === activeSid ? 'text-white/60' : 'text-gray-400'}`}>
+                          {new Date(s.updatedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                      <button
+                        onClick={(e) => deleteSession(s.sid, e)}
+                        className={`shrink-0 text-xs opacity-0 group-hover:opacity-100 transition-opacity ml-1 ${
+                          s.sid === activeSid ? 'text-white/60 hover:text-white' : 'text-gray-300 hover:text-red-400'
+                        }`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
