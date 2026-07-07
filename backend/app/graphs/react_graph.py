@@ -116,3 +116,100 @@ def build_react_graph(preference_context: str = ""):
             return await self._graph.ainvoke(input_data, **kwargs)
 
     return ReactGraphWithSystemPrompt(compiled)
+
+
+def build_react_graph_with_reflection(preference_context: str = ""):
+    """编译带 Self-Reflection 的 ReAct 图。
+
+    在 agent 产生 final answer 后，reflector 审查输出质量（幻觉、一致性、完整性）。
+    发现问题时反馈给 agent 重新生成，最多 1 次纠正循环。
+
+    与 build_react_graph 的区别：
+    - State 扩展 reflection_feedback / reflection_count 字段
+    - agent 无 tool_calls → reflector（而非 END）
+    - reflector 可路由回 agent 纠正
+    """
+    from app.graphs.reflection import build_reflector_node, route_after_reflector
+
+    prompt = SYSTEM_PROMPT
+    if preference_context:
+        prompt = preference_context + "\n\n" + SYSTEM_PROMPT
+
+    class ReactReflectionState(TypedDict):
+        messages: Annotated[list, add_messages]
+        reflection_feedback: str
+        reflection_count: int
+
+    llm = _get_llm()
+    tool_node = ToolNode(TOOLS_LIST)
+    reflector_fn = build_reflector_node()
+
+    async def agent(state: ReactReflectionState):
+        # 如果有 reflection 反馈，追加为上下文
+        feedback = state.get("reflection_feedback", "")
+        msgs = list(state["messages"])
+        if feedback:
+            from langchain_core.messages import HumanMessage
+            msgs.append(HumanMessage(
+                content=f"审核反馈（请根据以下意见修正你的回答，不要重复之前的错误）：\n{feedback}"
+            ))
+        response = await llm.ainvoke(msgs)
+        return {"messages": [response]}
+
+    def should_continue(state: ReactReflectionState):
+        last_msg = state["messages"][-1]
+        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+            return "tools"
+        # 无 tool_calls → 进入 reflector 审查
+        return "reflector"
+
+    graph = StateGraph(ReactReflectionState)
+    graph.add_node("agent", agent)
+    graph.add_node("tools", tool_node)
+    graph.add_node("reflector", reflector_fn)
+
+    graph.set_entry_point("agent")
+    graph.add_conditional_edges(
+        "agent", should_continue,
+        {"tools": "tools", "reflector": "reflector"},
+    )
+    graph.add_edge("tools", "agent")
+    graph.add_conditional_edges(
+        "reflector", route_after_reflector,
+        {"agent": "agent", END: END},
+    )
+
+    compiled = graph.compile()
+
+    class ReactReflectionGraphWithSystemPrompt:
+        """注入 system prompt + 初始化 reflection 字段。"""
+
+        def __init__(self, g):
+            self._graph = g
+
+        async def astream_events(self, input_data, **kwargs):
+            messages = input_data.get("messages", [])
+            if not messages or not isinstance(messages[0], SystemMessage):
+                messages = [SystemMessage(content=prompt)] + messages
+            input_data = {
+                **input_data,
+                "messages": messages,
+                "reflection_feedback": input_data.get("reflection_feedback", ""),
+                "reflection_count": input_data.get("reflection_count", 0),
+            }
+            async for event in self._graph.astream_events(input_data, **kwargs):
+                yield event
+
+        async def ainvoke(self, input_data, **kwargs):
+            messages = input_data.get("messages", [])
+            if not messages or not isinstance(messages[0], SystemMessage):
+                messages = [SystemMessage(content=prompt)] + messages
+            input_data = {
+                **input_data,
+                "messages": messages,
+                "reflection_feedback": input_data.get("reflection_feedback", ""),
+                "reflection_count": input_data.get("reflection_count", 0),
+            }
+            return await self._graph.ainvoke(input_data, **kwargs)
+
+    return ReactReflectionGraphWithSystemPrompt(compiled)

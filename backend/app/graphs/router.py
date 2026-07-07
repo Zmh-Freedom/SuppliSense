@@ -17,7 +17,8 @@ class Intent(str, Enum):
     RISK = "langgraph-react"
     PLAN_EXECUTE = "langgraph-plan-execute"
     MULTI_AGENT = "langgraph-multi-agent"
-    SOURCING = "langgraph-sourcing"  # 预留，寻源子图就绪后启用
+    PARALLEL = "langgraph-parallel"
+    SOURCING = "langgraph-sourcing"
 
 
 # 关键词 → 意图映射（优先级：先匹配先胜）
@@ -33,10 +34,16 @@ _KEYWORD_RULES: list[tuple[list[str], Intent]] = [
         ["制定方案", "全面分析", "全面评估", "综合评估", "综合分析", "帮我规划", "分步骤", "制定计划", "深度分析", "深度评估"],
         Intent.PLAN_EXECUTE,
     ),
-    # 多维度/多企业 → multi-agent
+    # 多维度/多企业 → multi-agent（串行轮询）
     (
-        ["多角度", "多维度", "分别分析", "同时分析", "对比分析", "多方评估", "各维度", "多个方面"],
+        ["多角度", "多维度", "分别分析", "对比分析", "多方评估", "各维度", "多个方面"],
         Intent.MULTI_AGENT,
+    ),
+    # 并行多维度 → parallel（同时并行执行）
+    (
+        ["并行分析", "同时分析", "一起分析", "一起评估", "并行评估",
+         "同时评估", "一起看看", "全面评估", "综合风险评估"],
+        Intent.PARALLEL,
     ),
     # 寻源类
     (
@@ -53,10 +60,11 @@ _CLASSIFY_PROMPT = """你是用户意图分类器。根据用户消息，判断�
 可用模式：
 - react：单次风险评估、查企业信息、看预警、加监控等简单查询
 - plan-execute：需要制定计划、分步骤执行的复杂任务（如"帮我全面评估..."、"制定方案..."）
-- multi-agent：需要多个专业 Agent 协作的任务（如"从风险、舆情、合规多角度分析..."）
+- multi-agent：需要多个专业 Agent 顺序协作的任务（如"从风险、舆情、合规多角度分析..."）
+- parallel：需要多个 Agent 并行分析的任务（如"同时评估风险、舆情和合规"、"一起分析"）
 - sourcing：采购寻源相关（如"找供应商"、"推荐替代"、"寻源"）
 
-只输出模式名称（react / plan-execute / multi-agent / sourcing），不要输出其他内容。"""
+只输出模式名称（react / plan-execute / multi-agent / parallel / sourcing），不要输出其他内容。"""
 
 
 # 意图 → 模式映射
@@ -64,6 +72,7 @@ _CLASSIFY_TO_INTENT = {
     "react": Intent.RISK,
     "plan-execute": Intent.PLAN_EXECUTE,
     "multi-agent": Intent.MULTI_AGENT,
+    "parallel": Intent.PARALLEL,
     "sourcing": Intent.SOURCING,
 }
 

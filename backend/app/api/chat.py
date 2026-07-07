@@ -51,10 +51,32 @@ async def _langgraph_sourcing_stream(session_id: str, message: str, preference_c
         yield event
 
 
+async def _langgraph_parallel_stream(session_id: str, message: str, preference_context: str = ""):
+    """LangGraph Parallel 并行多 Agent Map-Reduce 流式输出。"""
+    from app.graphs.parallel_graph import stream_parallel_graph
+    from app.services.agent import _load_history
+
+    history = _load_history(session_id)
+    async for event in stream_parallel_graph(message, session_id, history, preference_context):
+        yield event
+
+
+async def _langgraph_react_reflection_stream(session_id: str, message: str, preference_context: str = ""):
+    """LangGraph ReAct + Self-Reflection 流式输出。"""
+    from app.graphs.react_graph import build_react_graph_with_reflection
+    from app.graphs.streaming import stream_react_graph
+    from app.services.agent import _load_history
+
+    graph = build_react_graph_with_reflection(preference_context)
+    history = _load_history(session_id)
+    async for event in stream_react_graph(graph, message, session_id, history):
+        yield event
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "langgraph-react" | "langgraph-plan-execute" | "langgraph-multi-agent"
+    mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "parallel" | "react-reflection" | "sourcing"
 
 
 @router.post(
@@ -79,6 +101,8 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         "plan-execute": "langgraph-plan-execute",
         "multi-agent": "langgraph-multi-agent",
         "sourcing": "langgraph-sourcing",
+        "parallel": "langgraph-parallel",
+        "react-reflection": "langgraph-react-reflection",
     }
 
     async def event_generator():
@@ -101,6 +125,10 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             stream_fn = _langgraph_supervisor_stream
         elif mode == "langgraph-sourcing":
             stream_fn = _langgraph_sourcing_stream
+        elif mode == "langgraph-parallel":
+            stream_fn = _langgraph_parallel_stream
+        elif mode == "langgraph-react-reflection":
+            stream_fn = _langgraph_react_reflection_stream
         else:
             stream_fn = _langgraph_react_stream
 
