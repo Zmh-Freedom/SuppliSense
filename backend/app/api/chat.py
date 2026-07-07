@@ -19,7 +19,9 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
 
     graph = build_react_graph(preference_context)
     history = _load_history(session_id)
-    async for event in stream_react_graph(graph, message, session_id, history):
+    # 传入 config 用于 Human-in-the-Loop 恢复
+    run_config = {"configurable": {"thread_id": session_id}}
+    async for event in stream_react_graph(graph, message, session_id, history, run_config):
         yield event
 
 
@@ -79,10 +81,15 @@ class ChatRequest(BaseModel):
     mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "parallel" | "react-reflection" | "sourcing"
 
 
+class ResumeRequest(BaseModel):
+    session_id: str
+    approved: bool = True
+
+
 @router.post(
     "/stream",
     summary="AI 智能对话（流式 SSE）",
-    description="以 Server-Sent Events 流式返回 AI 智能体的对话响应。支持三种执行模式，首先返回 session_id，随后逐事件推送对话内容。",
+    description="以 Server-Sent Events 流式返回 AI 智能体的对话响应。支持多种执行模式。",
     responses={
         400: {"description": "请求参数错误"},
         500: {"description": "服务器内部错误"},
@@ -149,6 +156,80 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post(
+    "/resume",
+    summary="恢复暂停的对话（审批确认）",
+    description="当 Agent 需要用户确认高风险操作时，此端点恢复暂停的图执行。",
+    responses={
+        404: {"description": "无暂停的会话"},
+    },
+)
+async def resume_endpoint(req: ResumeRequest):
+    """Resume a paused graph after user approval/denial."""
+    from app.graphs.interrupt_store import pop
+
+    paused = pop(req.session_id)
+    if not paused:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")
+
+    graph = paused["graph"]
+    config = paused["config"]
+    mode = paused["mode"]
+    user_message = paused["user_message"]
+
+    async def resume_generator():
+        from langgraph.types import Command
+        resume_value = {"approved": req.approved}
+        cmd = Command(resume=resume_value)
+
+        try:
+            async for event in graph.astream_events(cmd, config, version="v2"):
+                kind = event.get("event", "")
+
+                if kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and chunk.content:
+                        yield f"event: answer_chunk\ndata: {json.dumps({'text': chunk.content}, ensure_ascii=False)}\n\n"
+
+                elif kind == "on_tool_start":
+                    tool_name = event.get("name", "")
+                    tool_input = event.get("data", {}).get("input", {})
+                    yield f"event: tool_call\ndata: {json.dumps({'tool': tool_name, 'args': tool_input}, ensure_ascii=False)}\n\n"
+
+                elif kind == "on_tool_end":
+                    tool_name = event.get("name", "")
+                    output = event.get("data", {}).get("output", "")
+                    if not isinstance(output, str):
+                        output = json.dumps(output, ensure_ascii=False, default=str)
+                    if len(output) > 2000:
+                        output = output[:2000] + "...(截断)"
+                    yield f"event: tool_result\ndata: {json.dumps({'tool': tool_name, 'result': output}, ensure_ascii=False)}\n\n"
+
+                elif kind == "on_chat_model_end":
+                    output = event.get("data", {}).get("output")
+                    content = output.content if output and hasattr(output, "content") else ""
+                    if content:
+                        yield f"event: answer_chunk\ndata: {json.dumps({'text': content}, ensure_ascii=False)}\n\n"
+
+            yield f"event: done\ndata: {json.dumps({'answer': ''}, ensure_ascii=False)}\n\n"
+
+        except Exception as e:
+            from app.graphs import format_llm_error
+            msg = format_llm_error(e)
+            yield f"event: error\ndata: {json.dumps({'message': msg}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        resume_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         },
     )

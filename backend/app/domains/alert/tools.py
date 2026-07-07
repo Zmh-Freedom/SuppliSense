@@ -77,21 +77,41 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
 
 @tool
 def add_to_watchlist(company_name: str) -> dict:
-    """将企业加入监控清单。
+    """将企业加入监控清单（需要用户确认）。
 
     Args:
         company_name: 企业全称
     """
+    from app.graphs.approval import needs_approval, request_approval
+
+    if needs_approval("add_to_watchlist", {"company_name": company_name}):
+        try:
+            approved = request_approval("add_to_watchlist", {"company_name": company_name})
+        except RuntimeError:
+            approved = True  # 不在图上下文中（如直接 API 调用），默认通过
+        if not approved:
+            return {"cancelled": True, "message": f"用户取消了将 {company_name} 加入监控清单的操作"}
+
     from app.domains.alert.service import add_to_watchlist as _add
     return _add(company_name)
 
 
 @tool
 def remove_from_watchlist(company_name: str) -> dict:
-    """将企业从监控清单移除。
+    """将企业从监控清单移除（需要用户确认）。
 
     Args:
         company_name: 企业全称
     """
+    from app.graphs.approval import needs_approval, request_approval
+
+    if needs_approval("remove_from_watchlist", {"company_name": company_name}):
+        try:
+            approved = request_approval("remove_from_watchlist", {"company_name": company_name})
+        except RuntimeError:
+            approved = True
+        if not approved:
+            return {"cancelled": True, "message": f"用户取消了将 {company_name} 移出监控清单的操作"}
+
     from app.domains.alert.service import remove_from_watchlist as _remove
     return _remove(company_name)

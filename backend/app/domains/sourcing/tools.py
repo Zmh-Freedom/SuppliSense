@@ -35,8 +35,18 @@ def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
 
     Args:
         result_id: 寻源结果 ID
-        action: 动作类型，可选值: watchlist(加入监控), apply_access(申请准入)
+        action: 动作类型，可选值: watchlist(加入监控), apply_access(申请准入，需确认)
     """
+    from app.graphs.approval import needs_approval, request_approval
+
+    if needs_approval("select_sourcing_result", {"result_id": result_id, "action": action}):
+        try:
+            approved = request_approval("select_sourcing_result", {"result_id": result_id, "action": action})
+        except RuntimeError:
+            approved = True
+        if not approved:
+            return {"cancelled": True, "message": f"用户取消了准入申请操作"}
+
     from app.domains.sourcing.service import select_result as _select
     return _select(result_id, action, user_id="agent")
 

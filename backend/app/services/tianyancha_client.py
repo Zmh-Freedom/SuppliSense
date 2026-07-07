@@ -199,44 +199,70 @@ def _fetch_lawsuit_paginated(company_name: str) -> None:
 
 
 def _call(path: str, company_name: str) -> dict | None:
-    result = None
-    try:
-        r = httpx.get(
-            f"{BASE_URL}{path}",
-            params={"keyword": company_name},
-            headers={"Authorization": TOKEN},
-            timeout=30.0,
-        )
-        if r.is_success:
-            data = r.json()
-            code = data.get("error_code", -1)
-            if code == 0 or code == 300000:
-                result = data
-    except Exception:
-        pass
-    _record_call(path, company_name, result is not None)
-    return result
+    return _call_with_retry(path, company_name)
 
 
 def _call_with_page(path: str, company_name: str, page_num: int, page_size: int) -> dict | None:
     """翻页调用天眼查 API。"""
-    result = None
-    try:
-        r = httpx.get(
-            f"{BASE_URL}{path}",
-            params={"keyword": company_name, "pageNum": page_num, "pageSize": page_size},
-            headers={"Authorization": TOKEN},
-            timeout=30.0,
-        )
-        if r.is_success:
-            data = r.json()
-            code = data.get("error_code", -1)
-            if code == 0 or code == 300000:
-                result = data
-    except Exception:
-        pass
-    _record_call(path, company_name, result is not None)
-    return result
+    return _call_with_retry(path, company_name, page_num, page_size)
+
+
+def _call_with_retry(
+    path: str, company_name: str,
+    page_num: int | None = None, page_size: int | None = None,
+    _max_retries: int = 2,
+) -> dict | None:
+    """调用天眼查 API，带自动重试（指数退避：1s, 2s）。
+
+    重试条件：连接错误、超时、5xx 服务端错误。
+    不重试：4xx 客户端错误、error_code 业务错误。
+    """
+    import time
+
+    last_error: Exception | None = None
+    params: dict[str, object] = {"keyword": company_name}
+    if page_num is not None:
+        params["pageNum"] = page_num
+    if page_size is not None:
+        params["pageSize"] = page_size
+
+    for attempt in range(_max_retries + 1):
+        try:
+            r = httpx.get(
+                f"{BASE_URL}{path}",
+                params=params,  # type: ignore[arg-type]
+                headers={"Authorization": TOKEN},
+                timeout=30.0,
+            )
+            if r.is_success:
+                data = r.json()
+                code = data.get("error_code", -1)
+                if code == 0 or code == 300000:
+                    _record_call(path, company_name, True)
+                    return data
+                # 业务错误不重试
+                _record_call(path, company_name, False)
+                return None
+
+            # 服务端错误可重试
+            if r.status_code >= 500 and attempt < _max_retries:
+                time.sleep(2**attempt)
+                continue
+
+            _record_call(path, company_name, False)
+            return None
+
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
+            last_error = e
+            if attempt < _max_retries:
+                time.sleep(2**attempt)
+                continue
+        except Exception:
+            _record_call(path, company_name, False)
+            return None
+
+    _record_call(path, company_name, False)
+    return None
 
 
 # ---- API call tracking ----

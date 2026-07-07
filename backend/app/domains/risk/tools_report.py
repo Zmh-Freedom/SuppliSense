@@ -25,11 +25,21 @@ def manage_scheduled_report(action: str, company_names: list[str] | None = None,
     """管理定时报告任务（创建/查看/删除）。
 
     Args:
-        action: 操作类型，可选值: create, list, delete
+        action: 操作类型，可选值: create(需确认), list, delete(需确认)
         company_names: 监控企业列表（create 时必填）
         cron: 定时表达式，如 weekly, daily（create 时使用）
         report_type: 报告格式，可选值: excel, html
     """
+    from app.graphs.approval import needs_approval, request_approval
+
+    if needs_approval("manage_scheduled_report", {"action": action, "company_names": company_names or []}):
+        try:
+            approved = request_approval("manage_scheduled_report", {"action": action, "company_names": company_names or []})
+        except RuntimeError:
+            approved = True
+        if not approved:
+            return {"cancelled": True, "message": f"用户取消了定时报告{action}操作"}
+
     from app.domains.risk.scheduled_report import (
         create_scheduled_report,
         list_scheduled_reports,

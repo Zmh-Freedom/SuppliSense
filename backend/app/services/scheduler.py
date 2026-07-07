@@ -128,23 +128,30 @@ def _scheduled_sentiment() -> None:
     analyze_all_sentiment()
 
 
+def _scheduled_proactive() -> None:
+    from app.services.proactive_agent import run_proactive_analysis
+    run_proactive_analysis()
+
+
 def start_scheduler() -> None:
     free_cron = os.getenv("ALERT_CHECK_CRON", "0 9 * * *")
     paid_cron = os.getenv("ALERT_REFRESH_CRON", "0 9 * * 1")
     digest_cron = os.getenv("FEISHU_DIGEST_CRON", "0 9 * * *")
     sentiment_cron = os.getenv("SENTIMENT_CHECK_CRON", "0 10 * * *")
     notify_cron = os.getenv("ALERT_NOTIFY_CRON", "*/30 * * * *")
+    proactive_cron = os.getenv("PROACTIVE_AGENT_CRON", "0 */2 * * *")
 
     _add_job(_scheduled_financial, free_cron, "financial_check")
     _add_job(_scheduled_digest, digest_cron, "daily_digest")
     _add_job(_scheduled_refresh, paid_cron, "full_refresh")
     _add_job(_scheduled_sentiment, sentiment_cron, "sentiment_check")
     _add_job(_scheduled_notify, notify_cron, "alert_notify")
+    _add_job(_scheduled_proactive, proactive_cron, "proactive_agent")
 
     _scheduler.start()
     logger.info(
-        "Scheduler started: financial[%s] digest[%s] refresh[%s] sentiment[%s] notify[%s]",
-        free_cron, digest_cron, paid_cron, sentiment_cron, notify_cron,
+        "Scheduler started: financial[%s] digest[%s] refresh[%s] sentiment[%s] notify[%s] proactive[%s]",
+        free_cron, digest_cron, paid_cron, sentiment_cron, notify_cron, proactive_cron,
     )
 
 
