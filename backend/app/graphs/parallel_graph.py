@@ -557,6 +557,23 @@ async def stream_parallel_graph(
                         "agent": agent,
                     })
 
+            # ---- 工具调用结束 + 自动图表 ----
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "")
+                output = event.get("data", {}).get("output", "")
+                if isinstance(output, str):
+                    result = output
+                else:
+                    result = json.dumps(output, ensure_ascii=False, default=str)
+                if len(result) > 2000:
+                    result = result[:2000] + "...(截断)"
+                yield _sse_event("tool_result", {"tool": tool_name, "result": result})
+
+                from app.graphs.chart_data import _try_auto_chart
+                chart = _try_auto_chart(tool_name, result)
+                if chart:
+                    yield _sse_event("chart_data", chart)
+
             # ---- reflector 发现问题时通知用户 ----
             elif kind == "on_chain_end" and node_name == "reflector":
                 output = event.get("data", {}).get("output", {})

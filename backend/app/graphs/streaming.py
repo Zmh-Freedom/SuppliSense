@@ -68,6 +68,12 @@ async def stream_react_graph(
                     result = result[:2000] + "...(截断)"
                 yield _sse_event("tool_result", {"tool": tool_name, "result": result})
 
+                # 自动注入图表事件
+                from app.graphs.chart_data import _try_auto_chart
+                chart = _try_auto_chart(tool_name, result)
+                if chart:
+                    yield _sse_event("chart_data", chart)
+
             # LLM 完成（非流式响应或工具调用后的回答）
             elif kind == "on_chat_model_end":
                 output = event.get("data", {}).get("output")

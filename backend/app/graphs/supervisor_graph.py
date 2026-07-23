@@ -361,6 +361,29 @@ async def stream_supervisor_graph(
                     yield _sse_event("agent_complete", {"agent": agent_name, "summary": answer[:200]})
                 current_agent = None
 
+            # ---- 工具调用开始 ----
+            elif kind == "on_tool_start":
+                tool_name = event.get("name", "")
+                tool_input = event.get("data", {}).get("input", {})
+                yield _sse_event("tool_call", {"tool": tool_name, "args": tool_input})
+
+            # ---- 工具调用结束 + 自动图表 ----
+            elif kind == "on_tool_end":
+                tool_name = event.get("name", "")
+                output = event.get("data", {}).get("output", "")
+                if isinstance(output, str):
+                    result = output
+                else:
+                    result = json.dumps(output, ensure_ascii=False, default=str)
+                if len(result) > 2000:
+                    result = result[:2000] + "...(截断)"
+                yield _sse_event("tool_result", {"tool": tool_name, "result": result})
+
+                from app.graphs.chart_data import _try_auto_chart
+                chart = _try_auto_chart(tool_name, result)
+                if chart:
+                    yield _sse_event("chart_data", chart)
+
             # ---- LLM 流式 token（仅子 agent）----
             elif kind == "on_chat_model_stream":
                 chunk = event.get("data", {}).get("chunk")
