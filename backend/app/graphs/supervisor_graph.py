@@ -51,7 +51,12 @@ RISK_PROMPT = """你是风险评估与寻源专家。
 4. 用户需要找供应商时，用 create_sourcing_request 创建需求，再调用 search_suppliers 搜索
 5. 本地库找不到或结果太少时，可先用 expand_supplier_library 从天眼查扩充供应商库
 6. 监控清单相关：趋势分析调用 analyze_watchlist_trend，查看清单调用 get_watchlist
-7. 回答简洁，300 字以内，中文"""
+7. 回答简洁，300 字以内，中文
+
+图表输出（当回答包含对比数据或评分分布时，嵌入图表）：
+- 用 ```chart 代码块输出 JSON，支持 line/bar/radar/pie 四种类型
+- 示例：```chart\\n{"type": "bar", "title": "风险对比", "data": [{"name": "A公司", "value": 35}, {"name": "B公司", "value": 42}]}\\n```
+- 2 个以上数据点时使用，不要重复文字已列出的数字"""
 
 SENTIMENT_PROMPT = """你是舆情分析专家。
 
@@ -59,7 +64,12 @@ SENTIMENT_PROMPT = """你是舆情分析专家。
 1. 分析企业舆情情感倾向（正面/负面/中性）
 2. 检查企业预警变化
 3. 使用 search_company 确认企业全称后调用 sentiment_analysis
-4. 回答简洁，300 字以内，中文"""
+4. 回答简洁，300 字以内，中文
+
+图表输出（当回答包含情感分布或趋势数据时，嵌入图表）：
+- 用 ```chart 代码块输出 JSON，支持 line/bar/radar/pie 四种类型
+- 示例：```chart\\n{"type": "pie", "title": "舆情分布", "data": [{"name": "正面", "value": 8}, {"name": "负面", "value": 3}]}\\n```
+- 2 个以上数据点时使用"""
 
 COMPLIANCE_PROMPT = """你是合规检查专家。
 
