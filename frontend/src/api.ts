@@ -101,6 +101,13 @@ export const api = {
 };
 
 // ---- Streaming (SSE) ----
+export interface ApprovalData {
+  message: string;
+  tool: string;
+  args: Record<string, unknown>;
+  session_id: string;
+}
+
 export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
   onThinking?: (data: { iteration?: number; message: string }) => void;
@@ -113,37 +120,18 @@ export interface StreamCallbacks {
   onAnswerChunk?: (data: { text: string }) => void;
   onDone?: (data: { answer: string }) => void;
   onError?: (data: { message: string }) => void;
+  onClarification?: (data: { message: string; missing: string[] }) => void;
+  onApprovalRequired?: (data: ApprovalData) => void;
+  onChartData?: (data: import('./types').ChartData) => void;
 }
 
-export async function chatStream(
-  message: string,
-  sessionId: string,
+async function _parseSSEStream(
+  res: Response,
   callbacks: StreamCallbacks,
-  mode: string = 'auto',
 ): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  if (!res.body) throw new Error('No response body');
 
-  try {
-    const res = await fetch(`${API_BASE}/chat/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, session_id: sessionId, mode }),
-      credentials: 'same-origin',
-      signal: controller.signal,
-    });
-
-    if (res.status === 401) {
-      clearStoredUser();
-      window.location.reload();
-      throw new Error('登录已过期，请重新登录');
-    }
-
-    if (!res.ok || !res.body) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    const reader = res.body.getReader();
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let fullAnswer = '';
@@ -200,6 +188,15 @@ export async function chatStream(
             case 'error':
               callbacks.onError?.(data);
               break;
+            case 'clarification':
+              callbacks.onClarification?.(data);
+              break;
+            case 'approval_required':
+              callbacks.onApprovalRequired?.(data);
+              break;
+            case 'chart_data':
+              callbacks.onChartData?.(data);
+              break;
           }
           currentEvent = '';
         } catch {
@@ -210,6 +207,70 @@ export async function chatStream(
   }
 
   return fullAnswer;
+}
+
+export async function chatStream(
+  message: string,
+  sessionId: string,
+  callbacks: StreamCallbacks,
+  mode: string = 'auto',
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+
+  try {
+    const res = await fetch(`${API_BASE}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, session_id: sessionId, mode }),
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+
+    if (res.status === 401) {
+      clearStoredUser();
+      window.location.reload();
+      throw new Error('登录已过期，请重新登录');
+    }
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    return await _parseSSEStream(res, callbacks);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function resumeChat(
+  sessionId: string,
+  approved: boolean,
+  callbacks: StreamCallbacks,
+): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+
+  try {
+    const res = await fetch(`${API_BASE}/chat/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, approved }),
+      credentials: 'same-origin',
+      signal: controller.signal,
+    });
+
+    if (res.status === 401) {
+      clearStoredUser();
+      window.location.reload();
+      throw new Error('登录已过期，请重新登录');
+    }
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    return await _parseSSEStream(res, callbacks);
   } finally {
     clearTimeout(timeout);
   }

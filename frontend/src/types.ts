@@ -69,6 +69,15 @@ export interface ChatMessage {
   content: string;
 }
 
+// ---- Chat Charts ----
+export interface ChartData {
+  type: 'line' | 'bar' | 'radar' | 'pie' | 'gauge';
+  title: string;
+  data: Array<Record<string, unknown>>;
+  source?: 'tool' | 'llm';
+  tool?: string;
+}
+
 // ---- Dashboard ----
 export interface Prediction {
   company_name: string;
@@ -287,4 +296,132 @@ export interface SanctionsResult {
   clean: boolean;
   match_count: number;
   matches: SanctionsMatch[];
+}
+
+// ---- Supplier Master Data ----
+
+export interface SupplierMasterData {
+  _id: string;
+  name: string;
+  unified_code?: string;
+  legal_person?: string;
+  registered_capital?: string;
+  establish_time?: string;
+  reg_status?: string;
+  categories: string[];
+  regions: string[];
+  contact_person?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  address?: string;
+  scale?: string;
+  description?: string;
+  certifications: { type: string; cert_number?: string; valid_until?: string }[];
+  annual_revenue?: number;
+  credit_rating?: string;
+  status: string;
+  source?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+// ---- Supplier Profile (aggregated) ----
+
+export interface ProfileBasicInfo {
+  name: string;
+  unified_code?: string;
+  legal_person?: string;
+  registered_capital?: string;
+  establish_time?: string;
+  reg_status?: string;
+  industry?: string;
+  categories: string[];
+  regions: string[];
+  scale?: string;
+  address?: string;
+  contact_person?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  status: string;
+}
+
+export interface ProfileRiskSummary {
+  risk_score: number;
+  risk_level: string;
+  trend: { date: string; risk_score: number; risk_level?: string }[];
+  alert_count: number;
+  last_checked?: string;
+  in_watchlist: boolean;
+}
+
+export interface ProfileFinancialSnapshot {
+  revenue_growth?: number;
+  net_profit_growth?: number;
+  debt_ratio?: number;
+  cash_flow?: number;
+  roe?: number;
+  net_profit_margin?: number;
+  current_ratio?: number;
+  quick_ratio?: number;
+  credit_rating?: string;
+  annual_revenue?: number;
+  cached_at?: string;
+}
+
+export interface ProfileSentimentSummary {
+  overall_sentiment: string;
+  sentiment_score: number;
+  negative_ratio: number;
+  article_count: number;
+  top_tags: string[];
+  analyzed_at?: string;
+}
+
+export interface ProfileComplianceStatus {
+  sanctions_clean: boolean;
+  sanctions_match_count: number;
+  lawsuit_count: number;
+  executed_count: number;
+  dishonesty_count: number;
+  abnormal_operation_count: number;
+  administrative_penalty_count: number;
+  tax_arrears_count: number;
+}
+
+export interface ProfileESGSummary {
+  environmental?: { score: number; level: string; detail: { item: string; value: string | number }[] };
+  social?: { score: number; level: string; detail: { item: string; value: string | number }[] };
+  governance?: { score: number; level: string; detail: { item: string; value: string | number }[] };
+}
+
+export interface ProfileAlertItem {
+  _id: string;
+  severity: string;
+  changes: { field: string; old: unknown; new: unknown }[];
+  created_at: string;
+}
+
+export interface ProfileRelationshipSummary {
+  related_count: number;
+  branch_count: number;
+  dependency_count: number;
+  high_risk_related_count: number;
+  entities: { name: string; relation_type: string; risk_score?: number }[];
+}
+
+export interface ChangelogEntry {
+  changed: Record<string, { old: unknown; new: unknown }>;
+  changed_at: string;
+}
+
+export interface SupplierProfile {
+  basic_info: ProfileBasicInfo;
+  risk?: ProfileRiskSummary;
+  financial?: ProfileFinancialSnapshot;
+  sentiment?: ProfileSentimentSummary;
+  compliance?: ProfileComplianceStatus;
+  esg?: ProfileESGSummary;
+  alerts: ProfileAlertItem[];
+  relationships?: ProfileRelationshipSummary;
+  changelog: ChangelogEntry[];
 }
