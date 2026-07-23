@@ -1,12 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
-import { AnimatePresence, motion } from 'framer-motion';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { api, chatStream } from '../api';
-import { getRiskColor } from '../riskColors';
-import type { ChatMessage, RiskResult } from '../types';
+import { chatStream, resumeChat } from '../api';
+import type { ApprovalData } from '../api';
+import type { ChatMessage, ChartData } from '../types';
+import ChartRenderer from './ChartRenderer';
+
+// react-markdown 自定义渲染：支持 ```chart 代码块
+const markdownComponents = {
+  code: ({ className, children, ...rest }: React.ComponentPropsWithoutRef<'code'> & { className?: string }) => {
+    if (className === 'language-chart') {
+      try {
+        const chartData = JSON.parse(String(children).replace(/\n/g, ''));
+        return <ChartRenderer data={chartData} />;
+      } catch {
+        // 解析失败时回退为普通代码块
+      }
+    }
+    return <code className={className} {...rest}>{children}</code>;
+  },
+};
 
 const CAPABILITIES = [
   { label: '风险评估', desc: '全面分析企业风险状况', prompt: '对 {公司名} 进行全面的风险评估' },
@@ -51,6 +65,8 @@ interface StreamState {
   agents: { selected: string[]; reasoning: string; status: Record<string, 'running' | 'complete' | 'error'> } | null;
   toolCalls: Array<{ tool: string; args: Record<string, unknown>; result?: unknown }>;
   answerChunks: string[];
+  approval: ApprovalData | null;
+  charts: ChartData[];
 }
 
 export default function ChatView() {
@@ -121,7 +137,7 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs);
     setLoading(true);
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [] });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], approval: null, charts: [] });
     answerAccRef.current = '';
 
     try {
@@ -208,6 +224,21 @@ export default function ChatView() {
           setStreamState(null);
           setLoading(false);
         },
+        onClarification: (data) => {
+          newMsgs.push({ role: 'assistant', content: data.message });
+          persist(sid, newMsgs);
+          setStreamState(null);
+          setLoading(false);
+        },
+        onApprovalRequired: (data) => {
+          setStreamState(prev => prev ? { ...prev, approval: data } : null);
+        },
+        onChartData: (data) => {
+          setStreamState(prev => prev ? {
+            ...prev,
+            charts: [...prev.charts, data]
+          } : null);
+        },
       }, 'auto');
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
@@ -217,6 +248,91 @@ export default function ChatView() {
       setLoading(false);
     }
   }, [input, loading, activeSid, msgs]);
+
+  const handleApproval = useCallback(async (approved: boolean) => {
+    if (!streamState?.approval) return;
+    const { session_id: approvalSid, tool, args, message } = streamState.approval;
+
+    // 记录审批结果到消息历史
+    const statusText = approved ? '✅ 已批准' : '❌ 已拒绝';
+    const approvalMsg: ChatMessage = {
+      role: 'assistant',
+      content: `${message}\n\n${statusText}：${tool}(${JSON.stringify(args)})`,
+    };
+    const updatedMsgs = [...msgs, approvalMsg];
+    persist(approvalSid, updatedMsgs);
+
+    // 清除审批 UI，恢复 loading 状态继续流式输出
+    setStreamState(prev => prev ? {
+      ...prev,
+      approval: null,
+      thinking: '正在执行操作...',
+      toolCalls: [],
+      answerChunks: [],
+      charts: [],
+    } : null);
+    answerAccRef.current = '';
+
+    const resumeMsgs: ChatMessage[] = [...updatedMsgs];
+
+    try {
+      await resumeChat(approvalSid, approved, {
+        onThinking: (data) => {
+          setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
+        },
+        onToolCall: (data) => {
+          setStreamState(prev => prev ? {
+            ...prev,
+            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }]
+          } : null);
+        },
+        onToolResult: (data) => {
+          setStreamState(prev => {
+            if (!prev) return null;
+            const toolCalls = [...prev.toolCalls];
+            const lastTool = toolCalls[toolCalls.length - 1];
+            if (lastTool && lastTool.tool === data.tool) {
+              lastTool.result = data.result;
+            }
+            return { ...prev, toolCalls };
+          });
+        },
+        onAnswerChunk: (data) => {
+          answerAccRef.current += data.text;
+          setStreamState(prev => prev ? {
+            ...prev,
+            answerChunks: [...prev.answerChunks, data.text]
+          } : null);
+        },
+        onChartData: (data) => {
+          setStreamState(prev => prev ? {
+            ...prev,
+            charts: [...prev.charts, data]
+          } : null);
+        },
+        onDone: (data) => {
+          const finalAnswer = answerAccRef.current || data.answer;
+          resumeMsgs.push({ role: 'assistant', content: finalAnswer });
+          answerAccRef.current = '';
+          persist(approvalSid, resumeMsgs);
+          setStreamState(null);
+          setLoading(false);
+        },
+        onError: (data) => {
+          resumeMsgs.push({ role: 'assistant', content: `错误：${data.message}` });
+          persist(approvalSid, resumeMsgs);
+          setStreamState(null);
+          setLoading(false);
+        },
+      });
+    } catch (err) {
+      const isTimeout = err instanceof DOMException && err.name === 'AbortError';
+      resumeMsgs.push({ role: 'assistant', content: isTimeout ? '请求超时，请重试' : '操作失败，请重试' });
+      persist(approvalSid, resumeMsgs);
+      setStreamState(null);
+      setLoading(false);
+    }
+  }, [streamState?.approval, msgs]);
 
   const handleCapabilityClick = (prompt: string) => {
     setInput(prompt);
@@ -363,7 +479,7 @@ export default function ChatView() {
                 : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'
             }`}>
               <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
               </div>
             </div>
           </div>
@@ -432,11 +548,41 @@ export default function ChatView() {
                   ))}
                 </div>
               )}
+              {/* Auto-injected charts from tool results */}
+              {streamState.charts.map((chart, i) => (
+                <ChartRenderer key={`chart-${i}`} data={chart} />
+              ))}
+              {/* Approval card (Human-in-the-Loop) */}
+              {streamState.approval && (
+                <div className="bg-[var(--color-surface)] glass-surface border border-amber-200 rounded-2xl px-4 py-3 text-sm shadow-sm space-y-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-amber-500 shrink-0">⚠️</span>
+                    <span className="text-[var(--color-text)]">{streamState.approval.message}</span>
+                  </div>
+                  <div className="text-xs text-gray-400 font-mono pl-6">
+                    {streamState.approval.tool}({JSON.stringify(streamState.approval.args)})
+                  </div>
+                  <div className="flex gap-2 pl-6">
+                    <button
+                      onClick={() => handleApproval(true)}
+                      className="bg-green-500 text-white rounded-lg px-4 py-1.5 text-xs hover:bg-green-600 transition-colors"
+                    >
+                      ✓ 批准
+                    </button>
+                    <button
+                      onClick={() => handleApproval(false)}
+                      className="bg-gray-200 text-gray-600 rounded-lg px-4 py-1.5 text-xs hover:bg-gray-300 transition-colors"
+                    >
+                      ✗ 拒绝
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* Streaming answer */}
               {streamState.answerChunks.length > 0 && (
                 <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
                   <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamState.answerChunks.join('')}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{streamState.answerChunks.join('')}</ReactMarkdown>
                   </div>
                   <span className="inline-block w-2 h-4 bg-[var(--color-primary-bg)] animate-pulse ml-1" />
                 </div>
@@ -446,9 +592,6 @@ export default function ChatView() {
         )}
         <div ref={bottomRef} />
       </div>
-
-      {/* quick assess bar */}
-      <QuickAssess />
 
       {/* input */}
       <div className="px-4 pb-6 pt-2">
@@ -475,107 +618,6 @@ export default function ChatView() {
         </div>
       </div>
       </div>
-    </div>
-  );
-}
-
-function QuickAssess() {
-  const [name, setName] = useState('');
-  const [data, setData] = useState<RiskResult | null>(null);
-  const [open, setOpen] = useState(false);
-
-  const assessMutation = useMutation({
-    mutationFn: () => api.post<RiskResult>('/risk/assess', { company_name: name.trim() }),
-    onSuccess: (res) => { setData(res); setOpen(true); },
-    onError: () => setData(null),
-  });
-
-  const assess = () => {
-    if (!name.trim() || assessMutation.isPending) return;
-    assessMutation.mutate();
-  };
-
-  const rd = data?.risk_detail;
-  const fin = data?.financial;
-
-  return (
-    <div className="px-4">
-      <div className="border-t border-[var(--color-divider)] pt-3">
-        <div className="flex gap-2 items-center">
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && assess()}
-            placeholder="快速查看风险详情…"
-            className="flex-1 text-xs border border-[var(--color-border)] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[var(--color-border-focus)] placeholder-gray-300"
-          />
-          <button onClick={assess} disabled={assessMutation.isPending}
-            className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] disabled:opacity-40">
-            {assessMutation.isPending ? '查询中' : '查看'}
-          </button>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {open && data && (
-          <motion.div
-            className="mt-3 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold">{name}</span>
-              <button onClick={() => { setOpen(false); setName(''); }} className="text-gray-400 hover:text-gray-600 text-sm">×</button>
-            </div>
-
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold text-white"
-                style={{ background: getRiskColor(data.risk_score) }}>
-                {data.risk_score}
-              </div>
-              <span className="text-sm font-semibold">{data.risk_level}</span>
-            </div>
-
-            <div className="grid grid-cols-4 gap-2 mb-3">
-              {fin ? (
-                <>
-                  <MiniMetric label="营收增长" value={`${(fin.revenue_growth * 100).toFixed(1)}%`} />
-                  <MiniMetric label="净利增长" value={`${(fin.net_profit_growth * 100).toFixed(1)}%`} />
-                  <MiniMetric label="负债率" value={`${(fin.debt_ratio * 100).toFixed(1)}%`} />
-                  <MiniMetric label="每股现金流" value={`¥${fin.cash_flow.toFixed(2)}`} />
-                </>
-              ) : <p className="text-xs text-gray-400 col-span-4">无财报数据</p>}
-            </div>
-
-            {rd && (
-              <div className="grid grid-cols-3 gap-1 text-xs text-gray-500">
-                <span>诉讼 {rd.lawsuit_count}</span>
-                <span>被执行 {rd.executed_count}</span>
-                <span>失信 {rd.dishonesty_count}</span>
-                <span>经营异常 {rd.abnormal_operation_count}</span>
-                <span>行政处罚 {rd.administrative_penalty_count}</span>
-                <span>重大诉讼 {rd.major_lawsuit ? '⚠️是' : '✓否'}</span>
-                <span>法人变更 {rd.legal_person_change_frequent ? '⚠️是' : '✓否'}</span>
-                <span>对外担保 {rd.guarantee_count ?? 0}</span>
-                <span>股权质押 {rd.pledge_count ?? 0}</span>
-                <span>破产/清算 {rd.bankruptcy_count ?? 0}</span>
-                <span>环保处罚 {rd.env_penalty_count ?? 0}</span>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function MiniMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-[var(--color-surface-hover)] rounded-lg p-1.5 text-center">
-      <div className="text-xs font-semibold">{value}</div>
-      <div className="text-[10px] text-gray-400">{label}</div>
     </div>
   );
 }
