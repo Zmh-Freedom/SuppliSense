@@ -11,6 +11,7 @@ const ContagionView = lazy(() => import('./components/ContagionView'));
 const Settings = lazy(() => import('./components/Settings'));
 const SourcingPage = lazy(() => import('./components/SourcingPage'));
 const SupplierLibraryPage = lazy(() => import('./components/SupplierLibraryPage'));
+const SupplierProfilePage = lazy(() => import('./components/SupplierProfilePage'));
 
 function Lazy({ children }: { children: ReactNode }) {
   return (
@@ -42,6 +43,7 @@ export const router = createBrowserRouter([
       { path: 'assess/:companyName?', element: <Lazy><AssessView /></Lazy> },
       { path: 'sourcing', element: <Lazy><SourcingPage /></Lazy> },
       { path: 'suppliers', element: <Lazy><SupplierLibraryPage /></Lazy> },
+      { path: 'suppliers/:id', element: <Lazy><SupplierProfilePage /></Lazy> },
       { path: 'chat', element: <Lazy><ChatView /></Lazy> },
       { path: 'contagion', element: <Lazy><ContagionView /></Lazy> },
       { path: 'settings', element: <Lazy><Settings /></Lazy> },

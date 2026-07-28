@@ -36,6 +36,7 @@ from app.domains.risk.api_scenario import router as scenario_router
 from app.domains.risk.api_sentiment import router as sentiment_router
 from app.domains.risk.api_trend import router as trend_router
 from app.domains.sourcing.api import router as sourcing_router
+from app.domains.supplier.api import router as supplier_router
 from app.domains.sourcing.api_access import router as access_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
@@ -252,6 +253,7 @@ api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(upload_router, prefix="/upload", tags=["upload"])
 api_v1.include_router(report_router, prefix="/report", tags=["report"])
 api_v1.include_router(sourcing_router)
+api_v1.include_router(supplier_router)
 api_v1.include_router(access_router)
 api_v1.include_router(trend_router)
 api_v1.include_router(compare_router)

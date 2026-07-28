@@ -1,0 +1,333 @@
+"""Supplier profile aggregation service.
+
+Builds a unified supplier profile by querying all existing domains
+(risk, financial, sentiment, compliance, ESG, alerts, relationships).
+Each domain query is isolated — one failure does not affect others.
+"""
+
+from datetime import datetime, timedelta, timezone
+
+from app.core.logging import get_logger
+
+logger = get_logger()
+
+
+def build_supplier_profile(supplier_id: str) -> dict:
+    """Build the complete supplier profile from all domain sources.
+
+    Args:
+        supplier_id: The supplier _id (UUID string).
+
+    Returns:
+        Complete profile dict matching SupplierProfileResponse schema.
+
+    Raises:
+        ValueError: If supplier not found.
+    """
+    from app.domains.supplier.repo import get_supplier, get_changelog
+
+    master = get_supplier(supplier_id)
+    if not master:
+        raise ValueError(f"Supplier {supplier_id} not found")
+
+    name = master["name"]
+
+    # Build each section independently — failures are logged but don't block
+    profile: dict = {
+        "basic_info": _build_basic_info(master),
+        "risk": _try_build("risk", name, _build_risk_summary),
+        "financial": _try_build("financial", name, _build_financial_snapshot, master),
+        "sentiment": _try_build("sentiment", name, _build_sentiment_summary),
+        "compliance": _try_build("compliance", name, _build_compliance_status),
+        "esg": _try_build("esg", name, _build_esg_summary),
+        "alerts": _try_build("alerts", name, _build_alert_list) or [],
+        "relationships": _try_build("relationships", name, _build_relationship_summary),
+        "changelog": _try_build("changelog", supplier_id, get_changelog, supplier_id, 20) or [],
+    }
+
+    return profile
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _try_build(section: str, key: str, fn, *args):
+    """Call fn(*args) and return its result, logging errors silently."""
+    try:
+        return fn(*args)
+    except Exception:
+        logger.exception("profile_section_failed", section=section, key=key)
+        return None
+
+
+def _build_basic_info(master: dict) -> dict:
+    """Extract basic info from the master record."""
+    return {
+        "name": master.get("name", ""),
+        "unified_code": master.get("unified_code"),
+        "legal_person": master.get("legal_person"),
+        "registered_capital": master.get("registered_capital"),
+        "establish_time": master.get("establish_time"),
+        "reg_status": master.get("reg_status"),
+        "industry": master.get("industry"),
+        "categories": master.get("categories", []),
+        "regions": master.get("regions", []),
+        "scale": master.get("scale"),
+        "address": master.get("address"),
+        "contact_person": master.get("contact_person"),
+        "contact_phone": master.get("contact_phone"),
+        "contact_email": master.get("contact_email"),
+        "status": master.get("status", "prospective"),
+    }
+
+
+# ---- Risk ----
+
+def _build_risk_summary(company_name: str) -> dict | None:
+    """Build risk summary from assessment_history (PG) or alert_snapshots (Mongo)."""
+    from app.domains.risk.service import SCORING_VERSION
+
+    trend_data: list[dict] = []
+    risk_score = 0
+    risk_level = "未知"
+    last_checked = None
+
+    # Prefer PostgreSQL
+    try:
+        from app.domains.risk.repo_assessment import get_trend as pg_get_trend
+
+        data = pg_get_trend(company_name, days=90, scoring_version=SCORING_VERSION)
+        if data:
+            trend_data = data
+    except Exception:
+        pass
+
+    # Fallback to MongoDB alert_snapshots
+    if not trend_data:
+        from app.db.mongo import get_db
+
+        db = get_db()
+        since = datetime.now(timezone.utc) - timedelta(days=90)
+        snapshots = list(
+            db["alert_snapshots"]
+            .find(
+                {"company_name": company_name, "checked_at": {"$gte": since}},
+                {"checked_at": 1, "risk_score": 1, "risk_level": 1, "_id": 0},
+            )
+            .sort("checked_at", 1)
+        )
+        trend_data = [
+            {
+                "date": s["checked_at"].strftime("%Y-%m-%d"),
+                "risk_score": s.get("risk_score", 0),
+                "risk_level": s.get("risk_level", ""),
+            }
+            for s in snapshots
+        ]
+
+    if trend_data:
+        latest = trend_data[-1]
+        risk_score = latest.get("risk_score", 0)
+        risk_level = latest.get("risk_level", "未知")
+        last_checked = latest.get("date", "")
+
+    # Check watchlist
+    in_watchlist = False
+    alert_count = 0
+    if trend_data:
+        try:
+            from app.db.mongo import get_db
+            db = get_db()
+            wl = db["watchlist"].find_one({"company_name": company_name})
+            in_watchlist = wl is not None
+            alert_count = db["alerts"].count_documents({"company_name": company_name})
+        except Exception:
+            pass
+
+    return {
+        "risk_score": risk_score,
+        "risk_level": risk_level,
+        "trend": trend_data,
+        "alert_count": alert_count,
+        "last_checked": last_checked,
+        "in_watchlist": in_watchlist,
+    }
+
+
+# ---- Financial ----
+
+def _build_financial_snapshot(company_name: str, master: dict) -> dict | None:
+    """Build financial snapshot from financial_cache + master record."""
+    from app.db.mongo import get_db
+
+    db = get_db()
+    cache = db["financial_cache"].find_one({"name": company_name})
+
+    result: dict = {
+        "revenue_growth": None,
+        "net_profit_growth": None,
+        "debt_ratio": None,
+        "cash_flow": None,
+        "roe": None,
+        "net_profit_margin": None,
+        "current_ratio": None,
+        "quick_ratio": None,
+        "credit_rating": master.get("credit_rating"),
+        "annual_revenue": master.get("annual_revenue"),
+        "cached_at": None,
+    }
+
+    if cache:
+        metrics = cache.get("metrics", {})
+        result["revenue_growth"] = metrics.get("revenue_growth")
+        result["net_profit_growth"] = metrics.get("net_profit_growth")
+        result["debt_ratio"] = metrics.get("debt_ratio")
+        result["cash_flow"] = metrics.get("cash_flow")
+        result["roe"] = metrics.get("roe")
+        result["net_profit_margin"] = metrics.get("net_profit_margin")
+        result["current_ratio"] = metrics.get("current_ratio")
+        result["quick_ratio"] = metrics.get("quick_ratio")
+        cached_at = cache.get("cached_at")
+        if cached_at and hasattr(cached_at, "isoformat"):
+            result["cached_at"] = cached_at.isoformat()
+
+    return result
+
+
+# ---- Sentiment ----
+
+def _build_sentiment_summary(company_name: str) -> dict | None:
+    """Build sentiment summary from sentiment_results collection."""
+    from app.db.mongo import get_db
+
+    db = get_db()
+    doc = db["sentiment_results"].find_one(
+        {"company_name": company_name},
+        sort=[("analyzed_at", -1)],
+    )
+
+    if not doc:
+        return None
+
+    analyzed_at = doc.get("analyzed_at")
+    if analyzed_at and hasattr(analyzed_at, "isoformat"):
+        analyzed_at = analyzed_at.isoformat()
+
+    return {
+        "overall_sentiment": doc.get("overall_sentiment", "未知"),
+        "sentiment_score": doc.get("sentiment_score", 0),
+        "negative_ratio": doc.get("negative_ratio", 0),
+        "article_count": doc.get("article_count", 0),
+        "top_tags": doc.get("top_tags", []),
+        "analyzed_at": analyzed_at,
+    }
+
+
+# ---- Compliance ----
+
+def _build_compliance_status(company_name: str) -> dict:
+    """Build compliance status from risk collections."""
+    from app.db.mongo import get_db
+
+    db = get_db()
+
+    # Count helper
+    def _count(coll: str) -> int:
+        doc = db[coll].find_one({"name": company_name})
+        if not doc:
+            return 0
+        items = doc.get("items", {})
+        if isinstance(items, dict):
+            return items.get("result", {}).get("total", 0) or 0
+        return 0
+
+    # Sanctions
+    sanctions_clean = True
+    sanctions_count = 0
+    try:
+        from app.domains.risk.sanctions_service import assess_sanctions
+        sanctions = assess_sanctions(company_name)
+        if sanctions:
+            sanctions_clean = sanctions.get("clean", True)
+            sanctions_count = sanctions.get("match_count", 0)
+    except Exception:
+        pass
+
+    return {
+        "sanctions_clean": sanctions_clean,
+        "sanctions_match_count": sanctions_count,
+        "lawsuit_count": _count("lawSuit"),
+        "executed_count": _count("executedPerson"),
+        "dishonesty_count": _count("dishonesty"),
+        "abnormal_operation_count": _count("abnormal"),
+        "administrative_penalty_count": _count("punishmentInfo"),
+        "tax_arrears_count": _count("taxArrears"),
+    }
+
+
+# ---- ESG ----
+
+def _build_esg_summary(company_name: str) -> dict | None:
+    """Build ESG summary by calling the existing ESG service."""
+    try:
+        from app.domains.risk.esg_service import assess_esg
+        result = assess_esg(company_name)
+        if result:
+            return {
+                "environmental": result.get("environmental"),
+                "social": result.get("social"),
+                "governance": result.get("governance"),
+            }
+    except Exception:
+        pass
+    return None
+
+
+# ---- Alerts ----
+
+def _build_alert_list(company_name: str) -> list[dict]:
+    """Get recent alerts for a company."""
+    from app.db.mongo import get_db
+
+    db = get_db()
+    docs = list(
+        db["alerts"]
+        .find({"company_name": company_name})
+        .sort("created_at", -1)
+        .limit(20)
+    )
+    result: list[dict] = []
+    for doc in docs:
+        created_at = doc.get("created_at")
+        if created_at and hasattr(created_at, "isoformat"):
+            created_at = created_at.isoformat()
+        result.append({
+            "_id": str(doc["_id"]),
+            "severity": doc.get("severity", "warning"),
+            "changes": doc.get("changes", []),
+            "created_at": str(created_at) if created_at else "",
+        })
+    return result
+
+
+# ---- Relationships ----
+
+def _build_relationship_summary(company_name: str) -> dict | None:
+    """Build relationship summary via contagion analysis."""
+    try:
+        from app.domains.risk.contagion import analyze_contagion
+        result = analyze_contagion(company_name)
+        if result:
+            entities = result.get("related_entities", [])
+            return {
+                "related_count": result.get("related_count", 0),
+                "branch_count": result.get("branch_count", 0),
+                "dependency_count": result.get("dependency_count", 0),
+                "high_risk_related_count": result.get("high_risk_related_count", 0),
+                "entities": entities if isinstance(entities, list) else [],
+            }
+    except Exception:
+        pass
+    return None

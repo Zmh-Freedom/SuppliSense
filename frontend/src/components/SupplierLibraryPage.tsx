@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
@@ -60,6 +61,7 @@ function formatEstablishTime(t: string): string {
 
 export default function SupplierLibraryPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const user = getStoredUser();
   const canManage = user?.role === 'admin' || user?.role === 'analyst';
   const [keyword, setKeyword] = useState('');
@@ -492,7 +494,12 @@ export default function SupplierLibraryPage() {
                     <>
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-[var(--color-text)]">{supplier.name}</span>
+                          <button
+                            onClick={() => navigate(`/suppliers/${supplier._id}`)}
+                            className="font-medium text-[var(--color-primary-bg)] hover:underline text-left"
+                          >
+                            {supplier.name}
+                          </button>
                           <span className={`text-xs px-1.5 py-0.5 rounded-full ${suppStatusColor[supplier.status] || 'text-gray-400 bg-gray-100'}`}>
                             {supplier.status === 'prospective' ? '待考察' : supplier.status === 'approved' ? '已准入' : supplier.status === 'blocked' ? '已拉黑' : supplier.status === 'deprecated' ? '已停用' : supplier.status}
                           </span>
@@ -514,6 +521,12 @@ export default function SupplierLibraryPage() {
                           ✎
                         </button>
                       )}
+                      <button
+                        onClick={() => navigate(`/suppliers/${supplier._id}`)}
+                        className="text-xs text-[var(--color-primary-bg)] hover:underline px-2"
+                      >
+                        画像
+                      </button>
                     </>
                   )}
                 </div>
