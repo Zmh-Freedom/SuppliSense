@@ -118,5 +118,5 @@ def ensure_pg_schema() -> None:
             )
         logger.info("pg_schema_ready")
     except Exception as e:
-        logger.error("pg_schema_init_failed", error=str(e))
+        logger.exception("PostgreSQL schema initialization failed: %s", e)
         raise RuntimeError(f"PostgreSQL schema 初始化失败: {e}") from e

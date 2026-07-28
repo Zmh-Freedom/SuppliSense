@@ -37,7 +37,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${PG_USER:-sra}
-      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?请设置 PG_PASSWORD}
       POSTGRES_DB: ${PG_DB:-sra}
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -125,7 +125,7 @@ services:
       - internal
       - external
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).read()"]
       interval: 10s
       timeout: 5s
       retries: 3

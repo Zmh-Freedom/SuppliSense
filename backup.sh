@@ -8,9 +8,10 @@ set -euo pipefail
 # ============================================================
 DB="tianyancha"
 MONGO_USER="${MONGO_USER:-root}"
-MONGO_PASS="${MONGO_PASSWORD:?请设置 MONGO_PASSWORD 环境变量}"
-MONGO_AUTH_DB="${MONGO_AUTH_DB:-admin}"
+MONGO_PASS="${MONGO_PASSWORD:-}"
+MONGO_AUTH_DB="${MONGO_AUTH_DB:-${MONGO_AUTH_SOURCE:-admin}}"
 RETENTION_DAYS=7
+ENV_FILE=""
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKUP_DIR="${SCRIPT_DIR}/backups"
@@ -42,27 +43,60 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --db)
             if [[ -z "${2:-}" ]]; then
-                echo -e "${RED}[ERROR]${RESET} --db 需要指定数据库名" >&2
+                echo "[ERROR] --db 需要指定数据库名" >&2
                 exit 1
             fi
             DB="$2"
             shift 2
             ;;
+        --env-file)
+            if [[ -z "${2:-}" ]]; then
+                echo "[ERROR] --env-file 需要指定文件路径" >&2
+                exit 1
+            fi
+            ENV_FILE="$2"
+            shift 2
+            ;;
         --help|-h)
-            echo "用法: $0 [--db <database_name>]"
+            echo "用法: $0 [--db <database_name>] [--env-file <path>]"
             echo ""
             echo "选项:"
             echo "  --db <name>   指定要备份的数据库名称（默认: tianyancha）"
+            echo "  --env-file <path>  从环境文件读取 MongoDB 连接配置"
             echo "  -h, --help    显示帮助信息"
             exit 0
             ;;
         *)
-            echo -e "${RED}[ERROR]${RESET} 未知参数: $1" >&2
+            echo "[ERROR] 未知参数: $1" >&2
             echo "用法: $0 [--db <database_name>]" >&2
             exit 1
             ;;
     esac
 done
+
+read_env_value() {
+    local key="$1"
+    local fallback="$2"
+    local value
+    value="$(awk -v key="$key" 'index($0, key "=") == 1 { value = substr($0, length(key) + 2) } END { print value }' "$ENV_FILE")"
+    printf '%s' "${value:-$fallback}"
+}
+
+if [[ -n "$ENV_FILE" ]]; then
+    if [[ ! -f "$ENV_FILE" ]]; then
+        echo "[ERROR] 环境文件不存在: $ENV_FILE" >&2
+        exit 1
+    fi
+    DB="$(read_env_value "MONGO_DB" "$DB")"
+    MONGO_USER="$(read_env_value "MONGO_USER" "$MONGO_USER")"
+    MONGO_PASS="$(read_env_value "MONGO_PASSWORD" "$MONGO_PASS")"
+    MONGO_AUTH_DB="$(read_env_value "MONGO_AUTH_SOURCE" "$MONGO_AUTH_DB")"
+fi
+
+if [[ -z "$MONGO_PASS" ]]; then
+    echo "[ERROR] 请设置 MONGO_PASSWORD 环境变量" >&2
+    exit 1
+fi
 
 # ============================================================
 # 日志函数
