@@ -71,3 +71,11 @@ docker-compose.override.yml
 backups/*.archive
 backups/backup.log
 .env.docker
+
+# 本地项目评审材料与导出图（源文件不纳入代码仓库）
+SuppliSense_项目评审.pdf
+docs/SuppliSense_项目评审*.pdf
+docs/SuppliSense_项目评审*.pptx
+docs/arch-*.jpg
+docs/s*-tiny.jpg
+docs/slide*-*.png
