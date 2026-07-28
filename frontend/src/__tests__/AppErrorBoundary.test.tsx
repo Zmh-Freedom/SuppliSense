@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import AppErrorBoundary from '../components/AppErrorBoundary'
 
-function BrokenComponent() {
+function BrokenComponent(): never {
   throw new Error('test error')
 }
 

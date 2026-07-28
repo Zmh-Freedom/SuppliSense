@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import type { SupplierProfile } from '../types';
-import { getRiskColor, getRiskBg, getRiskLevel } from '../riskColors';
+import { getRiskColor } from '../riskColors';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function SupplierProfilePage() {
@@ -124,9 +124,9 @@ export default function SupplierProfilePage() {
       </div>
 
       {/* ---- tab content ---- */}
-      {tab === 'overview' && <OverviewTab risk={risk} financial={financial} sentiment={sentiment} compliance={compliance} alerts={alerts} name={basic_info.name} />}
-      {tab === 'risk' && <RiskTab risk={risk} compliance={compliance} esg={esg} name={basic_info.name} />}
-      {tab === 'financial' && <FinancialTab financial={financial} name={basic_info.name} />}
+      {tab === 'overview' && <OverviewTab risk={risk} sentiment={sentiment} compliance={compliance} alerts={alerts} />}
+      {tab === 'risk' && <RiskTab compliance={compliance} esg={esg} />}
+      {tab === 'financial' && <FinancialTab financial={financial} />}
       {tab === 'relationships' && <RelationshipsTab relationships={relationships} />}
       {tab === 'changelog' && <ChangelogTab changelog={changelog} supplierId={id!} />}
     </div>
@@ -138,14 +138,12 @@ export default function SupplierProfilePage() {
 // ---------------------------------------------------------------------------
 
 function OverviewTab({
-  risk, financial, sentiment, compliance, alerts, name,
+  risk, sentiment, compliance, alerts,
 }: {
   risk?: SupplierProfile['risk'];
-  financial?: SupplierProfile['financial'];
   sentiment?: SupplierProfile['sentiment'];
   compliance?: SupplierProfile['compliance'];
   alerts: SupplierProfile['alerts'];
-  name: string;
 }) {
   return (
     <div className="space-y-4">
@@ -168,7 +166,7 @@ function OverviewTab({
               <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#999' }} axisLine={{ stroke: '#eee' }} tickLine={false} />
               <Tooltip
                 contentStyle={{ background: '#fff', border: '1px solid #e8e8e3', borderRadius: 12, fontSize: 12 }}
-                formatter={(v: number) => [`${v} 分`, '风险评分']}
+                formatter={(value) => [`${Number(value ?? 0)} 分`, '风险评分']}
               />
               <Line type="monotone" dataKey="risk_score" stroke={getRiskColor(risk.risk_score)} strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
@@ -197,12 +195,10 @@ function OverviewTab({
 }
 
 function RiskTab({
-  risk, compliance, esg, name,
+  compliance, esg,
 }: {
-  risk?: SupplierProfile['risk'];
   compliance?: SupplierProfile['compliance'];
   esg?: SupplierProfile['esg'];
-  name: string;
 }) {
   return (
     <div className="space-y-4">
@@ -247,10 +243,9 @@ function RiskTab({
 }
 
 function FinancialTab({
-  financial, name,
+  financial,
 }: {
   financial?: SupplierProfile['financial'];
-  name: string;
 }) {
   if (!financial) {
     return <div className="text-center py-12 text-sm text-gray-400">暂无财务数据（可能为非上市企业）</div>;

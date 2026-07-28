@@ -102,7 +102,6 @@ export default function SentimentPanel({ companyName, embedded }: { companyName?
   const detail = detailQuery.data ?? null;
   const error = dashQuery.error || detailQuery.error;
   const analyzing = detail?.analyzing ?? false;
-  const isStale = detail?.is_stale ?? false;
   const isRefreshing = analyzing || analyzeMutation.isPending;
 
   // WebSocket invalidation

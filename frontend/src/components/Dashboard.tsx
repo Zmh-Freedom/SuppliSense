@@ -6,7 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import SentimentPanel from './SentimentPanel';
 import RiskMatrix from './RiskMatrix';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { getRiskColor, getRiskBg, getRiskLevel } from '../riskColors';
+import { getRiskColor, getRiskBg } from '../riskColors';
 import { useDashboard, useWatchlist } from '../hooks';
 import { queryKeys } from '../query-keys';
 import type { Prediction } from '../types';
