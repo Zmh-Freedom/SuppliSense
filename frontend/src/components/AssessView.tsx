@@ -42,6 +42,7 @@ function AssessContent({ initialName }: { initialName: string }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [querying, setQuerying] = useState<QueryState>('idle');
   const inputRef = useRef<HTMLInputElement>(null);
+  const assessedInitialNameRef = useRef<string | null>(null);
 
   const { companies: watchlist } = useWatchlist();
 
@@ -74,9 +75,9 @@ function AssessContent({ initialName }: { initialName: string }) {
   } : null;
 
   useEffect(() => {
-    if (initialName) {
-      mutate(initialName);
-    }
+    if (!initialName || assessedInitialNameRef.current === initialName) return;
+    assessedInitialNameRef.current = initialName;
+    mutate(initialName);
   }, [initialName, mutate]);
 
   const assess = (target?: string) => {
@@ -90,6 +91,7 @@ function AssessContent({ initialName }: { initialName: string }) {
   const selectCompany = (company: string) => {
     setShowSuggestions(false);
     if (company === initialName) {
+      setName(company);
       assess(company);
       return;
     }

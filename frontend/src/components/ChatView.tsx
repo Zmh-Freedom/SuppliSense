@@ -113,19 +113,19 @@ export default function ChatView() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, streamState]);
 
-  const persist = useCallback((sid: string, newMsgs: ChatMessage[]) => {
+  const persist = useCallback((sid: string, newMsgs: ChatMessage[], create = false) => {
     const list = loadSessions();
     const idx = list.findIndex(s => s.sid === sid);
     const title = newMsgs.find(m => m.role === 'user')?.content.slice(0, 40) || '新对话';
     const session: Session = { sid, title, msgs: newMsgs, updatedAt: Date.now() };
 
     if (idx >= 0) list[idx] = session;
-    else list.push(session);
+    else if (create) list.push(session);
+    else return;
 
     list.sort((a, b) => b.updatedAt - a.updatedAt);
     saveSessions(list);
     setSessions(list);
-    setActiveSid(currentSid => currentSid || sid);
   }, []);
 
   const send = useCallback(async (msg?: string) => {
@@ -133,20 +133,18 @@ export default function ChatView() {
     if (!text || loading) return;
     setInput('');
 
+    const isNewSession = !activeSid;
     const sid = activeSid || crypto.randomUUID();
-    if (!activeSid) setActiveSid(sid);
+    if (isNewSession) setActiveSid(sid);
 
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
-    persist(sid, newMsgs);
+    persist(sid, newMsgs, isNewSession);
     setLoading(true);
     setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], approval: null, charts: [] });
     answerAccRef.current = '';
 
     try {
       await chatStream(text, sid, {
-        onSession: (sessionId) => {
-          if (!activeSid) setActiveSid(sessionId);
-        },
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
         },
