@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -15,7 +15,7 @@ const markdownComponents = {
         const chartData = JSON.parse(String(children).replace(/\n/g, ''));
         return <ChartRenderer data={chartData} />;
       } catch {
-        // 解析失败时回退为普通代码块
+        return <code className={className} {...rest}>{children}</code>;
       }
     }
     return <code className={className} {...rest}>{children}</code>;
@@ -77,20 +77,18 @@ export default function ChatView() {
     return list.length > 0 ? list[list.length - 1].sid : '';
   });
   const [input, setInput] = useState<string>(() => {
+    const queryInput = searchParams.get('q');
+    if (queryInput) return queryInput;
     try { return localStorage.getItem('chat_input') || ''; } catch { return ''; }
   });
 
-  // Read ?q= param from URL and auto-populate input
   useEffect(() => {
-    const q = searchParams.get('q');
-    if (q) {
-      setInput(q);
-      // Clear the param from URL without navigation
-      const next = new URLSearchParams(searchParams);
-      next.delete('q');
-      setSearchParams(next, { replace: true });
-    }
-  }, []); // run once on mount
+    if (!searchParams.get('q')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('q');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
   const [loading, setLoading] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -101,17 +99,21 @@ export default function ChatView() {
   useEffect(() => {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
-      try { localStorage.setItem('chat_input', input); } catch {}
+      try {
+        localStorage.setItem('chat_input', input);
+      } catch {
+        return;
+      }
     }, 500);
     return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
   }, [input]);
 
   const active = sessions.find(s => s.sid === activeSid);
-  const msgs = active?.msgs ?? [];
+  const msgs = useMemo(() => active?.msgs ?? [], [active]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs, streamState]);
 
-  const persist = (sid: string, newMsgs: ChatMessage[]) => {
+  const persist = useCallback((sid: string, newMsgs: ChatMessage[]) => {
     const list = loadSessions();
     const idx = list.findIndex(s => s.sid === sid);
     const title = newMsgs.find(m => m.role === 'user')?.content.slice(0, 40) || '新对话';
@@ -123,8 +125,8 @@ export default function ChatView() {
     list.sort((a, b) => b.updatedAt - a.updatedAt);
     saveSessions(list);
     setSessions(list);
-    if (!activeSid) setActiveSid(sid);
-  };
+    setActiveSid(currentSid => currentSid || sid);
+  }, []);
 
   const send = useCallback(async (msg?: string) => {
     const text = (msg ?? input).trim();
@@ -211,22 +213,22 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          newMsgs.push({ role: 'assistant', content: finalAnswer });
+          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer }];
           answerAccRef.current = '';
-          persist(sid, newMsgs);
+          persist(sid, completedMsgs);
           setStreamState(null);
           setLoading(false);
         },
         onError: (data) => {
           console.error('Stream error:', data.message);
-          newMsgs.push({ role: 'assistant', content: `错误：${data.message}` });
-          persist(sid, newMsgs);
+          const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: `错误：${data.message}` }];
+          persist(sid, failedMsgs);
           setStreamState(null);
           setLoading(false);
         },
         onClarification: (data) => {
-          newMsgs.push({ role: 'assistant', content: data.message });
-          persist(sid, newMsgs);
+          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message }];
+          persist(sid, clarifiedMsgs);
           setStreamState(null);
           setLoading(false);
         },
@@ -242,12 +244,12 @@ export default function ChatView() {
       }, 'auto');
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-      newMsgs.push({ role: 'assistant', content: isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试' });
-      persist(sid, newMsgs);
+      const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试' }];
+      persist(sid, failedMsgs);
       setStreamState(null);
       setLoading(false);
     }
-  }, [input, loading, activeSid, msgs]);
+  }, [input, loading, activeSid, msgs, persist]);
 
   const handleApproval = useCallback(async (approved: boolean) => {
     if (!streamState?.approval) return;
@@ -312,27 +314,27 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          resumeMsgs.push({ role: 'assistant', content: finalAnswer });
+          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer }];
           answerAccRef.current = '';
-          persist(approvalSid, resumeMsgs);
+          persist(approvalSid, completedMsgs);
           setStreamState(null);
           setLoading(false);
         },
         onError: (data) => {
-          resumeMsgs.push({ role: 'assistant', content: `错误：${data.message}` });
-          persist(approvalSid, resumeMsgs);
+          const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: `错误：${data.message}` }];
+          persist(approvalSid, failedMsgs);
           setStreamState(null);
           setLoading(false);
         },
       });
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-      resumeMsgs.push({ role: 'assistant', content: isTimeout ? '请求超时，请重试' : '操作失败，请重试' });
-      persist(approvalSid, resumeMsgs);
+      const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: isTimeout ? '请求超时，请重试' : '操作失败，请重试' }];
+      persist(approvalSid, failedMsgs);
       setStreamState(null);
       setLoading(false);
     }
-  }, [streamState?.approval, msgs]);
+  }, [streamState, msgs, persist]);
 
   const handleCapabilityClick = (prompt: string) => {
     setInput(prompt);

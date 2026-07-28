@@ -31,8 +31,11 @@ export default function LoginPage() {
       const data = await res.json();
       setStoredUser(data.username, data.role);
       navigate('/', { replace: true });
-    } catch (err: any) {
-      setError(err.message || '登录失败，请检查用户名和密码');
+    } catch (err: unknown) {
+      const message = err instanceof Error && err.message
+        ? err.message
+        : '登录失败，请检查用户名和密码';
+      setError(message);
     } finally {
       setLoading(false);
     }

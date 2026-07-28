@@ -2,6 +2,32 @@ import type { ChartData } from '../types';
 
 const CHART_COLORS = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
 
+interface PieSlice {
+  index: number;
+  startAngle: number;
+  endAngle: number;
+}
+
+function calculatePieSlices(items: Array<{ name: string; value: number }>, total: number): PieSlice[] {
+  return items.reduce<{ angle: number; slices: PieSlice[] }>(
+    (result, item, index) => {
+      const angle = (Number(item.value ?? 0) / total) * Math.PI * 2;
+      return {
+        angle: result.angle + angle,
+        slices: [
+          ...result.slices,
+          {
+            index,
+            startAngle: result.angle,
+            endAngle: result.angle + angle,
+          },
+        ],
+      };
+    },
+    { angle: -Math.PI / 2, slices: [] },
+  ).slices;
+}
+
 function GaugeChart({ data }: { data: ChartData }) {
   const item = data.data[0] as Record<string, unknown> | undefined;
   if (!item) return null;
@@ -102,32 +128,28 @@ function PieChartSimple({ data }: { data: ChartData }) {
   const items = data.data as Array<{ name: string; value: number }>;
   if (!items.length) return null;
   const total = items.reduce((s, d) => s + Number(d.value ?? 0), 0) || 1;
+  const slices = calculatePieSlices(items, total);
 
-  let cumAngle = -Math.PI / 2;
-  const slices = items.map((item, i) => {
-    const angle = (Number(item.value ?? 0) / total) * Math.PI * 2;
-    const startAngle = cumAngle;
-    cumAngle += angle;
-    const endAngle = cumAngle;
-
+  const slicePaths = slices.map(({ index, startAngle, endAngle }) => {
     const x1 = 40 + 30 * Math.cos(startAngle);
     const y1 = 40 + 30 * Math.sin(startAngle);
     const x2 = 40 + 30 * Math.cos(endAngle);
     const y2 = 40 + 30 * Math.sin(endAngle);
+    const angle = endAngle - startAngle;
     const largeArc = angle > Math.PI ? 1 : 0;
 
     return (
       <path
-        key={i}
+        key={index}
         d={`M 40 40 L ${x1} ${y1} A 30 30 0 ${largeArc} 1 ${x2} ${y2} Z`}
-        fill={CHART_COLORS[i % CHART_COLORS.length]}
+        fill={CHART_COLORS[index % CHART_COLORS.length]}
       />
     );
   });
 
   return (
     <div className="flex items-center gap-3 py-2">
-      <svg viewBox="0 0 80 80" className="w-20 h-20 shrink-0">{slices}</svg>
+      <svg viewBox="0 0 80 80" className="w-20 h-20 shrink-0">{slicePaths}</svg>
       <div className="space-y-1">
         {items.map((item, i) => (
           <div key={i} className="flex items-center gap-1.5 text-xs">

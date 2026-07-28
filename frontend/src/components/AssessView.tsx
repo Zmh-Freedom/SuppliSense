@@ -30,8 +30,13 @@ type QueryState = 'idle' | 'loading' | 'background';
 
 export default function AssessView() {
   const { companyName } = useParams<{ companyName?: string }>();
-  const navigate = useNavigate();
   const initialName = companyName ? decodeURIComponent(companyName) : '';
+
+  return <AssessContent key={initialName} initialName={initialName} />;
+}
+
+function AssessContent({ initialName }: { initialName: string }) {
+  const navigate = useNavigate();
   const [name, setName] = useState(initialName);
   const [subTab, setSubTab] = useState<SubTab>('overview');
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -49,7 +54,9 @@ export default function AssessView() {
   const assessMutation = useMutation({
     mutationFn: (target: string) =>
       api.post<RiskResult>('/risk/assess', { company_name: target.trim() }),
+    onSettled: () => setQuerying('idle'),
   });
+  const { mutate } = assessMutation;
 
   const trendQuery = useQuery({
     queryKey: queryKeys.riskTrend(name),
@@ -68,16 +75,9 @@ export default function AssessView() {
 
   useEffect(() => {
     if (initialName) {
-      setName(initialName);
-      assessMutation.mutate(initialName);
+      mutate(initialName);
     }
-  }, [initialName]);
-
-  useEffect(() => {
-    if (!assessMutation.isPending) {
-      setQuerying('idle');
-    }
-  }, [assessMutation.isPending]);
+  }, [initialName, mutate]);
 
   const assess = (target?: string) => {
     const t = (target || name).trim();
@@ -88,11 +88,12 @@ export default function AssessView() {
   };
 
   const selectCompany = (company: string) => {
-    setName(company);
     setShowSuggestions(false);
+    if (company === initialName) {
+      assess(company);
+      return;
+    }
     navigate(`/assess/${encodeURIComponent(company)}`, { replace: true });
-    setQuerying('loading');
-    assessMutation.mutate(company);
   };
 
   const handleRefresh = () => {
