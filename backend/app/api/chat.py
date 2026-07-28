@@ -71,7 +71,8 @@ async def _langgraph_react_reflection_stream(session_id: str, message: str, pref
 
     graph = build_react_graph_with_reflection(preference_context)
     history = _load_history(session_id)
-    async for event in stream_react_graph(graph, message, session_id, history):
+    run_config = {"configurable": {"thread_id": session_id}}
+    async for event in stream_react_graph(graph, message, session_id, history, run_config):
         yield event
 
 

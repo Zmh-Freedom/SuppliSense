@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SuppliSense Agent 架构图</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #fafaf8;
+    color: #333;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { text-align: center; font-size: 24px; margin-bottom: 8px; }
+  .subtitle { text-align: center; color: #888; font-size: 14px; margin-bottom: 32px; }
+  .section { max-width: 1200px; margin: 0 auto 40px; }
+  .section h2 { font-size: 16px; margin-bottom: 12px; color: #555; }
+  .diagram {
+    background: #fff;
+    border: 1px solid #e8e8e3;
+    border-radius: 12px;
+    padding: 24px;
+    overflow-x: auto;
+  }
+</style>
+</head>
+<body>
+<h1>SuppliSense Agent 架构图</h1>
+<p class="subtitle">LangGraph 多智能体编排系统 | 2026.06</p>
+
+<!-- 总览 -->
+<div class="section">
+<h2>一、系统总览</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph LR
+    A[React 前端] --> B[/api/v1/chat/stream]
+    B --> C{IntentRouter}
+    C -->|risk| D[ReAct Graph]
+    C -->|plan| E[Plan-Execute Graph]
+    C -->|multi| F[Supervisor Graph]
+    C -->|sourcing| G[Sourcing Graph]
+    D --> H[25 Tools]
+    E --> H
+    F --> H
+    G --> H
+    H --> I[Service 层]
+    I --> J[(MongoDB)]
+    I --> K[(PostgreSQL)]
+    I --> L[DeepSeek API]
+    D --> M[SSE Stream]
+    E --> M
+    F --> M
+    G --> M
+    M --> A
+
+    style A fill:#e3f2fd,stroke:#1565c0
+    style B fill:#fff3e0,stroke:#e65100
+    style C fill:#f3e5f5,stroke:#7b1fa2
+    style D fill:#e8f5e9,stroke:#2e7d32
+    style E fill:#e8f5e9,stroke:#2e7d32
+    style F fill:#e8f5e9,stroke:#2e7d32
+    style G fill:#e8f5e9,stroke:#2e7d32
+    style H fill:#fffde7,stroke:#f9a825
+    style I fill:#fce4ec,stroke:#c62828
+    style J fill:#e0f2f1,stroke:#00695c
+    style K fill:#e0f2f1,stroke:#00695c
+    style L fill:#eceff1,stroke:#546e7a
+    style M fill:#e8eaf6,stroke:#283593
+</pre>
+</div>
+</div>
+
+<!-- ReAct Graph 详细 -->
+<div class="section">
+<h2>二、ReAct Graph（默认图，单 Agent + 全量工具循环）</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+    START([用户消息]) --> SYS[SystemMessage + 偏好注入]
+    SYS --> AGENT[agent 节点<br/>LLM bind_tools]
+    AGENT --> DECIDE{有 tool_calls?}
+    DECIDE -->|yes| TOOLS[ToolNode<br/>执行工具调用]
+    TOOLS --> AGENT
+    DECIDE -->|no| DONE([SSE done])
+    AGENT --> STREAM[SSE answer_chunk<br/>token 级流式输出]
+
+    style AGENT fill:#e8f5e9,stroke:#2e7d32
+    style TOOLS fill:#fffde7,stroke:#f9a825
+    style SYS fill:#f3e5f5,stroke:#7b1fa2
+</pre>
+</div>
+</div>
+
+<!-- Plan-Execute 详细 -->
+<div class="section">
+<h2>三、Plan-Execute Graph</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+    START([用户消息]) --> PLANNER[planner 节点<br/>LLM 生成 JSON 计划]
+    PLANNER --> EXECUTOR[executor 节点<br/>LLM 选择工具并执行]
+    EXECUTOR --> REPLANNER[replanner 节点<br/>判断是否继续]
+    REPLANNER -->|继续下一步| EXECUTOR
+    REPLANNER -->|完成| DONE([SSE done<br/>输出最终答案])
+    EXECUTOR --> TOOL[ToolNode<br/>执行工具]
+
+    style PLANNER fill:#e8f5e9,stroke:#2e7d32
+    style EXECUTOR fill:#e8f5e9,stroke:#2e7d32
+    style REPLANNER fill:#e8f5e9,stroke:#2e7d32
+    style TOOL fill:#fffde7,stroke:#f9a825
+</pre>
+</div>
+</div>
+
+<!-- Supervisor 详细 -->
+<div class="section">
+<h2>四、Supervisor Graph（多 Agent 编排）</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph TB
+    START([用户消息]) --> SPV[supervisor 节点<br/>LLM 路由决策]
+
+    SPV --> RISK[risk_agent<br/>15 个风险工具]
+    SPV --> SENT[sentiment_agent<br/>3 个舆情工具]
+    SPV --> COMP[compliance_agent<br/>3 个合规工具]
+    SPV --> FINISH([FINISH])
+
+    RISK --> RT[risk_tools ToolNode]
+    SENT --> ST[sentiment_tools ToolNode]
+    COMP --> CT[compliance_tools ToolNode]
+
+    RT --> RISK
+    ST --> SENT
+    CT --> COMP
+
+    RISK --> SPV
+    SENT --> SPV
+    COMP --> SPV
+
+    style SPV fill:#e8f5e9,stroke:#2e7d32
+    style RISK fill:#e8f5e9,stroke:#2e7d32
+    style SENT fill:#e8f5e9,stroke:#2e7d32
+    style COMP fill:#e8f5e9,stroke:#2e7d32
+    style RT fill:#fffde7,stroke:#f9a825
+    style ST fill:#fffde7,stroke:#f9a825
+    style CT fill:#fffde7,stroke:#f9a825
+</pre>
+</div>
+</div>
+
+<!-- 工具层 -->
+<div class="section">
+<h2>五、工具层（25 个 @tool，按领域分组）</h2>
+<div class="diagram">
+<pre class="mermaid">
+graph LR
+    subgraph RISK[风险工具 8]
+        T1[search_company]
+        T2[assess_risk]
+        T3[predict_risk]
+        T4[macro_risk]
+        T5[scenario_simulate]
+        T6[esg_assessment]
+        T7[contagion_analysis]
+        T8[analyze_trend]
+    end
+    subgraph ANALYSIS[分析工具 5]
+        T9[sentiment_analysis]
+        T10[compare_companies]
+        T11[query_financials]
+        T12[find_alternatives]
+        T13[check_sanctions]
+    end
+    subgraph ALERT[预警工具 4]
+        T14[check_alert]
+        T15[get_watchlist]
+        T16[watchlist_trend]
+        T17[add_or_remove_watchlist]
+    end
+    subgraph OTHER[其他工具 8]
+        T18[generate_report]
+        T19[scheduled_report]
+        T20[create_sourcing_request]
+        T21[search_suppliers]
+        T22[select_sourcing_result]
+        T23[expand_supplier_library]
+        T24[knowledge_search]
+    end
+
+    style RISK fill:#fff3e0,stroke:#e65100
+    style ANALYSIS fill:#f3e5f5,stroke:#7b1fa2
+    style ALERT fill:#fffde7,stroke:#f9a825
+    style OTHER fill:#e0f2f1,stroke:#00695c
+</pre>
+</div>
+</div>
+
+<!-- 数据流 -->
+<div class="section">
+<h2>六、SSE 事件流 & 数据持久化</h2>
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    participant U as 用户
+    participant F as ChatView.tsx
+    participant A as /api/v1/chat/stream
+    participant G as LangGraph
+    participant T as ToolNode
+    participant D as MongoDB
+
+    U->>F: 输入问题
+    F->>A: POST {message, session_id, mode}
+    A->>A: IntentRouter 分类
+    A->>A: 偏好注入
+    A->>G: 启动执行图
+
+    loop ReAct 循环
+        G->>G: LLM 推理
+        G-->>F: SSE: thinking
+        G->>T: tool_call
+        G-->>F: SSE: tool_call
+        T-->>F: SSE: tool_result
+        T->>G: 工具结果
+    end
+
+    G-->>F: SSE: answer_chunk (流式)
+    G->>D: _save_turn
+    G-->>F: SSE: done
+    F->>U: 渲染答案
+</pre>
+</div>
+</div>
+
+</body>
+</html>

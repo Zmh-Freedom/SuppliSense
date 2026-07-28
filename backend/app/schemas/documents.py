@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 class SupplierDocument(BaseModel):
     """suppliers 集合文档。"""
+
     name: str
     unified_code: str | None = None
     legal_person: str | None = None
@@ -20,6 +21,18 @@ class SupplierDocument(BaseModel):
     reg_status: str | None = None
     categories: list[str] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
+    # 联系方式
+    contact_person: str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    address: str | None = None
+    # 经营信息
+    scale: str | None = None
+    description: str | None = None
+    certifications: list[dict] = Field(default_factory=list)
+    annual_revenue: float | None = None
+    credit_rating: str | None = None
+    # 状态
     status: str = "prospective"
     source: str = "manual"
     embedding_dirty: bool = True

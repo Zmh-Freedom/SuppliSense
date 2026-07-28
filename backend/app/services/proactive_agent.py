@@ -8,9 +8,9 @@
 """
 
 import json
-import logging
 import os
 
+from app.core.logging import get_logger
 from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
@@ -18,7 +18,7 @@ from app.domains.alert.service import (
 )
 from app.graphs import build_shared_llm
 
-logger = logging.getLogger(__name__)
+logger = get_logger()
 
 ANALYSIS_PROMPT = """你是采购风险分析专家。请根据以下供应商的监控数据，生成简洁的风险变化分析。
 
@@ -162,8 +162,6 @@ def _push_results(results: list[dict]) -> bool:
 
     # 推送到飞书
     try:
-        from app.services.feishu import _send_markdown
-
         lines = ["## 🤖 主动监控分析报告\n"]
         for r in results:
             emoji = {"稳定": "🟢", "上升": "🔴", "下降": "🟡"}.get(
@@ -205,7 +203,7 @@ def _send_markdown(content: str) -> None:
     import requests
     from app.core.config import settings
 
-    webhook = settings.FEISHU_WEBHOOK
+    webhook = settings.FEISHU_WEBHOOK_URL
     secret = settings.FEISHU_SECRET
 
     if not webhook:
