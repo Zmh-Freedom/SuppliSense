@@ -3,10 +3,11 @@ PostgreSQL connection pool management (psycopg2, synchronous).
 """
 
 import logging
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 import psycopg2
-from psycopg2.extensions import connection as PgConnection
+from psycopg2.extensions import connection as PgConnection, cursor as PgCursor
 from psycopg2.pool import ThreadedConnectionPool
 
 from app.core.config import settings
@@ -50,25 +51,45 @@ def get_conn() -> PgConnection:
     return conn
 
 
-def put_conn(conn: PgConnection) -> None:
-    _get_pool().putconn(conn)
+def put_conn(conn: PgConnection, *, close: bool = False) -> None:
+    _get_pool().putconn(conn, close=close)
 
 
 @contextmanager
-def get_cursor():
+def get_cursor() -> Iterator[tuple[PgConnection, PgCursor]]:
     conn = get_conn()
     cur = None
+    original_error: BaseException | None = None
+    discard_connection = False
     try:
         cur = conn.cursor()
         yield conn, cur
         conn.commit()
-    except Exception:
-        conn.rollback()
+    except BaseException as exc:
+        original_error = exc
+        try:
+            conn.rollback()
+        except Exception:
+            discard_connection = True
         raise
     finally:
+        cleanup_error: Exception | None = None
         if cur is not None:
-            cur.close()
-        put_conn(conn)
+            try:
+                cur.close()
+            except Exception as exc:
+                cleanup_error = exc
+                discard_connection = True
+        try:
+            if discard_connection:
+                put_conn(conn, close=True)
+            else:
+                put_conn(conn)
+        except Exception as exc:
+            if cleanup_error is None:
+                cleanup_error = exc
+        if original_error is None and cleanup_error is not None:
+            raise cleanup_error
 
 
 def close_pool() -> None:

@@ -123,3 +123,28 @@ def test_backup_removes_partial_archive_when_dump_fails(tmp_path) -> None:
 
     assert result.returncode != 0
     assert not list((project_dir / "backups").glob("failed_db_*.archive"))
+
+
+def test_backup_preserves_failed_dump_diagnostics_in_private_named_log(
+    tmp_path,
+) -> None:
+    """Operators need private mongodump stderr without leaking it to the terminal."""
+    result, _, project_dir = _run_script(
+        tmp_path,
+        "backup.sh",
+        "--db",
+        "failed_db",
+        dump_exit=1,
+    )
+
+    diagnostic_logs = list(
+        (project_dir / "backups").glob("failed_db_*.mongodump-error.log")
+    )
+    assert result.returncode != 0
+    assert len(diagnostic_logs) == 1
+    diagnostic_log = diagnostic_logs[0]
+    assert diagnostic_log.read_text(encoding="utf-8") == "dump-diagnostic"
+    assert diagnostic_log.stat().st_mode & 0o777 == 0o600
+    assert str(diagnostic_log) in result.stdout + result.stderr
+    assert "dump-diagnostic" not in result.stdout + result.stderr
+    assert not list((project_dir / "backups").glob("failed_db_*.archive"))

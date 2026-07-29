@@ -112,6 +112,26 @@ describe('AssessView URL assessment', () => {
     expect(mocks.post).toHaveBeenCalledWith('/risk/assess', { company_name: '企业A' })
   })
 
+  it('shows the loading state while the URL assessment is pending', async () => {
+    let resolveAssessment: (result: RiskResult) => void = () => undefined
+    mocks.post.mockImplementation(
+      () => new Promise<RiskResult>((resolve) => {
+        resolveAssessment = resolve
+      }),
+    )
+
+    renderAssess()
+
+    expect(
+      await screen.findByRole('button', { name: '评估中…' }),
+    ).toBeDisabled()
+
+    resolveAssessment(RISK_RESULT)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '评估' })).toBeEnabled()
+    })
+  })
+
   it('restores the URL company to the input before reassessing it', async () => {
     const user = userEvent.setup()
     renderAssess()

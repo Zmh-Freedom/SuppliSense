@@ -40,7 +40,9 @@ function AssessContent({ initialName }: { initialName: string }) {
   const [name, setName] = useState(initialName);
   const [subTab, setSubTab] = useState<SubTab>('overview');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [querying, setQuerying] = useState<QueryState>('idle');
+  const [querying, setQuerying] = useState<QueryState>(
+    initialName ? 'loading' : 'idle',
+  );
   const inputRef = useRef<HTMLInputElement>(null);
   const assessedInitialNameRef = useRef<string | null>(null);
 

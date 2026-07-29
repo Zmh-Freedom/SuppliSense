@@ -5,20 +5,37 @@ import asyncio
 import psycopg2
 import redis
 from fastapi import APIRouter, Response, status
+from pymongo import MongoClient
 
 from app.core.config import settings
-from app.db.mongo import get_db
 
 router = APIRouter(tags=["health"])
 
 
 def _check_mongo() -> str:
+    client = None
+    result = "ok"
     try:
-        db = get_db()
-        db.command("ping")
+        client = MongoClient(
+            host=settings.MONGO_HOST,
+            port=settings.MONGO_PORT,
+            username=settings.MONGO_USER,
+            password=settings.MONGO_PASSWORD,
+            authSource=settings.MONGO_AUTH_SOURCE,
+            serverSelectionTimeoutMS=3000,
+            connectTimeoutMS=3000,
+            socketTimeoutMS=3000,
+        )
+        client[settings.MONGO_DB].command("ping")
     except Exception:
-        return "unavailable"
-    return "ok"
+        result = "unavailable"
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                result = "unavailable"
+    return result
 
 
 def _check_redis() -> str:

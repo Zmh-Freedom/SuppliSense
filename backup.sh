@@ -107,6 +107,7 @@ if [[ -z "$DB" ]]; then
 fi
 ARCHIVE_NAME="${DB}_${BACKUP_DATE}.archive"
 ARCHIVE_PATH="${BACKUP_DIR}/${ARCHIVE_NAME}"
+DIAGNOSTIC_LOG="${BACKUP_DIR}/${DB}_${BACKUP_DATE}.mongodump-error.log"
 
 echo -e "${BOLD}${CYAN}============================================================${RESET}"
 echo -e "${BOLD}${CYAN}  MongoDB 备份工具${RESET}"
@@ -170,8 +171,10 @@ then
     fi
 else
     echo -e "${RED}[ERROR]${RESET} mongodump 执行失败"
-    log_error "mongodump 执行失败"
-    rm -f "$TEMP_ARCHIVE" "$DUMP_ERROR_LOG"
+    rm -f "$TEMP_ARCHIVE"
+    mv "$DUMP_ERROR_LOG" "$DIAGNOSTIC_LOG"
+    chmod 600 "$DIAGNOSTIC_LOG"
+    log_error "mongodump 执行失败；诊断日志: ${DIAGNOSTIC_LOG}"
     exit 1
 fi
 
