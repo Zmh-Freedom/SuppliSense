@@ -45,6 +45,7 @@ def _check_redis() -> str:
 def _check_postgres() -> str:
     connection = None
     cursor = None
+    cleanup_failed = False
     try:
         connection = psycopg2.connect(
             host=settings.PG_HOST,
@@ -61,9 +62,17 @@ def _check_postgres() -> str:
         return "unavailable"
     finally:
         if cursor is not None:
-            cursor.close()
+            try:
+                cursor.close()
+            except Exception:
+                cleanup_failed = True
         if connection is not None:
-            connection.close()
+            try:
+                connection.close()
+            except Exception:
+                cleanup_failed = True
+    if cleanup_failed:
+        return "unavailable"
     return "ok"
 
 

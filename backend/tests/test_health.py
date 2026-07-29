@@ -71,6 +71,45 @@ def test_readiness_returns_503_when_postgres_is_unavailable(monkeypatch) -> None
     assert response.json()["checks"]["postgres"] == "unavailable"
 
 
+def test_readiness_returns_503_when_postgres_cleanup_fails(monkeypatch) -> None:
+    """A PostgreSQL cleanup error must remain an unavailable readiness result."""
+    class FailingCloseCursor:
+        def execute(self, statement: str) -> None:
+            assert statement == "SELECT 1"
+
+        def close(self) -> None:
+            raise RuntimeError("cursor close failed")
+
+    class Connection:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def cursor(self) -> FailingCloseCursor:
+            return FailingCloseCursor()
+
+        def close(self) -> None:
+            self.closed = True
+
+    connection = Connection()
+
+    class FakePsycopg:
+        @staticmethod
+        def connect(**kwargs) -> Connection:
+            return connection
+
+    app = FastAPI()
+    app.include_router(health.router)
+    monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
+    monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: HealthyRedis())
+    monkeypatch.setattr(health, "psycopg2", FakePsycopg(), raising=False)
+
+    response = TestClient(app, raise_server_exceptions=False).get("/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["postgres"] == "unavailable"
+    assert connection.closed is True
+
+
 def test_readiness_closes_redis_client_when_ping_fails(monkeypatch) -> None:
     """A Redis ping error after client creation must still release the client."""
     redis_client = FailingRedis()

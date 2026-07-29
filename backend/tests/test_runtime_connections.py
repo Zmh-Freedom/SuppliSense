@@ -160,3 +160,43 @@ def test_readiness_postgres_closes_resources_when_select_fails(monkeypatch) -> N
     assert health._check_postgres() == "unavailable"
     assert cursor.closed is True
     assert connection.closed is True
+
+
+def test_readiness_postgres_returns_unavailable_when_both_cleanup_calls_fail(monkeypatch) -> None:
+    """Cleanup failures must not skip connection close or escape the readiness probe."""
+    class FailingCloseCursor(FakeCursor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_attempted = False
+
+        def close(self) -> None:
+            self.close_attempted = True
+            raise RuntimeError("cursor close failed")
+
+    class FailingCloseConnection(FakeConnection):
+        def __init__(self, cursor: FakeCursor) -> None:
+            super().__init__(cursor)
+            self.close_attempted = False
+
+        def close(self) -> None:
+            self.close_attempted = True
+            raise RuntimeError("connection close failed")
+
+    cursor = FailingCloseCursor()
+    connection = FailingCloseConnection(cursor)
+
+    class FakePsycopg:
+        @staticmethod
+        def connect(**kwargs) -> FailingCloseConnection:
+            return connection
+
+    monkeypatch.setattr(health, "psycopg2", FakePsycopg(), raising=False)
+
+    try:
+        result = health._check_postgres()
+    except Exception:
+        result = "raised"
+
+    assert result == "unavailable"
+    assert cursor.close_attempted is True
+    assert connection.close_attempted is True
