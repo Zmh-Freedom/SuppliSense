@@ -24,7 +24,12 @@ def _check_mongo() -> str:
 def _check_redis() -> str:
     client = None
     try:
-        client = redis.from_url(settings.REDIS_URL or "redis://localhost:6379")
+        client = redis.from_url(
+            settings.REDIS_URL or "redis://localhost:6379/0",
+            password=settings.REDIS_PASSWORD or None,
+            socket_connect_timeout=3,
+            socket_timeout=3,
+        )
         client.ping()
     except Exception:
         return "unavailable"

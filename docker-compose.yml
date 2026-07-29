@@ -7,6 +7,7 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?请设置 MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-tianyancha}
     volumes:
       - ~/docker-volumes/mongodb:/data/db
     healthcheck:
@@ -125,9 +126,9 @@ services:
       - internal
       - external
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5).read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=10).read()"]
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 3
     logging:
       driver: "json-file"

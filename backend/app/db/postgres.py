@@ -27,7 +27,7 @@ def _get_pool() -> ThreadedConnectionPool:
             user=settings.PG_USER,
             password=settings.PG_PASSWORD,
             dbname=settings.PG_DB,
-            connect_timeout=10,
+            connect_timeout=3,
         )
     return _pool
 
@@ -57,6 +57,7 @@ def put_conn(conn: PgConnection) -> None:
 @contextmanager
 def get_cursor():
     conn = get_conn()
+    cur = None
     try:
         cur = conn.cursor()
         yield conn, cur
@@ -65,6 +66,8 @@ def get_cursor():
         conn.rollback()
         raise
     finally:
+        if cur is not None:
+            cur.close()
         put_conn(conn)
 
 

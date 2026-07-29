@@ -5,6 +5,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env.docker"
+COMPOSE_CMD=(docker compose --project-directory "$SCRIPT_DIR" -f "$SCRIPT_DIR/docker-compose.yml" --env-file "$ENV_FILE")
 
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "❌ 缺少环境文件: $ENV_FILE"
@@ -13,5 +14,5 @@ if [[ ! -f "$ENV_FILE" ]]; then
 fi
 
 echo "⏹️  停止供应商风险分析系统..."
-docker compose --env-file "$ENV_FILE" down
+"${COMPOSE_CMD[@]}" down
 echo "✅ 已停止"

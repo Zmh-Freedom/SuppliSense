@@ -5,6 +5,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env.docker"
+COMPOSE_CMD=(docker compose --project-directory "$SCRIPT_DIR" -f "$SCRIPT_DIR/docker-compose.yml" --env-file "$ENV_FILE")
 
 if [[ ! -f "$ENV_FILE" ]]; then
     echo "❌ 缺少环境文件: $ENV_FILE"
@@ -18,7 +19,7 @@ if ! docker info > /dev/null 2>&1; then
 fi
 
 echo "🔍 验证 Compose 配置..."
-docker compose --env-file "$ENV_FILE" config --quiet
+"${COMPOSE_CMD[@]}" config --quiet
 
 echo "📦 检查是否需要备份..."
 if ! bash "$SCRIPT_DIR/backup.sh" --env-file "$ENV_FILE"; then
@@ -26,7 +27,7 @@ if ! bash "$SCRIPT_DIR/backup.sh" --env-file "$ENV_FILE"; then
 fi
 
 echo "🚀 启动供应商风险分析系统..."
-docker compose --env-file "$ENV_FILE" up -d --build
+"${COMPOSE_CMD[@]}" up -d --build
 echo ""
 echo "✅ 服务已启动"
 echo "🌐 http://localhost"

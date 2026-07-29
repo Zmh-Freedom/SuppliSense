@@ -21,6 +21,9 @@ cache_client = redis.Redis.from_url(
     settings.REDIS_URL,
     db=2,
     decode_responses=True,
+    password=settings.REDIS_PASSWORD or None,
+    socket_connect_timeout=3,
+    socket_timeout=3,
 )
 
 

@@ -6,10 +6,7 @@ set -euo pipefail
 # ============================================================
 # 配置
 # ============================================================
-DB="tianyancha"
-MONGO_USER="${MONGO_USER:-root}"
-MONGO_PASS="${MONGO_PASSWORD:-}"
-MONGO_AUTH_DB="${MONGO_AUTH_DB:-${MONGO_AUTH_SOURCE:-admin}}"
+DB=""
 RETENTION_DAYS=7
 ENV_FILE=""
 
@@ -74,28 +71,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-read_env_value() {
-    local key="$1"
-    local fallback="$2"
-    local value
-    value="$(awk -v key="$key" 'index($0, key "=") == 1 { value = substr($0, length(key) + 2) } END { print value }' "$ENV_FILE")"
-    printf '%s' "${value:-$fallback}"
-}
-
+COMPOSE_CMD=(docker compose --project-directory "$SCRIPT_DIR" -f "$SCRIPT_DIR/docker-compose.yml")
 if [[ -n "$ENV_FILE" ]]; then
     if [[ ! -f "$ENV_FILE" ]]; then
         echo "[ERROR] 环境文件不存在: $ENV_FILE" >&2
         exit 1
     fi
-    DB="$(read_env_value "MONGO_DB" "$DB")"
-    MONGO_USER="$(read_env_value "MONGO_USER" "$MONGO_USER")"
-    MONGO_PASS="$(read_env_value "MONGO_PASSWORD" "$MONGO_PASS")"
-    MONGO_AUTH_DB="$(read_env_value "MONGO_AUTH_SOURCE" "$MONGO_AUTH_DB")"
-fi
-
-if [[ -z "$MONGO_PASS" ]]; then
-    echo "[ERROR] 请设置 MONGO_PASSWORD 环境变量" >&2
-    exit 1
+    COMPOSE_CMD+=(--env-file "$ENV_FILE")
 fi
 
 # ============================================================
@@ -120,6 +102,9 @@ log_error() { log "ERROR" "$@"; }
 mkdir -p "$BACKUP_DIR"
 
 BACKUP_DATE="$(date +%Y%m%d)"
+if [[ -z "$DB" ]]; then
+    DB="$("${COMPOSE_CMD[@]}" exec -T mongo sh -c 'printf "%s" "${MONGO_INITDB_DATABASE:-tianyancha}"')"
+fi
 ARCHIVE_NAME="${DB}_${BACKUP_DATE}.archive"
 ARCHIVE_PATH="${BACKUP_DIR}/${ARCHIVE_NAME}"
 
@@ -135,53 +120,58 @@ echo ""
 log_info "开始备份数据库: ${DB}"
 
 # ============================================================
-# 查找 MongoDB 容器
-# ============================================================
-CONTAINER=$(docker ps --format '{{.Names}}' | grep -E 'sra-mongo|mongodb' | head -1)
-if [[ -z "$CONTAINER" ]]; then
-    echo -e "${RED}[ERROR]${RESET} 未找到运行中的 MongoDB 容器"
-    log_error "未找到运行中的 MongoDB 容器"
-    exit 1
-fi
-echo -e "容器:       ${BOLD}${CONTAINER}${RESET}"
-echo ""
-log_info "使用容器: ${CONTAINER}"
-
-# ============================================================
 # 执行备份
 # ============================================================
 echo -e "${YELLOW}[INFO]${RESET} 正在执行 mongodump ..."
 
-if docker exec "$CONTAINER" mongodump \
-    --username "$MONGO_USER" \
-    --password "$MONGO_PASS" \
-    --authenticationDatabase "$MONGO_AUTH_DB" \
-    --db "$DB" \
-    --archive > "$ARCHIVE_PATH" 2>&1; then
+TEMP_ARCHIVE="$(mktemp "${BACKUP_DIR}/.${ARCHIVE_NAME}.XXXXXX")"
+DUMP_ERROR_LOG="$(mktemp "${BACKUP_DIR}/.mongodump.XXXXXX.log")"
+
+if "${COMPOSE_CMD[@]}" exec -T mongo sh -s -- "$DB" > "$TEMP_ARCHIVE" 2> "$DUMP_ERROR_LOG" <<'EOF'
+set -eu
+umask 077
+config_file="$(mktemp)"
+cleanup() {
+    rm -f "$config_file"
+}
+trap cleanup EXIT
+escaped_password="$(printf '%s' "$MONGO_INITDB_ROOT_PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+printf 'password: "%s"\n' "$escaped_password" > "$config_file"
+mongodump \
+    --config "$config_file" \
+    --username "${MONGO_INITDB_ROOT_USERNAME:-root}" \
+    --authenticationDatabase admin \
+    --db "$1" \
+    --archive
+EOF
+then
 
     # ============================================================
     # 验证备份
     # ============================================================
-    if [[ -f "$ARCHIVE_PATH" ]]; then
-        ARCHIVE_SIZE=$(stat -f%z "$ARCHIVE_PATH" 2>/dev/null || stat -c%s "$ARCHIVE_PATH" 2>/dev/null || echo 0)
+    if [[ -f "$TEMP_ARCHIVE" ]]; then
+        ARCHIVE_SIZE=$(stat -f%z "$TEMP_ARCHIVE" 2>/dev/null || stat -c%s "$TEMP_ARCHIVE" 2>/dev/null || echo 0)
         if [[ "$ARCHIVE_SIZE" -gt 0 ]]; then
+            mv "$TEMP_ARCHIVE" "$ARCHIVE_PATH"
+            rm -f "$DUMP_ERROR_LOG"
             echo -e "${GREEN}[SUCCESS]${RESET} 备份完成: ${BOLD}${ARCHIVE_PATH}${RESET} (${ARCHIVE_SIZE} bytes)"
             log_info "备份成功: ${ARCHIVE_PATH} (${ARCHIVE_SIZE} bytes)"
         else
             echo -e "${RED}[ERROR]${RESET} 备份文件为空，可能备份失败"
             log_error "备份文件为空: ${ARCHIVE_PATH}"
-            rm -f "$ARCHIVE_PATH"
+            rm -f "$TEMP_ARCHIVE" "$DUMP_ERROR_LOG"
             exit 1
         fi
     else
         echo -e "${RED}[ERROR]${RESET} 备份文件未生成"
         log_error "备份文件未生成: ${ARCHIVE_PATH}"
+        rm -f "$DUMP_ERROR_LOG"
         exit 1
     fi
 else
     echo -e "${RED}[ERROR]${RESET} mongodump 执行失败"
     log_error "mongodump 执行失败"
-    rm -f "$ARCHIVE_PATH"
+    rm -f "$TEMP_ARCHIVE" "$DUMP_ERROR_LOG"
     exit 1
 fi
 

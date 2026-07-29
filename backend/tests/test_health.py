@@ -1,5 +1,6 @@
 """Readiness probe behavior without application lifespan or real services."""
 
+import threading
 from contextlib import contextmanager
 
 from fastapi import FastAPI
@@ -57,7 +58,7 @@ def _failing_pg_cursor():
 def test_readiness_returns_200_when_all_dependencies_are_healthy(monkeypatch) -> None:
     """Missing a dependency check must not make the probe report ready."""
     monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
-    monkeypatch.setattr(health.redis, "from_url", lambda _: HealthyRedis())
+    monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: HealthyRedis())
     monkeypatch.setattr(health, "get_cursor", _healthy_pg_cursor, raising=False)
 
     response = _readiness_client().get("/health/ready")
@@ -72,7 +73,7 @@ def test_readiness_returns_200_when_all_dependencies_are_healthy(monkeypatch) ->
 def test_readiness_returns_503_when_postgres_is_unavailable(monkeypatch) -> None:
     """A failed PostgreSQL check must take the API out of service."""
     monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
-    monkeypatch.setattr(health.redis, "from_url", lambda _: HealthyRedis())
+    monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: HealthyRedis())
     monkeypatch.setattr(health, "get_cursor", _failing_pg_cursor, raising=False)
 
     response = _readiness_client().get("/health/ready")
@@ -85,7 +86,7 @@ def test_readiness_closes_redis_client_when_ping_fails(monkeypatch) -> None:
     """A Redis ping error after client creation must still release the client."""
     redis_client = FailingRedis()
     monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
-    monkeypatch.setattr(health.redis, "from_url", lambda _: redis_client)
+    monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: redis_client)
     monkeypatch.setattr(health, "get_cursor", _healthy_pg_cursor, raising=False)
 
     response = _readiness_client().get("/health/ready")
@@ -93,3 +94,46 @@ def test_readiness_closes_redis_client_when_ping_fails(monkeypatch) -> None:
     assert response.status_code == 503
     assert response.json()["checks"]["redis"] == "unavailable"
     assert redis_client.closed is True
+
+
+def test_readiness_passes_raw_redis_password_outside_url(monkeypatch) -> None:
+    """Redis credentials must not be URL-encoded or embedded in the endpoint."""
+    captured: dict = {}
+    password = "pa:ss/@?#% word"
+
+    def from_url(url: str, *args, **kwargs) -> HealthyRedis:
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return HealthyRedis()
+
+    monkeypatch.setattr(health.settings, "REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setattr(health.settings, "REDIS_PASSWORD", password)
+    monkeypatch.setattr(health.redis, "from_url", from_url)
+
+    assert health._check_redis() == "ok"
+    assert captured["url"] == "redis://redis:6379/0"
+    assert captured["kwargs"].get("password") == password
+    assert captured["kwargs"].get("socket_connect_timeout") == 3
+    assert captured["kwargs"].get("socket_timeout") == 3
+
+
+def test_readiness_starts_all_dependency_checks_concurrently(monkeypatch) -> None:
+    """A sequential readiness implementation cannot release all three workers."""
+    barrier = threading.Barrier(3)
+
+    def wait_for_peers() -> str:
+        barrier.wait(timeout=1)
+        return "ok"
+
+    monkeypatch.setattr(health, "_check_mongo", wait_for_peers)
+    monkeypatch.setattr(health, "_check_redis", wait_for_peers)
+    monkeypatch.setattr(health, "_check_postgres", wait_for_peers)
+
+    response = _readiness_client().get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["checks"] == {
+        "mongo": "ok",
+        "redis": "ok",
+        "postgres": "ok",
+    }
