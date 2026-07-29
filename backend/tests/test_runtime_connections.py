@@ -2,6 +2,7 @@
 
 import importlib
 
+from app.api import health
 from app.core import cache
 from app.db import mongo, postgres
 
@@ -22,6 +23,9 @@ class FakeCursor:
     def __init__(self) -> None:
         self.closed = False
 
+    def execute(self, statement: str) -> None:
+        assert statement == "SELECT 1"
+
     def close(self) -> None:
         self.closed = True
 
@@ -40,6 +44,9 @@ class FakeConnection:
 
     def rollback(self) -> None:
         self.rolled_back = True
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def test_cache_uses_raw_redis_password_as_connection_parameter(monkeypatch) -> None:
@@ -106,3 +113,50 @@ def test_get_cursor_closes_cursor_before_returning_connection(monkeypatch) -> No
 
     assert cursor.closed is True
     assert returned == [connection]
+
+
+def test_readiness_postgres_uses_one_bounded_connection_and_closes_resources(monkeypatch) -> None:
+    """Readiness must avoid initializing the multi-connection application pool."""
+    cursor = FakeCursor()
+    connection = FakeConnection(cursor)
+    connection.closed = False
+    connect_calls: list[dict] = []
+
+    class FakePsycopg:
+        @staticmethod
+        def connect(**kwargs) -> FakeConnection:
+            connect_calls.append(kwargs)
+            return connection
+
+    monkeypatch.setattr(health, "psycopg2", FakePsycopg(), raising=False)
+
+    assert health._check_postgres() == "ok"
+    assert len(connect_calls) == 1
+    assert connect_calls[0]["connect_timeout"] == 3
+    assert connect_calls[0]["options"] == "-c statement_timeout=3000"
+    assert cursor.closed is True
+    assert connection.closed is True
+
+
+def test_readiness_postgres_closes_resources_when_select_fails(monkeypatch) -> None:
+    """A failed readiness query must still close its dedicated connection."""
+    cursor = FakeCursor()
+    connection = FakeConnection(cursor)
+    connection.closed = False
+
+    def fail_execute(statement: str) -> None:
+        assert statement == "SELECT 1"
+        raise RuntimeError("query failed")
+
+    cursor.execute = fail_execute
+
+    class FakePsycopg:
+        @staticmethod
+        def connect(**kwargs) -> FakeConnection:
+            return connection
+
+    monkeypatch.setattr(health, "psycopg2", FakePsycopg(), raising=False)
+
+    assert health._check_postgres() == "unavailable"
+    assert cursor.closed is True
+    assert connection.closed is True

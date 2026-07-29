@@ -2,12 +2,12 @@
 
 import asyncio
 
+import psycopg2
 import redis
 from fastapi import APIRouter, Response, status
 
 from app.core.config import settings
 from app.db.mongo import get_db
-from app.db.postgres import get_cursor
 
 router = APIRouter(tags=["health"])
 
@@ -43,11 +43,27 @@ def _check_redis() -> str:
 
 
 def _check_postgres() -> str:
+    connection = None
+    cursor = None
     try:
-        with get_cursor() as (_, cursor):
-            cursor.execute("SELECT 1")
+        connection = psycopg2.connect(
+            host=settings.PG_HOST,
+            port=settings.PG_PORT,
+            user=settings.PG_USER,
+            password=settings.PG_PASSWORD,
+            dbname=settings.PG_DB,
+            connect_timeout=3,
+            options="-c statement_timeout=3000",
+        )
+        cursor = connection.cursor()
+        cursor.execute("SELECT 1")
     except Exception:
         return "unavailable"
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if connection is not None:
+            connection.close()
     return "ok"
 
 

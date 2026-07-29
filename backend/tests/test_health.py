@@ -1,9 +1,9 @@
 """Readiness probe behavior without application lifespan or real services."""
 
+import asyncio
 import threading
-from contextlib import contextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 from app.api import health
@@ -44,22 +44,11 @@ def _readiness_client() -> TestClient:
     return TestClient(app)
 
 
-@contextmanager
-def _healthy_pg_cursor():
-    yield None, HealthyCursor()
-
-
-@contextmanager
-def _failing_pg_cursor():
-    raise RuntimeError("PostgreSQL unavailable")
-    yield
-
-
 def test_readiness_returns_200_when_all_dependencies_are_healthy(monkeypatch) -> None:
     """Missing a dependency check must not make the probe report ready."""
     monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
     monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: HealthyRedis())
-    monkeypatch.setattr(health, "get_cursor", _healthy_pg_cursor, raising=False)
+    monkeypatch.setattr(health, "_check_postgres", lambda: "ok")
 
     response = _readiness_client().get("/health/ready")
 
@@ -74,7 +63,7 @@ def test_readiness_returns_503_when_postgres_is_unavailable(monkeypatch) -> None
     """A failed PostgreSQL check must take the API out of service."""
     monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
     monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: HealthyRedis())
-    monkeypatch.setattr(health, "get_cursor", _failing_pg_cursor, raising=False)
+    monkeypatch.setattr(health, "_check_postgres", lambda: "unavailable")
 
     response = _readiness_client().get("/health/ready")
 
@@ -87,7 +76,7 @@ def test_readiness_closes_redis_client_when_ping_fails(monkeypatch) -> None:
     redis_client = FailingRedis()
     monkeypatch.setattr(health, "get_db", lambda: HealthyMongo())
     monkeypatch.setattr(health.redis, "from_url", lambda *args, **kwargs: redis_client)
-    monkeypatch.setattr(health, "get_cursor", _healthy_pg_cursor, raising=False)
+    monkeypatch.setattr(health, "_check_postgres", lambda: "ok")
 
     response = _readiness_client().get("/health/ready")
 
@@ -137,3 +126,49 @@ def test_readiness_starts_all_dependency_checks_concurrently(monkeypatch) -> Non
         "redis": "ok",
         "postgres": "ok",
     }
+
+
+def test_readiness_keeps_event_loop_progressing_while_checks_block(monkeypatch) -> None:
+    """Blocking dependency checks must run in worker threads, not the event loop."""
+    all_workers_started = threading.Event()
+    barrier = threading.Barrier(3, action=all_workers_started.set)
+    release = threading.Event()
+    progress = 0
+
+    def blocking_check() -> str:
+        barrier.wait(timeout=0.5)
+        release.wait(timeout=1)
+        return "ok"
+
+    async def scenario() -> None:
+        nonlocal progress
+        response = Response()
+        monkeypatch.setattr(health, "_check_mongo", blocking_check)
+        monkeypatch.setattr(health, "_check_redis", blocking_check)
+        monkeypatch.setattr(health, "_check_postgres", blocking_check)
+
+        async def heartbeat() -> None:
+            nonlocal progress
+            while not release.is_set():
+                progress += 1
+                await asyncio.sleep(0.01)
+
+        readiness_task = asyncio.create_task(health.readiness(response))
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            for _ in range(30):
+                if all_workers_started.is_set() and progress >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert all_workers_started.is_set()
+            assert progress >= 2
+            release.set()
+            result = await readiness_task
+            assert result["status"] == "ready"
+        finally:
+            release.set()
+            await asyncio.gather(readiness_task, return_exceptions=True)
+            heartbeat_task.cancel()
+            await asyncio.gather(heartbeat_task, return_exceptions=True)
+
+    asyncio.run(scenario())
