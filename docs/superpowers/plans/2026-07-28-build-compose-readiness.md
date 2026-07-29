@@ -76,6 +76,12 @@ git add frontend/tsconfig.app.json frontend/src/__tests__/AppErrorBoundary.test.
 git commit -m "fix: restore frontend production build"
 ```
 
+#### Historical audit evidence
+
+- RED: `cd frontend && npm run build` exited 2. Reported categories were missing Vitest `vi` globals, a `void` JSX component return, unused declarations/imports, and a Recharts nullable formatter type mismatch.
+- GREEN: `npm test && npm run build` exited 0 (2 Vitest files / 6 tests; production build succeeded); focused ESLint over the changed test and three components, plus `git diff --check`, also exited 0.
+- Delivered in `28d30052` (`fix: restore frontend production build`). Full lint remained deliberately deferred to Task 2 because its 17 errors and 5 warnings were in out-of-scope files.
+
 ### Task 2: 修复 React 与 ESLint 门禁
 
 **Files:**
@@ -143,6 +149,13 @@ Expected: 三条命令全部退出码 0，ESLint 0 errors。
 git add frontend/eslint.config.js frontend/src/components/AssessView.tsx frontend/src/components/ChartRenderer.tsx frontend/src/components/ChatView.tsx frontend/src/components/LoginPage.tsx
 git commit -m "fix: satisfy React quality gates"
 ```
+
+#### Historical audit evidence
+
+- RED: `cd frontend && npm run lint` exited 1 with 17 errors and 5 warnings. The documented categories were synchronous derived-state updates, render-time mutation, empty catch blocks, explicit `any`, and the routes Fast Refresh export rule.
+- Focused behavior/regression evidence: the follow-up focused Vitest command over `ChatView.test.tsx` and `AssessView.test.tsx` first failed 4 tests (stale/deleted chat-session persistence, StrictMode duplicate assessment, and URL-company input restoration), then passed 4/4 after correction.
+- GREEN: `npm test && npm run lint && npm run build` exited 0 in the final follow-up run (4 Vitest files / 10 tests; 0 lint errors/warnings; production build succeeded). Diff whitespace checks also exited 0.
+- Delivered in `6f384256` (`fix: satisfy React quality gates`) and `d7944543` (`fix: protect chat and assessment state`).
 
 ### Task 3: 修复 Compose 配置与后端就绪检查
 
@@ -256,6 +269,13 @@ Expected: 退出码 0。
 git add backend/tests/test_health.py backend/app/api/health.py backend/app/db/init_pg.py .env.docker.example docker-compose.yml start.sh stop.sh
 git commit -m "fix: make compose startup readiness reliable"
 ```
+
+#### Historical audit evidence
+
+- Initial RED: isolated `pytest tests/test_health.py -v` exited 1 with 3 failures (missing PostgreSQL readiness check, PostgreSQL failure returning 200, and failed Redis ping returning 200 without closing its client). Static Compose resolution also exited 1 because the original example lacked `REDIS_PASSWORD` and left `PG_PASSWORD` unset.
+- Initial implementation GREEN: the health suite passed 3 tests; temporary-env Compose resolution, Bash syntax checks, and diff whitespace checks passed. Commit: `02f6af4d` (`fix: make compose startup readiness reliable`).
+- Security/reliability review rounds: Round 1 focused suite passed 12 tests after a 7-of-11 RED failure baseline; Round 2 passed 16 tests after 3-of-16 RED failures; Round 3 passed 14 tests after 2-of-14 RED failures. Each round also recorded passing static Compose/script/diff checks where applicable.
+- Final reviewed commits: `a4f2cb7b` (`fix: harden compose readiness and backup`), `cff089b6` (`fix: bound readiness probes and redis command`), and `457d66c3` (`fix: contain postgres readiness cleanup failures`). These checks were isolated/static and retained the existing TestClient deprecation warning; no live dependencies were launched.
 
 ### Task 4: 全量回归与交付检查
 
