@@ -34,6 +34,7 @@ pnpm-debug.log*
 .vscode/
 .idea/
 .worktrees/
+.superpowers/
 *.swp
 *.swo
 *~
