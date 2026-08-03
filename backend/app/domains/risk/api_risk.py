@@ -115,7 +115,7 @@ async def risk_assess(request: RiskAssessRequest, background_tasks: BackgroundTa
             action="assess_risk",
             resource_type="company",
             resource_id=request.company_name,
-            details={"risk_score": fresh.get("risk_score"), "risk_level": fresh.get("risk_level")},
+            details={"risk_score": fresh.risk_score, "risk_level": fresh.risk_level},
         )
 
         return fresh
