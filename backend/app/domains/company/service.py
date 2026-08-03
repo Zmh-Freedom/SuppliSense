@@ -8,7 +8,12 @@ from app.domains.company import repo as company_repo
 from app.domains.company.normalization import normalize_company_name, normalize_credit_code
 from app.domains.auth.audit_repo import create_log_with_cursor
 from app.domains.outbox.repo import enqueue_event
-from app.schemas.company import CompanyCreateInput, CompanyUpdateInput, CompanyVerifyInput
+from app.schemas.company import (
+    CompanyAliasInput,
+    CompanyCreateInput,
+    CompanyUpdateInput,
+    CompanyVerifyInput,
+)
 
 
 MAX_MERGE_HOPS = 20
@@ -16,10 +21,13 @@ _ALIAS_EXACT_CONFIDENCE = 0.95
 _TRUSTED_IDENTITY_SOURCES = {"tianyancha", "import", "admin_verified"}
 _WRITER_ROLES = {"admin", "analyst"}
 _ANALYST_RESTRICTED_UPDATE_FIELDS = {
+    "legal_name",
     "unified_social_credit_code",
     "identity_source",
     "source_reference",
 }
+_UPDATE_NON_NULL_FIELDS = {"legal_name", "identity_source"}
+_CREDIT_CODE_UNIQUE_CONSTRAINT = "companies_unified_social_credit_code_key"
 
 
 def create_company(
@@ -36,6 +44,7 @@ def create_company(
     credit_code = normalize_credit_code(data.unified_social_credit_code)
     if verification_status == "verified":
         _require_verification_evidence(credit_code, data.identity_source, data.source_reference)
+    normalized_aliases = _normalized_aliases(data.aliases)
 
     try:
         with get_cursor() as (_, cur):
@@ -52,20 +61,20 @@ def create_company(
                 created_by=actor_id,
                 verified_by=actor_id if verification_status == "verified" else None,
             )
-            for alias in data.aliases:
+            for alias, normalized_alias in normalized_aliases:
                 company_repo.insert_alias(
                     cur,
                     company_id=company["id"],
                     alias_name=alias.alias_name,
-                    normalized_alias=normalize_company_name(alias.alias_name),
+                    normalized_alias=normalized_alias,
                     alias_type=alias.alias_type,
                     source=alias.source,
                     confidence=alias.confidence,
                     created_by=actor_id,
                 )
             _write_audit_and_event(cur, company, "created", actor_id)
-    except UniqueViolation:
-        _raise_credit_code_conflict(credit_code)
+    except UniqueViolation as exc:
+        _raise_unique_violation(exc, credit_code)
     return _command_result(company)
 
 
@@ -78,6 +87,7 @@ def update_company(
     """Optimistically update a canonical company and write its audit/event atomically."""
     _require_writer_role(actor_role)
     specified_fields = set(data.model_fields_set)
+    _validate_update_fields(data, specified_fields)
     if actor_role != "admin" and specified_fields & _ANALYST_RESTRICTED_UPDATE_FIELDS:
         raise DomainError(
             "COMPANY_IDENTITY_FIELD_FORBIDDEN",
@@ -106,8 +116,9 @@ def update_company(
             if company is None:
                 _raise_update_failure(cur, company_id)
             _write_audit_and_event(cur, company, "updated", actor_id)
-    except UniqueViolation:
-        _raise_credit_code_conflict(
+    except UniqueViolation as exc:
+        _raise_unique_violation(
+            exc,
             normalize_credit_code(data.unified_social_credit_code)
             if "unified_social_credit_code" in specified_fields
             else None
@@ -151,8 +162,9 @@ def verify_company(
             if company is None:
                 _raise_update_failure(cur, company_id)
             _write_audit_and_event(cur, company, "verified", actor_id)
-    except UniqueViolation:
-        _raise_credit_code_conflict(
+    except UniqueViolation as exc:
+        _raise_unique_violation(
+            exc,
             normalize_credit_code(data.unified_social_credit_code)
             if data.unified_social_credit_code is not None
             else None
@@ -215,6 +227,43 @@ def _raise_credit_code_conflict(credit_code: str | None) -> None:
     )
 
 
+def _raise_unique_violation(exc: UniqueViolation, credit_code: str | None) -> None:
+    if exc.diag.constraint_name != _CREDIT_CODE_UNIQUE_CONSTRAINT:
+        raise exc
+    _raise_credit_code_conflict(credit_code)
+
+
+def _normalized_aliases(
+    aliases: list[CompanyAliasInput],
+) -> list[tuple[CompanyAliasInput, str]]:
+    normalized_aliases: list[tuple[CompanyAliasInput, str]] = []
+    seen_aliases: set[str] = set()
+    for alias in aliases:
+        normalized_alias = normalize_company_name(alias.alias_name)
+        if normalized_alias in seen_aliases:
+            raise DomainError(
+                "COMPANY_DUPLICATE_ALIAS",
+                "企业别名标准化后重复",
+                422,
+            )
+        seen_aliases.add(normalized_alias)
+        normalized_aliases.append((alias, normalized_alias))
+    return normalized_aliases
+
+
+def _validate_update_fields(data: CompanyUpdateInput, specified_fields: set[str]) -> None:
+    update_fields = specified_fields - {"expected_version"}
+    if not update_fields:
+        raise DomainError("COMPANY_UPDATE_REQUIRED", "至少需要提供一个更新字段", 422)
+    for field_name in _UPDATE_NON_NULL_FIELDS & update_fields:
+        if getattr(data, field_name) is None:
+            raise DomainError(
+                "COMPANY_INVALID_UPDATE",
+                f"{field_name} 不能为 null",
+                422,
+            )
+
+
 def _require_current_company(cur: object, company_id: str) -> dict:
     company = company_repo.get_company_row_with_cursor(cur, company_id)
     if company is None:
@@ -244,6 +293,8 @@ def _company_update_changes(
 
 def _raise_update_failure(cur: object, company_id: str) -> None:
     current = company_repo.get_company_row_with_cursor(cur, company_id)
+    if current is None:
+        raise DomainError("COMPANY_NOT_FOUND", "企业不存在", 404)
     if current is not None and current["merged_into_id"] is not None:
         raise DomainError("COMPANY_MERGED_SUBJECT", "已合并企业不能修改", 409)
     raise DomainError("COMPANY_VERSION_CONFLICT", "企业身份版本已变更", 409)

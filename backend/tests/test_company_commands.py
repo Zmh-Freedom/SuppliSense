@@ -12,7 +12,18 @@ from app.domains.company.service import create_company, update_company, verify_c
 from app.schemas.company import CompanyAliasInput, CompanyCreateInput, CompanyUpdateInput, CompanyVerifyInput
 
 
-VALID_CREDIT_CODE = "911100007109250324"
+_CREDIT_CODE_CHARS = "0123456789ABCDEFGHJKLMNPQRTUWXY"
+_CREDIT_CODE_WEIGHTS = (1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28)
+
+
+def _unique_valid_credit_code() -> str:
+    """Generate a valid, per-test credit code without relying on production normalization."""
+    body = "91" + "".join(char for char in uuid4().hex.upper() if char in _CREDIT_CODE_CHARS)[:15]
+    total = sum(
+        _CREDIT_CODE_CHARS.index(char) * weight
+        for char, weight in zip(body, _CREDIT_CODE_WEIGHTS)
+    )
+    return body + _CREDIT_CODE_CHARS[(31 - total % 31) % 31]
 
 
 @pytest.fixture(autouse=True)
@@ -160,10 +171,11 @@ def test_create_duplicate_credit_code_reports_the_conflicting_company(
     _company_command_database: list[str],
 ) -> None:
     """Replacing a conflict with a generic database error would hide the existing canonical company."""
+    credit_code = _unique_valid_credit_code()
     existing = create_company(
         CompanyCreateInput(
             legal_name="Task5 Existing Credit Code Company",
-            unified_social_credit_code=VALID_CREDIT_CODE,
+            unified_social_credit_code=credit_code,
             verification_status="verified",
             identity_source="admin_verified",
         ),
@@ -176,7 +188,7 @@ def test_create_duplicate_credit_code_reports_the_conflicting_company(
         create_company(
             CompanyCreateInput(
                 legal_name="Task5 Duplicate Credit Code Company",
-                unified_social_credit_code=VALID_CREDIT_CODE,
+                unified_social_credit_code=credit_code,
             ),
             None,
             "analyst",
@@ -185,6 +197,32 @@ def test_create_duplicate_credit_code_reports_the_conflicting_company(
     assert exc_info.value.code == "COMPANY_ALREADY_EXISTS"
     assert exc_info.value.status_code == 409
     assert exc_info.value.detail == {"company_id": existing["company_id"]}
+
+
+def test_create_rejects_duplicate_normalized_aliases_before_writing_company(
+    _company_command_database: list[str],
+) -> None:
+    """Allowing duplicate aliases to reach the database would leak a storage error as a credit-code conflict."""
+    legal_name = f"Task5 Duplicate Alias {uuid4().hex}"
+
+    with pytest.raises(DomainError) as exc_info:
+        create_company(
+            CompanyCreateInput(
+                legal_name=legal_name,
+                aliases=[
+                    CompanyAliasInput(alias_name="  Ｔａｓｋ５ Alias ", alias_type="short_name"),
+                    CompanyAliasInput(alias_name="task5   alias", alias_type="former_name"),
+                ],
+            ),
+            None,
+            "analyst",
+        )
+
+    assert exc_info.value.code == "COMPANY_DUPLICATE_ALIAS"
+    assert exc_info.value.status_code == 422
+    with get_cursor() as (_, cur):
+        cur.execute("SELECT COUNT(*) FROM companies WHERE legal_name = %s", (legal_name,))
+        assert cur.fetchone() == (0,)
 
 
 def test_analyst_can_update_operational_fields_but_not_authoritative_identity_fields(
@@ -211,12 +249,75 @@ def test_analyst_can_update_operational_fields_but_not_authoritative_identity_fi
     assert exc_info.value.code == "COMPANY_IDENTITY_FIELD_FORBIDDEN"
 
 
-def test_update_rejects_stale_version_and_merged_subject(
+def test_analyst_cannot_rename_a_company(
+    _company_command_database: list[str],
+) -> None:
+    """Treating legal names as operational data would let analysts alter a legal identity."""
+    company = _create_pending(_company_command_database, "Task5 Analyst Rename Company")
+
+    with pytest.raises(DomainError) as exc_info:
+        update_company(
+            company["company_id"],
+            CompanyUpdateInput(expected_version=1, legal_name="Task5 Renamed Legal Entity"),
+            None,
+            "analyst",
+        )
+
+    assert exc_info.value.code == "COMPANY_IDENTITY_FIELD_FORBIDDEN"
+
+
+@pytest.mark.parametrize("field_name", ["legal_name", "identity_source"])
+def test_update_rejects_explicit_none_for_non_null_fields(
+    _company_command_database: list[str],
+    field_name: str,
+) -> None:
+    """Passing NULL through to a non-null column would leak a PostgreSQL error instead of a domain validation error."""
+    company = _create_pending(_company_command_database, f"Task5 Null {field_name} Company")
+
+    with pytest.raises(DomainError) as exc_info:
+        update_company(
+            company["company_id"],
+            CompanyUpdateInput(expected_version=1, **{field_name: None}),
+            None,
+            "admin",
+        )
+
+    assert exc_info.value.code == "COMPANY_INVALID_UPDATE"
+    assert exc_info.value.status_code == 422
+
+
+def test_update_rejects_expected_version_only_patch(
+    _company_command_database: list[str],
+) -> None:
+    """Incrementing the identity version for no data change would manufacture a false concurrent update."""
+    company = _create_pending(_company_command_database, "Task5 Empty Update Company")
+
+    with pytest.raises(DomainError) as exc_info:
+        update_company(
+            company["company_id"],
+            CompanyUpdateInput(expected_version=1),
+            None,
+            "admin",
+        )
+
+    assert exc_info.value.code == "COMPANY_UPDATE_REQUIRED"
+    assert exc_info.value.status_code == 422
+
+
+def test_update_reports_not_found_merged_subject_and_stale_version(
     _company_command_database: list[str],
 ) -> None:
     """Ignoring either predicate would permit lost updates or edits to a redirected subject."""
     company = _create_pending(_company_command_database, "Task5 Versioned Company")
     merged_company_id = _insert_merged_subject(_company_command_database)
+
+    with pytest.raises(DomainError) as missing_error:
+        update_company(
+            str(uuid4()),
+            CompanyUpdateInput(expected_version=1, registration_status="active"),
+            None,
+            "admin",
+        )
 
     with pytest.raises(DomainError) as stale_error:
         update_company(
@@ -233,8 +334,9 @@ def test_update_rejects_stale_version_and_merged_subject(
             "admin",
         )
 
-    assert stale_error.value.code == "COMPANY_VERSION_CONFLICT"
+    assert missing_error.value.code == "COMPANY_NOT_FOUND"
     assert merged_error.value.code == "COMPANY_MERGED_SUBJECT"
+    assert stale_error.value.code == "COMPANY_VERSION_CONFLICT"
 
 
 def test_verify_requires_admin_and_trusted_evidence_then_writes_event(
