@@ -5,8 +5,10 @@ logging.basicConfig(level=logging.INFO)
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from app.core.config import settings
 from app.domains.risk.repo_company import get_baseinfo
 from app.domains.risk.repo_financial import get_financial_metrics
+from app.domains.outbox.worker import run_outbox_once
 from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
@@ -133,6 +135,10 @@ def _scheduled_proactive() -> None:
     run_proactive_analysis()
 
 
+def _scheduled_outbox() -> None:
+    run_outbox_once()
+
+
 def start_scheduler() -> None:
     free_cron = os.getenv("ALERT_CHECK_CRON", "0 9 * * *")
     paid_cron = os.getenv("ALERT_REFRESH_CRON", "0 9 * * 1")
@@ -147,8 +153,10 @@ def start_scheduler() -> None:
     _add_job(_scheduled_sentiment, sentiment_cron, "sentiment_check")
     _add_job(_scheduled_notify, notify_cron, "alert_notify")
     _add_job(_scheduled_proactive, proactive_cron, "proactive_agent")
+    _add_outbox_job()
 
-    _scheduler.start()
+    if not _scheduler.running:
+        _scheduler.start()
     logger.info(
         "Scheduler started: financial[%s] digest[%s] refresh[%s] sentiment[%s] notify[%s] proactive[%s]",
         free_cron, digest_cron, paid_cron, sentiment_cron, notify_cron, proactive_cron,
@@ -169,9 +177,26 @@ def _add_job(func, cron: str, job_id: str) -> None:
         month=parts[3],
         day_of_week=parts[4],
         id=job_id,
+        replace_existing=True,
+    )
+
+
+def _add_outbox_job() -> None:
+    if not settings.OUTBOX_WORKER_ENABLED:
+        return
+    _scheduler.add_job(
+        _scheduled_outbox,
+        "interval",
+        seconds=settings.OUTBOX_POLL_SECONDS,
+        id="outbox_worker",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
     )
 
 
 def stop_scheduler() -> None:
+    if not _scheduler.running:
+        return
     _scheduler.shutdown(wait=True)
     logger.info("Alert scheduler stopped (waited for running tasks)")

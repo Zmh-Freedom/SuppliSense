@@ -71,6 +71,27 @@ def claim_events(worker_id: str, batch_size: int, lease_seconds: int) -> list[di
         return events
 
 
+def get_pending_stats() -> dict:
+    """Return the current unpublished backlog size and its oldest event age."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT
+                COUNT(*),
+                EXTRACT(EPOCH FROM NOW() - MIN(occurred_at))
+            FROM outbox_events
+            WHERE published_at IS NULL AND dead_lettered_at IS NULL
+            """
+        )
+        pending, oldest_age_seconds = cur.fetchone()
+    return {
+        "pending": int(pending),
+        "oldest_age_seconds": (
+            float(oldest_age_seconds) if oldest_age_seconds is not None else None
+        ),
+    }
+
+
 def is_consumed(event_id: str, consumer_name: str) -> bool:
     with get_cursor() as (_, cur):
         cur.execute(

@@ -34,6 +34,7 @@ def process_outbox_batch(
     batch_size: int,
     max_attempts: int,
     lease_seconds: int,
+    outcome_observer: Callable[[str, str], None] | None = None,
 ) -> dict:
     if batch_size < 1:
         raise ValueError("batch_size 必须大于 0")
@@ -56,6 +57,7 @@ def process_outbox_batch(
                 repo.record_consumption(event_id, consumer_name)
             if repo.mark_published(event_id, worker_id):
                 result["published"] += 1
+                _notify_outcome(outcome_observer, event["event_type"], "published")
             else:
                 logger.info(
                     "outbox_event_lease_lost",
@@ -79,6 +81,8 @@ def process_outbox_batch(
                     attempt=attempt,
                 )
                 result["failed"] += 1
+                outcome = "dead_lettered" if attempt >= max_attempts else "retry"
+                _notify_outcome(outcome_observer, event["event_type"], outcome)
             else:
                 logger.info(
                     "outbox_event_lease_lost",
@@ -87,6 +91,24 @@ def process_outbox_batch(
                     worker_id=worker_id,
                 )
     return result
+
+
+def _notify_outcome(
+    observer: Callable[[str, str], None] | None,
+    event_type: str,
+    outcome: str,
+) -> None:
+    """Keep telemetry failures from changing already-persisted delivery state."""
+    if observer is None:
+        return
+    try:
+        observer(event_type, outcome)
+    except Exception:
+        logger.exception(
+            "outbox_outcome_observer_failed",
+            event_type=event_type,
+            outcome=outcome,
+        )
 
 
 def list_events(status: str, limit: int) -> list[dict]:

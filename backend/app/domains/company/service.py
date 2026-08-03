@@ -6,6 +6,7 @@ from uuid import UUID
 from psycopg2.errors import UniqueViolation
 
 from app.core.errors import DomainError
+from app.core.metrics import record_company_identity_resolution
 from app.db.postgres import get_cursor
 from app.domains.company import repo as company_repo
 from app.domains.company.normalization import normalize_company_name, normalize_credit_code
@@ -563,30 +564,49 @@ def search_identity(query: str, limit: int = 10) -> dict:
 
     candidates = sorted(candidates_by_company_id.values(), key=_candidate_sort_key)
     if not candidates:
-        return {"resolution": "pending_verification", "exact": None, "candidates": []}
+        return _record_resolution(
+            {"resolution": "pending_verification", "exact": None, "candidates": []}
+        )
     credit_candidates = [
         candidate for candidate in candidates if candidate["match_type"] == "credit_code"
     ]
     if len(credit_candidates) == 1:
-        return {"resolution": "exact", "exact": credit_candidates[0], "candidates": []}
+        return _record_resolution(
+            {"resolution": "exact", "exact": credit_candidates[0], "candidates": []}
+        )
     if len(candidates) != 1:
-        return {
-            "resolution": "candidates",
-            "exact": None,
-            "candidates": candidates[:limit],
-        }
+        return _record_resolution(
+            {
+                "resolution": "candidates",
+                "exact": None,
+                "candidates": candidates[:limit],
+            }
+        )
 
     candidate = candidates[0]
     if candidate["verification_status"] != "verified":
-        return {"resolution": "pending_verification", "exact": None, "candidates": []}
+        return _record_resolution(
+            {"resolution": "pending_verification", "exact": None, "candidates": []}
+        )
     if candidate["match_type"] == "legal_name":
-        return {"resolution": "exact", "exact": candidate, "candidates": []}
+        return _record_resolution(
+            {"resolution": "exact", "exact": candidate, "candidates": []}
+        )
     if (
         candidate["match_type"] == "alias"
         and candidate["confidence"] >= _ALIAS_EXACT_CONFIDENCE
     ):
-        return {"resolution": "exact", "exact": candidate, "candidates": []}
-    return {"resolution": "candidates", "exact": None, "candidates": candidates}
+        return _record_resolution(
+            {"resolution": "exact", "exact": candidate, "candidates": []}
+        )
+    return _record_resolution(
+        {"resolution": "candidates", "exact": None, "candidates": candidates}
+    )
+
+
+def _record_resolution(result: dict) -> dict:
+    record_company_identity_resolution(result["resolution"])
+    return result
 
 
 def _company_candidate(canonical: dict, matched_row: dict) -> dict:
