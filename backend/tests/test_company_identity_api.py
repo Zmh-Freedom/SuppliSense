@@ -7,6 +7,7 @@ import pytest
 
 from app.core.deps import get_current_user
 from app.core.errors import DomainError
+from app.core.config import settings
 from app.schemas.user import UserInDB, UserRole
 
 
@@ -365,3 +366,292 @@ def test_company_api_openapi_declares_companies_tag_and_contract(app):
     assert set(schema["paths"][f"/api/v1/companies/{{company_id}}/merge"]) == {"post"}
     assert schema["paths"]["/api/v1/companies/search"]["get"]["tags"] == ["companies"]
     assert schema["paths"]["/api/v1/companies"]["post"]["summary"] == "创建企业身份主体"
+
+
+def test_company_cors_preflight_allows_patch_from_configured_frontend(client):
+    """A browser PATCH preflight from an allowed frontend must not be rejected by CORS."""
+    response = client.options(
+        "/api/v1/companies/00000000-0000-0000-0000-000000000001",
+        headers={
+            "Origin": settings.CORS_ORIGINS[0],
+            "Access-Control-Request-Method": "PATCH",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "PATCH" in response.headers["access-control-allow-methods"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "params", "body", "service_name"),
+    [
+        ("get", "/api/v1/companies/search", {"q": "  \u3000  "}, None, "search_identity"),
+        ("post", "/api/v1/companies", None, {"legal_name": "  "}, "create_company"),
+        (
+            "post",
+            "/api/v1/companies",
+            None,
+            {"legal_name": "示例科技有限公司", "unified_social_credit_code": "invalid"},
+            "create_company",
+        ),
+        (
+            "post",
+            "/api/v1/companies",
+            None,
+            {
+                "legal_name": "示例科技有限公司",
+                "aliases": [{"alias_name": "  ", "alias_type": "short_name"}],
+            },
+            "create_company",
+        ),
+        (
+            "patch",
+            f"/api/v1/companies/{COMPANY_ID}",
+            None,
+            {"expected_version": 1, "legal_name": "  "},
+            "update_company",
+        ),
+        (
+            "patch",
+            f"/api/v1/companies/{COMPANY_ID}",
+            None,
+            {"expected_version": 1, "unified_social_credit_code": "invalid"},
+            "update_company",
+        ),
+        (
+            "post",
+            f"/api/v1/companies/{COMPANY_ID}/verify",
+            None,
+            {
+                "expected_version": 1,
+                "identity_source": "admin_verified",
+                "unified_social_credit_code": "invalid",
+            },
+            "verify_company",
+        ),
+    ],
+)
+def test_company_api_rejects_blank_or_invalid_identity_inputs_before_service(
+    as_role,
+    monkeypatch,
+    company_api,
+    method,
+    path,
+    params,
+    body,
+    service_name,
+):
+    """Blank names and invalid credit codes must return the standard 422 envelope before service code runs."""
+    def should_not_run(*args, **kwargs):
+        raise AssertionError("invalid API input reached the company service")
+
+    monkeypatch.setattr(company_api, service_name, should_not_run)
+    response = as_role(UserRole.ADMIN).request(method.upper(), path, params=params, json=body)
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+def test_company_api_normalizes_valid_create_update_verify_and_alias_inputs(
+    as_role,
+    monkeypatch,
+    company_api,
+):
+    """Boundary normalization gives services trimmed names and canonical credit codes without changing valid requests."""
+    observed: dict[str, object] = {}
+
+    def create(data, actor_id, actor_role):
+        observed["create"] = data
+        return {
+            "company_id": COMPANY_ID,
+            "legal_name": data.legal_name,
+            "verification_status": "pending_verification",
+            "identity_version": 1,
+        }
+
+    def update(company_id, data, actor_id, actor_role):
+        observed["update"] = data
+        return {
+            "company_id": company_id,
+            "legal_name": data.legal_name or "示例科技有限公司",
+            "verification_status": "pending_verification",
+            "identity_version": 2,
+        }
+
+    def verify(company_id, data, actor_id, actor_role):
+        observed["verify"] = data
+        return {
+            "company_id": company_id,
+            "legal_name": "示例科技有限公司",
+            "verification_status": "verified",
+            "identity_version": 3,
+        }
+
+    monkeypatch.setattr(company_api, "create_company", create)
+    monkeypatch.setattr(company_api, "update_company", update)
+    monkeypatch.setattr(company_api, "verify_company", verify)
+    client = as_role(UserRole.ADMIN)
+
+    create_response = client.post(
+        "/api/v1/companies",
+        json={
+            "legal_name": "  示例科技有限公司  ",
+            "unified_social_credit_code": " 911100007109250324 ",
+            "aliases": [{"alias_name": "  示例科技  ", "alias_type": "short_name"}],
+        },
+    )
+    update_response = client.patch(
+        f"/api/v1/companies/{COMPANY_ID}",
+        json={
+            "expected_version": 1,
+            "legal_name": "  更新后的示例科技有限公司  ",
+            "unified_social_credit_code": " 911100007109250324 ",
+        },
+    )
+    verify_response = client.post(
+        f"/api/v1/companies/{COMPANY_ID}/verify",
+        json={
+            "expected_version": 2,
+            "identity_source": "admin_verified",
+            "unified_social_credit_code": " 911100007109250324 ",
+        },
+    )
+
+    assert [create_response.status_code, update_response.status_code, verify_response.status_code] == [200, 200, 200]
+    assert observed["create"].legal_name == "示例科技有限公司"
+    assert observed["create"].aliases[0].alias_name == "示例科技"
+    assert observed["create"].unified_social_credit_code == "911100007109250324"
+    assert observed["update"].legal_name == "更新后的示例科技有限公司"
+    assert observed["update"].unified_social_credit_code == "911100007109250324"
+    assert observed["verify"].unified_social_credit_code == "911100007109250324"
+
+
+@pytest.mark.parametrize(
+    ("role", "method", "path", "body", "service_name"),
+    [
+        (UserRole.VIEWER, "post", "/api/v1/companies", {"legal_name": "示例科技有限公司"}, "create_company"),
+        (UserRole.VIEWER, "patch", f"/api/v1/companies/{COMPANY_ID}", {"expected_version": 1, "registration_status": "active"}, "update_company"),
+        (UserRole.VIEWER, "post", f"/api/v1/companies/{COMPANY_ID}/verify", {"expected_version": 1, "identity_source": "admin_verified"}, "verify_company"),
+        (UserRole.VIEWER, "post", f"/api/v1/companies/{COMPANY_ID}/merge", {"target_company_id": TARGET_COMPANY_ID, "source_expected_version": 1, "target_expected_version": 1, "reason": "重复企业记录", "confirm": True}, "merge_company"),
+        (UserRole.ANALYST, "post", f"/api/v1/companies/{COMPANY_ID}/verify", {"expected_version": 1, "identity_source": "admin_verified"}, "verify_company"),
+        (UserRole.ANALYST, "post", f"/api/v1/companies/{COMPANY_ID}/merge", {"target_company_id": TARGET_COMPANY_ID, "source_expected_version": 1, "target_expected_version": 1, "reason": "重复企业记录", "confirm": True}, "merge_company"),
+    ],
+)
+def test_denied_company_write_roles_never_reach_services(
+    as_role,
+    monkeypatch,
+    company_api,
+    role,
+    method,
+    path,
+    body,
+    service_name,
+):
+    """An authorization regression must not allow a denied request to execute a company write service."""
+    called = False
+
+    def forbidden(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("denied role reached company service")
+
+    monkeypatch.setattr(company_api, service_name, forbidden)
+    response = as_role(role).request(method.upper(), path, json=body)
+
+    assert response.status_code == 403
+    assert called is False
+
+
+@pytest.mark.parametrize(
+    ("role", "method", "path", "body", "service_name"),
+    [
+        (UserRole.ANALYST, "post", "/api/v1/companies", {"legal_name": "示例科技有限公司"}, "create_company"),
+        (UserRole.ANALYST, "patch", f"/api/v1/companies/{COMPANY_ID}", {"expected_version": 1, "registration_status": "active"}, "update_company"),
+        (UserRole.ADMIN, "post", "/api/v1/companies", {"legal_name": "示例科技有限公司"}, "create_company"),
+        (UserRole.ADMIN, "patch", f"/api/v1/companies/{COMPANY_ID}", {"expected_version": 1, "registration_status": "active"}, "update_company"),
+        (UserRole.ADMIN, "post", f"/api/v1/companies/{COMPANY_ID}/verify", {"expected_version": 1, "identity_source": "admin_verified"}, "verify_company"),
+        (UserRole.ADMIN, "post", f"/api/v1/companies/{COMPANY_ID}/merge", {"target_company_id": TARGET_COMPANY_ID, "source_expected_version": 1, "target_expected_version": 1, "reason": "重复企业记录", "confirm": True}, "merge_company"),
+    ],
+)
+def test_allowed_company_write_roles_reach_services(
+    as_role,
+    monkeypatch,
+    company_api,
+    role,
+    method,
+    path,
+    body,
+    service_name,
+):
+    """Admins may perform every write, while analysts may create and update."""
+    called = False
+
+    def command(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {
+            "company_id": COMPANY_ID,
+            "legal_name": "示例科技有限公司",
+            "verification_status": "verified",
+            "identity_version": 2,
+        }
+
+    def merge(*args, **kwargs):
+        nonlocal called
+        called = True
+        return {
+            "source_company_id": COMPANY_ID,
+            "target_company_id": TARGET_COMPANY_ID,
+            "source_version": 2,
+            "target_version": 3,
+            "merged": True,
+        }
+
+    monkeypatch.setattr(company_api, service_name, merge if service_name == "merge_company" else command)
+    response = as_role(role).request(method.upper(), path, json=body)
+
+    assert response.status_code == 200
+    assert called is True
+
+
+def test_company_write_responses_filter_internal_service_fields_and_document_models(
+    as_role,
+    monkeypatch,
+    company_api,
+    app,
+):
+    """Write responses must expose only documented fields even if a service returns internal metadata."""
+    command_result = {
+        "company_id": COMPANY_ID,
+        "legal_name": "示例科技有限公司",
+        "verification_status": "verified",
+        "identity_version": 2,
+        "internal_event_id": "do-not-expose",
+    }
+    merge_result = {
+        "source_company_id": COMPANY_ID,
+        "target_company_id": TARGET_COMPANY_ID,
+        "source_version": 2,
+        "target_version": 3,
+        "merged": True,
+        "internal_event_id": "do-not-expose",
+    }
+    monkeypatch.setattr(company_api, "create_company", lambda *args: command_result)
+    monkeypatch.setattr(company_api, "update_company", lambda *args: command_result)
+    monkeypatch.setattr(company_api, "verify_company", lambda *args: command_result)
+    monkeypatch.setattr(company_api, "merge_company", lambda *args: merge_result)
+    client = as_role(UserRole.ADMIN)
+
+    responses = [
+        client.post("/api/v1/companies", json={"legal_name": "示例科技有限公司"}),
+        client.patch(f"/api/v1/companies/{COMPANY_ID}", json={"expected_version": 1, "registration_status": "active"}),
+        client.post(f"/api/v1/companies/{COMPANY_ID}/verify", json={"expected_version": 1, "identity_source": "admin_verified"}),
+        client.post(f"/api/v1/companies/{COMPANY_ID}/merge", json={"target_company_id": TARGET_COMPANY_ID, "source_expected_version": 1, "target_expected_version": 1, "reason": "重复企业记录", "confirm": True}),
+    ]
+
+    for response in responses:
+        assert response.status_code == 200
+        assert "internal_event_id" not in response.json()
+    schema = app.openapi()
+    for model_name in ("CompanyCommandResponse", "CompanyMergeResponse"):
+        assert schema["components"]["schemas"][model_name]["additionalProperties"] is False

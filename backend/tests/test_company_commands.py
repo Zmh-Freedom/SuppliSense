@@ -144,7 +144,7 @@ def test_create_persists_normalized_aliases_audit_and_outbox_event(
             (company_id,),
         )
         assert set(cur.fetchall()) == {
-            ("  Ｔａｓｋ５   别名  ", "task5 别名"),
+            ("Ｔａｓｋ５   别名", "task5 别名"),
             ("Task5 Former Name", "task5 former name"),
         }
         cur.execute(

@@ -1,6 +1,7 @@
 """FastAPI routes for Company Identity operations."""
 
 import asyncio
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -17,8 +18,11 @@ from app.domains.company.service import (
 )
 from app.schemas.company import (
     CompanyCreateInput,
+    CompanyCommandResponse,
     CompanyMergeInput,
+    CompanyMergeResponse,
     CompanyResponse,
+    CompanySearchQuery,
     CompanyUpdateInput,
     CompanyVerifyInput,
     IdentityResolutionResponse,
@@ -40,11 +44,10 @@ router = APIRouter(
     responses={401: {"description": "未认证"}, 422: {"description": "请求参数校验失败"}},
 )
 async def search_companies(
-    q: str = Query(..., min_length=1, max_length=255, description="企业查询文本"),
-    limit: int = Query(10, ge=1, le=100, description="最大候选数"),
+    query: Annotated[CompanySearchQuery, Query()],
 ) -> IdentityResolutionResponse:
     """Search identity subjects for any authenticated user."""
-    result = await asyncio.to_thread(search_identity, q, limit)
+    result = await asyncio.to_thread(search_identity, query.q, query.limit)
     return IdentityResolutionResponse.model_validate(result)
 
 
@@ -68,6 +71,7 @@ async def get_company_endpoint(company_id: UUID) -> CompanyResponse:
 
 @router.post(
     "",
+    response_model=CompanyCommandResponse,
     summary="创建企业身份主体",
     description="管理员或分析师创建待核验企业身份主体。",
     responses={
@@ -80,18 +84,20 @@ async def get_company_endpoint(company_id: UUID) -> CompanyResponse:
 async def create_company_endpoint(
     data: CompanyCreateInput,
     current_user: UserInDB = Depends(require_admin_or_analyst),
-) -> dict[str, object]:
+) -> CompanyCommandResponse:
     """Create a company using only the authenticated actor identity."""
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         create_company,
         data,
         current_user.id,
         current_user.role.value,
     )
+    return CompanyCommandResponse.model_validate(result)
 
 
 @router.patch(
     "/{company_id}",
+    response_model=CompanyCommandResponse,
     summary="更新企业身份主体",
     description="管理员或分析师按版本更新企业身份主体。",
     responses={
@@ -106,19 +112,21 @@ async def update_company_endpoint(
     company_id: UUID,
     data: CompanyUpdateInput,
     current_user: UserInDB = Depends(require_admin_or_analyst),
-) -> dict[str, object]:
+) -> CompanyCommandResponse:
     """Update a company using only the authenticated actor identity."""
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         update_company,
         str(company_id),
         data,
         current_user.id,
         current_user.role.value,
     )
+    return CompanyCommandResponse.model_validate(result)
 
 
 @router.post(
     "/{company_id}/verify",
+    response_model=CompanyCommandResponse,
     summary="核验企业身份主体",
     description="管理员核验企业身份并记录核验来源。",
     responses={
@@ -133,19 +141,21 @@ async def verify_company_endpoint(
     company_id: UUID,
     data: CompanyVerifyInput,
     current_user: UserInDB = Depends(require_admin),
-) -> dict[str, object]:
+) -> CompanyCommandResponse:
     """Verify a company using only the authenticated administrator identity."""
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         verify_company,
         str(company_id),
         data,
         current_user.id,
         current_user.role.value,
     )
+    return CompanyCommandResponse.model_validate(result)
 
 
 @router.post(
     "/{company_id}/merge",
+    response_model=CompanyMergeResponse,
     summary="合并企业身份主体",
     description="管理员确认后将源企业逻辑合并到目标规范主体。",
     responses={
@@ -160,12 +170,13 @@ async def merge_company_endpoint(
     company_id: UUID,
     data: CompanyMergeInput,
     current_user: UserInDB = Depends(require_admin),
-) -> dict[str, object]:
+) -> CompanyMergeResponse:
     """Merge a company using only the authenticated administrator identity."""
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         merge_company,
         str(company_id),
         data,
         current_user.id,
         current_user.role.value,
     )
+    return CompanyMergeResponse.model_validate(result)

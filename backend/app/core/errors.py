@@ -5,6 +5,7 @@ Unified error response handlers.
 import logging
 
 from fastapi import Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger("app")
@@ -58,7 +59,10 @@ async def validation_exception_handler(request: Request, exc):
             "error": {
                 "code": "VALIDATION_ERROR",
                 "message": "请求参数校验失败",
-                "detail": exc.errors(),
+                "detail": jsonable_encoder(
+                    exc.errors(),
+                    custom_encoder={ValueError: str},
+                ),
             }
         },
     )
