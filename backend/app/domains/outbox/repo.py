@@ -97,16 +97,22 @@ def record_consumption(event_id: str, consumer_name: str) -> bool:
         return cur.fetchone() is not None
 
 
-def mark_published(event_id: str) -> None:
+def mark_published(event_id: str, worker_id: str) -> bool:
     with get_cursor() as (_, cur):
         cur.execute(
             """
             UPDATE outbox_events
             SET published_at = NOW(), locked_by = NULL, locked_until = NULL
             WHERE event_id = %s
+              AND locked_by = %s
+              AND locked_until >= NOW()
+              AND published_at IS NULL
+              AND dead_lettered_at IS NULL
+            RETURNING event_id
             """,
-            (event_id,),
+            (event_id, worker_id),
         )
+        return cur.fetchone() is not None
 
 
 def mark_failed(
@@ -114,7 +120,8 @@ def mark_failed(
     error: str,
     max_attempts: int,
     retry_seconds: int,
-) -> dict | None:
+    worker_id: str,
+) -> bool:
     """Record one failed attempt and either schedule it or dead-letter it."""
     with get_cursor() as (_, cur):
         cur.execute(
@@ -133,11 +140,15 @@ def mark_failed(
                 locked_by = NULL,
                 locked_until = NULL
             WHERE event_id = %s
-            RETURNING *
+              AND locked_by = %s
+              AND locked_until >= NOW()
+              AND published_at IS NULL
+              AND dead_lettered_at IS NULL
+            RETURNING event_id
             """,
-            (error, max_attempts, retry_seconds, max_attempts, event_id),
+            (error, max_attempts, retry_seconds, max_attempts, event_id, worker_id),
         )
-        return _row_to_dict(cur, cur.fetchone())
+        return cur.fetchone() is not None
 
 
 def list_events(status: str, limit: int) -> list[dict]:

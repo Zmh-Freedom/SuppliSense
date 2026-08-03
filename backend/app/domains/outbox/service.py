@@ -54,23 +54,38 @@ def process_outbox_batch(
                     continue
                 handler(event)
                 repo.record_consumption(event_id, consumer_name)
-            repo.mark_published(event_id)
-            result["published"] += 1
+            if repo.mark_published(event_id, worker_id):
+                result["published"] += 1
+            else:
+                logger.info(
+                    "outbox_event_lease_lost",
+                    event_id=event_id,
+                    event_type=event["event_type"],
+                    worker_id=worker_id,
+                )
         except Exception as exc:
             attempt = int(event["attempt_count"]) + 1
-            repo.mark_failed(
+            if repo.mark_failed(
                 event_id,
                 str(exc),
                 max_attempts,
                 retry_delay_seconds(attempt),
-            )
-            logger.exception(
-                "outbox_event_failed",
-                event_id=event_id,
-                event_type=event["event_type"],
-                attempt=attempt,
-            )
-            result["failed"] += 1
+                worker_id,
+            ):
+                logger.exception(
+                    "outbox_event_failed",
+                    event_id=event_id,
+                    event_type=event["event_type"],
+                    attempt=attempt,
+                )
+                result["failed"] += 1
+            else:
+                logger.info(
+                    "outbox_event_lease_lost",
+                    event_id=event_id,
+                    event_type=event["event_type"],
+                    worker_id=worker_id,
+                )
     return result
 
 

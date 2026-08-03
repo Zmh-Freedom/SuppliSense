@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -9,7 +10,12 @@ import pytest
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, get_cursor, put_conn
 from app.domains.outbox import repo as outbox_repo
-from app.domains.outbox.repo import claim_events, enqueue_event
+from app.domains.outbox.repo import (
+    claim_events,
+    enqueue_event,
+    mark_failed,
+    mark_published,
+)
 from app.domains.outbox.service import (
     list_events,
     process_outbox_batch,
@@ -168,6 +174,135 @@ def test_claim_events_leases_only_the_due_event_for_the_worker(monkeypatch):
         _delete_event(str(event_id))
 
 
+def test_claim_events_skips_a_row_locked_by_another_real_postgres_connection(monkeypatch):
+    """Replacing SKIP LOCKED with a blocking or unlocked claim breaks concurrent workers."""
+    ensure_pg_schema()
+    locked_event_id = UUID("00000000-0000-4000-8000-000000000401")
+    available_event_id = UUID("00000000-0000-4000-8000-000000000402")
+    locked_aggregate_id = UUID("00000000-0000-4000-8000-000000000403")
+    available_aggregate_id = UUID("00000000-0000-4000-8000-000000000404")
+
+    try:
+        _enqueue_committed(
+            monkeypatch,
+            locked_event_id,
+            "test.outbox.concurrent.locked.20260803",
+            locked_aggregate_id,
+            {"company_id": str(locked_aggregate_id)},
+        )
+        _enqueue_committed(
+            monkeypatch,
+            available_event_id,
+            "test.outbox.concurrent.available.20260803",
+            available_aggregate_id,
+            {"company_id": str(available_aggregate_id)},
+        )
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "UPDATE outbox_events SET next_attempt_at = %s WHERE event_id = %s",
+                (datetime(2000, 1, 1, tzinfo=timezone.utc), str(locked_event_id)),
+            )
+            cur.execute(
+                "UPDATE outbox_events SET next_attempt_at = %s WHERE event_id = %s",
+                (datetime(2000, 1, 2, tzinfo=timezone.utc), str(available_event_id)),
+            )
+
+        with _real_connection() as (_, lock_cur):
+            lock_cur.execute(
+                "SELECT event_id FROM outbox_events WHERE event_id = %s FOR UPDATE",
+                (str(locked_event_id),),
+            )
+            assert lock_cur.fetchone() == (str(locked_event_id),)
+
+            claimed = claim_events("test-concurrent-worker-b", 1, 60)
+
+            assert [event["event_id"] for event in claimed] == [str(available_event_id)]
+            with get_cursor() as (_, cur):
+                cur.execute(
+                    """
+                    SELECT event_id, locked_by
+                    FROM outbox_events
+                    WHERE event_id = ANY(%s::uuid[])
+                    ORDER BY event_id
+                    """,
+                    ([str(locked_event_id), str(available_event_id)],),
+                )
+                assert cur.fetchall() == [
+                    (str(locked_event_id), None),
+                    (str(available_event_id), "test-concurrent-worker-b"),
+                ]
+    finally:
+        _delete_event(str(locked_event_id))
+        _delete_event(str(available_event_id))
+
+
+def test_stale_worker_cannot_publish_or_fail_an_event_reclaimed_by_another_worker(monkeypatch):
+    """An ownership-blind state update lets a stale worker overwrite a newer lease."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000411")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000412")
+    event_type = "test.outbox.stale.20260803"
+    consumer_name = "test_outbox_stale_consumer_20260803"
+    handler_calls: list[str] = []
+
+    def handler(event: dict) -> None:
+        handler_calls.append(event["event_id"])
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                UPDATE outbox_events
+                SET locked_until = NOW() - INTERVAL '1 second'
+                WHERE event_id = %s
+                """,
+                (event["event_id"],),
+            )
+        reclaimed = claim_events("test-stale-worker-b", 1, 60)
+        assert [claimed_event["event_id"] for claimed_event in reclaimed] == [event["event_id"]]
+
+    try:
+        register_consumer(event_type, consumer_name, handler)
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            event_type,
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+
+        result = process_outbox_batch("test-stale-worker-a", 1, 3, 60)
+
+        assert result == {"claimed": 1, "published": 0, "failed": 0}
+        assert handler_calls == [str(event_id)]
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT published_at, dead_lettered_at, attempt_count, locked_by,
+                       locked_until > NOW()
+                FROM outbox_events
+                WHERE event_id = %s
+                """,
+                (str(event_id),),
+            )
+            assert cur.fetchone() == (None, None, 0, "test-stale-worker-b", True)
+
+        assert mark_published(str(event_id), "test-stale-worker-a") is False
+        assert mark_failed(
+            str(event_id), "stale failure", 3, 2, "test-stale-worker-a"
+        ) is False
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT published_at, dead_lettered_at, attempt_count, last_error, locked_by
+                FROM outbox_events
+                WHERE event_id = %s
+                """,
+                (str(event_id),),
+            )
+            assert cur.fetchone() == (None, None, 0, None, "test-stale-worker-b")
+    finally:
+        _delete_event(str(event_id))
+
+
 def test_process_outbox_batch_records_success_and_skips_repeated_delivery(monkeypatch):
     """Dropping consumption persistence would make a re-delivered event invoke its handler twice."""
     ensure_pg_schema()
@@ -246,21 +381,24 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
             {"company_id": str(aggregate_id)},
         )
 
+        failure_started_at = datetime.now(timezone.utc)
         first_result = process_outbox_batch("test-retry-worker", 10, 2, 60)
         assert first_result == {"claimed": 1, "published": 0, "failed": 1}
         with get_cursor() as (_, cur):
             cur.execute(
                 """
-                SELECT attempt_count, last_error, dead_lettered_at
+                SELECT attempt_count, last_error, dead_lettered_at, next_attempt_at
                 FROM outbox_events
                 WHERE event_id = %s
                 """,
                 (str(event_id),),
             )
-            attempt_count, last_error, dead_lettered_at = cur.fetchone()
+            attempt_count, last_error, dead_lettered_at, next_attempt_at = cur.fetchone()
             assert attempt_count == 1
             assert "planned retry failure" in last_error
             assert dead_lettered_at is None
+            assert next_attempt_at >= failure_started_at + timedelta(seconds=2)
+            assert next_attempt_at <= datetime.now(timezone.utc) + timedelta(seconds=2)
             cur.execute(
                 "UPDATE outbox_events SET next_attempt_at = NOW() WHERE event_id = %s",
                 (str(event_id),),
@@ -292,6 +430,83 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
         final_result = process_outbox_batch("test-retry-worker", 10, 2, 60)
         assert final_result == {"claimed": 1, "published": 1, "failed": 0}
         assert handler_state == {"attempts": 3, "handled": [str(event_id)]}
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_replay_preserves_successful_consumer_and_retries_only_failed_consumer(monkeypatch):
+    """Clearing prior consumption during replay would invoke a successful consumer again."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000421")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000422")
+    event_type = "test.outbox.partial.20260803"
+    successful_consumer = "test_outbox_partial_success_20260803"
+    retrying_consumer = "test_outbox_partial_retry_20260803"
+    successful_calls: list[str] = []
+    retry_state = {"attempts": 0, "successful_calls": []}
+
+    def successful_handler(event: dict) -> None:
+        successful_calls.append(event["event_id"])
+
+    def retrying_handler(event: dict) -> None:
+        retry_state["attempts"] += 1
+        if retry_state["attempts"] == 1:
+            raise RuntimeError("planned partial consumer failure")
+        retry_state["successful_calls"].append(event["event_id"])
+
+    try:
+        register_consumer(event_type, successful_consumer, successful_handler)
+        register_consumer(event_type, retrying_consumer, retrying_handler)
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            event_type,
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+
+        first_result = process_outbox_batch("test-partial-worker", 1, 1, 60)
+        assert first_result == {"claimed": 1, "published": 0, "failed": 1}
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT consumer_name
+                FROM outbox_consumptions
+                WHERE event_id = %s
+                ORDER BY consumer_name
+                """,
+                (str(event_id),),
+            )
+            assert cur.fetchall() == [(successful_consumer,)]
+
+        assert replay_event(str(event_id), "重放部分成功事件", None) == {
+            "event_id": str(event_id),
+            "status": "queued",
+            "reason": "重放部分成功事件",
+        }
+        final_result = process_outbox_batch("test-partial-worker", 1, 1, 60)
+
+        assert final_result == {"claimed": 1, "published": 1, "failed": 0}
+        assert successful_calls == [str(event_id)]
+        assert retry_state == {
+            "attempts": 2,
+            "successful_calls": [str(event_id)],
+        }
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT published_at IS NOT NULL, array_agg(consumer_name ORDER BY consumer_name)
+                FROM outbox_events
+                JOIN outbox_consumptions USING (event_id)
+                WHERE event_id = %s
+                GROUP BY published_at
+                """,
+                (str(event_id),),
+            )
+            assert cur.fetchone() == (
+                True,
+                [retrying_consumer, successful_consumer],
+            )
     finally:
         _delete_event(str(event_id))
 
