@@ -2,11 +2,41 @@
 Audit log repository -- PostgreSQL.
 """
 
-import json
 import uuid
 from typing import Any
 
-from app.db.postgres import get_cursor
+from psycopg2.extras import Json
+
+from app.db.postgres import PgCursor, get_cursor
+
+
+def create_log_with_cursor(
+    cur: PgCursor,
+    action: str,
+    user_id: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    details: dict | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> str:
+    log_id = str(uuid.uuid4())
+    cur.execute(
+        """INSERT INTO audit_logs
+           (id, user_id, action, resource_type, resource_id, details, ip_address, user_agent)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+        (
+            log_id,
+            user_id,
+            action,
+            resource_type,
+            resource_id,
+            Json(details) if details is not None else None,
+            ip_address,
+            user_agent,
+        ),
+    )
+    return log_id
 
 
 def create_log(
@@ -18,18 +48,17 @@ def create_log(
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> str:
-    log_id = str(uuid.uuid4())
     with get_cursor() as (conn, cur):
-        cur.execute(
-            """INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, details, ip_address, user_agent)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
-            (
-                log_id, user_id, action, resource_type, resource_id,
-                json.dumps(details, ensure_ascii=False) if details else None,
-                ip_address, user_agent,
-            ),
+        return create_log_with_cursor(
+            cur,
+            action,
+            user_id,
+            resource_type,
+            resource_id,
+            details,
+            ip_address,
+            user_agent,
         )
-    return log_id
 
 
 def get_logs(
