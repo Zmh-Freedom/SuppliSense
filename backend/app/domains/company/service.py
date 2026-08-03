@@ -49,17 +49,26 @@ def search_identity(query: str, limit: int = 10) -> dict:
         if canonical is None:
             continue
         candidate = _company_candidate(canonical, row)
-        candidates_by_company_id.setdefault(candidate["company_id"], candidate)
+        existing = candidates_by_company_id.get(candidate["company_id"])
+        if existing is None or _candidate_sort_key(candidate) < _candidate_sort_key(existing):
+            candidates_by_company_id[candidate["company_id"]] = candidate
 
-    candidates = list(candidates_by_company_id.values())
+    candidates = sorted(candidates_by_company_id.values(), key=_candidate_sort_key)
     if not candidates:
         return {"resolution": "pending_verification", "exact": None, "candidates": []}
+    credit_candidates = [
+        candidate for candidate in candidates if candidate["match_type"] == "credit_code"
+    ]
+    if len(credit_candidates) == 1:
+        return {"resolution": "exact", "exact": credit_candidates[0], "candidates": []}
     if len(candidates) != 1:
-        return {"resolution": "candidates", "exact": None, "candidates": candidates}
+        return {
+            "resolution": "candidates",
+            "exact": None,
+            "candidates": candidates[:limit],
+        }
 
     candidate = candidates[0]
-    if candidate["match_type"] == "credit_code":
-        return {"resolution": "exact", "exact": candidate, "candidates": []}
     if candidate["verification_status"] != "verified":
         return {"resolution": "pending_verification", "exact": None, "candidates": []}
     if candidate["match_type"] == "legal_name":
@@ -83,6 +92,21 @@ def _company_candidate(canonical: dict, matched_row: dict) -> dict:
         "confidence": matched_row["confidence"],
         "redirected_from": canonical["redirected_from"],
     }
+
+
+def _candidate_sort_key(candidate: dict) -> tuple[int, int, float, str, str]:
+    return (
+        {
+            "credit_code": 0,
+            "legal_name": 1,
+            "alias": 2,
+            "prefix": 3,
+        }[candidate["match_type"]],
+        0 if candidate["verification_status"] == "verified" else 1,
+        -float(candidate["confidence"]),
+        candidate["legal_name"],
+        candidate["company_id"],
+    )
 
 
 def _merge_integrity_error() -> DomainError:

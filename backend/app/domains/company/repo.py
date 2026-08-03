@@ -104,7 +104,7 @@ def search_identity_rows(query: str, limit: int) -> list[dict]:
     deduplicated: dict[str, dict] = {}
     for row in sorted(matches, key=_identity_sort_key):
         deduplicated.setdefault(row["id"], row)
-    return list(deduplicated.values())[:limit]
+    return list(deduplicated.values())
 
 
 def _fetch_identity_rows(query: str, parameters: tuple[Any, ...]) -> list[dict]:

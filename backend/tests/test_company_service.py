@@ -37,6 +37,15 @@ TEST_COMPANY_IDS = [
         *range(700, 722),
         731,
         732,
+        801,
+        802,
+        803,
+        804,
+        805,
+        821,
+        822,
+        823,
+        824,
     )
 ]
 
@@ -245,8 +254,8 @@ def test_get_company_and_search_identity_redirect_to_the_canonical_company() -> 
     assert resolution["exact"]["redirected_from"] == source_id
 
 
-def test_search_identity_deduplicates_and_sorts_match_types_stably() -> None:
-    """Changing deduplication or sort precedence makes equally valid searches nondeterministic."""
+def test_search_identity_prioritizes_unique_credit_code_over_lower_match_classes() -> None:
+    """Returning candidates here would let legal, alias, or prefix matches override a unique credit code."""
     credit_id = "00000000-0000-4000-8000-000000000581"
     legal_id = "00000000-0000-4000-8000-000000000582"
     alias_id = "00000000-0000-4000-8000-000000000583"
@@ -264,19 +273,67 @@ def test_search_identity_deduplicates_and_sorts_match_types_stably() -> None:
 
     result = search_identity(STABLE_CREDIT_CODE_QUERY)
 
+    assert result["resolution"] == "exact"
+    assert result["exact"]["company_id"] == credit_id
+    assert result["exact"]["match_type"] == "credit_code"
+    assert result["candidates"] == []
+
+
+def test_search_identity_resolves_all_merged_rows_before_applying_limit() -> None:
+    """Limiting source rows first would hide the independent legal-name candidate behind redirects."""
+    query = "Task4 Round1 Shared Legal Name"
+    canonical_a_id = "00000000-0000-4000-8000-000000000801"
+    source_ids = [
+        "00000000-0000-4000-8000-000000000802",
+        "00000000-0000-4000-8000-000000000803",
+        "00000000-0000-4000-8000-000000000804",
+    ]
+    canonical_b_id = "00000000-0000-4000-8000-000000000805"
+    _insert_company(canonical_a_id, "Task4 Round1 Canonical A")
+    for source_id in source_ids:
+        _insert_company(source_id, query, merged_into_id=canonical_a_id)
+    _insert_company(canonical_b_id, query)
+
+    result = search_identity(query, limit=2)
+
     assert result["resolution"] == "candidates"
+    assert result["exact"] is None
     assert [candidate["company_id"] for candidate in result["candidates"]] == [
-        credit_id,
-        legal_id,
-        alias_id,
-        prefix_id,
+        canonical_a_id,
+        canonical_b_id,
     ]
-    assert [candidate["match_type"] for candidate in result["candidates"]] == [
-        "credit_code",
-        "legal_name",
-        "alias",
-        "prefix",
+
+
+def test_search_identity_sorts_canonical_candidates_before_applying_limit() -> None:
+    """Sorting source names or limiting them first would return Canonical Zulu ahead of Canonical Alpha."""
+    query = "Task4 Round1 Redirect Alias"
+    zulu_source_id = "00000000-0000-4000-8000-000000000821"
+    zulu_canonical_id = "00000000-0000-4000-8000-000000000822"
+    alpha_source_id = "00000000-0000-4000-8000-000000000823"
+    alpha_canonical_id = "00000000-0000-4000-8000-000000000824"
+    _insert_company(zulu_canonical_id, "Task4 Round1 Canonical Zulu")
+    _insert_company(alpha_canonical_id, "Task4 Round1 Canonical Alpha")
+    _insert_company(
+        zulu_source_id,
+        "Task4 Round1 Source Alpha",
+        merged_into_id=zulu_canonical_id,
+    )
+    _insert_company(
+        alpha_source_id,
+        "Task4 Round1 Source Zulu",
+        merged_into_id=alpha_canonical_id,
+    )
+    _insert_alias("20000000-0000-4000-8000-000000000821", zulu_source_id, query, 0.99)
+    _insert_alias("20000000-0000-4000-8000-000000000823", alpha_source_id, query, 0.99)
+
+    result = search_identity(query, limit=1)
+
+    assert result["resolution"] == "candidates"
+    assert result["exact"] is None
+    assert [candidate["company_id"] for candidate in result["candidates"]] == [
+        alpha_canonical_id,
     ]
+    assert result["candidates"][0]["match_type"] == "alias"
 
 
 def test_get_company_returns_none_when_the_requested_company_is_absent() -> None:
