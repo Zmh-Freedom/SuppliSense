@@ -1,5 +1,6 @@
 """Framework-independent Company Identity read and resolution services."""
 
+from datetime import date, datetime
 from uuid import UUID
 
 from psycopg2.errors import UniqueViolation
@@ -190,6 +191,7 @@ def merge_company(
             "合并企业必须明确确认",
             422,
         )
+    reason = _normalized_merge_reason(data.reason)
 
     source_id = _normalize_company_id(source_company_id)
     target_id = str(data.target_company_id)
@@ -215,7 +217,7 @@ def merge_company(
             cur,
             source_company_id=source_id,
             target_company_id=target_id,
-            reason=data.reason,
+            reason=reason,
             operator_id=actor_id,
             source_version=source["identity_version"],
             target_version=target["identity_version"],
@@ -232,7 +234,7 @@ def merge_company(
             "source_company_id": source_id,
             "target_company_id": target_id,
             "operator_id": actor_id,
-            "reason": data.reason,
+            "reason": reason,
             "source_version": merged_source["identity_version"],
             "target_version": merged_target["identity_version"],
         }
@@ -271,6 +273,13 @@ def _normalize_company_id(company_id: str) -> str:
         return str(UUID(str(company_id)))
     except (TypeError, ValueError, AttributeError) as exc:
         raise DomainError("COMPANY_INVALID_ID", "企业 ID 必须是有效 UUID", 422) from exc
+
+
+def _normalized_merge_reason(reason: str) -> str:
+    normalized_reason = reason.strip()
+    if not normalized_reason:
+        raise DomainError("COMPANY_MERGE_REASON_REQUIRED", "合并原因不能为空", 422)
+    return normalized_reason
 
 
 def _ensure_redirect_chain_cannot_reach_source(
@@ -332,7 +341,14 @@ def _merge_snapshot(company: dict) -> dict:
         "source_reference": company["source_reference"],
         "identity_version": company["identity_version"],
         "merged_into_id": company["merged_into_id"],
+        "updated_at": _json_safe_snapshot_value(company["updated_at"]),
     }
+
+
+def _json_safe_snapshot_value(value: object) -> object:
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
 
 
 def _verification_forbidden_error() -> DomainError:

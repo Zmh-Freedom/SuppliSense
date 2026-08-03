@@ -3,12 +3,12 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from threading import Event, Thread
-from time import sleep
+from time import monotonic
 from uuid import uuid4
 
 import pytest
 from psycopg2 import sql
-from psycopg2.errors import CheckViolation
+from psycopg2.errors import CheckViolation, DeadlockDetected
 from pydantic import ValidationError
 
 from app.core.errors import DomainError
@@ -84,10 +84,11 @@ def _merge_input(
     source_expected_version: int = 1,
     target_expected_version: int = 1,
     confirm: bool = True,
+    reason: str = "重复档案",
 ) -> CompanyMergeInput:
     return CompanyMergeInput(
         target_company_id=target_company_id,
-        reason="重复档案",
+        reason=reason,
         confirm=confirm,
         source_expected_version=source_expected_version,
         target_expected_version=target_expected_version,
@@ -210,6 +211,20 @@ def test_merge_rejects_already_merged_subject(monkeypatch: pytest.MonkeyPatch) -
     assert exc_info.value.code == "COMPANY_MERGED_SUBJECT"
 
 
+def test_merge_rejects_an_already_merged_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Treating a redirected target as canonical would make the requested target ambiguous."""
+    with _isolated_company_schema(monkeypatch):
+        source = _create_company("Task6 Merged Target Source")
+        target = _create_company("Task6 Merged Target")
+        canonical = _create_company("Task6 Merged Target Canonical")
+        merge_company(target["company_id"], _merge_input(canonical["company_id"]), None, "admin")
+
+        with pytest.raises(DomainError) as exc_info:
+            merge_company(source["company_id"], _merge_input(target["company_id"]), None, "admin")
+
+    assert exc_info.value.code == "COMPANY_MERGED_SUBJECT"
+
+
 @pytest.mark.parametrize(
     ("source_expected_version", "target_expected_version"),
     [(2, 1), (1, 2)],
@@ -258,6 +273,155 @@ def test_merge_rejects_target_redirect_chain_that_reaches_source(
     assert exc_info.value.code == "COMPANY_MERGE_INTEGRITY_ERROR"
 
 
+def test_merge_rejects_target_redirect_cycle_not_involving_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-existing target-only cycle must fail closed even when it never reaches the source."""
+    with _isolated_company_schema(monkeypatch) as schema_cursor:
+        source = _create_company("Task6 Independent Cycle Source")
+        target = _create_company("Task6 Independent Cycle Target")
+        cycle_member = _create_company("Task6 Independent Cycle Member")
+        with schema_cursor() as (_, cur):
+            cur.execute(
+                "UPDATE companies SET merged_into_id = %s WHERE id = %s",
+                (cycle_member["company_id"], target["company_id"]),
+            )
+            cur.execute(
+                "UPDATE companies SET merged_into_id = %s WHERE id = %s",
+                (target["company_id"], cycle_member["company_id"]),
+            )
+
+        with pytest.raises(DomainError) as exc_info:
+            merge_company(source["company_id"], _merge_input(target["company_id"]), None, "admin")
+
+    assert exc_info.value.code == "COMPANY_MERGE_INTEGRITY_ERROR"
+
+
+def test_merge_rejects_broken_target_redirect_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A target that points at a missing row cannot safely become a canonical merge target."""
+    with _isolated_company_schema(monkeypatch) as schema_cursor:
+        source = _create_company("Task6 Broken Target Source")
+        target = _create_company("Task6 Broken Target")
+        with schema_cursor() as (_, cur):
+            cur.execute("ALTER TABLE companies DROP CONSTRAINT companies_merged_into_id_fkey")
+            cur.execute(
+                "UPDATE companies SET merged_into_id = %s WHERE id = %s",
+                (str(uuid4()), target["company_id"]),
+            )
+
+        with pytest.raises(DomainError) as exc_info:
+            merge_company(source["company_id"], _merge_input(target["company_id"]), None, "admin")
+
+    assert exc_info.value.code == "COMPANY_MERGE_INTEGRITY_ERROR"
+
+
+@pytest.mark.parametrize(
+    ("redirect_links", "expected_code"),
+    [
+        (20, "COMPANY_MERGED_SUBJECT"),
+        (21, "COMPANY_MERGE_INTEGRITY_ERROR"),
+    ],
+)
+def test_merge_bounds_target_redirect_traversal(
+    monkeypatch: pytest.MonkeyPatch,
+    redirect_links: int,
+    expected_code: str,
+) -> None:
+    """Changing the redirect cap would either allow unbounded traversal or reject the documented limit."""
+    with _isolated_company_schema(monkeypatch) as schema_cursor:
+        source = _create_company(f"Task6 Hop Source {redirect_links}")
+        chain_ids = [str(uuid4()) for _ in range(redirect_links + 1)]
+        with schema_cursor() as (_, cur):
+            for index, company_id in enumerate(chain_ids):
+                cur.execute(
+                    """
+                    INSERT INTO companies (
+                        id, legal_name, normalized_name, verification_status, identity_source
+                    ) VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        company_id,
+                        f"Task6 Hop Target {redirect_links}-{index}",
+                        f"task6 hop target {redirect_links}-{index}",
+                        "pending_verification",
+                        "manual",
+                    ),
+                )
+            for company_id, next_company_id in zip(chain_ids, chain_ids[1:]):
+                cur.execute(
+                    "UPDATE companies SET merged_into_id = %s WHERE id = %s",
+                    (next_company_id, company_id),
+                )
+
+        with pytest.raises(DomainError) as exc_info:
+            merge_company(source["company_id"], _merge_input(chain_ids[0]), None, "admin")
+
+    assert exc_info.value.code == expected_code
+
+
+@pytest.mark.parametrize(
+    ("source_credit_code", "target_credit_code"),
+    [
+        ("911100007109250324", None),
+        (None, "911100007109250324"),
+        (None, None),
+    ],
+)
+def test_merge_allows_compatible_one_sided_or_absent_credit_codes(
+    monkeypatch: pytest.MonkeyPatch,
+    source_credit_code: str | None,
+    target_credit_code: str | None,
+) -> None:
+    """Rejecting a merge unless both rows have the same code would block incomplete identity cleanup."""
+    with _isolated_company_schema(monkeypatch):
+        source = _create_company("Task6 Compatible Credit Source", credit_code=source_credit_code)
+        target = _create_company("Task6 Compatible Credit Target", credit_code=target_credit_code)
+
+        result = merge_company(source["company_id"], _merge_input(target["company_id"]), None, "admin")
+
+    assert result["merged"] is True
+
+
+def test_merge_rejects_whitespace_only_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Persisting a blank reason would leave an irreversible merge without an auditable rationale."""
+    with _isolated_company_schema(monkeypatch):
+        source = _create_company("Task6 Blank Reason Source")
+        target = _create_company("Task6 Blank Reason Target")
+
+        with pytest.raises(DomainError) as exc_info:
+            merge_company(
+                source["company_id"],
+                _merge_input(target["company_id"], reason=" \t "),
+                None,
+                "admin",
+            )
+
+    assert exc_info.value.code == "COMPANY_MERGE_REASON_REQUIRED"
+    assert exc_info.value.status_code == 422
+
+
+def test_merge_strips_reason_in_merge_log_audit_and_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keeping surrounding reason whitespace would create inconsistent audit and event facts."""
+    with _isolated_company_schema(monkeypatch) as schema_cursor:
+        source = _create_company("Task6 Trimmed Reason Source")
+        target = _create_company("Task6 Trimmed Reason Target")
+
+        merge_company(
+            source["company_id"],
+            _merge_input(target["company_id"], reason="  重复登记  "),
+            None,
+            "admin",
+        )
+
+        with schema_cursor() as (_, cur):
+            cur.execute("SELECT reason FROM company_merge_log")
+            assert cur.fetchone() == ("重复登记",)
+            cur.execute("SELECT details FROM audit_logs WHERE action = 'company.merge'")
+            assert cur.fetchone()[0]["reason"] == "重复登记"
+            cur.execute("SELECT payload FROM outbox_events WHERE event_type = 'company.merged'")
+            assert cur.fetchone()[0]["reason"] == "重复登记"
+
+
 def test_merge_writes_snapshot_redirect_versions_audit_event_and_preserves_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -271,6 +435,12 @@ def test_merge_writes_snapshot_redirect_versions_audit_event_and_preserves_alias
             "Task6 Target Legal Name",
             aliases=[CompanyAliasInput(alias_name="Task6 Target Alias", alias_type="short_name")],
         )
+        with schema_cursor() as (_, cur):
+            cur.execute(
+                "SELECT id, updated_at FROM companies WHERE id = ANY(%s::uuid[]) ORDER BY id",
+                ([source["company_id"], target["company_id"]],),
+            )
+            pre_merge_updated_at = dict(cur.fetchall())
 
         result = merge_company(source["company_id"], _merge_input(target["company_id"]), None, "admin")
 
@@ -306,7 +476,9 @@ def test_merge_writes_snapshot_redirect_versions_audit_event_and_preserves_alias
             assert (source_version, target_version) == (1, 1)
             assert snapshot["source"]["id"] == source["company_id"]
             assert snapshot["source"]["merged_into_id"] is None
+            assert snapshot["source"]["updated_at"] == pre_merge_updated_at[source["company_id"]].isoformat()
             assert snapshot["target"]["id"] == target["company_id"]
+            assert snapshot["target"]["updated_at"] == pre_merge_updated_at[target["company_id"]].isoformat()
             cur.execute(
                 "SELECT company_id FROM company_aliases WHERE normalized_alias = %s",
                 ("task6 source alias",),
@@ -317,15 +489,26 @@ def test_merge_writes_snapshot_redirect_versions_audit_event_and_preserves_alias
                 "WHERE resource_id = %s AND action = 'company.merge'",
                 (source["company_id"],),
             )
-            assert cur.fetchone()[0] == "company.merge"
+            assert cur.fetchone() == (
+                "company.merge",
+                {
+                    "source_company_id": source["company_id"],
+                    "target_company_id": target["company_id"],
+                    "operator_id": None,
+                    "reason": "重复档案",
+                    "source_version": 2,
+                    "target_version": 2,
+                },
+            )
             cur.execute(
-                "SELECT event_type, aggregate_id, payload FROM outbox_events "
+                "SELECT event_type, aggregate_id, schema_version, payload FROM outbox_events "
                 "WHERE aggregate_id = %s AND event_type = 'company.merged'",
                 (source["company_id"],),
             )
-            event_type, aggregate_id, payload = cur.fetchone()
+            event_type, aggregate_id, schema_version, payload = cur.fetchone()
             assert event_type == "company.merged"
             assert aggregate_id == source["company_id"]
+            assert schema_version == 1
             assert payload == {
                 "source_company_id": source["company_id"],
                 "target_company_id": target["company_id"],
@@ -370,17 +553,43 @@ def test_merge_rolls_back_log_redirect_versions_and_audit_when_event_insert_fail
             assert cur.fetchone() == (0,)
 
 
-def test_opposite_merge_requests_lock_in_sorted_order_without_deadlock(
+def test_lock_companies_for_merge_uses_one_uuid_sorted_for_update_statement() -> None:
+    """Splitting or unsorting the lock query would reintroduce opposite-order deadlock risk."""
+    class RecordingCursor:
+        description = [("id",)]
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+        def execute(self, query: str, parameters: tuple[object, ...]) -> None:
+            self.calls.append((query, parameters))
+
+        def fetchall(self) -> list[tuple[str]]:
+            return [(SOURCE_ID,), (TARGET_ID,)]
+
+    cursor = RecordingCursor()
+    rows = company_repo.lock_companies_for_merge(cursor, [TARGET_ID, SOURCE_ID])
+
+    assert rows == [{"id": SOURCE_ID}, {"id": TARGET_ID}]
+    assert len(cursor.calls) == 1
+    query, parameters = cursor.calls[0]
+    assert "ORDER BY id" in query
+    assert "FOR UPDATE" in query
+    assert parameters == ([SOURCE_ID, TARGET_ID],)
+
+
+def test_opposite_merge_lock_requests_wait_then_complete_without_deadlock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Locking source then target would deadlock when two sessions request the same pair in reverse order."""
+    """Opposite lock requests must wait on the same first row instead of forming a deadlock cycle."""
     with _isolated_company_schema(monkeypatch):
         source = _create_company("Task6 Lock Source")
         target = _create_company("Task6 Lock Target")
         first_locked = Event()
         release_first = Event()
-        second_started = Event()
+        second_attempting_lock = Event()
         second_finished = Event()
+        second_backend_pid: list[int] = []
         first_result: list[list[dict]] = []
         second_result: list[list[dict]] = []
         failures: list[BaseException] = []
@@ -400,8 +609,10 @@ def test_opposite_merge_requests_lock_in_sorted_order_without_deadlock(
 
         def lock_second() -> None:
             try:
-                second_started.set()
                 with company_service.get_cursor() as (_, cur):
+                    cur.execute("SELECT pg_backend_pid()")
+                    second_backend_pid.append(cur.fetchone()[0])
+                    second_attempting_lock.set()
                     second_result.append(
                         company_repo.lock_companies_for_merge(
                             cur, [source["company_id"], target["company_id"]]
@@ -416,16 +627,37 @@ def test_opposite_merge_requests_lock_in_sorted_order_without_deadlock(
         first_thread.start()
         assert first_locked.wait(timeout=5)
         second_thread.start()
-        assert second_started.wait(timeout=5)
-        sleep(0.1)
-        assert second_finished.is_set() is False
-        release_first.set()
-        first_thread.join(timeout=5)
-        second_thread.join(timeout=5)
+        assert second_attempting_lock.wait(timeout=5)
+        try:
+            deadline = monotonic() + 5
+            observed_lock_wait = False
+            observer_conn = get_conn()
+            try:
+                while monotonic() < deadline:
+                    with observer_conn.cursor() as observer_cur:
+                        observer_cur.execute(
+                            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                            (second_backend_pid[0],),
+                        )
+                        observed_lock_wait = observer_cur.fetchone() == ("Lock",)
+                    observer_conn.rollback()
+                    if observed_lock_wait:
+                        break
+                    if second_finished.wait(timeout=0.02):
+                        break
+            finally:
+                put_conn(observer_conn)
+            assert observed_lock_wait is True
+            assert second_finished.is_set() is False
+        finally:
+            release_first.set()
+            first_thread.join(timeout=5)
+            second_thread.join(timeout=5)
 
     assert not first_thread.is_alive()
     assert not second_thread.is_alive()
     assert failures == []
+    assert not any(isinstance(failure, DeadlockDetected) for failure in failures)
     assert [[row["id"] for row in rows] for rows in first_result + second_result] == [
         sorted([source["company_id"], target["company_id"]]),
         sorted([source["company_id"], target["company_id"]]),
