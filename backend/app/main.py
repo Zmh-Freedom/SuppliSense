@@ -41,6 +41,8 @@ from app.domains.sourcing.api_access import router as access_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.errors import (
+    DomainError,
+    domain_error_handler,
     http_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
@@ -182,6 +184,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 # Unified error handlers
+app.add_exception_handler(DomainError, domain_error_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
