@@ -31,7 +31,7 @@ def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
     db = get_db()
     doc = {
         "company_name": company_name,
-        "supplier_id": resolve_supplier_id(company_name, auto_create=True),
+        "supplier_id": resolve_supplier_id(company_name),
         "checked_at": datetime.now(timezone.utc),
         "risk_score": result.risk_score,
         "risk_level": result.risk_level,
@@ -150,7 +150,7 @@ def add_to_watchlist(company_name: str) -> dict:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
-    sid = resolve_supplier_id(company_name, auto_create=True)
+    sid = resolve_supplier_id(company_name)
     db["watchlist"].update_one(
         {"company_name": company_name},
         {"$set": {

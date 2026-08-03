@@ -324,7 +324,7 @@ def _save(collection: str, name: str, data: dict, wrapper_key: str) -> None:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
-    sid = resolve_supplier_id(name, auto_create=True)
+    sid = resolve_supplier_id(name)
     db[collection].update_one(
         {"name": name},
         {"$set": {"name": name, "supplier_id": sid, wrapper_key: data}},
