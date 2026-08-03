@@ -25,6 +25,7 @@ from app.api.upload import router as upload_router
 from app.domains.alert.api import router as alert_router
 from app.domains.alert.api_notifications import router as notifications_router
 from app.domains.auth.api import router as auth_router
+from app.domains.company.api import router as company_identity_router
 from app.domains.knowledge.api import router as knowledge_router
 from app.domains.risk.api_risk import router as risk_router
 from app.domains.risk.api_company import router as company_router
@@ -154,6 +155,7 @@ app = FastAPI(
         {"name": "auth", "description": "用户认证与权限管理"},
         {"name": "risk", "description": "企业风险评估（13维度评分体系）"},
         {"name": "company", "description": "企业信息查询"},
+        {"name": "companies", "description": "企业身份主数据管理"},
         {"name": "financial", "description": "财务指标分析（15项指标）"},
         {"name": "sentiment", "description": "舆情情感分析"},
         {"name": "alert", "description": "风险预警与监控"},
@@ -246,6 +248,7 @@ api_v1.include_router(async_tasks_router)
 api_v1.include_router(alert_router, prefix="/alert", tags=["alert"])
 api_v1.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_v1.include_router(company_router, prefix="/company", tags=["company"])
+api_v1.include_router(company_identity_router)
 api_v1.include_router(financial_router, prefix="/financial", tags=["financial"])
 api_v1.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 api_v1.include_router(risk_router, prefix="/risk", tags=["risk"])
