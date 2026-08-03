@@ -55,7 +55,7 @@ def create_log(
             user_id,
             resource_type,
             resource_id,
-            details,
+            details if details else None,
             ip_address,
             user_agent,
         )
