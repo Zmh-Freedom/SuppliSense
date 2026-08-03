@@ -3,6 +3,8 @@
 from typing import Any
 from uuid import uuid4
 
+from psycopg2.extras import Json
+
 from app.db.postgres import PgCursor, get_cursor
 from app.domains.company.normalization import normalize_company_name, normalize_credit_code
 
@@ -237,6 +239,83 @@ def verify_company(
         ),
     )
     return _row_to_dict(cur, cur.fetchone())
+
+
+def lock_companies_for_merge(cur: PgCursor, ids: list[str]) -> list[dict]:
+    """Lock requested companies in UUID order to make opposite merge requests deadlock-safe."""
+    sorted_ids = sorted(str(company_id) for company_id in ids)
+    cur.execute(
+        f"""
+        SELECT {_RETURNING_COMPANY_COLUMNS}
+        FROM companies
+        WHERE id = ANY(%s::uuid[])
+        ORDER BY id
+        FOR UPDATE
+        """,
+        (sorted_ids,),
+    )
+    return _rows_to_dicts(cur)
+
+
+def insert_company_merge_log(
+    cur: PgCursor,
+    *,
+    source_company_id: str,
+    target_company_id: str,
+    reason: str,
+    operator_id: str | None,
+    source_version: int,
+    target_version: int,
+    compensation_snapshot: dict,
+) -> str:
+    """Persist the pre-merge state in the caller-owned transaction."""
+    merge_log_id = str(uuid4())
+    cur.execute(
+        """
+        INSERT INTO company_merge_log (
+            id, source_company_id, target_company_id, reason, operator_id,
+            source_version, target_version, compensation_snapshot
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            merge_log_id,
+            source_company_id,
+            target_company_id,
+            reason,
+            operator_id,
+            source_version,
+            target_version,
+            Json(compensation_snapshot),
+        ),
+    )
+    return merge_log_id
+
+
+def apply_company_merge(
+    cur: PgCursor,
+    source_company_id: str,
+    target_company_id: str,
+) -> list[dict]:
+    """Redirect the source and advance both identity versions in one statement."""
+    cur.execute(
+        f"""
+        UPDATE companies
+        SET merged_into_id = CASE
+                WHEN id = %s THEN %s
+                ELSE merged_into_id
+            END,
+            identity_version = identity_version + 1,
+            updated_at = NOW()
+        WHERE id = ANY(%s::uuid[])
+        RETURNING {_RETURNING_COMPANY_COLUMNS}
+        """,
+        (
+            source_company_id,
+            target_company_id,
+            [source_company_id, target_company_id],
+        ),
+    )
+    return _rows_to_dicts(cur)
 
 
 def search_identity_rows(query: str, limit: int) -> list[dict]:

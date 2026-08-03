@@ -1,5 +1,7 @@
 """Framework-independent Company Identity read and resolution services."""
 
+from uuid import UUID
+
 from psycopg2.errors import UniqueViolation
 
 from app.core.errors import DomainError
@@ -11,6 +13,7 @@ from app.domains.outbox.repo import enqueue_event
 from app.schemas.company import (
     CompanyAliasInput,
     CompanyCreateInput,
+    CompanyMergeInput,
     CompanyUpdateInput,
     CompanyVerifyInput,
 )
@@ -172,9 +175,164 @@ def verify_company(
     return _command_result(company)
 
 
+def merge_company(
+    source_company_id: str,
+    data: CompanyMergeInput,
+    actor_id: str | None,
+    actor_role: str,
+) -> dict:
+    """Logically merge two canonical companies with audit and outbox facts in one transaction."""
+    if actor_role != "admin":
+        raise DomainError("COMPANY_MERGE_FORBIDDEN", "只有管理员可以合并企业", 403)
+    if not data.confirm:
+        raise DomainError(
+            "COMPANY_MERGE_CONFIRMATION_REQUIRED",
+            "合并企业必须明确确认",
+            422,
+        )
+
+    source_id = _normalize_company_id(source_company_id)
+    target_id = str(data.target_company_id)
+    if source_id == target_id:
+        raise DomainError("COMPANY_MERGE_SELF_REFERENCE", "企业不能合并到自身", 422)
+
+    with get_cursor() as (_, cur):
+        locked_companies = company_repo.lock_companies_for_merge(cur, [source_id, target_id])
+        companies_by_id = {company["id"]: company for company in locked_companies}
+        source = companies_by_id.get(source_id)
+        target = companies_by_id.get(target_id)
+        if source is None or target is None:
+            raise DomainError("COMPANY_NOT_FOUND", "企业不存在", 404)
+
+        _ensure_redirect_chain_cannot_reach_source(cur, target, source_id)
+        _require_merge_subject(source)
+        _require_merge_subject(target)
+        _require_merge_version(source, data.source_expected_version)
+        _require_merge_version(target, data.target_expected_version)
+        _require_merge_credit_codes_compatible(source, target)
+
+        company_repo.insert_company_merge_log(
+            cur,
+            source_company_id=source_id,
+            target_company_id=target_id,
+            reason=data.reason,
+            operator_id=actor_id,
+            source_version=source["identity_version"],
+            target_version=target["identity_version"],
+            compensation_snapshot={
+                "source": _merge_snapshot(source),
+                "target": _merge_snapshot(target),
+            },
+        )
+        merged_companies = company_repo.apply_company_merge(cur, source_id, target_id)
+        merged_by_id = {company["id"]: company for company in merged_companies}
+        merged_source = merged_by_id[source_id]
+        merged_target = merged_by_id[target_id]
+        event_payload = {
+            "source_company_id": source_id,
+            "target_company_id": target_id,
+            "operator_id": actor_id,
+            "reason": data.reason,
+            "source_version": merged_source["identity_version"],
+            "target_version": merged_target["identity_version"],
+        }
+        create_log_with_cursor(
+            cur,
+            action="company.merge",
+            user_id=actor_id,
+            resource_type="company",
+            resource_id=source_id,
+            details=event_payload,
+        )
+        enqueue_event(
+            cur,
+            event_type="company.merged",
+            aggregate_type="company",
+            aggregate_id=source_id,
+            payload=event_payload,
+        )
+
+    return {
+        "source_company_id": source_id,
+        "target_company_id": target_id,
+        "source_version": merged_source["identity_version"],
+        "target_version": merged_target["identity_version"],
+        "merged": True,
+    }
+
+
 def _require_writer_role(actor_role: str) -> None:
     if actor_role not in _WRITER_ROLES:
         raise DomainError("COMPANY_WRITE_FORBIDDEN", "没有企业写入权限", 403)
+
+
+def _normalize_company_id(company_id: str) -> str:
+    try:
+        return str(UUID(str(company_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise DomainError("COMPANY_INVALID_ID", "企业 ID 必须是有效 UUID", 422) from exc
+
+
+def _ensure_redirect_chain_cannot_reach_source(
+    cur: object,
+    target: dict,
+    source_company_id: str,
+) -> None:
+    """Fail closed for a malformed target redirect chain before adding source -> target."""
+    current = target
+    seen: set[str] = set()
+    hops = 0
+    while True:
+        current_id = current["id"]
+        if current_id == source_company_id or current_id in seen:
+            raise _merge_integrity_error()
+        seen.add(current_id)
+        merged_into_id = current.get("merged_into_id")
+        if merged_into_id is None:
+            return
+        if hops >= MAX_MERGE_HOPS:
+            raise _merge_integrity_error()
+        hops += 1
+        current = company_repo.get_company_row_with_cursor(cur, str(merged_into_id))
+        if current is None:
+            raise _merge_integrity_error()
+
+
+def _require_merge_subject(company: dict) -> None:
+    if company["merged_into_id"] is not None:
+        raise DomainError("COMPANY_MERGED_SUBJECT", "已合并企业不能再次合并", 409)
+
+
+def _require_merge_version(company: dict, expected_version: int) -> None:
+    if company["identity_version"] != expected_version:
+        raise DomainError("COMPANY_VERSION_CONFLICT", "企业身份版本已变更", 409)
+
+
+def _require_merge_credit_codes_compatible(source: dict, target: dict) -> None:
+    source_code = source["unified_social_credit_code"]
+    target_code = target["unified_social_credit_code"]
+    if source_code is not None and target_code is not None and source_code != target_code:
+        raise DomainError(
+            "COMPANY_MERGE_IDENTITY_CONFLICT",
+            "统一社会信用代码冲突，不能合并企业",
+            409,
+        )
+
+
+def _merge_snapshot(company: dict) -> dict:
+    """Keep a JSON-serializable pre-merge compensation snapshot."""
+    return {
+        "id": company["id"],
+        "legal_name": company["legal_name"],
+        "normalized_name": company["normalized_name"],
+        "unified_social_credit_code": company["unified_social_credit_code"],
+        "registration_status": company["registration_status"],
+        "verification_status": company["verification_status"],
+        "identity_source": company["identity_source"],
+        "source_reference": company["source_reference"],
+        "identity_version": company["identity_version"],
+        "merged_into_id": company["merged_into_id"],
+    }
 
 
 def _verification_forbidden_error() -> DomainError:
