@@ -415,6 +415,8 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
             "status": "queued",
             "reason": "恢复测试事件",
         }
+        assert str(event_id) in [event["event_id"] for event in list_events("pending", 10)]
+        assert str(event_id) not in [event["event_id"] for event in list_events("failed", 10)]
         with get_cursor() as (_, cur):
             cur.execute(
                 """
@@ -425,7 +427,7 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
                 """,
                 (str(event_id),),
             )
-            assert cur.fetchone() == (0, None, None, None, None, None)
+            assert cur.fetchone() == (2, None, None, None, None, None)
 
         final_result = process_outbox_batch("test-retry-worker", 10, 2, 60)
         assert final_result == {"claimed": 1, "published": 1, "failed": 0}

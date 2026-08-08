@@ -112,17 +112,23 @@ def _notify_outcome(
 
 
 def list_events(status: str, limit: int) -> list[dict]:
-    return repo.list_events(status, limit)
+    events = repo.list_events(status, limit)
+    return sorted(events, key=lambda event: (event["occurred_at"], event["event_id"]))
 
 
 def replay_event(event_id: str, reason: str, actor_id: str | None) -> dict:
     with get_cursor() as (_, cur):
         event = repo.replay_event_with_cursor(cur, event_id)
         if event is None:
-            existing_event = repo.get_event(event_id)
+            existing_event = repo.get_event_with_cursor(cur, event_id)
             if existing_event is None:
                 raise DomainError("OUTBOX_EVENT_NOT_FOUND", "Outbox 事件不存在", 404)
-            raise DomainError("OUTBOX_REPLAY_NOT_ALLOWED", "只有死信事件可以重放", 409)
+            raise DomainError(
+                "OUTBOX_EVENT_NOT_REPLAYABLE",
+                "仅可回放未发布的失败或死信事件",
+                409,
+                {"event_id": event_id},
+            )
         create_log_with_cursor(
             cur,
             action="outbox.replayed",

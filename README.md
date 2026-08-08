@@ -52,6 +52,34 @@ cd frontend && npm run dev                        # 启动前端（热更新）
 
 打开 `http://localhost:5173`。
 
+### P1 企业身份与 Transactional Outbox
+
+P1 在 PostgreSQL 中维护企业法定主体、别名、核验与逻辑合并，并将企业创建、更新、核验和合并事实与对应 Outbox 事件放在同一事务提交。它**尚未**切换现有风险评估或 MongoDB 供应商库的读写路径；评估不会隐式创建供应商。
+
+Outbox worker 默认启用，可通过以下环境变量调整：
+
+| 配置 | 默认值 | 说明 |
+|------|------|------|
+| `OUTBOX_WORKER_ENABLED` | `true` | 关闭时只停止消费，不影响企业事实和事件写入 |
+| `OUTBOX_POLL_SECONDS` | `5` | 轮询间隔（秒） |
+| `OUTBOX_BATCH_SIZE` | `50` | 每批领取事件数 |
+| `OUTBOX_MAX_ATTEMPTS` | `8` | 自动重试上限，达到后进入死信 |
+| `OUTBOX_LEASE_SECONDS` | `60` | 多 worker 领取事件的租约时长（秒） |
+
+管理员可查看积压、失败和死信事件，并仅对未发布的失败/死信事件回放：
+
+```bash
+# status 仅支持 pending、failed、dead_letter；limit 为 1..100
+curl -H "Authorization: Bearer <access-token>" \
+  "http://localhost:8000/api/v1/admin/outbox/events?status=dead_letter&limit=50"
+
+# 回放会保留既有成功消费记录和尝试次数，并写入管理员与原因审计
+curl -X POST -H "Authorization: Bearer <access-token>" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"确认下游故障已修复"}' \
+  "http://localhost:8000/api/v1/admin/outbox/events/<event-id>/replay"
+```
+
 ---
 
 ## 功能模块（7 个标签页）
@@ -242,6 +270,22 @@ app/
 | GET | `/company/search` | 模糊搜索企业 |
 | GET | `/company/profile` | 工商信息 |
 | GET | `/financial/metrics` | 财务指标 |
+
+### 企业身份 `/api/v1/companies`
+| Method | Path | 说明 |
+|--------|------|------|
+| GET | `/companies/search` | 确定性解析企业身份 |
+| GET | `/companies/{company_id}` | 获取规范企业主体（支持合并重定向） |
+| POST | `/companies` | 创建待核验企业主体（管理员/分析师） |
+| PATCH | `/companies/{company_id}` | 按身份版本更新主体（管理员/分析师） |
+| POST | `/companies/{company_id}/verify` | 核验企业主体（管理员） |
+| POST | `/companies/{company_id}/merge` | 逻辑合并企业主体（管理员，需确认） |
+
+### Outbox 运维 `/api/v1/admin/outbox`
+| Method | Path | 说明 |
+|--------|------|------|
+| GET | `/admin/outbox/events?status=pending\|failed\|dead_letter&limit=1..100` | 查看确定性排序的未发布事件（管理员） |
+| POST | `/admin/outbox/events/{event_id}/replay` | 带原因回放未发布失败/死信事件（管理员） |
 
 ### 舆情 `/api/v1/sentiment`
 | Method | Path | 说明 |

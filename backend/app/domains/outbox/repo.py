@@ -174,22 +174,24 @@ def mark_failed(
 
 def list_events(status: str, limit: int) -> list[dict]:
     conditions = {
-        "pending": "published_at IS NULL AND dead_lettered_at IS NULL",
-        "published": "published_at IS NOT NULL",
-        "dead_lettered": "dead_lettered_at IS NOT NULL",
+        "pending": "published_at IS NULL AND dead_lettered_at IS NULL AND last_error IS NULL",
+        "failed": "published_at IS NULL AND dead_lettered_at IS NULL AND last_error IS NOT NULL",
+        # Retained for the existing service-level caller; the admin API accepts dead_letter only.
+        "dead_lettered": "published_at IS NULL AND dead_lettered_at IS NOT NULL",
+        "dead_letter": "published_at IS NULL AND dead_lettered_at IS NOT NULL",
     }
     condition = conditions.get(status)
     if condition is None:
         raise ValueError("未知 Outbox 事件状态")
-    if limit < 1:
-        raise ValueError("limit 必须大于 0")
+    if not 1 <= limit <= 100:
+        raise ValueError("limit 必须在 1 到 100 之间")
 
     with get_cursor() as (_, cur):
         cur.execute(
             f"""
             SELECT * FROM outbox_events
             WHERE {condition}
-            ORDER BY occurred_at DESC
+            ORDER BY occurred_at ASC, event_id ASC
             LIMIT %s
             """,
             (limit,),
@@ -203,19 +205,28 @@ def get_event(event_id: str) -> dict | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def get_event_with_cursor(cur: PgCursor, event_id: str) -> dict | None:
+    """Read an event in the caller-owned transaction for replay eligibility checks."""
+    cur.execute("SELECT * FROM outbox_events WHERE event_id = %s", (event_id,))
+    return _row_to_dict(cur, cur.fetchone())
+
+
 def replay_event_with_cursor(cur: PgCursor, event_id: str) -> dict | None:
-    """Reset a dead-letter event while keeping the caller's transaction open."""
+    """Queue an unpublished failed/dead-letter event without erasing delivery history."""
     cur.execute(
         """
         UPDATE outbox_events
-        SET published_at = NULL,
-            attempt_count = 0,
-            last_error = NULL,
+        SET last_error = NULL,
             next_attempt_at = NOW(),
             locked_by = NULL,
             locked_until = NULL,
             dead_lettered_at = NULL
-        WHERE event_id = %s AND dead_lettered_at IS NOT NULL
+        WHERE event_id = %s
+          AND published_at IS NULL
+          AND (
+              dead_lettered_at IS NOT NULL
+              OR (attempt_count > 0 AND last_error IS NOT NULL)
+          )
         RETURNING *
         """,
         (event_id,),
