@@ -3,10 +3,12 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from threading import Event, Thread
 from uuid import UUID
 
 import pytest
 
+from app.core.errors import DomainError
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, get_cursor, put_conn
 from app.domains.outbox import repo as outbox_repo
@@ -509,6 +511,193 @@ def test_replay_preserves_successful_consumer_and_retries_only_failed_consumer(m
                 True,
                 [retrying_consumer, successful_consumer],
             )
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_replay_rejects_an_event_actively_claimed_by_a_real_worker(monkeypatch):
+    """Clearing a live lease would let an admin replay race a worker and duplicate delivery."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000441")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000442")
+    event_type = "test.outbox.active-lease.20260808"
+    consumer_name = "test_outbox_active_lease_consumer_20260808"
+    handler_started = Event()
+    release_handler = Event()
+    handler_calls: list[str] = []
+    worker_results: list[dict] = []
+
+    def handler(event: dict) -> None:
+        handler_calls.append(event["event_id"])
+        handler_started.set()
+        assert release_handler.wait(timeout=5)
+
+    worker_thread: Thread | None = None
+    try:
+        register_consumer(event_type, consumer_name, handler)
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            event_type,
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                UPDATE outbox_events
+                SET attempt_count = 1, last_error = %s, next_attempt_at = NOW()
+                WHERE event_id = %s
+                """,
+                ("prior delivery failure", str(event_id)),
+            )
+
+        worker_thread = Thread(
+            target=lambda: worker_results.append(
+                process_outbox_batch("test-active-lease-worker", 1, 3, 60)
+            )
+        )
+        worker_thread.start()
+        assert handler_started.wait(timeout=5)
+
+        with pytest.raises(DomainError) as exc_info:
+            replay_event(str(event_id), "不得抢占活动租约", None)
+        assert exc_info.value.code == "OUTBOX_EVENT_LEASE_ACTIVE"
+        assert exc_info.value.status_code == 409
+
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT locked_by, locked_until > NOW(), last_error, attempt_count,
+                       dead_lettered_at, published_at
+                FROM outbox_events WHERE event_id = %s
+                """,
+                (str(event_id),),
+            )
+            assert cur.fetchone() == (
+                "test-active-lease-worker",
+                True,
+                "prior delivery failure",
+                1,
+                None,
+                None,
+            )
+
+        release_handler.set()
+        worker_thread.join(timeout=5)
+        assert not worker_thread.is_alive()
+        assert worker_results == [{"claimed": 1, "published": 1, "failed": 0}]
+        assert handler_calls == [str(event_id)]
+    finally:
+        release_handler.set()
+        if worker_thread is not None:
+            worker_thread.join(timeout=5)
+        _delete_event(str(event_id))
+
+
+@pytest.mark.parametrize("expired_lease", (False, True))
+def test_replay_allows_failed_event_with_missing_or_expired_lease(
+    monkeypatch: pytest.MonkeyPatch,
+    expired_lease: bool,
+) -> None:
+    """Treating every retained claim as active would strand recoverable failed events."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000451")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000452")
+
+    try:
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            "test.outbox.expired-lease.20260808",
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+        with get_cursor() as (_, cur):
+            if expired_lease:
+                cur.execute(
+                    """
+                    UPDATE outbox_events
+                    SET attempt_count = 2,
+                        last_error = %s,
+                        locked_by = %s,
+                        locked_until = NOW() - INTERVAL '1 second'
+                    WHERE event_id = %s
+                    """,
+                    ("recoverable failure", "expired-worker", str(event_id)),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE outbox_events
+                    SET attempt_count = 2, last_error = %s
+                    WHERE event_id = %s
+                    """,
+                    ("recoverable failure", str(event_id)),
+                )
+
+        assert replay_event(str(event_id), "恢复过期租约事件", None) == {
+            "event_id": str(event_id),
+            "status": "queued",
+            "reason": "恢复过期租约事件",
+        }
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT attempt_count, last_error, locked_by, locked_until, dead_lettered_at
+                FROM outbox_events WHERE event_id = %s
+                """,
+                (str(event_id),),
+            )
+            assert cur.fetchone() == (2, None, None, None, None)
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_worker_and_service_sanitize_and_bound_delivery_errors(monkeypatch):
+    """Persisting raw exception text would leak secrets and unbounded data to admin operations."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000461")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000462")
+    event_type = "test.outbox.sanitized-error.20260808"
+    consumer_name = "test_outbox_sanitized_error_consumer_20260808"
+    raw_error = "token=super-secret\npassword: hunter2\x00" + ("x" * 500)
+
+    def handler(event: dict) -> None:
+        raise RuntimeError(raw_error)
+
+    try:
+        register_consumer(event_type, consumer_name, handler)
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            event_type,
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+
+        assert process_outbox_batch("test-sanitized-error-worker", 1, 3, 60) == {
+            "claimed": 1,
+            "published": 0,
+            "failed": 1,
+        }
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "SELECT last_error FROM outbox_events WHERE event_id = %s",
+                (str(event_id),),
+            )
+            persisted_error = cur.fetchone()[0]
+        assert persisted_error == "token=[REDACTED] password=[REDACTED] " + ("x" * 202) + "…"
+        assert len(persisted_error) == 240
+        assert "super-secret" not in persisted_error
+        assert "hunter2" not in persisted_error
+        assert "\n" not in persisted_error
+        assert "\x00" not in persisted_error
+
+        listed_event = next(
+            event for event in list_events("failed", 10) if event["event_id"] == str(event_id)
+        )
+        assert listed_event["last_error"] == persisted_error
     finally:
         _delete_event(str(event_id))
 

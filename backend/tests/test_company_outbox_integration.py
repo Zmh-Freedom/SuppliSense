@@ -88,12 +88,13 @@ def test_company_facts_and_all_p1_events_commit_atomically(
         None,
         "admin",
     )
+    tracked_company_ids.append(source["company_id"])
     target = company_service.create_company(
         CompanyCreateInput(legal_name=target_name),
         None,
         "admin",
     )
-    tracked_company_ids.extend((source["company_id"], target["company_id"]))
+    tracked_company_ids.append(target["company_id"])
 
     updated = company_service.update_company(
         source["company_id"],

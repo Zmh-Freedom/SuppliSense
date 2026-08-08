@@ -7,10 +7,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import require_admin
-from app.domains.outbox.service import list_events, replay_event
+from app.domains.outbox.service import list_events, replay_event, to_admin_event
 from app.schemas.outbox import (
+    OutboxAdminEventResponse,
     OutboxEventListResponse,
-    OutboxEventResponse,
     OutboxReplayInput,
     OutboxReplayResponse,
 )
@@ -36,7 +36,7 @@ async def list_outbox_events(
     events = await asyncio.to_thread(list_events, status, limit)
     return OutboxEventListResponse(
         events=[
-            OutboxEventResponse.model_validate(event)
+            OutboxAdminEventResponse.model_validate(to_admin_event(event))
             for event in sorted(events, key=lambda event: (event["occurred_at"], event["event_id"]))
         ]
     )

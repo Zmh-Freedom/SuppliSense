@@ -7,6 +7,7 @@ from app.core.logging import get_logger
 from app.db.postgres import get_cursor
 from app.domains.auth.audit_repo import create_log_with_cursor
 from app.domains.outbox import repo
+from app.domains.outbox.sanitization import sanitize_delivery_error
 
 logger = get_logger(__name__)
 
@@ -67,18 +68,20 @@ def process_outbox_batch(
                 )
         except Exception as exc:
             attempt = int(event["attempt_count"]) + 1
+            safe_error = sanitize_delivery_error(exc)
             if repo.mark_failed(
                 event_id,
-                str(exc),
+                safe_error,
                 max_attempts,
                 retry_delay_seconds(attempt),
                 worker_id,
             ):
-                logger.exception(
+                logger.error(
                     "outbox_event_failed",
                     event_id=event_id,
                     event_type=event["event_type"],
                     attempt=attempt,
+                    error=safe_error,
                 )
                 result["failed"] += 1
                 outcome = "dead_lettered" if attempt >= max_attempts else "retry"
@@ -113,16 +116,46 @@ def _notify_outcome(
 
 def list_events(status: str, limit: int) -> list[dict]:
     events = repo.list_events(status, limit)
-    return sorted(events, key=lambda event: (event["occurred_at"], event["event_id"]))
+    return [
+        to_admin_event(event)
+        for event in sorted(events, key=lambda event: (event["occurred_at"], event["event_id"]))
+    ]
+
+
+def to_admin_event(event: dict) -> dict:
+    """Map a repository row to the deliberately minimal administrator view."""
+    return {
+        "event_id": event["event_id"],
+        "event_type": event["event_type"],
+        "aggregate_type": event["aggregate_type"],
+        "aggregate_id": event["aggregate_id"],
+        "schema_version": event["schema_version"],
+        "status": event.get("status", _event_status(event)),
+        "attempt_count": event["attempt_count"],
+        "occurred_at": event["occurred_at"],
+        "published_at": event["published_at"],
+        "last_error": (
+            sanitize_delivery_error(event["last_error"])
+            if event.get("last_error") is not None
+            else None
+        ),
+    }
 
 
 def replay_event(event_id: str, reason: str, actor_id: str | None) -> dict:
     with get_cursor() as (_, cur):
         event = repo.replay_event_with_cursor(cur, event_id)
         if event is None:
-            existing_event = repo.get_event_with_cursor(cur, event_id)
+            existing_event = repo.get_replay_state_with_cursor(cur, event_id)
             if existing_event is None:
                 raise DomainError("OUTBOX_EVENT_NOT_FOUND", "Outbox 事件不存在", 404)
+            if existing_event["lease_active"]:
+                raise DomainError(
+                    "OUTBOX_EVENT_LEASE_ACTIVE",
+                    "Outbox 事件正在被 worker 处理，不能回放",
+                    409,
+                    {"event_id": event_id},
+                )
             raise DomainError(
                 "OUTBOX_EVENT_NOT_REPLAYABLE",
                 "仅可回放未发布的失败或死信事件",
@@ -138,6 +171,16 @@ def replay_event(event_id: str, reason: str, actor_id: str | None) -> dict:
             details={"reason": reason},
         )
     return {"event_id": event_id, "status": "queued", "reason": reason}
+
+
+def _event_status(event: dict) -> str:
+    if event.get("published_at") is not None:
+        return "published"
+    if event.get("dead_lettered_at") is not None:
+        return "dead_letter"
+    if event.get("last_error") is not None:
+        return "failed"
+    return "pending"
 
 
 def _company_event_audit(event: dict) -> None:

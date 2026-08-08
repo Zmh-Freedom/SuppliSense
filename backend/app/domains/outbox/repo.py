@@ -6,6 +6,7 @@ from uuid import uuid4
 from psycopg2.extras import Json
 
 from app.db.postgres import PgCursor, get_cursor
+from app.domains.outbox.sanitization import sanitize_delivery_error
 
 
 def enqueue_event(
@@ -144,6 +145,7 @@ def mark_failed(
     worker_id: str,
 ) -> bool:
     """Record one failed attempt and either schedule it or dead-letter it."""
+    safe_error = sanitize_delivery_error(error)
     with get_cursor() as (_, cur):
         cur.execute(
             """
@@ -167,7 +169,7 @@ def mark_failed(
               AND dead_lettered_at IS NULL
             RETURNING event_id
             """,
-            (error, max_attempts, retry_seconds, max_attempts, event_id, worker_id),
+            (safe_error, max_attempts, retry_seconds, max_attempts, event_id, worker_id),
         )
         return cur.fetchone() is not None
 
@@ -211,6 +213,19 @@ def get_event_with_cursor(cur: PgCursor, event_id: str) -> dict | None:
     return _row_to_dict(cur, cur.fetchone())
 
 
+def get_replay_state_with_cursor(cur: PgCursor, event_id: str) -> dict | None:
+    """Read replay eligibility using PostgreSQL time in the caller-owned transaction."""
+    cur.execute(
+        """
+        SELECT *, (locked_by IS NOT NULL AND locked_until > NOW()) AS lease_active
+        FROM outbox_events
+        WHERE event_id = %s
+        """,
+        (event_id,),
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
 def replay_event_with_cursor(cur: PgCursor, event_id: str) -> dict | None:
     """Queue an unpublished failed/dead-letter event without erasing delivery history."""
     cur.execute(
@@ -223,6 +238,7 @@ def replay_event_with_cursor(cur: PgCursor, event_id: str) -> dict | None:
             dead_lettered_at = NULL
         WHERE event_id = %s
           AND published_at IS NULL
+          AND NOT (locked_by IS NOT NULL AND locked_until > NOW())
           AND (
               dead_lettered_at IS NOT NULL
               OR (attempt_count > 0 AND last_error IS NOT NULL)

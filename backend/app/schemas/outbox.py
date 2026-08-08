@@ -17,25 +17,23 @@ class OutboxReplayInput(BaseModel):
         return reason
 
 
-class OutboxEventResponse(BaseModel):
+class OutboxAdminEventResponse(BaseModel):
+    """Safe projection of an Outbox event for administrator operations."""
+
     event_id: UUID
     event_type: str
     aggregate_type: str
     aggregate_id: str
     schema_version: int
-    payload: dict
+    status: Literal["pending", "failed", "dead_letter", "published"]
+    attempt_count: int
     occurred_at: datetime
     published_at: datetime | None
-    attempt_count: int
     last_error: str | None
-    next_attempt_at: datetime
-    locked_by: str | None
-    locked_until: datetime | None
-    dead_lettered_at: datetime | None
 
 
 class OutboxEventListResponse(BaseModel):
-    events: list[OutboxEventResponse]
+    events: list[OutboxAdminEventResponse]
 
 
 class OutboxReplayResponse(BaseModel):
