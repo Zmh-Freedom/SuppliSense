@@ -23,17 +23,18 @@ def run_outbox_once() -> dict:
     result = {"claimed": 0, "published": 0, "failed": 0}
     status = "ok"
 
-    try:
-        result = process_outbox_batch(
-            worker_id=worker_id,
-            batch_size=settings.OUTBOX_BATCH_SIZE,
-            max_attempts=settings.OUTBOX_MAX_ATTEMPTS,
-            lease_seconds=settings.OUTBOX_LEASE_SECONDS,
-            outcome_observer=record_outbox_outcome,
-        )
-    except Exception:
-        status = "failed"
-        logger.exception("outbox_worker_batch_failed", worker_id=worker_id)
+    if settings.OUTBOX_WORKER_ENABLED:
+        try:
+            result = process_outbox_batch(
+                worker_id=worker_id,
+                batch_size=settings.OUTBOX_BATCH_SIZE,
+                max_attempts=settings.OUTBOX_MAX_ATTEMPTS,
+                lease_seconds=settings.OUTBOX_LEASE_SECONDS,
+                outcome_observer=record_outbox_outcome,
+            )
+        except Exception:
+            status = "failed"
+            logger.exception("outbox_worker_batch_failed", worker_id=worker_id)
 
     try:
         _refresh_pending_metrics()

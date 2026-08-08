@@ -24,6 +24,7 @@ from app.schemas.company import (
 MAX_MERGE_HOPS = 20
 _ALIAS_EXACT_CONFIDENCE = 0.95
 _TRUSTED_IDENTITY_SOURCES = {"tianyancha", "import", "admin_verified"}
+_TRUSTED_ALIAS_SOURCES = _TRUSTED_IDENTITY_SOURCES
 _WRITER_ROLES = {"admin", "analyst"}
 _ANALYST_RESTRICTED_UPDATE_FIELDS = {
     "legal_name",
@@ -50,6 +51,7 @@ def create_company(
     if verification_status == "verified":
         _require_verification_evidence(credit_code, data.identity_source, data.source_reference)
     normalized_aliases = _normalized_aliases(data.aliases)
+    _validate_aliases_for_actor(data.aliases, actor_role)
 
     try:
         with get_cursor() as (_, cur):
@@ -426,6 +428,24 @@ def _normalized_aliases(
     return normalized_aliases
 
 
+def _validate_aliases_for_actor(
+    aliases: list[CompanyAliasInput],
+    actor_role: str,
+) -> None:
+    if actor_role == "admin":
+        return
+    for alias in aliases:
+        if (
+            alias.source in _TRUSTED_ALIAS_SOURCES
+            or alias.confidence >= _ALIAS_EXACT_CONFIDENCE
+        ):
+            raise DomainError(
+                "COMPANY_ALIAS_PROVENANCE_FORBIDDEN",
+                "分析师不能提交可信或可自动解析的企业别名证据",
+                403,
+            )
+
+
 def _validate_update_fields(data: CompanyUpdateInput, specified_fields: set[str]) -> None:
     update_fields = specified_fields - {"expected_version"}
     if not update_fields:
@@ -551,12 +571,11 @@ def get_company(company_id: str) -> dict | None:
 
 def search_identity(query: str, limit: int = 10) -> dict:
     """Resolve a query deterministically to an exact company, candidates, or verification state."""
-    rows = company_repo.search_identity_rows(query, limit)
+    rows, truncated = company_repo.search_identity_rows(query, limit)
+    canonical_by_company_id = _resolve_canonical_companies(rows)
     candidates_by_company_id: dict[str, dict] = {}
     for row in rows:
-        canonical = get_company(row["id"])
-        if canonical is None:
-            continue
+        canonical = canonical_by_company_id[row["id"]]
         candidate = _company_candidate(canonical, row)
         existing = candidates_by_company_id.get(candidate["company_id"])
         if existing is None or _candidate_sort_key(candidate) < _candidate_sort_key(existing):
@@ -566,6 +585,10 @@ def search_identity(query: str, limit: int = 10) -> dict:
     if not candidates:
         return _record_resolution(
             {"resolution": "pending_verification", "exact": None, "candidates": []}
+        )
+    if truncated:
+        return _record_resolution(
+            {"resolution": "candidates", "exact": None, "candidates": candidates[:limit]}
         )
     credit_candidates = [
         candidate for candidate in candidates if candidate["match_type"] == "credit_code"
@@ -595,6 +618,7 @@ def search_identity(query: str, limit: int = 10) -> dict:
     if (
         candidate["match_type"] == "alias"
         and candidate["confidence"] >= _ALIAS_EXACT_CONFIDENCE
+        and candidate.get("_alias_source") in _TRUSTED_ALIAS_SOURCES
     ):
         return _record_resolution(
             {"resolution": "exact", "exact": candidate, "candidates": []}
@@ -605,8 +629,46 @@ def search_identity(query: str, limit: int = 10) -> dict:
 
 
 def _record_resolution(result: dict) -> dict:
+    exact = result.get("exact")
+    if exact is not None:
+        exact.pop("_alias_source", None)
+    for candidate in result.get("candidates", []):
+        candidate.pop("_alias_source", None)
     record_company_identity_resolution(result["resolution"])
     return result
+
+
+def _resolve_canonical_companies(rows: list[dict]) -> dict[str, dict]:
+    """Follow merge redirects in bounded batches instead of one query per candidate."""
+    current_by_original = {row["id"]: row for row in rows}
+    seen_by_original = {company_id: {company_id} for company_id in current_by_original}
+    for _ in range(MAX_MERGE_HOPS + 1):
+        target_ids = {
+            str(company["merged_into_id"])
+            for company in current_by_original.values()
+            if company.get("merged_into_id") is not None
+        }
+        if not target_ids:
+            result: dict[str, dict] = {}
+            for original_id, canonical in current_by_original.items():
+                canonical = dict(canonical)
+                canonical["redirected_from"] = (
+                    original_id if original_id != canonical["id"] else None
+                )
+                result[original_id] = canonical
+            return result
+        target_rows = company_repo.get_company_rows(sorted(target_ids))
+        for original_id, current in list(current_by_original.items()):
+            target_id = current.get("merged_into_id")
+            if target_id is None:
+                continue
+            target_id = str(target_id)
+            next_company = target_rows.get(target_id)
+            if next_company is None or target_id in seen_by_original[original_id]:
+                raise _merge_integrity_error()
+            seen_by_original[original_id].add(target_id)
+            current_by_original[original_id] = next_company
+    raise _merge_integrity_error()
 
 
 def _company_candidate(canonical: dict, matched_row: dict) -> dict:
@@ -619,6 +681,7 @@ def _company_candidate(canonical: dict, matched_row: dict) -> dict:
         "match_type": matched_row["match_type"],
         "confidence": matched_row["confidence"],
         "redirected_from": canonical["redirected_from"],
+        "_alias_source": matched_row.get("alias_source"),
     }
 
 

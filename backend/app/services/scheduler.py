@@ -182,8 +182,6 @@ def _add_job(func, cron: str, job_id: str) -> None:
 
 
 def _add_outbox_job() -> None:
-    if not settings.OUTBOX_WORKER_ENABLED:
-        return
     _scheduler.add_job(
         _scheduled_outbox,
         "interval",

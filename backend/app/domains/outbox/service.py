@@ -14,6 +14,14 @@ logger = get_logger(__name__)
 _CONSUMERS: dict[tuple[str, str], Callable[[dict], None]] = {}
 
 
+class _OutboxDeliveryError(Exception):
+    """A delivery failure with an allowlisted diagnostic safe for durable storage."""
+
+    def __init__(self, diagnostic: str) -> None:
+        super().__init__(diagnostic)
+        self.diagnostic = diagnostic
+
+
 def register_consumer(
     event_type: str,
     consumer_name: str,
@@ -49,9 +57,14 @@ def process_outbox_batch(
     for event in events:
         event_id = event["event_id"]
         try:
-            for (event_type, consumer_name), handler in _CONSUMERS.items():
-                if event_type != event["event_type"]:
-                    continue
+            consumers = [
+                (consumer_name, handler)
+                for (event_type, consumer_name), handler in _CONSUMERS.items()
+                if event_type == event["event_type"]
+            ]
+            if not consumers:
+                raise _OutboxDeliveryError("consumer_not_registered")
+            for consumer_name, handler in consumers:
                 if repo.is_consumed(event_id, consumer_name):
                     continue
                 handler(event)
@@ -68,7 +81,11 @@ def process_outbox_batch(
                 )
         except Exception as exc:
             attempt = int(event["attempt_count"]) + 1
-            safe_error = sanitize_delivery_error(exc)
+            safe_error = (
+                exc.diagnostic
+                if isinstance(exc, _OutboxDeliveryError)
+                else "consumer_handler_failed"
+            )
             if repo.mark_failed(
                 event_id,
                 safe_error,
@@ -143,6 +160,13 @@ def to_admin_event(event: dict) -> dict:
 
 
 def replay_event(event_id: str, reason: str, actor_id: str | None) -> dict:
+    normalized_reason = reason.strip()
+    if not 2 <= len(normalized_reason) <= 500:
+        raise DomainError(
+            "OUTBOX_REPLAY_REASON_INVALID",
+            "回放原因长度必须在 2 到 500 个字符之间",
+            422,
+        )
     with get_cursor() as (_, cur):
         event = repo.replay_event_with_cursor(cur, event_id)
         if event is None:
@@ -168,9 +192,9 @@ def replay_event(event_id: str, reason: str, actor_id: str | None) -> dict:
             user_id=actor_id,
             resource_type="outbox_event",
             resource_id=event_id,
-            details={"reason": reason},
+            details={"reason": normalized_reason},
         )
-    return {"event_id": event_id, "status": "queued", "reason": reason}
+    return {"event_id": event_id, "status": "queued", "reason": normalized_reason}
 
 
 def _event_status(event: dict) -> str:

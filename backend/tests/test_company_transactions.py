@@ -125,7 +125,7 @@ def test_create_rolls_back_company_alias_and_audit_when_real_event_insert_fails(
                     aliases=[CompanyAliasInput(alias_name="Task5 Rollback Alias", alias_type="short_name")],
                 ),
                 None,
-                "analyst",
+                "admin",
             )
 
         with schema_cursor() as (_, cur):

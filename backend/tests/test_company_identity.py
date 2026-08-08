@@ -10,6 +10,7 @@ from app.domains.company.normalization import (
     validate_credit_code,
 )
 from app.schemas.company import (
+    CompanyAliasInput,
     CompanyCreateInput,
     CompanyMergeInput,
     CompanyResponse,
@@ -42,6 +43,37 @@ def test_validate_credit_code_accepts_valid_checksum():
 def test_normalize_credit_code_returns_none_or_validated_code():
     assert normalize_credit_code(None) is None
     assert normalize_credit_code("911100007109250324") == "911100007109250324"
+
+
+def test_analyst_cannot_submit_trusted_or_auto_exact_alias_provenance(monkeypatch):
+    """Analysts must not manufacture alias evidence that can auto-bind an identity."""
+    from contextlib import contextmanager
+
+    from app.core.errors import DomainError
+    from app.domains.company import service as company_service
+
+    @contextmanager
+    def unexpected_transaction():
+        raise AssertionError("analyst alias provenance must be rejected before database access")
+        yield
+
+    monkeypatch.setattr(company_service, "get_cursor", unexpected_transaction)
+    data = CompanyCreateInput(
+        legal_name="Analyst Alias Provenance Company",
+        aliases=[
+            CompanyAliasInput(
+                alias_name="Analyst Trusted Alias",
+                alias_type="short_name",
+                source="tianyancha",
+                confidence=0.95,
+            )
+        ],
+    )
+
+    with pytest.raises(DomainError) as exc_info:
+        company_service.create_company(data, None, "analyst")
+
+    assert exc_info.value.code == "COMPANY_ALIAS_PROVENANCE_FORBIDDEN"
 
 
 def test_company_create_input_defaults_to_pending_manual_identity():

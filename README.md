@@ -66,6 +66,8 @@ Outbox worker 默认启用，可通过以下环境变量调整：
 | `OUTBOX_MAX_ATTEMPTS` | `8` | 自动重试上限，达到后进入死信 |
 | `OUTBOX_LEASE_SECONDS` | `60` | 多 worker 领取事件的租约时长（秒） |
 
+Prometheus 指标当前使用进程内 collector；生产 Gunicorn 配置强制单 worker，避免多进程 scrape 返回不完整指标。Outbox 仍可由独立实例扩展，依靠数据库租约协调。
+
 管理员可查看积压、失败和死信事件，并仅对未发布的失败/死信事件回放：
 
 ```bash

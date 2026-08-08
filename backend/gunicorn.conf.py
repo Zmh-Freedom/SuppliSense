@@ -4,7 +4,9 @@ import os
 
 # Worker
 worker_class = "uvicorn.workers.UvicornWorker"
-workers = int(os.getenv("GUNICORN_WORKERS", "4"))
+# Prometheus collectors in this application are process-local. Keep the web
+# topology single-process until multiprocess collector storage is introduced.
+workers = 1
 threads = int(os.getenv("GUNICORN_THREADS", "2"))
 worker_connections = 1000
 

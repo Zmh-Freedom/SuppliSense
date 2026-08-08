@@ -64,8 +64,8 @@ def _insert_company(
             """
             INSERT INTO companies (
                 id, legal_name, normalized_name, unified_social_credit_code,
-                verification_status, identity_source, merged_into_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                verification_status, identity_source, source_reference, merged_into_id
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 company_id,
@@ -73,7 +73,8 @@ def _insert_company(
                 legal_name.casefold(),
                 credit_code,
                 verification_status,
-                "manual",
+                "admin_verified",
+                "test-reference",
                 merged_into_id,
             ),
         )
@@ -84,6 +85,7 @@ def _insert_alias(
     company_id: str,
     alias_name: str,
     confidence: float,
+    source: str = "test",
 ) -> None:
     with get_cursor() as (_, cur):
         cur.execute(
@@ -98,7 +100,7 @@ def _insert_alias(
                 alias_name,
                 alias_name.casefold(),
                 "short_name",
-                "test",
+                source,
                 confidence,
             ),
         )
@@ -166,12 +168,35 @@ def test_search_identity_resolves_unique_verified_legal_name_exactly() -> None:
     assert result["candidates"] == []
 
 
+def test_search_identity_returns_candidates_for_high_confidence_untrusted_alias(
+    _real_company_identity_database: None,
+) -> None:
+    """Alias confidence alone cannot prove a legal identity without trusted provenance."""
+    company_id = "00000000-0000-4000-8000-000000000521"
+    alias_name = "Task4 Untrusted Exact Alias 20260808B"
+    _insert_company(company_id, "Task4 Untrusted Alias Company")
+    _insert_alias("10000000-0000-4000-8000-000000000521", company_id, alias_name, 0.99)
+
+    result = search_identity(alias_name)
+
+    assert result["resolution"] == "candidates"
+    assert result["exact"] is None
+    assert result["candidates"][0]["company_id"] == company_id
+    assert result["candidates"][0]["match_type"] == "alias"
+
+
 def test_search_identity_resolves_high_confidence_unique_verified_alias_exactly() -> None:
     """Raising the alias threshold above .95 would reject this documented exact alias match."""
     company_id = "00000000-0000-4000-8000-000000000521"
     alias_name = "Task4 Exact Alias"
     _insert_company(company_id, "Task4 Alias Exact Company")
-    _insert_alias("10000000-0000-4000-8000-000000000521", company_id, alias_name, 0.95)
+    _insert_alias(
+        "10000000-0000-4000-8000-000000000521",
+        company_id,
+        alias_name,
+        0.95,
+        source="tianyancha",
+    )
 
     result = search_identity(alias_name)
 
@@ -210,6 +235,37 @@ def test_search_identity_returns_candidates_for_ambiguous_alias() -> None:
     assert result["resolution"] == "candidates"
     assert result["exact"] is None
     assert [candidate["company_id"] for candidate in result["candidates"]] == [alpha_id, beta_id]
+
+
+def test_search_identity_requires_two_normalized_characters_for_prefix_matching() -> None:
+    """A one-character prefix is too broad for identity candidates even when it is unique."""
+    company_id = "00000000-0000-4000-8000-000000000521"
+    _insert_company(company_id, "Task4 Prefix Minimum Company")
+
+    one_character = search_identity("T")
+    two_characters = search_identity("Ta")
+
+    assert one_character == {
+        "resolution": "pending_verification",
+        "exact": None,
+        "candidates": [],
+    }
+    assert two_characters["resolution"] == "candidates"
+    assert two_characters["exact"] is None
+    assert two_characters["candidates"][0]["company_id"] == company_id
+
+
+def test_search_identity_escapes_prefix_pattern_metacharacters() -> None:
+    """A literal percent in a company query must not expand into a SQL wildcard match."""
+    literal_id = "00000000-0000-4000-8000-000000000521"
+    wildcard_id = "00000000-0000-4000-8000-000000000531"
+    _insert_company(literal_id, "Task4 Esc% Literal Company")
+    _insert_company(wildcard_id, "Task4 EscX Wildcard Company")
+
+    result = search_identity("Task4 Esc%")
+
+    assert result["resolution"] == "candidates"
+    assert [candidate["company_id"] for candidate in result["candidates"]] == [literal_id]
 
 
 def test_search_identity_never_auto_resolves_a_unique_prefix_match() -> None:

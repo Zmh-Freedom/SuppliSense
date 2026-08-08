@@ -16,6 +16,38 @@ def _counter_value(counter, **labels: str) -> float:
     return counter.labels(**labels)._value.get()
 
 
+def test_production_gunicorn_enforces_single_process_metrics_topology() -> None:
+    """Process-local Prometheus collectors require the production web process count to be one."""
+    from pathlib import Path
+    from runpy import run_path
+
+    config = run_path(Path(__file__).parents[1] / "gunicorn.conf.py")
+
+    assert config["workers"] == 1
+
+
+def test_worker_disabled_still_refreshes_pending_metrics_without_consuming(monkeypatch) -> None:
+    """The rollback switch stops delivery only; metrics must still expose the pending backlog."""
+    monkeypatch.setattr(outbox_worker.settings, "OUTBOX_WORKER_ENABLED", False)
+    monkeypatch.setattr(
+        outbox_worker,
+        "process_outbox_batch",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("disabled worker must not consume")),
+    )
+    monkeypatch.setattr(
+        outbox_worker.repo,
+        "get_pending_stats",
+        lambda: {"pending": 7, "oldest_age_seconds": 19.5},
+    )
+
+    result = outbox_worker.run_outbox_once()
+
+    assert result["status"] == "ok"
+    assert result["claimed"] == 0
+    assert metrics.OUTBOX_PENDING_EVENTS._value.get() == 7
+    assert metrics.OUTBOX_OLDEST_PENDING_AGE_SECONDS._value.get() == 19.5
+
+
 def test_outbox_settings_have_safe_defaults_and_reject_non_positive_limits() -> None:
     """Zero polling, batch, attempt, or lease values would create a broken worker."""
     configured = Settings(
@@ -193,7 +225,11 @@ def test_identity_resolution_metric_uses_the_bounded_resolution_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Identity query text must not become a metric label, but its result must be counted."""
-    monkeypatch.setattr(company_service.company_repo, "search_identity_rows", lambda query, limit: [])
+    monkeypatch.setattr(
+        company_service.company_repo,
+        "search_identity_rows",
+        lambda query, limit: ([], False),
+    )
     before = _counter_value(
         metrics.COMPANY_IDENTITY_RESOLUTIONS_TOTAL,
         resolution="pending_verification",

@@ -397,7 +397,7 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
             )
             attempt_count, last_error, dead_lettered_at, next_attempt_at = cur.fetchone()
             assert attempt_count == 1
-            assert "planned retry failure" in last_error
+            assert last_error == "consumer_handler_failed"
             assert dead_lettered_at is None
             assert next_attempt_at >= failure_started_at + timedelta(seconds=2)
             assert next_attempt_at <= datetime.now(timezone.utc) + timedelta(seconds=2)
@@ -687,8 +687,8 @@ def test_worker_and_service_sanitize_and_bound_delivery_errors(monkeypatch):
                 (str(event_id),),
             )
             persisted_error = cur.fetchone()[0]
-        assert persisted_error == "token=[REDACTED] password=[REDACTED] " + ("x" * 202) + "…"
-        assert len(persisted_error) == 240
+        assert persisted_error == "consumer_handler_failed"
+        assert len(persisted_error) <= 240
         assert "super-secret" not in persisted_error
         assert "hunter2" not in persisted_error
         assert "\n" not in persisted_error
@@ -706,6 +706,127 @@ def test_worker_and_service_sanitize_and_bound_delivery_errors(monkeypatch):
 def test_retry_delay_is_exponential_and_capped(attempt, seconds):
     """Changing either the backoff base or cap must alter the literal next-delay contract."""
     assert retry_delay_seconds(attempt) == seconds
+
+
+def test_replay_event_rejects_blank_reason_before_opening_a_transaction(monkeypatch):
+    """Service callers bypassing HTTP validation must not create a blank replay audit record."""
+    from contextlib import contextmanager
+
+    from app.core.errors import DomainError
+    from app.domains.outbox import service as outbox_service
+
+    @contextmanager
+    def unexpected_transaction():
+        raise AssertionError("invalid replay reason must fail before database access")
+        yield
+
+    monkeypatch.setattr(outbox_service, "get_cursor", unexpected_transaction)
+
+    with pytest.raises(DomainError) as exc_info:
+        outbox_service.replay_event(
+            "00000000-0000-4000-8000-000000000885",
+            " \t ",
+            None,
+        )
+
+    assert exc_info.value.code == "OUTBOX_REPLAY_REASON_INVALID"
+
+
+def test_process_outbox_batch_retries_unknown_event_type_without_publishing(monkeypatch):
+    """An event without a registered consumer is undeliverable and must remain retryable."""
+    from app.domains.outbox import service as outbox_service
+
+    event_id = "00000000-0000-4000-8000-000000000881"
+    _enqueue_committed(
+        monkeypatch,
+        event_id,
+        "test.outbox.unregistered-consumer.20260808",
+        "00000000-0000-4000-8000-000000000882",
+        {"test": "unknown-consumer"},
+    )
+    try:
+        monkeypatch.setattr(outbox_service, "_CONSUMERS", {})
+        monkeypatch.setattr(outbox_service, "retry_delay_seconds", lambda attempt: 0)
+
+        result = process_outbox_batch("test-unknown-consumer-worker", 1, 2, 60)
+
+        assert result == {"claimed": 1, "published": 0, "failed": 1}
+        with _real_connection() as (_, cur):
+            cur.execute(
+                """
+                SELECT published_at, dead_lettered_at, attempt_count, last_error
+                FROM outbox_events
+                WHERE event_id = %s
+                """,
+                (event_id,),
+            )
+            published_at, dead_lettered_at, attempt_count, last_error = cur.fetchone()
+        assert published_at is None
+        assert dead_lettered_at is None
+        assert attempt_count == 1
+        assert last_error == "consumer_not_registered"
+
+        result = process_outbox_batch("test-unknown-consumer-worker", 1, 2, 60)
+        assert result == {"claimed": 1, "published": 0, "failed": 1}
+        with _real_connection() as (_, cur):
+            cur.execute(
+                """
+                SELECT published_at, dead_lettered_at, attempt_count, last_error
+                FROM outbox_events
+                WHERE event_id = %s
+                """,
+                (event_id,),
+            )
+            published_at, dead_lettered_at, attempt_count, last_error = cur.fetchone()
+        assert published_at is None
+        assert dead_lettered_at is not None
+        assert attempt_count == 2
+        assert last_error == "consumer_not_registered"
+    finally:
+        _delete_event(event_id)
+
+
+def test_process_outbox_batch_persists_only_allowlisted_error_diagnostic(monkeypatch):
+    """Raw exception messages can contain credentials and must never be retained in Outbox rows."""
+    from app.domains.outbox import service as outbox_service
+
+    event_type = "test.outbox.allowlisted-error.20260808"
+    event_id = "00000000-0000-4000-8000-000000000883"
+    _enqueue_committed(
+        monkeypatch,
+        event_id,
+        event_type,
+        "00000000-0000-4000-8000-000000000884",
+        {"test": "safe-error"},
+    )
+
+    def raise_sensitive_error(event: dict) -> None:
+        raise RuntimeError("postgres://user:secret@example.invalid/db?token=do-not-persist")
+
+    try:
+        monkeypatch.setattr(
+            outbox_service,
+            "_CONSUMERS",
+            {(event_type, "test-sensitive-error"): raise_sensitive_error},
+        )
+
+        assert process_outbox_batch("test-safe-error-worker", 1, 3, 60) == {
+            "claimed": 1,
+            "published": 0,
+            "failed": 1,
+        }
+
+        with _real_connection() as (_, cur):
+            cur.execute(
+                "SELECT last_error FROM outbox_events WHERE event_id = %s",
+                (event_id,),
+            )
+            persisted_error = cur.fetchone()[0]
+        assert persisted_error == "consumer_handler_failed"
+        assert "secret" not in persisted_error
+        assert "do-not-persist" not in persisted_error
+    finally:
+        _delete_event(event_id)
 
 
 def test_register_consumer_rejects_a_different_handler_for_the_same_key():

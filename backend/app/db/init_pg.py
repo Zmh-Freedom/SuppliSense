@@ -85,7 +85,16 @@ DDL_STATEMENTS = [
             CHECK (verification_status IN ('verified', 'pending_verification')),
         CONSTRAINT companies_identity_version_check CHECK (identity_version > 0),
         CONSTRAINT companies_merged_into_id_check
-            CHECK (merged_into_id IS NULL OR merged_into_id <> id)
+            CHECK (merged_into_id IS NULL OR merged_into_id <> id),
+        CONSTRAINT companies_verified_evidence_check CHECK (
+            verification_status <> 'verified'
+            OR unified_social_credit_code IS NOT NULL
+            OR (
+                identity_source IN ('tianyancha', 'import', 'admin_verified')
+                AND source_reference IS NOT NULL
+                AND BTRIM(source_reference) <> ''
+            )
+        )
     )
     """,
     """
@@ -182,6 +191,31 @@ DDL_STATEMENTS = [
     """,
 ]
 
+MIGRATION_STATEMENTS = [
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'companies'::regclass
+              AND conname = 'companies_verified_evidence_check'
+        ) THEN
+            ALTER TABLE companies
+            ADD CONSTRAINT companies_verified_evidence_check CHECK (
+                verification_status <> 'verified'
+                OR unified_social_credit_code IS NOT NULL
+                OR (
+                    identity_source IN ('tianyancha', 'import', 'admin_verified')
+                    AND source_reference IS NOT NULL
+                    AND BTRIM(source_reference) <> ''
+                )
+            ) NOT VALID;
+        END IF;
+    END $$
+    """,
+]
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
     "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
@@ -190,6 +224,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name ON companies (normalized_name)",
+    "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name_pattern ON companies (normalized_name text_pattern_ops)",
     "CREATE INDEX IF NOT EXISTS idx_companies_merged_into_id ON companies (merged_into_id)",
     "CREATE INDEX IF NOT EXISTS idx_company_aliases_normalized_alias ON company_aliases (normalized_alias)",
     "CREATE INDEX IF NOT EXISTS idx_company_merge_log_source_company ON company_merge_log (source_company_id)",
@@ -207,6 +242,8 @@ def ensure_pg_schema() -> None:
     try:
         with get_cursor() as (conn, cur):
             for stmt in DDL_STATEMENTS:
+                cur.execute(stmt)
+            for stmt in MIGRATION_STATEMENTS:
                 cur.execute(stmt)
             for stmt in INDEX_STATEMENTS:
                 cur.execute(stmt)

@@ -128,7 +128,7 @@ def test_create_persists_normalized_aliases_audit_and_outbox_event(
             ],
         ),
         None,
-        "analyst",
+        "admin",
     )
     company_id = result["company_id"]
     _company_command_database.append(company_id)

@@ -429,7 +429,14 @@ def test_merge_writes_snapshot_redirect_versions_audit_event_and_preserves_alias
     with _isolated_company_schema(monkeypatch) as schema_cursor:
         source = _create_company(
             "Task6 Source Legal Name",
-            aliases=[CompanyAliasInput(alias_name="Task6 Source Alias", alias_type="former_name")],
+            aliases=[
+                CompanyAliasInput(
+                    alias_name="Task6 Source Alias",
+                    alias_type="former_name",
+                    source="tianyancha",
+                    confidence=0.99,
+                )
+            ],
         )
         target = _create_company(
             "Task6 Target Legal Name",
@@ -551,6 +558,41 @@ def test_merge_rolls_back_log_redirect_versions_and_audit_when_event_insert_fail
             assert cur.fetchone() == (0,)
             cur.execute("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'company.merged'")
             assert cur.fetchone() == (0,)
+
+
+def test_sequential_public_merges_flatten_all_inbound_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Repeated canonical merges must not leave a redirect chain that exceeds public bounds."""
+    with _isolated_company_schema(monkeypatch) as schema_cursor:
+        companies = [_create_company(f"Task6 Flatten Chain {index}") for index in range(22)]
+        versions = {company["company_id"]: 1 for company in companies}
+
+        for source, target in zip(companies, companies[1:]):
+            result = merge_company(
+                source["company_id"],
+                _merge_input(
+                    target["company_id"],
+                    source_expected_version=versions[source["company_id"]],
+                    target_expected_version=versions[target["company_id"]],
+                ),
+                None,
+                "admin",
+            )
+            versions[source["company_id"]] = result["source_version"]
+            versions[target["company_id"]] = result["target_version"]
+
+        canonical_id = companies[-1]["company_id"]
+        assert get_company(companies[0]["company_id"])["id"] == canonical_id
+        with schema_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT merged_into_id
+                FROM companies
+                WHERE id = ANY(%s::uuid[])
+                  AND id <> %s
+                """,
+                ([company["company_id"] for company in companies], canonical_id),
+            )
+            assert {row[0] for row in cur.fetchall()} == {canonical_id}
 
 
 def test_lock_companies_for_merge_uses_one_uuid_sorted_for_update_statement() -> None:

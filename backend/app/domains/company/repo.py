@@ -15,6 +15,7 @@ _MATCH_TYPE_ORDER = {
     "alias": 2,
     "prefix": 3,
 }
+_SEARCH_FETCH_MULTIPLIER = 20
 
 _COMPANY_COLUMNS = """
     c.id,
@@ -87,6 +88,22 @@ def get_company_row_with_cursor(cur: PgCursor, company_id: str) -> dict | None:
         (company_id,),
     )
     return _row_to_dict(cur, cur.fetchone())
+
+
+def get_company_rows(company_ids: list[str]) -> dict[str, dict]:
+    """Fetch company rows in one query for batched redirect resolution."""
+    if not company_ids:
+        return {}
+    with get_cursor() as (_, cur):
+        cur.execute(
+            f"""
+            SELECT {_RETURNING_COMPANY_COLUMNS}
+            FROM companies
+            WHERE id = ANY(%s::uuid[])
+            """,
+            (company_ids,),
+        )
+        return {row["id"]: row for row in _rows_to_dicts(cur)}
 
 
 def insert_company(
@@ -296,35 +313,40 @@ def apply_company_merge(
     source_company_id: str,
     target_company_id: str,
 ) -> list[dict]:
-    """Redirect the source and advance both identity versions in one statement."""
+    """Redirect the source and atomically flatten every inbound redirect to the target."""
     cur.execute(
         f"""
         UPDATE companies
         SET merged_into_id = CASE
-                WHEN id = %s THEN %s
-                ELSE merged_into_id
+                WHEN id = %s THEN merged_into_id
+                ELSE %s
             END,
             identity_version = identity_version + 1,
             updated_at = NOW()
-        WHERE id = ANY(%s::uuid[])
+        WHERE id = %s
+           OR id = %s
+           OR merged_into_id = %s
         RETURNING {_RETURNING_COMPANY_COLUMNS}
         """,
         (
+            target_company_id,
+            target_company_id,
             source_company_id,
             target_company_id,
-            [source_company_id, target_company_id],
+            source_company_id,
         ),
     )
     return _rows_to_dicts(cur)
 
 
-def search_identity_rows(query: str, limit: int) -> list[dict]:
-    """Find deterministic identity matches before canonical merge resolution."""
+def search_identity_rows(query: str, limit: int) -> tuple[list[dict], bool]:
+    """Return database-ranked matches plus whether the caller-visible limit truncated them."""
     if limit < 1:
         raise ValueError("limit 必须大于 0")
 
     normalized_query = normalize_company_name(query)
-    matches: list[dict] = []
+    match_queries: list[str] = []
+    parameters: list[object] = []
 
     try:
         credit_code = normalize_credit_code(query)
@@ -332,53 +354,66 @@ def search_identity_rows(query: str, limit: int) -> list[dict]:
         credit_code = None
 
     if credit_code is not None:
-        matches.extend(
-            _fetch_identity_rows(
-                """
-                SELECT {columns}, 'credit_code' AS match_type, 1.0::float AS confidence
-                FROM companies AS c
-                WHERE c.unified_social_credit_code = %s
-                """,
-                (credit_code,),
-            )
+        match_queries.append(
+            """
+            SELECT {columns}, 'credit_code' AS match_type, 1.0::float AS confidence,
+                   NULL::varchar AS alias_source, 0 AS match_rank
+            FROM companies AS c
+            WHERE c.unified_social_credit_code = %s
+            """
         )
+        parameters.append(credit_code)
 
-    matches.extend(
-        _fetch_identity_rows(
-            """
-            SELECT {columns}, 'legal_name' AS match_type, 1.0::float AS confidence
-            FROM companies AS c
-            WHERE c.normalized_name = %s
-            """,
-            (normalized_query,),
-        )
+    match_queries.append(
+        """
+        SELECT {columns}, 'legal_name' AS match_type, 1.0::float AS confidence,
+               NULL::varchar AS alias_source, 1 AS match_rank
+        FROM companies AS c
+        WHERE c.normalized_name = %s
+        """
     )
-    matches.extend(
-        _fetch_identity_rows(
-            """
-            SELECT {columns}, 'alias' AS match_type, a.confidence::float AS confidence
-            FROM companies AS c
-            JOIN company_aliases AS a ON a.company_id = c.id
-            WHERE a.normalized_alias = %s
-            """,
-            (normalized_query,),
-        )
+    parameters.append(normalized_query)
+    match_queries.append(
+        """
+        SELECT {columns}, 'alias' AS match_type, a.confidence::float AS confidence,
+               a.source AS alias_source, 2 AS match_rank
+        FROM companies AS c
+        JOIN company_aliases AS a ON a.company_id = c.id
+        WHERE a.normalized_alias = %s
+        """
     )
-    matches.extend(
-        _fetch_identity_rows(
+    parameters.append(normalized_query)
+    if len(normalized_query) >= 2:
+        match_queries.append(
             """
-            SELECT {columns}, 'prefix' AS match_type, 1.0::float AS confidence
+            SELECT {columns}, 'prefix' AS match_type, 1.0::float AS confidence,
+                   NULL::varchar AS alias_source, 3 AS match_rank
             FROM companies AS c
             WHERE c.normalized_name LIKE %s ESCAPE '\\'
-            """,
-            (_escape_like(normalized_query) + "%",),
+            """
         )
-    )
+        parameters.append(_escape_like(normalized_query) + "%")
 
-    deduplicated: dict[str, dict] = {}
-    for row in sorted(matches, key=_identity_sort_key):
-        deduplicated.setdefault(row["id"], row)
-    return list(deduplicated.values())
+    rows = _fetch_identity_rows(
+        f"""
+        WITH matches AS ({" UNION ALL ".join(match_queries)}),
+        deduplicated AS (
+            SELECT DISTINCT ON (id) *
+            FROM matches
+            ORDER BY id, match_rank,
+                     CASE WHEN verification_status = 'verified' THEN 0 ELSE 1 END,
+                     confidence DESC, legal_name, id
+        )
+        SELECT * FROM deduplicated
+        ORDER BY match_rank,
+                 CASE WHEN verification_status = 'verified' THEN 0 ELSE 1 END,
+                 confidence DESC, legal_name, id
+        LIMIT %s
+        """,
+        tuple(parameters + [limit * _SEARCH_FETCH_MULTIPLIER + 1]),
+    )
+    fetch_limit = limit * _SEARCH_FETCH_MULTIPLIER
+    return rows[:fetch_limit], len(rows) > fetch_limit
 
 
 def _fetch_identity_rows(query: str, parameters: tuple[Any, ...]) -> list[dict]:

@@ -240,6 +240,12 @@ def test_ensure_pg_schema_creates_complete_p1_contract_in_isolated_schema(monkey
             _assert_fk(company_constraints, "verified_by", f"{schema_name}.users", "n")
             company_checks = _check_definitions(company_constraints)
             assert any("verified" in definition and "pending_verification" in definition for definition in company_checks)
+            assert any(
+                "unified_social_credit_code" in definition
+                and "source_reference" in definition
+                and "admin_verified" in definition
+                for definition in company_checks
+            )
             assert any("identity_version > 0" in definition for definition in company_checks)
             assert any("merged_into_id IS NULL" in definition and "merged_into_id <> id" in definition for definition in company_checks)
 
@@ -334,6 +340,9 @@ def test_ensure_pg_schema_creates_complete_p1_contract_in_isolated_schema(monkey
             merge_indexes = _indexes(cur, schema_name, "company_merge_log")
             outbox_indexes = _indexes(cur, schema_name, "outbox_events")
             assert company_indexes["idx_companies_normalized_name"]["keys"] == ("normalized_name",)
+            assert company_indexes["idx_companies_normalized_name_pattern"]["keys"] == (
+                "normalized_name",
+            )
             assert company_indexes["idx_companies_merged_into_id"]["keys"] == ("merged_into_id",)
             assert alias_indexes["idx_company_aliases_normalized_alias"]["keys"] == ("normalized_alias",)
             assert merge_indexes["idx_company_merge_log_source_company"]["keys"] == ("source_company_id",)

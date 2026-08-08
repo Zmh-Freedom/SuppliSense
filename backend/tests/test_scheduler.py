@@ -61,10 +61,10 @@ def test_scheduler_registers_one_stable_interval_outbox_job_when_enabled(
     assert outbox_job["replace_existing"] is True
 
 
-def test_scheduler_skips_outbox_job_when_disabled_and_stop_is_safe_before_start(
+def test_scheduler_keeps_metrics_refresh_job_when_disabled_and_stop_is_safe_before_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The rollback switch must prevent registration, including during partial startup cleanup."""
+    """The rollback switch disables delivery while retaining periodic backlog metric refreshes."""
     fake = _FakeScheduler()
     monkeypatch.setattr(scheduler, "_scheduler", fake)
     monkeypatch.setattr(settings, "OUTBOX_WORKER_ENABLED", False)
@@ -74,6 +74,6 @@ def test_scheduler_skips_outbox_job_when_disabled_and_stop_is_safe_before_start(
     scheduler.stop_scheduler()
     scheduler.stop_scheduler()
 
-    assert "outbox_worker" not in fake.jobs
+    assert "outbox_worker" in fake.jobs
     assert fake.start_count == 1
     assert fake.shutdown_count == 1
