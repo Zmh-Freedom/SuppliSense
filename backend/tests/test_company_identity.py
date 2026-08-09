@@ -30,6 +30,12 @@ def test_normalize_company_name_rejects_blank_value():
         normalize_company_name(" \t ")
 
 
+def test_company_text_validation_rejects_normalized_length_over_limit():
+    """NFKC expansion must be constrained after normalization, not only before it."""
+    with pytest.raises(ValidationError):
+        CompanyCreateInput(legal_name="ﬃ" * 86)
+
+
 @pytest.mark.parametrize("code", ["", "123", "91110000710925032I", "911100007109250325"])
 def test_validate_credit_code_rejects_invalid_values(code):
     with pytest.raises(ValueError, match="统一社会信用代码"):
@@ -45,19 +51,10 @@ def test_normalize_credit_code_returns_none_or_validated_code():
     assert normalize_credit_code("911100007109250324") == "911100007109250324"
 
 
-def test_analyst_cannot_submit_trusted_or_auto_exact_alias_provenance(monkeypatch):
-    """Analysts must not manufacture alias evidence that can auto-bind an identity."""
-    from contextlib import contextmanager
+def test_analyst_alias_provenance_is_downgraded_before_persistence():
+    """Analysts can submit aliases, but cannot manufacture trusted auto-exact evidence."""
+    from app.domains.company.service import _alias_provenance_for_actor
 
-    from app.core.errors import DomainError
-    from app.domains.company import service as company_service
-
-    @contextmanager
-    def unexpected_transaction():
-        raise AssertionError("analyst alias provenance must be rejected before database access")
-        yield
-
-    monkeypatch.setattr(company_service, "get_cursor", unexpected_transaction)
     data = CompanyCreateInput(
         legal_name="Analyst Alias Provenance Company",
         aliases=[
@@ -70,10 +67,7 @@ def test_analyst_cannot_submit_trusted_or_auto_exact_alias_provenance(monkeypatc
         ],
     )
 
-    with pytest.raises(DomainError) as exc_info:
-        company_service.create_company(data, None, "analyst")
-
-    assert exc_info.value.code == "COMPANY_ALIAS_PROVENANCE_FORBIDDEN"
+    assert _alias_provenance_for_actor(data.aliases[0], "analyst") == ("manual", 0.94)
 
 
 def test_company_create_input_defaults_to_pending_manual_identity():

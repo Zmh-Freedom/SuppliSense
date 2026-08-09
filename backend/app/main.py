@@ -70,6 +70,15 @@ logger = get_logger(__name__)
 init_sentry()
 
 METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+_UNMATCHED_METRIC_ENDPOINT = "__unmatched__"
+
+
+def _metric_endpoint_label(scope: dict) -> str:
+    """Use FastAPI's matched route template and bound all unmatched requests."""
+    route_path = getattr(scope.get("route"), "path", None)
+    if isinstance(route_path, str) and route_path.startswith("/"):
+        return route_path
+    return _UNMATCHED_METRIC_ENDPOINT
 
 
 def _validate_config():
@@ -225,7 +234,7 @@ async def metrics_middleware(request: Request, call_next):
     response = await call_next(request)
 
     duration = time.time() - start_time
-    endpoint = request.url.path
+    endpoint = _metric_endpoint_label(request.scope)
 
     HTTP_REQUESTS_TOTAL.labels(
         method=request.method,

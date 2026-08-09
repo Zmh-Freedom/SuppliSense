@@ -708,6 +708,33 @@ def test_retry_delay_is_exponential_and_capped(attempt, seconds):
     assert retry_delay_seconds(attempt) == seconds
 
 
+@pytest.mark.parametrize(
+    "legacy_error",
+    [
+        "postgres://user:password@example.invalid/db?token=super-secret",
+        '{"token":"super-secret","nested":{"authorization":"Bearer jwt-value"}}',
+        "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
+    ],
+)
+def test_admin_projection_maps_legacy_errors_to_generic_allowlisted_code(legacy_error: str):
+    """Historical failure text is never trusted as safe output, even after regex-style redaction."""
+    from app.domains.outbox.service import to_admin_event
+
+    assert to_admin_event(
+        {
+            "event_id": "00000000-0000-4000-8000-000000000886",
+            "event_type": "company.created",
+            "aggregate_type": "company",
+            "aggregate_id": "00000000-0000-4000-8000-000000000887",
+            "schema_version": 1,
+            "attempt_count": 1,
+            "occurred_at": datetime.now(timezone.utc),
+            "published_at": None,
+            "last_error": legacy_error,
+        }
+    )["last_error"] == "delivery_failed"
+
+
 def test_replay_event_rejects_blank_reason_before_opening_a_transaction(monkeypatch):
     """Service callers bypassing HTTP validation must not create a blank replay audit record."""
     from contextlib import contextmanager

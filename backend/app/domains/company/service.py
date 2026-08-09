@@ -51,7 +51,6 @@ def create_company(
     if verification_status == "verified":
         _require_verification_evidence(credit_code, data.identity_source, data.source_reference)
     normalized_aliases = _normalized_aliases(data.aliases)
-    _validate_aliases_for_actor(data.aliases, actor_role)
 
     try:
         with get_cursor() as (_, cur):
@@ -69,14 +68,15 @@ def create_company(
                 verified_by=actor_id if verification_status == "verified" else None,
             )
             for alias, normalized_alias in normalized_aliases:
+                alias_source, alias_confidence = _alias_provenance_for_actor(alias, actor_role)
                 company_repo.insert_alias(
                     cur,
                     company_id=company["id"],
                     alias_name=alias.alias_name,
                     normalized_alias=normalized_alias,
                     alias_type=alias.alias_type,
-                    source=alias.source,
-                    confidence=alias.confidence,
+                    source=alias_source,
+                    confidence=alias_confidence,
                     created_by=actor_id,
                 )
             _write_audit_and_event(cur, company, "created", actor_id)
@@ -428,22 +428,14 @@ def _normalized_aliases(
     return normalized_aliases
 
 
-def _validate_aliases_for_actor(
-    aliases: list[CompanyAliasInput],
+def _alias_provenance_for_actor(
+    alias: CompanyAliasInput,
     actor_role: str,
-) -> None:
-    if actor_role == "admin":
-        return
-    for alias in aliases:
-        if (
-            alias.source in _TRUSTED_ALIAS_SOURCES
-            or alias.confidence >= _ALIAS_EXACT_CONFIDENCE
-        ):
-            raise DomainError(
-                "COMPANY_ALIAS_PROVENANCE_FORBIDDEN",
-                "分析师不能提交可信或可自动解析的企业别名证据",
-                403,
-            )
+) -> tuple[str, float]:
+    """Downgrade analyst alias claims before they are persisted."""
+    if actor_role == "analyst":
+        return "manual", _ALIAS_EXACT_CONFIDENCE - 0.01
+    return alias.source, alias.confidence
 
 
 def _validate_update_fields(data: CompanyUpdateInput, specified_fields: set[str]) -> None:
@@ -586,16 +578,16 @@ def search_identity(query: str, limit: int = 10) -> dict:
         return _record_resolution(
             {"resolution": "pending_verification", "exact": None, "candidates": []}
         )
-    if truncated:
-        return _record_resolution(
-            {"resolution": "candidates", "exact": None, "candidates": candidates[:limit]}
-        )
     credit_candidates = [
         candidate for candidate in candidates if candidate["match_type"] == "credit_code"
     ]
     if len(credit_candidates) == 1:
         return _record_resolution(
             {"resolution": "exact", "exact": credit_candidates[0], "candidates": []}
+        )
+    if truncated:
+        return _record_resolution(
+            {"resolution": "candidates", "exact": None, "candidates": candidates[:limit]}
         )
     if len(candidates) != 1:
         return _record_resolution(

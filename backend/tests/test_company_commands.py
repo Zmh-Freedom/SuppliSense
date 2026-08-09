@@ -115,6 +115,49 @@ def test_admin_verified_create_requires_valid_credit_code_or_trusted_reference()
     assert exc_info.value.code == "COMPANY_VERIFICATION_EVIDENCE_REQUIRED"
 
 
+def test_analyst_default_alias_is_persisted_as_non_exact_manual_evidence(
+    _company_command_database: list[str],
+) -> None:
+    """Analyst defaults are accepted, but server-side evidence cannot later auto-resolve a verified company."""
+    alias_name = "Task5 Analyst Default Alias"
+    created = create_company(
+        CompanyCreateInput(
+            legal_name="Task5 Analyst Alias Company",
+            aliases=[CompanyAliasInput(alias_name=alias_name, alias_type="short_name")],
+        ),
+        None,
+        "analyst",
+    )
+    _company_command_database.append(created["company_id"])
+
+    verified = verify_company(
+        created["company_id"],
+        CompanyVerifyInput(
+            expected_version=1,
+            identity_source="admin_verified",
+            source_reference="task5-review",
+        ),
+        None,
+        "admin",
+    )
+
+    with get_cursor() as (_, cur):
+        cur.execute(
+            "SELECT source, confidence FROM company_aliases WHERE company_id = %s",
+            (created["company_id"],),
+        )
+        source, confidence = cur.fetchone()
+        assert source == "manual"
+        assert float(confidence) == 0.94
+
+    from app.domains.company.service import search_identity
+
+    resolution = search_identity(alias_name)
+    assert verified["identity_version"] == 2
+    assert resolution["resolution"] == "candidates"
+    assert resolution["exact"] is None
+
+
 def test_create_persists_normalized_aliases_audit_and_outbox_event(
     _company_command_database: list[str],
 ) -> None:

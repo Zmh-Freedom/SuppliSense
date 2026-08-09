@@ -136,6 +136,35 @@ def _real_company_identity_database() -> Iterator[None]:
             assert cur.fetchone() == (0,)
 
 
+def test_search_identity_prefers_unique_credit_code_when_lower_matches_are_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lower-ranked truncation marker must not downgrade a unique authoritative credit-code hit."""
+    credit_id = "00000000-0000-4000-8000-000000000501"
+    row = {
+        "id": credit_id,
+        "legal_name": "Task4 Truncated Credit Company",
+        "normalized_name": "task4 truncated credit company",
+        "unified_social_credit_code": "911100007109250324",
+        "registration_status": None,
+        "verification_status": "verified",
+        "identity_source": "admin_verified",
+        "source_reference": "task4-review",
+        "identity_version": 1,
+        "merged_into_id": None,
+        "match_type": "credit_code",
+        "confidence": 1.0,
+        "alias_source": None,
+    }
+    monkeypatch.setattr(company_repo, "search_identity_rows", lambda query, limit: ([row], True))
+
+    result = search_identity("911100007109250324")
+
+    assert result["resolution"] == "exact"
+    assert result["exact"]["company_id"] == credit_id
+    assert result["exact"]["match_type"] == "credit_code"
+
+
 def test_search_identity_resolves_unique_credit_code_exactly() -> None:
     """Removing credit-code matching would turn this unique authoritative match into pending."""
     company_id = "00000000-0000-4000-8000-000000000501"

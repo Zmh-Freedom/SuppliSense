@@ -202,7 +202,12 @@ def test_create_company_allows_analyst_and_uses_dependency_actor(as_role, monkey
     captured: dict[str, object] = {}
 
     def create(data, actor_id, actor_role):
-        captured.update(actor_id=actor_id, actor_role=actor_role, legal_name=data.legal_name)
+        captured.update(
+            actor_id=actor_id,
+            actor_role=actor_role,
+            legal_name=data.legal_name,
+            aliases=[(alias.alias_name, alias.source, alias.confidence) for alias in data.aliases],
+        )
         return {
             "company_id": COMPANY_ID,
             "legal_name": data.legal_name,
@@ -213,7 +218,11 @@ def test_create_company_allows_analyst_and_uses_dependency_actor(as_role, monkey
     monkeypatch.setattr(company_api, "create_company", create)
     response = as_role(UserRole.ANALYST, "00000000-0000-0000-0000-000000000020").post(
         "/api/v1/companies",
-        json={"legal_name": "示例科技有限公司", "actor_id": "untrusted-request-actor"},
+        json={
+            "legal_name": "示例科技有限公司",
+            "actor_id": "untrusted-request-actor",
+            "aliases": [{"alias_name": "示例科技", "alias_type": "short_name"}],
+        },
     )
 
     assert response.status_code == 200
@@ -222,6 +231,7 @@ def test_create_company_allows_analyst_and_uses_dependency_actor(as_role, monkey
         "actor_id": "00000000-0000-0000-0000-000000000020",
         "actor_role": "analyst",
         "legal_name": "示例科技有限公司",
+        "aliases": [("示例科技", "manual", 1.0)],
     }
     assert offloaded[0][1][1:] == ("00000000-0000-0000-0000-000000000020", "analyst")
 

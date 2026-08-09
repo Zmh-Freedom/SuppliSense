@@ -12,7 +12,9 @@ def _strip_and_validate_company_text(value: object) -> object:
     if not isinstance(value, str):
         return value
     stripped_value = value.strip()
-    normalize_company_name(stripped_value)
+    normalized_value = normalize_company_name(stripped_value)
+    if len(normalized_value) > 255:
+        raise ValueError("企业名称标准化后长度不能超过 255")
     return stripped_value
 
 

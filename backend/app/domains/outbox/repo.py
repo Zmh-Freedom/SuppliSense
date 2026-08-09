@@ -266,4 +266,6 @@ def _convert_row(row: dict) -> dict:
     for field_name in ("event_id", "aggregate_id"):
         if field_name in row and row[field_name] is not None:
             row[field_name] = str(row[field_name])
+    if row.get("last_error") is not None:
+        row["last_error"] = sanitize_delivery_error(row["last_error"])
     return row

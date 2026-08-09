@@ -66,7 +66,7 @@ Outbox worker 默认启用，可通过以下环境变量调整：
 | `OUTBOX_MAX_ATTEMPTS` | `8` | 自动重试上限，达到后进入死信 |
 | `OUTBOX_LEASE_SECONDS` | `60` | 多 worker 领取事件的租约时长（秒） |
 
-Prometheus 指标当前使用进程内 collector；生产 Gunicorn 配置强制单 worker，避免多进程 scrape 返回不完整指标。Outbox 仍可由独立实例扩展，依靠数据库租约协调。
+生产环境默认使用 4 个 Gunicorn worker。设置 `PROMETHEUS_MULTIPROC_DIR`（Compose 默认 `/tmp/prometheus` tmpfs）后，`/metrics` 使用 Prometheus multiprocess 聚合；Gunicorn master 会在 fork 前清理旧指标文件，并在 worker 退出后释放其 gauge 文件。每个 API worker 都会尝试取得 PostgreSQL advisory lock，但只有持锁进程启动 APScheduler；锁在进程退出时释放，替代 worker 可接管调度。Uvicorn 单进程开发模式不受影响。
 
 管理员可查看积压、失败和死信事件，并仅对未发布的失败/死信事件回放：
 

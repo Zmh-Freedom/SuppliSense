@@ -30,12 +30,21 @@ class _FakeScheduler:
         self.shutdown_count += 1
 
 
+class _Leader:
+    def acquire(self) -> bool:
+        return True
+
+    def release(self) -> None:
+        return None
+
+
 def test_scheduler_registers_one_stable_interval_outbox_job_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Repeated startup must replace the same job rather than create duplicates or crash."""
     fake = _FakeScheduler()
     monkeypatch.setattr(scheduler, "_scheduler", fake)
+    monkeypatch.setattr(scheduler, "_scheduler_leadership", _Leader())
     monkeypatch.setattr(settings, "OUTBOX_WORKER_ENABLED", True)
     monkeypatch.setattr(settings, "OUTBOX_POLL_SECONDS", 7)
 
@@ -61,12 +70,50 @@ def test_scheduler_registers_one_stable_interval_outbox_job_when_enabled(
     assert outbox_job["replace_existing"] is True
 
 
+def test_scheduler_does_not_start_without_postgres_leadership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the worker that holds the advisory lock may register APScheduler jobs."""
+    class NonLeader:
+        def acquire(self) -> bool:
+            return False
+
+        def release(self) -> None:
+            raise AssertionError("non-leader must not release an unheld lock")
+
+    fake = _FakeScheduler()
+    monkeypatch.setattr(scheduler, "_scheduler", fake)
+    monkeypatch.setattr(scheduler, "_scheduler_leadership", NonLeader(), raising=False)
+
+    scheduler.start_scheduler()
+
+    assert fake.jobs == {}
+    assert fake.start_count == 0
+
+
+def test_postgres_scheduler_advisory_lock_allows_only_one_leader() -> None:
+    """A replacement worker can take over only after the prior scheduler session releases its lock."""
+    from app.services.scheduler_leadership import SchedulerLeadership
+
+    first = SchedulerLeadership()
+    second = SchedulerLeadership()
+    try:
+        assert first.acquire() is True
+        assert second.acquire() is False
+        first.release()
+        assert second.acquire() is True
+    finally:
+        first.release()
+        second.release()
+
+
 def test_scheduler_keeps_metrics_refresh_job_when_disabled_and_stop_is_safe_before_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The rollback switch disables delivery while retaining periodic backlog metric refreshes."""
     fake = _FakeScheduler()
     monkeypatch.setattr(scheduler, "_scheduler", fake)
+    monkeypatch.setattr(scheduler, "_scheduler_leadership", _Leader())
     monkeypatch.setattr(settings, "OUTBOX_WORKER_ENABLED", False)
 
     scheduler.stop_scheduler()

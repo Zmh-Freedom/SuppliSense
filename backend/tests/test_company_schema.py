@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from psycopg2 import sql
+import pytest
 
 from app.db import init_pg
 from app.db.postgres import get_conn, put_conn
@@ -193,6 +194,41 @@ def _assert_columns(
     expected: dict[str, tuple[str, int | None, str]],
 ) -> None:
     assert actual == expected
+
+
+def test_verified_evidence_upgrade_fails_closed_then_validates_after_remediation(monkeypatch) -> None:
+    """Legacy invalid verified rows require an operator fix; startup must not silently retain them."""
+    with _isolated_schema(monkeypatch) as (schema_name, conn):
+        init_pg.ensure_pg_schema()
+        with _schema_cursor(conn, schema_name) as cur:
+            cur.execute("ALTER TABLE companies DROP CONSTRAINT companies_verified_evidence_check")
+            cur.execute(
+                """
+                INSERT INTO companies (
+                    id, legal_name, normalized_name, verification_status, identity_source
+                ) VALUES (%s, %s, %s, 'verified', 'manual')
+                """,
+                (str(uuid.uuid4()), "Legacy Invalid Company", "legacy invalid company"),
+            )
+
+        with pytest.raises(RuntimeError, match="核验凭据"):
+            init_pg.ensure_pg_schema()
+
+        with _schema_cursor(conn, schema_name) as cur:
+            cur.execute("UPDATE companies SET verification_status = 'pending_verification'")
+        init_pg.ensure_pg_schema()
+
+        with _schema_cursor(conn, schema_name) as cur:
+            cur.execute(
+                """
+                SELECT convalidated
+                FROM pg_constraint
+                WHERE conrelid = (%s || '.companies')::regclass
+                  AND conname = 'companies_verified_evidence_check'
+                """,
+                (schema_name,),
+            )
+            assert cur.fetchone() == (True,)
 
 
 def test_ensure_pg_schema_creates_complete_p1_contract_in_isolated_schema(monkeypatch):

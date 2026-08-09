@@ -16,14 +16,17 @@ def _counter_value(counter, **labels: str) -> float:
     return counter.labels(**labels)._value.get()
 
 
-def test_production_gunicorn_enforces_single_process_metrics_topology() -> None:
-    """Process-local Prometheus collectors require the production web process count to be one."""
+def test_production_gunicorn_uses_configurable_multi_worker_metrics_topology(monkeypatch) -> None:
+    """Gunicorn must retain the production default of four workers for multiprocess metrics."""
     from pathlib import Path
     from runpy import run_path
 
+    monkeypatch.setenv("GUNICORN_WORKERS", "4")
     config = run_path(Path(__file__).parents[1] / "gunicorn.conf.py")
 
-    assert config["workers"] == 1
+    assert config["workers"] == 4
+    assert callable(config["on_starting"])
+    assert callable(config["child_exit"])
 
 
 def test_worker_disabled_still_refreshes_pending_metrics_without_consuming(monkeypatch) -> None:

@@ -191,30 +191,64 @@ DDL_STATEMENTS = [
     """,
 ]
 
-MIGRATION_STATEMENTS = [
+VERIFIED_EVIDENCE_CONDITION = """
+    verification_status <> 'verified'
+    OR unified_social_credit_code IS NOT NULL
+    OR (
+        identity_source IN ('tianyancha', 'import', 'admin_verified')
+        AND source_reference IS NOT NULL
+        AND BTRIM(source_reference) <> ''
+    )
+"""
+
+
+def _ensure_verified_evidence_constraint(cur: object) -> None:
+    """Require legacy verified rows to be remediated before enforcing the check.
+
+    A previous migration added this constraint ``NOT VALID``.  Leaving it in
+    that state permits historical rows that contradict the production identity
+    invariant.  We never alter those rows here: an operator must add evidence
+    or explicitly return the company to pending verification.
     """
-    DO $$
-    BEGIN
-        IF NOT EXISTS (
-            SELECT 1
-            FROM pg_constraint
-            WHERE conrelid = 'companies'::regclass
-              AND conname = 'companies_verified_evidence_check'
-        ) THEN
+    cur.execute(
+        """
+        SELECT convalidated
+        FROM pg_constraint
+        WHERE conrelid = 'companies'::regclass
+          AND conname = 'companies_verified_evidence_check'
+        """
+    )
+    constraint = cur.fetchone()
+    cur.execute(
+        f"""
+        SELECT id::text
+        FROM companies
+        WHERE NOT ({VERIFIED_EVIDENCE_CONDITION})
+        ORDER BY id
+        LIMIT 20
+        """
+    )
+    invalid_ids = [row[0] for row in cur.fetchall()]
+    if invalid_ids:
+        examples = ", ".join(invalid_ids)
+        raise RuntimeError(
+            "companies 存在缺少核验凭据的 verified 企业（ID: "
+            f"{examples}）。请补充统一社会信用代码或可信来源引用，"
+            "或将其改为 pending_verification 后重试。"
+        )
+
+    if constraint is None:
+        cur.execute(
+            f"""
             ALTER TABLE companies
-            ADD CONSTRAINT companies_verified_evidence_check CHECK (
-                verification_status <> 'verified'
-                OR unified_social_credit_code IS NOT NULL
-                OR (
-                    identity_source IN ('tianyancha', 'import', 'admin_verified')
-                    AND source_reference IS NOT NULL
-                    AND BTRIM(source_reference) <> ''
-                )
-            ) NOT VALID;
-        END IF;
-    END $$
-    """,
-]
+            ADD CONSTRAINT companies_verified_evidence_check
+            CHECK ({VERIFIED_EVIDENCE_CONDITION})
+            """
+        )
+    elif not constraint[0]:
+        cur.execute(
+            "ALTER TABLE companies VALIDATE CONSTRAINT companies_verified_evidence_check"
+        )
 
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
@@ -243,8 +277,7 @@ def ensure_pg_schema() -> None:
         with get_cursor() as (conn, cur):
             for stmt in DDL_STATEMENTS:
                 cur.execute(stmt)
-            for stmt in MIGRATION_STATEMENTS:
-                cur.execute(stmt)
+            _ensure_verified_evidence_constraint(cur)
             for stmt in INDEX_STATEMENTS:
                 cur.execute(stmt)
             # Create ivfflat index for vector search (after data exists)

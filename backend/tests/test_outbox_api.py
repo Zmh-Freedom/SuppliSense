@@ -224,7 +224,7 @@ def test_outbox_events_returns_deterministically_ordered_schema(
                 "occurred_at": "2026-08-08T00:00:02Z",
                 "published_at": None,
                 "attempt_count": 1,
-                "last_error": "token=[REDACTED] " + ("x" * 222) + "…",
+                "last_error": "delivery_failed",
             },
         ]
     }

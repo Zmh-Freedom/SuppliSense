@@ -3,16 +3,19 @@ Prometheus metrics for monitoring.
 """
 
 from collections.abc import Callable
+import os
 from typing import Any
 
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
+    CollectorRegistry,
     REGISTRY,
     Counter,
     Gauge,
     Histogram,
     generate_latest,
 )
+from prometheus_client import multiprocess
 
 
 def _registered_metric(name: str, factory: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -177,4 +180,8 @@ def record_company_identity_resolution(resolution: str) -> None:
 
 def get_metrics() -> tuple[str, str]:
     """Get Prometheus metrics in text format."""
+    if os.getenv("PROMETHEUS_MULTIPROC_DIR"):
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        return generate_latest(registry).decode("utf-8"), CONTENT_TYPE_LATEST
     return generate_latest().decode("utf-8"), CONTENT_TYPE_LATEST
