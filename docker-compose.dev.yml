@@ -77,45 +77,7 @@ services:
           memory: 32m
           cpus: '0.1'
 
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: sra-backend
-    restart: unless-stopped
-    working_dir: /app
-    command: >
-      sh -c "pip install -r requirements.txt -q &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
-    env_file:
-      - backend/.env
-    environment:
-      - MONGO_HOST=mongo
-      - REDIS_URL=redis://redis:6379
-      - PG_HOST=postgres
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - uploads_data:/app/uploads
-    depends_on:
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-          cpus: '2.0'
-        reservations:
-          memory: 256m
-          cpus: '0.5'
-
 volumes:
   mongo_data:
   redis_data:
-  uploads_data:
   pg_data:

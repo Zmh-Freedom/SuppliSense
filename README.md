@@ -46,11 +46,13 @@ FastAPI ──→ LangGraph Agent 编排层
 ### 开发模式
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d   # 启动数据库 + 后端
-cd frontend && npm run dev                        # 启动前端（热更新）
+docker compose --env-file backend/.env \
+  -f docker-compose.dev.yml up -d mongo postgres redis  # 仅启动开发基础设施
+cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000  # 本地后端热更新
+cd frontend && npm run dev                                      # 前端热更新
 ```
 
-打开 `http://localhost:5173`。
+后端访问 `http://localhost:8000`，前端访问 `http://localhost:5173`。开发环境后端使用 `backend/.env` 中的 `localhost` 数据库地址；完整后端容器仅用于生产模式。
 
 ---
 
@@ -82,7 +84,7 @@ cd frontend && npm run dev                        # 启动前端（热更新）
 | 日志 | structlog（结构化日志）+ Sentry（异常监控） |
 | 监控 | Prometheus metrics + 请求 ID 追踪 |
 | 限流 | slowapi（60/min 全局 + 5/min 认证端点） |
-| 容器化 | Docker Compose（mongo / postgres / redis / backend / nginx） |
+| 容器化 | 生产环境 Docker Compose（mongo / postgres / redis / backend / frontend） |
 | 前端 | React 19 + Vite 8 + TypeScript + Tailwind CSS 4 |
 | 状态管理 | TanStack Query 5（服务端状态）+ localStorage（持久化） |
 | 图表 | recharts（趋势图）+ @xyflow/react（关系图谱） |
