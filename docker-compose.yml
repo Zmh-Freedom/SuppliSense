@@ -118,10 +118,13 @@ services:
     environment:
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
       - GUNICORN_THREADS=${GUNICORN_THREADS:-2}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
       - PG_POOL_MIN=4
       - PG_POOL_MAX=20
     volumes:
       - uploads_data:/app/uploads
+    tmpfs:
+      - /tmp/prometheus
     networks:
       - internal
       - external

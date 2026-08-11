@@ -35,6 +35,7 @@ pnpm-debug.log*
 .idea/
 .worktrees/
 .superpowers/
+task-8-report.md
 *.swp
 *.swo
 *~

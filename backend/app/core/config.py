@@ -5,6 +5,7 @@ Application configuration.
 import os
 
 from dotenv import load_dotenv
+from pydantic import Field
 
 load_dotenv()
 
@@ -52,6 +53,13 @@ class Settings(BaseSettings):
     PG_DB: str = os.getenv("PG_DB", "sra")
     PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "4"))
     PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "20"))
+
+    # Transactional Outbox worker
+    OUTBOX_WORKER_ENABLED: bool = True
+    OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)
+    OUTBOX_BATCH_SIZE: int = Field(default=50, ge=1)
+    OUTBOX_MAX_ATTEMPTS: int = Field(default=8, ge=1)
+    OUTBOX_LEASE_SECONDS: int = Field(default=60, ge=1)
 
     # PG 用户存储（默认启用，MongoDB 路径已废弃）
     USE_PG_USERS: bool = os.getenv("USE_PG_USERS", "true").lower() == "true"

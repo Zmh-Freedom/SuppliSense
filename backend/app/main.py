@@ -25,6 +25,8 @@ from app.api.upload import router as upload_router
 from app.domains.alert.api import router as alert_router
 from app.domains.alert.api_notifications import router as notifications_router
 from app.domains.auth.api import router as auth_router
+from app.domains.company.api import router as company_identity_router
+from app.domains.outbox.api import router as outbox_router
 from app.domains.knowledge.api import router as knowledge_router
 from app.domains.risk.api_risk import router as risk_router
 from app.domains.risk.api_company import router as company_router
@@ -41,6 +43,8 @@ from app.domains.sourcing.api_access import router as access_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.errors import (
+    DomainError,
+    domain_error_handler,
     http_exception_handler,
     unhandled_exception_handler,
     validation_exception_handler,
@@ -66,6 +70,15 @@ logger = get_logger(__name__)
 init_sentry()
 
 METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
+_UNMATCHED_METRIC_ENDPOINT = "__unmatched__"
+
+
+def _metric_endpoint_label(scope: dict) -> str:
+    """Use FastAPI's matched route template and bound all unmatched requests."""
+    route_path = getattr(scope.get("route"), "path", None)
+    if isinstance(route_path, str) and route_path.startswith("/"):
+        return route_path
+    return _UNMATCHED_METRIC_ENDPOINT
 
 
 def _validate_config():
@@ -152,6 +165,7 @@ app = FastAPI(
         {"name": "auth", "description": "用户认证与权限管理"},
         {"name": "risk", "description": "企业风险评估（13维度评分体系）"},
         {"name": "company", "description": "企业信息查询"},
+        {"name": "companies", "description": "企业身份主数据管理"},
         {"name": "financial", "description": "财务指标分析（15项指标）"},
         {"name": "sentiment", "description": "舆情情感分析"},
         {"name": "alert", "description": "风险预警与监控"},
@@ -171,7 +185,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
     allow_credentials=True,
 )
@@ -182,6 +196,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 # Unified error handlers
+app.add_exception_handler(DomainError, domain_error_handler)
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
@@ -219,7 +234,7 @@ async def metrics_middleware(request: Request, call_next):
     response = await call_next(request)
 
     duration = time.time() - start_time
-    endpoint = request.url.path
+    endpoint = _metric_endpoint_label(request.scope)
 
     HTTP_REQUESTS_TOTAL.labels(
         method=request.method,
@@ -243,6 +258,8 @@ api_v1.include_router(async_tasks_router)
 api_v1.include_router(alert_router, prefix="/alert", tags=["alert"])
 api_v1.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_v1.include_router(company_router, prefix="/company", tags=["company"])
+api_v1.include_router(company_identity_router)
+api_v1.include_router(outbox_router)
 api_v1.include_router(financial_router, prefix="/financial", tags=["financial"])
 api_v1.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 api_v1.include_router(risk_router, prefix="/risk", tags=["risk"])
