@@ -24,3 +24,16 @@
 
 - The six provider adapters are deliberately neutral seams pending governed provider integrations; production enabling needs integration tests against those configured providers and the persistent PostgreSQL saver.
 - The runner is intentionally detached from the HTTP request, so deployment monitoring should surface exceptions from these background tasks; that operational concern is outside the requested P0/P1 scope.
+
+## Final P0 Closure (2026-08-12)
+
+- Clarification is now a legal `CLARIFYING → CREATED` version-protected transition. In the same database transaction it merges reviewer answers into the durable `agent_runs.requirement` input, increments the version, and appends the typed `clarification` event. The runner therefore consumes the merged durable input when it starts the next graph execution; it cannot parse the stale pre-clarification requirement.
+- Added an API → real clarification service → runner seam test. It verifies authorization/version flow, durable requirement mutation, event payload/version, persistent-checkpointer acquisition, and the exact runner payload containing the supplied specification.
+- Every graph checkpoint status now matches the status written by the same `_event(..., status=...)` call through `record_orchestration_state`. Intermediate parsing stays `CREATED` until policy lock, provider failures remain in their current durable stage until the final `PARTIAL` decision, and clear evidence validation atomically records `INVESTIGATING` with its typed event.
+- Added graph alignment tests for requirement-ready, external-provider failure, investigation failure, and clear validation, plus a rollback test proving an event-insert failure escapes the shared cursor transaction rather than committing a standalone status transition.
+
+## Final Verification
+
+- `cd backend && pytest tests/test_agent_run_api.py tests/test_agent_run_service.py tests/test_agent_run_checkpointer.py tests/test_sourcing_risk_graph.py tests/test_sourcing_risk_requirement_service.py tests/test_sourcing_risk_policy_service.py tests/test_sourcing_risk_discovery_service.py tests/test_sourcing_risk_identity_service.py tests/test_sourcing_risk_evidence_service.py tests/test_sourcing_risk_decision_service.py -q` — 99 passed (existing dependency deprecation warnings only).
+- `cd backend && python -m compileall -q app/graphs/sourcing_risk_v2 app/domains/agent_run` — passed.
+- `git diff --check` — passed.

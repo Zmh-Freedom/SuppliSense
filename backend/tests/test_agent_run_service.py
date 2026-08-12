@@ -78,6 +78,46 @@ def test_submit_clarification_resumes_only_clarifying_run(monkeypatch: pytest.Mo
     assert exc.value.code == "AGENT_RUN_INVALID_STATE"
 
 
+def test_submit_clarification_merges_answers_and_resets_clarifying_run(monkeypatch: pytest.MonkeyPatch):
+    """Keeping answers only in an event would make the resumed graph parse stale input again."""
+    events: list[dict] = []
+    updated_requirement = {"requirement_text": "采购工业摄像头", "specification": "IP67"}
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("CLARIFYING", 2))
+    monkeypatch.setattr(
+        service,
+        "update_run_requirement",
+        lambda run_id, expected_version, requirement, status, **_: {
+            **_run(status, expected_version + 1),
+            "requirement": requirement,
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "append_event",
+        lambda run_id, version, event_type, payload, **_: events.append(
+            {"run_id": run_id, "version": version, "event_type": event_type, "payload": payload}
+        ),
+    )
+
+    result = service.submit_clarification(
+        "run-id",
+        ClarificationRequest(expected_version=2, answers={"specification": "IP67"}),
+        "user-id",
+        "analyst",
+    )
+
+    assert result["status"] == "CREATED"
+    assert result["version"] == 3
+    assert result["requirement"] == updated_requirement
+    assert events == [{
+        "run_id": "run-id",
+        "version": 3,
+        "event_type": "clarification",
+        "payload": {"answers": {"specification": "IP67"}, "status": "CREATED"},
+    }]
+
+
 def test_create_run_persists_created_event(monkeypatch: pytest.MonkeyPatch):
     """Removing the first event would prevent a subscriber from reconstructing the lifecycle start."""
     events: list[dict] = []
@@ -156,6 +196,33 @@ def test_orchestration_state_transition_writes_typed_event_with_new_version(monk
         "event_type": "ready_for_review",
         "payload": {"provider_failures": [], "status": "READY_FOR_REVIEW"},
     }]
+
+
+def test_orchestration_state_rolls_back_when_event_write_fails(monkeypatch: pytest.MonkeyPatch):
+    """Committing a status without its event would split checkpoint/SSE recovery histories."""
+    observed: list[type[BaseException] | None] = []
+
+    class CursorContext:
+        def __enter__(self):
+            return None, object()
+
+        def __exit__(self, exc_type, *_):
+            observed.append(exc_type)
+            return False
+
+    monkeypatch.setattr(service, "get_cursor", CursorContext)
+    monkeypatch.setattr(service, "get_run", lambda *_: _run("SCORING", 7))
+    monkeypatch.setattr(
+        service,
+        "update_run_status",
+        lambda run_id, expected_version, status, **_: _run(status, expected_version + 1),
+    )
+    monkeypatch.setattr(service, "append_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("event insert failed")))
+
+    with pytest.raises(RuntimeError, match="event insert failed"):
+        service.record_orchestration_state("run-id", "READY_FOR_REVIEW", "ready_for_review", {})
+
+    assert observed == [RuntimeError]
 
 
 def test_stream_events_stops_after_replaying_a_durable_terminal_stage(monkeypatch: pytest.MonkeyPatch):

@@ -14,6 +14,7 @@ from app.domains.agent_run.repo import (
     insert_approval_decision,
     insert_run,
     list_events_after,
+    update_run_requirement,
     update_run_status,
 )
 from app.domains.agent_run.schemas import (
@@ -71,8 +72,15 @@ def submit_clarification(
     run = get_sourcing_risk_run(run_id, user_id, user_role)
     _require_version(run, request.expected_version)
     _require_transition(run, AgentRunStatus.CREATED)
+    requirement = {**dict(run.get("requirement") or {}), **dict(request.answers)}
     with get_cursor() as (_, cur):
-        updated = update_run_status(run_id, request.expected_version, AgentRunStatus.CREATED.value, cur=cur)
+        updated = update_run_requirement(
+            run_id,
+            request.expected_version,
+            requirement,
+            AgentRunStatus.CREATED.value,
+            cur=cur,
+        )
         if updated is None:
             _raise_version_conflict()
         append_event(

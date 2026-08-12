@@ -189,6 +189,73 @@ def test_clarification_stops_before_policy_lock(monkeypatch: pytest.MonkeyPatch)
     assert policy_locked is False
 
 
+def test_ready_requirement_keeps_checkpoint_status_at_durable_created_until_policy_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Writing the non-durable POLICY_LOCKING marker into a checkpoint splits recovery state."""
+    monkeypatch.setattr(nodes, "parse_requirement", lambda *_: {"status": "ready", "requirement": _requirement()})
+
+    update = asyncio.run(nodes.parse_requirement_node({"run_id": "run-id", "requirement_input": _requirement()}))
+
+    assert update == {"status": "CREATED", "requirement": _requirement(), "next_action": None}
+
+
+def test_external_provider_failure_keeps_checkpoint_and_durable_status_aligned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Checkpointing PARTIAL before its terminal event would expose a status the run row never had."""
+    transitions: list[tuple[str, str, str, dict]] = []
+    monkeypatch.setattr(nodes, "search_external_provider", lambda *_: (_ for _ in ()).throw(ConnectionError("offline")))
+    monkeypatch.setattr(nodes, "_sleep", lambda *_: None)
+    monkeypatch.setattr(
+        nodes,
+        "record_orchestration_state",
+        lambda run_id, status, event_type, payload: transitions.append((run_id, status, event_type, payload)),
+    )
+
+    update = asyncio.run(nodes.external_discovery({"run_id": "run-id", "requirement": _requirement(), "candidates": [_candidate()]}))
+
+    assert update == {
+        "status": "LOCAL_SEARCHING",
+        "external_candidates": [],
+        "provider_failures": ["external_discovery"],
+    }
+    assert transitions == [("run-id", "LOCAL_SEARCHING", "provider_failed", {"provider": "external_discovery", "error": "ConnectionError"})]
+
+
+def test_investigation_failure_keeps_checkpoint_and_durable_status_aligned(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Returning PARTIAL after persisting INVESTIGATING creates a recoverable-state split."""
+    candidate = _candidate()
+    transitions: list[tuple[str, str, str, dict]] = []
+
+    async def investigate(*_args):
+        return ({candidate["company_id"]: []}, ["financial"])
+
+    monkeypatch.setattr(nodes, "investigate_candidates", investigate)
+    monkeypatch.setattr(
+        nodes,
+        "record_orchestration_state",
+        lambda run_id, status, event_type, payload: transitions.append((run_id, status, event_type, payload)),
+    )
+
+    update = asyncio.run(nodes.investigate_parallel({"run_id": "run-id", "policy_snapshot": _policy(), "candidates": [candidate]}))
+
+    assert update["status"] == "INVESTIGATING"
+    assert transitions == [("run-id", "INVESTIGATING", "investigation", {"failed_dimensions": ["financial"]})]
+
+
+def test_clear_evidence_records_its_checkpoint_status_atomically(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An event-only validation checkpoint can be observed after a crash without a matching run status."""
+    transitions: list[tuple[str, str, str, dict]] = []
+    monkeypatch.setattr(nodes, "validate_evidence_set", lambda *_: {"status": "clear", "reason_codes": [], "score_eligible": True})
+    monkeypatch.setattr(
+        nodes,
+        "record_orchestration_state",
+        lambda run_id, status, event_type, payload: transitions.append((run_id, status, event_type, payload)),
+    )
+
+    update = asyncio.run(nodes.validate_evidence({"run_id": "run-id", "status": "INVESTIGATING", "policy_snapshot": _policy(), "evidence_by_company_id": {"company-id": []}}))
+
+    assert update["status"] == "INVESTIGATING"
+    assert transitions == [("run-id", "INVESTIGATING", "evidence_validated", {"requires_review": False})]
+
+
 def test_complete_local_flow_reaches_review_without_external_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """Routing sufficient local candidates to external discovery would add unneeded provider risk."""
     candidate = _candidate()
@@ -284,7 +351,7 @@ def test_sanctions_failure_marks_candidate_needs_review(monkeypatch: pytest.Monk
 
     update = asyncio.run(nodes.investigate_parallel({"run_id": str(uuid4()), "policy_snapshot": _policy(), "candidates": [candidate]}))
 
-    assert update["status"] == "PARTIAL"
+    assert update["status"] == "INVESTIGATING"
     assert update["candidates"] == [{**candidate, "status": "needs_review", "score_eligible": False}]
 
 

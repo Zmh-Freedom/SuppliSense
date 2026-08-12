@@ -240,3 +240,79 @@ def test_clarification_restarts_v2_runner_after_durable_answer_event(
 
     assert response.status_code == 200
     assert started == [RUN_ID]
+
+
+def test_clarification_api_service_runner_seam_consumes_durable_requirement_patch(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    """Dropping the patch between HTTP, service, and runner would re-enter CLARIFYING after restart."""
+    from unittest.mock import AsyncMock, Mock
+
+    from app.domains.agent_run import api, service
+    from app.graphs.sourcing_risk_v2 import runner
+
+    durable_run = {
+        "id": RUN_ID,
+        "user_id": "00000000-0000-0000-0000-000000000011",
+        "status": "CLARIFYING",
+        "version": 2,
+        "requirement": {"requirement_text": "采购工业摄像头"},
+    }
+    persisted_events: list[dict] = []
+    graph = AsyncMock()
+    saver = object()
+
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: dict(durable_run))
+
+    def update_requirement(_run_id, expected_version, requirement, status, **_kwargs):
+        durable_run.update({"requirement": requirement, "status": status, "version": expected_version + 1})
+        return dict(durable_run)
+
+    monkeypatch.setattr(service, "update_run_requirement", update_requirement)
+    monkeypatch.setattr(
+        service,
+        "append_event",
+        lambda run_id, version, event_type, payload, **_: persisted_events.append(
+            {"run_id": run_id, "version": version, "event_type": event_type, "payload": payload}
+        ),
+    )
+    monkeypatch.setattr(runner, "get_orchestration_run", lambda *_: dict(durable_run))
+    monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(return_value=saver))
+    monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=graph))
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", runner._start)
+
+    async def schedule(coroutine):
+        await coroutine
+
+    monkeypatch.setattr(api, "_schedule_graph", schedule)
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/clarification",
+        headers=agent_headers,
+        json={"expected_version": 2, "answers": {"specification": "IP67"}},
+    )
+
+    assert response.status_code == 200
+    assert durable_run["status"] == "CREATED"
+    assert persisted_events == [{
+        "run_id": RUN_ID,
+        "version": 3,
+        "event_type": "clarification",
+        "payload": {"answers": {"specification": "IP67"}, "status": "CREATED"},
+    }]
+    assert graph.ainvoke.await_args.args[0] == {
+        "run_id": RUN_ID,
+        "requirement_input": {"requirement_text": "采购工业摄像头", "specification": "IP67"},
+    }
+
+
+def _no_cursor():
+    class CursorContext:
+        def __enter__(self):
+            return None, object()
+
+        def __exit__(self, *_):
+            return False
+
+    return CursorContext()

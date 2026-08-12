@@ -84,6 +84,42 @@ def update_run_status(
         )
 
 
+def update_run_requirement(
+    run_id: str,
+    expected_version: int,
+    requirement: dict[str, Any],
+    status: str,
+    cur: PgCursor | None = None,
+) -> dict[str, Any] | None:
+    """Atomically replace runner-consumable requirement input while advancing a run version."""
+    if cur is not None:
+        return update_run_requirement_with_cursor(cur, run_id, expected_version, requirement, status)
+    with get_cursor() as (_, cursor):
+        return update_run_requirement_with_cursor(cursor, run_id, expected_version, requirement, status)
+
+
+def update_run_requirement_with_cursor(
+    cur: PgCursor,
+    run_id: str,
+    expected_version: int,
+    requirement: dict[str, Any],
+    status: str,
+) -> dict[str, Any] | None:
+    cur.execute(
+        """
+        UPDATE agent_runs
+        SET requirement = %s,
+            status = %s,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE id = %s AND version = %s
+        RETURNING *
+        """,
+        (Json(requirement), status, run_id, expected_version),
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
 def update_run_status_with_cursor(
     cur: PgCursor,
     run_id: str,

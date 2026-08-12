@@ -45,7 +45,7 @@ def record_orchestration_state(run_id: str, status: str, event_type: str, payloa
 async def load_run(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Initialize graph fields without mutating a run record directly."""
     run_id = state["run_id"]
-    await _event(run_id, "stage", {"stage": "load_run"})
+    await _event(run_id, "stage", {"stage": "load_run"}, "CREATED")
     return {
         "status": "CREATED",
         "requirement_id": state.get("requirement_id") or run_id,
@@ -64,8 +64,8 @@ async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any
     if result.get("status") != "ready":
         await _event(state["run_id"], "clarification", {"missing": result.get("missing", [])}, "CLARIFYING")
         return {"status": "CLARIFYING", "next_action": "clarification_required", "error_code": None}
-    await _event(state["run_id"], "stage", {"stage": "requirement_ready"})
-    return {"status": "POLICY_LOCKING", "requirement": dict(result["requirement"]), "next_action": None}
+    await _event(state["run_id"], "stage", {"stage": "requirement_ready"}, "CREATED")
+    return {"status": "CREATED", "requirement": dict(result["requirement"]), "next_action": None}
 
 
 async def lock_policy(state: SourcingRiskGraphState) -> dict[str, Any]:
@@ -100,8 +100,13 @@ async def external_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
     try:
         found = await _call_provider("external_discovery", search_external_provider, state["requirement"])
     except Exception as exc:
-        await _event(state["run_id"], "provider_failed", {"provider": "external_discovery", "error": type(exc).__name__})
-        return {"status": "PARTIAL", "external_candidates": [], "provider_failures": ["external_discovery"]}
+        await _event(
+            state["run_id"],
+            "provider_failed",
+            {"provider": "external_discovery", "error": type(exc).__name__},
+            "LOCAL_SEARCHING",
+        )
+        return {"status": "LOCAL_SEARCHING", "external_candidates": [], "provider_failures": ["external_discovery"]}
     staged = stage_external_candidates(state["run_id"], found)
     await _event(state["run_id"], "discovery", {"source": "external_staged", "count": len(staged)}, "EXTERNAL_REVIEW")
     return {
@@ -156,7 +161,7 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
     candidates = _mark_sanctions_failures_for_review(state.get("candidates", []), normalized_evidence)
     await _event(state["run_id"], "investigation", {"failed_dimensions": failures}, "INVESTIGATING")
     return {
-        "status": "PARTIAL" if failures else "INVESTIGATING",
+        "status": "INVESTIGATING",
         "candidates": candidates,
         "evidence_by_company_id": normalized_evidence,
         "provider_failures": failures,
@@ -190,7 +195,12 @@ async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:
     if requires_review:
         await _event(state["run_id"], "evidence_validated", {"requires_review": True}, "EVIDENCE_REVIEW")
     else:
-        await _event(state["run_id"], "evidence_validated", {"requires_review": False})
+        await _event(
+            state["run_id"],
+            "evidence_validated",
+            {"requires_review": False},
+            state.get("status", "INVESTIGATING"),
+        )
     return {
         "status": "EVIDENCE_REVIEW" if requires_review else state.get("status", "INVESTIGATING"),
         "evidence_reviews": reviews,
