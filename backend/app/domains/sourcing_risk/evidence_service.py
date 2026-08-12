@@ -262,12 +262,20 @@ def retry_raw_payload_compensations(
     collection = get_db()["agent_evidence_payloads"]
     outcomes: list[dict[str, str]] = []
     for raw_payload_ref in dict.fromkeys(raw_payload_refs):
-        selector = {"raw_payload_ref": raw_payload_ref, "lifecycle_status": "pending_compensation"}
-        if staging_owners and raw_payload_ref in staging_owners:
-            selector["staging_owner"] = staging_owners[raw_payload_ref]
-        document = collection.find_one(selector)
+        try:
+            document = collection.find_one({"raw_payload_ref": raw_payload_ref})
+        except Exception:
+            outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "unknown"})
+            continue
         if document is None:
-            outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "already_compensated"})
+            outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "unknown"})
+            continue
+        expected_owner = (staging_owners or {}).get(raw_payload_ref)
+        if document.get("lifecycle_status") != "pending_compensation":
+            outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "unknown"})
+            continue
+        if expected_owner and document.get("staging_owner") != expected_owner:
+            outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "unknown"})
             continue
         outcomes.append(
             {

@@ -3,7 +3,7 @@
 import time
 from collections.abc import Iterator
 from typing import Any
-from uuid import UUID, uuid4, uuid5
+from uuid import uuid4
 
 from app.core.errors import DomainError
 from app.db.postgres import get_cursor
@@ -133,8 +133,20 @@ def retry_sourcing_risk_raw_payload_compensations(
         ) from exc
     compensation_refs = {item["raw_payload_ref"] for item in compensations}
     for outcome in outcomes:
-        if isinstance(outcome, dict) and outcome["raw_payload_ref"] in compensation_refs:
-            update_raw_payload_compensation(run_id, outcome["raw_payload_ref"], outcome["lifecycle_status"])
+        if not isinstance(outcome, dict):
+            continue
+        raw_payload_ref = outcome["raw_payload_ref"]
+        if raw_payload_ref in compensation_refs:
+            update_raw_payload_compensation(run_id, raw_payload_ref, outcome["lifecycle_status"])
+        elif outcome.get("lifecycle_status") == "unknown":
+            _record_compensations(
+                [{
+                    "run_id": run_id,
+                    "raw_payload_ref": raw_payload_ref,
+                    "staging_owner": f"recovery-{uuid4()}",
+                }],
+                "mongo_recovery_state_unknown",
+            )
     return outcomes
 
 
@@ -443,11 +455,8 @@ def _record_and_compensate(payloads: list[dict[str, Any]], reason: str) -> None:
 
 
 def _staging_owner(run_id: str, raw_payloads: list[dict[str, Any]]) -> str:
-    refs = sorted(str(payload["raw_payload_ref"]) for payload in raw_payloads)
-    try:
-        return str(uuid5(UUID(run_id), f"raw-stage:{'|'.join(refs)}"))
-    except (AttributeError, TypeError, ValueError):
-        return str(uuid4())
+    del run_id, raw_payloads
+    return str(uuid4())
 
 
 def get_orchestration_run(run_id: str) -> dict[str, Any] | None:

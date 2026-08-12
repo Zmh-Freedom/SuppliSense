@@ -124,6 +124,76 @@ def test_get_sourcing_risk_run_exposes_pending_raw_payload_compensation_status(m
     ]
 
 
+def test_get_sourcing_risk_run_fails_closed_when_raw_payload_record_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _run("SCORING", 4)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [{"id": "candidate-1", "score_eligible": True}],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [{"candidate_id": "candidate-1", "score_eligible": True}],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    monkeypatch.setattr(service, "get_raw_payload_lifecycle_statuses", lambda refs: [
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}
+    ])
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: [])
+
+    result = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
+
+    assert result["candidates"][0]["score_eligible"] is False
+    assert result["decisions"][0]["score_eligible"] is False
+    assert result["decisions"][0]["recovery_required"] is True
+
+
+def test_retry_missing_raw_payload_keeps_recovery_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("SCORING", 4))
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    compensation = [{
+        "raw_payload_ref": "raw-1",
+        "run_id": _run()["id"],
+        "staging_owner": "attempt-1",
+        "status": "pending_compensation",
+    }]
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: compensation)
+    monkeypatch.setattr(
+        service,
+        "retry_raw_payload_compensations",
+        lambda *_args, **_kwargs: [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}],
+    )
+    updated: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        service,
+        "update_raw_payload_compensation",
+        lambda run_id, ref, status, last_error=None: updated.append((ref, status, last_error or "")),
+    )
+
+    result = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
+
+    assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}]
+    assert updated == [("raw-1", "unknown", "")]
+
+
 def test_retry_run_raw_payload_compensations_uses_only_authorized_evidence_refs(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -705,7 +775,7 @@ def test_retry_raw_payload_compensation_deletes_pending_record_idempotently(monk
     assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
     assert payloads.documents == {}
     assert evidence_service.retry_raw_payload_compensations(["raw-1"]) == [
-        {"raw_payload_ref": "raw-1", "lifecycle_status": "already_compensated"}
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}
     ]
 
 
@@ -760,7 +830,7 @@ def test_postgres_commit_failure_records_durable_recovery(monkeypatch: pytest.Mo
     monkeypatch.setattr(service, "stage_raw_payloads", lambda *_args, **_kwargs: [{**payload, "staging_owner": "attempt-1", "lifecycle_status": "pending"}])
     monkeypatch.setattr(service, "commit_raw_payloads", lambda *_: (_ for _ in ()).throw(RuntimeError("mongo commit failed")))
     monkeypatch.setattr(service, "_record_compensations", lambda payloads, reason: recorded.append((payloads, reason)))
-    monkeypatch.setattr(service, "compensate_raw_payloads", lambda *_: None)
+    monkeypatch.setattr(service, "compensate_raw_payloads", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(service, "get_cursor", CursorContext)
     monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run("INVESTIGATING", 4))
     monkeypatch.setattr(service, "persist_run_snapshot", lambda *_args, **_kwargs: {"candidates": []})
@@ -773,6 +843,24 @@ def test_postgres_commit_failure_records_durable_recovery(monkeypatch: pytest.Mo
     assert recorded[0][0][0]["raw_payload_ref"] == "raw-1"
     assert recorded[0][0][0]["staging_owner"] == "attempt-1"
     assert recorded[0][1] == "mongo_commit_failed"
+
+
+def test_each_snapshot_attempt_uses_a_unique_staging_owner(monkeypatch: pytest.MonkeyPatch):
+    owners: list[str] = []
+    monkeypatch.setattr(service, "stage_raw_payloads", lambda _payloads, *, staging_owner: owners.append(staging_owner) or [])
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run("INVESTIGATING", 4))
+    monkeypatch.setattr(service, "persist_run_snapshot", lambda *_args, **_kwargs: {"candidates": []})
+    monkeypatch.setattr(service, "update_run_status", lambda *_args, **_kwargs: _run("SCORING", 5))
+    monkeypatch.setattr(service, "append_event", lambda *_args, **_kwargs: {"event_id": 1})
+    payload = _raw_payload("raw-1")
+
+    run_id = _run()["id"]
+    service.persist_orchestration_snapshot(run_id, "SCORING", "investigation", {}, raw_payloads=[payload])
+    service.persist_orchestration_snapshot(run_id, "SCORING", "investigation", {}, raw_payloads=[payload])
+
+    assert len(owners) == 2
+    assert owners[0] != owners[1]
 
 
 def test_ambiguous_stage_confirmation_failure_is_compensable(monkeypatch: pytest.MonkeyPatch):

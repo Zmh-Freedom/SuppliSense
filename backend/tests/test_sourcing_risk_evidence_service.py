@@ -249,3 +249,39 @@ def test_staging_owner_cannot_commit_another_run_payload(monkeypatch):
         evidence_service.commit_raw_payloads(
             [{"raw_payload_ref": "raw-1", "run_id": "run-b", "company_id": "company-b", "staging_owner": "owner-b"}]
         )
+
+
+def test_retry_missing_raw_payload_is_unknown_not_already_compensated(monkeypatch):
+    class Collection:
+        def find_one(self, selector):
+            return None
+
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": Collection()})
+
+    assert evidence_service.retry_raw_payload_compensations(["raw-missing"]) == [
+        {"raw_payload_ref": "raw-missing", "lifecycle_status": "unknown"}
+    ]
+
+
+def test_retry_raw_payload_query_failure_is_unknown(monkeypatch):
+    class Collection:
+        def find_one(self, selector):
+            raise RuntimeError("mongo unavailable")
+
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": Collection()})
+
+    assert evidence_service.retry_raw_payload_compensations(["raw-unknown"]) == [
+        {"raw_payload_ref": "raw-unknown", "lifecycle_status": "unknown"}
+    ]
+
+
+def test_retry_raw_payload_non_pending_record_is_unknown(monkeypatch):
+    class Collection:
+        def find_one(self, selector):
+            return {"raw_payload_ref": "raw-committed", "lifecycle_status": "committed"}
+
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": Collection()})
+
+    assert evidence_service.retry_raw_payload_compensations(["raw-committed"]) == [
+        {"raw_payload_ref": "raw-committed", "lifecycle_status": "unknown"}
+    ]
