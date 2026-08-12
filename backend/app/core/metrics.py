@@ -145,6 +145,109 @@ COMPANY_IDENTITY_RESOLUTIONS_TOTAL = _registered_metric(
     ["resolution"],
 )
 
+# Sourcing Risk Agent V2 metrics. Labels are finite domain values only; IDs,
+# names, prompts and provider-specific identifiers must remain log attributes.
+AGENT_RUNS_TOTAL = _registered_metric(
+    "agent_runs_total",
+    Counter,
+    "Total Sourcing Risk Agent V2 runs",
+    ["status", "rollout"],
+)
+AGENT_STAGE_DURATION_SECONDS = _registered_metric(
+    "agent_stage_duration_seconds",
+    Histogram,
+    "Sourcing Risk Agent V2 stage duration",
+    ["stage"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+AGENT_PROVIDER_OUTCOMES_TOTAL = _registered_metric(
+    "agent_provider_outcomes_total",
+    Counter,
+    "Sourcing Risk Agent V2 provider outcomes",
+    ["provider", "outcome"],
+)
+AGENT_CANDIDATE_GROUPS_TOTAL = _registered_metric(
+    "agent_candidate_groups_total",
+    Counter,
+    "Sourcing Risk Agent V2 candidate decision groups",
+    ["group"],
+)
+AGENT_ACTION_OUTCOMES_TOTAL = _registered_metric(
+    "agent_action_outcomes_total",
+    Counter,
+    "Sourcing Risk Agent V2 action outcomes",
+    ["action", "outcome"],
+)
+AGENT_EVAL_CASES_TOTAL = _registered_metric(
+    "agent_eval_cases_total",
+    Counter,
+    "Offline Sourcing Risk Agent V2 evaluation cases",
+    ["eval_version", "capability", "outcome"],
+)
+
+_AGENT_STATUSES = frozenset({"created", "running", "completed", "clarification", "failed", "cancelled"})
+_AGENT_ROLLOUTS = frozenset({"shadow", "internal", "canary", "default"})
+_AGENT_STAGES = frozenset({
+    "requirement_parsing", "local_discovery", "external_discovery", "identity",
+    "evidence", "decision", "approval", "recovery",
+})
+_AGENT_PROVIDERS = frozenset({"local", "external", "financial", "sanctions", "judicial", "other"})
+_AGENT_PROVIDER_OUTCOMES = frozenset({"success", "empty", "staged", "timeout", "unavailable", "error"})
+_AGENT_CANDIDATE_GROUPS = frozenset({"recommended", "alternative", "needs_review", "rejected"})
+_AGENT_ACTIONS = frozenset({"import", "watchlist", "access_application", "export", "none"})
+_AGENT_ACTION_OUTCOMES = frozenset({"proposed", "approved", "rejected", "executed", "blocked", "failed"})
+_AGENT_EVAL_OUTCOMES = frozenset({"pass", "fail"})
+
+
+def record_agent_run(status: str, rollout: str = "default") -> None:
+    """Record a V2 run using bounded status and rollout labels."""
+    AGENT_RUNS_TOTAL.labels(
+        status=status if status in _AGENT_STATUSES else "failed",
+        rollout=rollout if rollout in _AGENT_ROLLOUTS else "default",
+    ).inc()
+
+
+def record_agent_stage(stage: str, duration_seconds: float) -> None:
+    """Record a stage duration without exposing a run or company identifier."""
+    AGENT_STAGE_DURATION_SECONDS.labels(
+        stage=stage if stage in _AGENT_STAGES else "recovery",
+    ).observe(max(0.0, duration_seconds))
+
+
+def record_agent_provider(provider: str, outcome: str) -> None:
+    """Record a provider result using a fixed provider/outcome vocabulary."""
+    AGENT_PROVIDER_OUTCOMES_TOTAL.labels(
+        provider=provider if provider in _AGENT_PROVIDERS else "other",
+        outcome=outcome if outcome in _AGENT_PROVIDER_OUTCOMES else "error",
+    ).inc()
+
+
+def record_agent_candidate_group(group: str) -> None:
+    """Record one bounded candidate decision group."""
+    AGENT_CANDIDATE_GROUPS_TOTAL.labels(
+        group=group if group in _AGENT_CANDIDATE_GROUPS else "needs_review",
+    ).inc()
+
+
+def record_agent_action(action: str, outcome: str) -> None:
+    """Record an action proposal/execution outcome without target identifiers."""
+    AGENT_ACTION_OUTCOMES_TOTAL.labels(
+        action=action if action in _AGENT_ACTIONS else "none",
+        outcome=outcome if outcome in _AGENT_ACTION_OUTCOMES else "blocked",
+    ).inc()
+
+
+def record_agent_eval(capability: str, outcome: str, eval_version: str = "v1") -> None:
+    """Record an offline Eval case with bounded capability and result labels."""
+    AGENT_EVAL_CASES_TOTAL.labels(
+        eval_version=eval_version if eval_version in {"v1"} else "v1",
+        capability=capability if capability in {
+            "requirement_parsing", "local_first_discovery", "identity_evidence_safety",
+            "decision_action_boundary", "recovery_fail_closed",
+        } else "other",
+        outcome=outcome if outcome in _AGENT_EVAL_OUTCOMES else "fail",
+    ).inc()
+
 _OUTBOX_EVENT_TYPES = frozenset({
     "company.created",
     "company.updated",

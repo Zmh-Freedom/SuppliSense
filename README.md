@@ -460,6 +460,36 @@ SuppliSense/
 
 ## 文档索引
 
+## Agent V2 离线评估与灰度发布
+
+Task 14 提供不依赖 MongoDB、PostgreSQL、Redis、LLM 或外部 Provider 的固定评估集：
+
+```bash
+cd backend
+pytest -q tests/test_sourcing_risk_evals.py
+python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import json; print(json.dumps(run_sourcing_risk_evals("tests/evals/sourcing_risk_cases.json"), ensure_ascii=False, indent=2))'
+```
+
+评估报告包含需求解析质量、本地优先发现、身份/证据安全、决策/审批边界、恢复 fail-closed、候选 precision/recall、citation/evidence completeness、unsafe action rate、clarification rate 和 p50/p95/max latency。固定 12 个场景覆盖完整本地流、澄清、外部候选暂存/审批导入、身份歧义、制裁不可用、财务缺失、证据冲突、审批重放、重启恢复、未知 recovery 和越权授权。
+
+### V2 feature flags
+
+安全默认值为 `AGENT_RUN_V2_ENABLED=false`、`AGENT_RUN_V2_ROLLOUT=shadow`、`AGENT_RUN_V2_CANARY_PERCENT=0`。环境变量含义：
+
+| Flag | 值 | 行为 |
+|---|---|---|
+| `AGENT_RUN_V2_ENABLED` | `true/false` | 总开关，关闭时始终走 legacy |
+| `AGENT_RUN_V2_ROLLOUT` | `shadow/internal/canary/default` | 灰度阶段 |
+| `AGENT_RUN_V2_CANARY_PERCENT` | `0..100` | Canary 按 user ID 的稳定 SHA-256 bucket 放量 |
+
+Shadow 可执行并持久化 V2 以比较结果，但用户响应仍走 legacy，且不执行领域动作。Internal 仅 `admin`/`analyst` 可进入 V2；Canary 使用确定性用户 hash；Default 才面向全部用户。所有导入、监控、准入等业务写入仍必须经过人工审批和 approved-only Outbox。
+
+### 灰度门槛、观测和回滚
+
+Shadow → Internal → Canary → Default 逐阶段推进。每阶段至少观察完整业务周期，并确认离线 Eval 评分 100%、关键缺证据误推荐 0%、身份唯一命中精确率 ≥99%、需求字段准确率 ≥95%、关键证据支持率 ≥98%、未审批写入 0%、重复动作 0%、恢复成功率 ≥99%、P95 首事件 ≤2 秒、本地候选 P95 完成 ≤90 秒。Prometheus 只使用固定枚举标签；企业名、run/user ID 和查询文本进入日志/追踪属性，不进入 label。
+
+发现主体错绑、制裁不可用仍推荐、未经审批写入、恢复重复执行、评分不可复现或证据不一致时立即停止推进。回滚只需将 rollout 设置为 `shadow`（保留 V2 影子观测）或 `internal`（仅内部用户），必要时再将 `AGENT_RUN_V2_ENABLED=false`；不得删除已有 Run、checkpoint、审批或审计记录。回滚后由人工审批人确认未完成 proposal 状态，再恢复业务流量。
+
 | 文档 | 说明 |
 |------|------|
 | `CLAUDE.md` | 开发规范（AI 助手用） |

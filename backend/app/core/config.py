@@ -2,7 +2,9 @@
 Application configuration.
 """
 
+import hashlib
 import os
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -56,6 +58,12 @@ class Settings(BaseSettings):
 
     # Agent Run V2 LangGraph checkpoints (managed with a dedicated psycopg3 connection)
     AGENT_RUN_V2_ENABLED: bool = os.getenv("AGENT_RUN_V2_ENABLED", "false").lower() == "true"
+    AGENT_RUN_V2_ROLLOUT: Literal["shadow", "internal", "canary", "default"] = os.getenv(
+        "AGENT_RUN_V2_ROLLOUT", "shadow"
+    )
+    AGENT_RUN_V2_CANARY_PERCENT: int = Field(
+        default=int(os.getenv("AGENT_RUN_V2_CANARY_PERCENT", "0")), ge=0, le=100
+    )
     AGENT_RUN_CHECKPOINT_SCHEMA: str = os.getenv("AGENT_RUN_CHECKPOINT_SCHEMA", "agent_checkpoint")
 
     # Transactional Outbox worker
@@ -88,3 +96,27 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def agent_run_v2_route(
+    user_id: str,
+    user_role: str,
+    config: Settings = settings,
+) -> Literal["legacy", "shadow", "v2"]:
+    """Return the safe routing decision for a V2 request.
+
+    The feature must be explicitly enabled. Shadow still allows execution and
+    persistence by the caller, but its response remains on the legacy route.
+    Canary assignment is deterministic so retries and reconnects do not move a
+    user between routes.
+    """
+    if not config.AGENT_RUN_V2_ENABLED:
+        return "legacy"
+    if config.AGENT_RUN_V2_ROLLOUT == "shadow":
+        return "shadow"
+    if config.AGENT_RUN_V2_ROLLOUT == "internal":
+        return "v2" if user_role in {"admin", "analyst"} else "legacy"
+    if config.AGENT_RUN_V2_ROLLOUT == "canary":
+        bucket = int(hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8], 16) % 100
+        return "v2" if bucket < config.AGENT_RUN_V2_CANARY_PERCENT else "legacy"
+    return "v2"
