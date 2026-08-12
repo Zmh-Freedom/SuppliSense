@@ -17,6 +17,24 @@ def test_exact_identity_binds_only_the_canonical_company_id(monkeypatch):
         "identity_status": "exact",
         "company_id": "company-id",
         "identity_candidates": [],
+        "score_eligible": True,
+    }
+
+
+def test_exact_result_without_company_id_requires_identity_review(monkeypatch):
+    """Accepting an empty exact ID would allow a name to become a durable identity."""
+    p1_result = {"resolution": "exact", "exact": {"company_id": None}, "candidates": []}
+    monkeypatch.setattr(identity_service, "search_identity", lambda *_: p1_result)
+
+    result = identity_service.resolve_candidate_identity({"supplier_name": "示例科技"})
+
+    assert result == {
+        "identity_status": "pending_verification",
+        "company_id": None,
+        "identity_candidates": [],
+        "identity_review": True,
+        "score_eligible": False,
+        "identity_source_snapshot": p1_result,
     }
 
 

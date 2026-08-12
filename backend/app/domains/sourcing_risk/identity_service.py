@@ -10,11 +10,14 @@ def resolve_candidate_identity(candidate: dict) -> dict:
 
     if resolution.get("resolution") == "exact":
         exact = resolution.get("exact") or {}
-        return {
-            "identity_status": "exact",
-            "company_id": exact.get("company_id"),
-            "identity_candidates": [],
-        }
+        company_id = exact.get("company_id")
+        if company_id:
+            return {
+                "identity_status": "exact",
+                "company_id": company_id,
+                "identity_candidates": [],
+                "score_eligible": True,
+            }
 
     identity_status = resolution.get("resolution")
     if identity_status not in {"candidates", "pending_verification"}:

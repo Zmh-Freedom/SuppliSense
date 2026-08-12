@@ -6,6 +6,7 @@
 - Exact P1 resolution binds only the returned canonical `company_id`.
 - Candidate and pending-verification resolutions carry candidate/source snapshots, require identity review, have no `company_id`, and are not score eligible.
 - The adapter creates and merges no company records; supplier names are lookup inputs only.
+- P1 follow-up: exact results require a non-empty canonical `company_id` and explicitly set `score_eligible=True`; malformed exact results downgrade to pending verification with identity review and `score_eligible=False`.
 
 ## Verification
 
@@ -13,6 +14,7 @@
 - GREEN: focused identity tests pass (3 passed).
 - `python -m compileall -q app/domains/sourcing_risk/identity_service.py` passes.
 - `git diff --check` passes.
+- P1 follow-up: focused identity tests pass (4 passed), including malformed exact and exact score eligibility coverage; compile and diff checks pass.
 
 ## Concerns
 
