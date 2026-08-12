@@ -302,7 +302,7 @@ def _bind_action_target(
         candidate = get_action_candidate_for_update(cur, candidate_id)
         if candidate is None or candidate["run_id"] != run_id:
             raise DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)
-        if candidate["source"] != "external" or candidate["status"] != "staged_candidate":
+        if candidate["source"] not in {"staged_external", "external"} or candidate["status"] != "staged_candidate":
             raise DomainError("AGENT_ACTION_CANDIDATE_INVALID", "候选企业不是可导入的外部暂存候选", 422)
         snapshot = candidate.get("candidate_snapshot")
         if not isinstance(snapshot, dict):

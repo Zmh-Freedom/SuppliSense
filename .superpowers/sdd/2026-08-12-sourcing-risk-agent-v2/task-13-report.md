@@ -61,3 +61,32 @@ git diff --check
 ### Remaining environment constraint
 
 The existing PostgreSQL integration tests in `tests/test_agent_run_repo.py` cannot connect to `localhost:5432` in this sandbox (`Operation not permitted`). The new transaction rollback seam test passes without a database; rerun the database-backed repository integration cases in an environment with PostgreSQL access.
+
+---
+
+## Final P1 transaction and staged-external repair
+
+### Delivered
+
+- `normalize_evidence()` now persists only the raw MongoDB payload reference and returns normalized evidence to the graph. The graph passes that evidence to `persist_orchestration_snapshot()`, whose existing caller-owned PostgreSQL cursor writes evidence snapshots, candidates/decisions, Run status, and SSE event as one transaction. Thus an event-write failure rolls the full PostgreSQL snapshot back instead of leaving a separately committed evidence row.
+- Evidence upserts now use a stable provider/source key (with dimension/index fallback), not the newly generated normalized `evidence_id`; retrying the same graph snapshot updates one durable evidence row.
+- Approval-gated external import recognizes the graph's canonical `source=staged_external,status=staged_candidate` pair while retaining the explicit legacy `source=external` alias. It still requires the candidate to belong to the current Run and uses only its persisted snapshot, so no supplier master write occurs before approval.
+
+### TDD evidence
+
+- RED: event-failure graph coverage showed `normalize_evidence()` independently invoked PostgreSQL evidence insertion; staged graph-persisted external candidates were rejected; stable evidence retry IDs differed.
+- GREEN: coverage now verifies normalized evidence is handed to the snapshot command, the service passes evidence through the rollback transaction cursor, snapshot evidence shares the caller cursor, retry IDs match, and an actual `staged_external` candidate can create only a pending proposal from its persisted snapshot.
+
+### Verification
+
+Passed:
+
+```text
+cd backend && pytest -q tests/test_sourcing_risk_evidence_service.py tests/test_sourcing_risk_graph.py tests/test_agent_run_service.py tests/test_agent_run_repo.py::test_snapshot_writes_share_the_caller_transaction tests/test_agent_run_repo.py::test_evidence_snapshot_retries_reuse_a_stable_provider_key tests/test_sourcing_risk_actions.py -k 'not real_postgres_action_transaction'  # 66 passed, 1 deselected
+cd backend && python -m compileall -q app
+git diff --check
+```
+
+### Remaining environment constraint
+
+The existing PostgreSQL integration test needs `localhost:5432`, which this sandbox denies (`Operation not permitted`). It remains excluded from the focused command above; rerun it where PostgreSQL is reachable.

@@ -610,9 +610,10 @@ def _upsert_evidence(
     run_id: str, company_id: str, evidence: dict[str, Any], index: int,
     candidate_id: str | None, cur: PgCursor,
 ) -> None:
+    evidence_key = evidence.get("source_reference") or evidence.get("provider_key") or evidence.get("dimension") or index
     evidence_id = _stable_id(
         run_id,
-        f"evidence:{company_id}:{evidence.get('evidence_id') or evidence.get('dimension') or index}",
+        f"evidence:{company_id}:{evidence_key}:{index}",
     )
     cur.execute(
         """

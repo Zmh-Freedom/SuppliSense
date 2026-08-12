@@ -306,7 +306,12 @@ def test_orchestration_snapshot_rolls_back_collections_when_event_write_fails(
 
     monkeypatch.setattr(service, "get_cursor", CursorContext)
     monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run("INVESTIGATING", 4))
-    monkeypatch.setattr(service, "persist_run_snapshot", lambda *_args, **_kwargs: {"candidates": [{"candidate_id": "candidate-1"}]})
+    snapshots: list[dict] = []
+    monkeypatch.setattr(
+        service,
+        "persist_run_snapshot",
+        lambda *_args, **kwargs: snapshots.append(kwargs) or {"candidates": [{"candidate_id": "candidate-1"}]},
+    )
     monkeypatch.setattr(service, "update_run_status", lambda *_args, **_kwargs: _run("SCORING", 5))
     monkeypatch.setattr(service, "append_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("event insert failed")))
 
@@ -317,10 +322,13 @@ def test_orchestration_snapshot_rolls_back_collections_when_event_write_fails(
             "decision",
             {"count": 1},
             candidates=[{"candidate_key": "local:company-1"}],
+            evidence_by_company_id={"company-1": [{"dimension": "sanctions"}]},
             decisions=[{"candidate_id": "candidate-1", "group": "recommended"}],
         )
 
     assert observed == [RuntimeError]
+    assert snapshots[0]["evidence_by_company_id"] == {"company-1": [{"dimension": "sanctions"}]}
+    assert snapshots[0]["cur"] is not None
 
 
 def test_stream_events_stops_after_replaying_a_durable_terminal_stage(monkeypatch: pytest.MonkeyPatch):

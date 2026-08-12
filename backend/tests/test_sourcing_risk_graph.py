@@ -310,6 +310,44 @@ def test_investigation_failure_keeps_checkpoint_and_durable_status_aligned(monke
     assert transitions == [("run-id", "INVESTIGATING", "investigation", {"failed_dimensions": ["financial"]})]
 
 
+def test_investigation_event_failure_does_not_independently_commit_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed replay event must roll back the structured evidence collected for its snapshot."""
+    candidate = _candidate()
+    snapshots: list[dict] = []
+
+    async def investigate(*_args):
+        return ({candidate["company_id"]: [{"dimension": "sanctions", "claim_code": "clear"}]}, [])
+
+    class RawPayloads:
+        def insert_one(self, _document: dict) -> None:
+            return None
+
+    monkeypatch.setattr(nodes, "investigate_candidates", investigate)
+    monkeypatch.setattr(
+        "app.domains.sourcing_risk.evidence_service.get_db",
+        lambda: {"agent_evidence_payloads": RawPayloads()},
+    )
+    monkeypatch.setattr(
+        nodes,
+        "persist_orchestration_snapshot",
+        lambda *_args, **kwargs: snapshots.append(kwargs)
+        or (_ for _ in ()).throw(RuntimeError("event insert failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="event insert failed"):
+        asyncio.run(nodes.investigate_parallel({
+            "run_id": str(uuid4()),
+            "policy_snapshot": _policy(),
+            "candidates": [candidate],
+        }))
+
+
+    assert (
+        snapshots[0]["evidence_by_company_id"][candidate["company_id"]][0]["dimension"]
+        == "sanctions"
+    )
+
+
 def test_clear_evidence_records_its_checkpoint_status_atomically(monkeypatch: pytest.MonkeyPatch) -> None:
     """An event-only validation checkpoint can be observed after a crash without a matching run status."""
     transitions: list[tuple[str, str, str, dict]] = []

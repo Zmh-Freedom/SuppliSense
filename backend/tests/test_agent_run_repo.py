@@ -84,18 +84,51 @@ def test_snapshot_writes_share_the_caller_transaction(monkeypatch):
     cursor = object()
     calls: list[tuple[str, object]] = []
     monkeypatch.setattr(repo, "upsert_candidate", lambda *args, **kwargs: calls.append(("candidate", kwargs.get("cur"))) or {"id": "candidate-1"})
+    monkeypatch.setattr(repo, "_upsert_evidence", lambda *args, **kwargs: calls.append(("evidence", args[-1])))
     monkeypatch.setattr(repo, "upsert_evidence_review", lambda *args, **kwargs: calls.append(("review", kwargs.get("cur"))) or {"company_id": "company-1"})
     monkeypatch.setattr(repo, "upsert_decision", lambda *args, **kwargs: calls.append(("decision", kwargs.get("cur"))) or {"id": "decision-1"})
 
     repo.persist_run_snapshot(
         "run-id",
         candidates=[{"candidate_key": "local:company-1", "company_id": "company-1"}],
+        evidence_by_company_id={"company-1": [{"dimension": "sanctions"}]},
         evidence_reviews={"company-1": {"status": "clear"}},
         decisions=[{"candidate_id": "candidate-1", "group": "recommended"}],
         cur=cursor,
     )
 
-    assert calls == [("candidate", cursor), ("review", cursor), ("decision", cursor)]
+    assert calls == [
+        ("candidate", cursor),
+        ("evidence", cursor),
+        ("review", cursor),
+        ("decision", cursor),
+    ]
+
+
+def test_evidence_snapshot_retries_reuse_a_stable_provider_key():
+    """Basing upserts on a newly normalized UUID would duplicate evidence after graph retry."""
+    observed_ids: list[str] = []
+
+    class Cursor:
+        def execute(self, _query: str, params: tuple[object, ...]) -> None:
+            observed_ids.append(str(params[0]))
+
+    run_id = "00000000-0000-4000-8000-000000000001"
+    for evidence_id in ("first-normalization", "second-normalization"):
+        repo._upsert_evidence(
+            run_id,
+            "company-id",
+            {
+                "evidence_id": evidence_id,
+                "dimension": "sanctions",
+                "source_reference": "provider-record-42",
+            },
+            0,
+            "candidate-id",
+            Cursor(),
+        )
+
+    assert observed_ids[0] == observed_ids[1]
 
 
 @contextmanager

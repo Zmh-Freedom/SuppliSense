@@ -63,8 +63,8 @@ def test_stale_required_evidence_is_incomplete_not_clear():
     }
 
 
-def test_normalize_clear_claim_keeps_raw_payload_only_by_reference(monkeypatch):
-    """Leaking provider payload into the record would break the structured evidence boundary."""
+def test_normalize_clear_claim_defers_structured_persistence_to_run_snapshot(monkeypatch):
+    """An independent PostgreSQL write would survive a later snapshot-event rollback."""
     observed_at = datetime.now(timezone.utc) - timedelta(days=2)
     persisted: dict[str, object] = {}
 
@@ -73,12 +73,6 @@ def test_normalize_clear_claim_keeps_raw_payload_only_by_reference(monkeypatch):
             persisted["raw"] = document
 
     monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": FakeCollection()})
-    monkeypatch.setattr(
-        evidence_service.agent_run_repo,
-        "insert_evidence",
-        lambda **kwargs: persisted.setdefault("structured", kwargs) or {"id": "evidence-id"},
-    )
-
     run_id = str(uuid4())
     company_id = str(uuid4())
     record = evidence_service.normalize_evidence(
@@ -102,9 +96,7 @@ def test_normalize_clear_claim_keeps_raw_payload_only_by_reference(monkeypatch):
     assert record.raw_payload_ref
     assert "raw_payload" not in record.model_dump()
     assert persisted["raw"]["raw_payload"] == {"unbounded": "provider response"}
-    assert persisted["structured"]["evidence_snapshot"]["raw_payload_ref"] == record.raw_payload_ref
-    assert persisted["structured"]["company_id"] == company_id
-    assert persisted["structured"]["evidence_snapshot"]["company_id"] == company_id
+    assert "structured" not in persisted
 
 
 def test_normalize_rejects_non_uuid_run_or_company_id():
@@ -122,11 +114,9 @@ def test_normalize_rejects_non_uuid_run_or_company_id():
 
 def test_normalize_uses_frozen_policy_window_not_provider_window(monkeypatch):
     """A provider must not loosen the freshness window used for a sourcing decision."""
-    persisted: dict[str, object] = {}
     monkeypatch.setattr(
         evidence_service, "get_db", lambda: {"agent_evidence_payloads": type("C", (), {"insert_one": lambda *_: None})()}
     )
-    monkeypatch.setattr(evidence_service.agent_run_repo, "insert_evidence", lambda **kwargs: persisted.update(kwargs))
     now = datetime.now(timezone.utc)
 
     record = evidence_service.normalize_evidence(
@@ -186,7 +176,6 @@ def test_normalize_unknown_conflict_status_is_explicitly_unknown(monkeypatch):
     monkeypatch.setattr(
         evidence_service, "get_db", lambda: {"agent_evidence_payloads": type("C", (), {"insert_one": lambda *_: None})()}
     )
-    monkeypatch.setattr(evidence_service.agent_run_repo, "insert_evidence", lambda **_: None)
 
     record = evidence_service.normalize_evidence(
         str(uuid4()), str(uuid4()), "sanctions", {"conflict_status": "provider_pending"}, policy=_policy_requiring_sanctions()
@@ -200,7 +189,6 @@ def test_future_observed_at_is_invalid_not_fresh(monkeypatch):
     monkeypatch.setattr(
         evidence_service, "get_db", lambda: {"agent_evidence_payloads": type("C", (), {"insert_one": lambda *_: None})()}
     )
-    monkeypatch.setattr(evidence_service.agent_run_repo, "insert_evidence", lambda **_: None)
     collected_at = datetime.now(timezone.utc)
 
     record = evidence_service.normalize_evidence(

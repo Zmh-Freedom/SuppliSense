@@ -265,6 +265,37 @@ def test_external_import_uses_persisted_staged_candidate_snapshot(monkeypatch):
     assert persisted[0]["payload"] == snapshot
 
 
+def test_external_import_accepts_graph_persisted_staged_external_candidate(monkeypatch):
+    """Rejecting the graph's durable external source makes approval-gated import unreachable."""
+    persisted: list[dict] = []
+    snapshot = {"company_name": "图暂存外部企业", "risk_level": "low"}
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {
+            "id": "candidate-a",
+            "run_id": RUN_ID,
+            "source": "staged_external",
+            "status": "staged_candidate",
+            "candidate_snapshot": snapshot,
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        action_service,
+        "insert_action_proposal",
+        lambda **kwargs: persisted.append(kwargs) or _proposal(payload=kwargs["payload"]),
+    )
+
+    proposal = _create_proposal(payload={"company_name": "调用方伪造企业"})
+
+    assert proposal["payload"] == snapshot
+    assert persisted[0]["payload"] == snapshot
+
+
 def test_proposal_creation_requires_authorized_creator_and_current_version(monkeypatch):
     """Skipping creator scope or optimistic locking would create approvable writes for stale or foreign Runs."""
     monkeypatch.setattr(action_service, "get_cursor", _cursor)

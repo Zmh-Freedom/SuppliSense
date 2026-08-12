@@ -7,7 +7,6 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, Field
 
 from app.db.mongo import get_db
-from app.domains.agent_run import repo as agent_run_repo
 
 
 class EvidenceRecord(BaseModel):
@@ -34,7 +33,7 @@ class EvidenceRecord(BaseModel):
 def normalize_evidence(
     run_id: str, company_id: str, dimension: str, provider_result: dict, *, policy: dict
 ) -> EvidenceRecord:
-    """Persist raw input separately and return its normalized structured index."""
+    """Persist raw input separately and return normalized evidence for the run snapshot."""
     run_uuid = _require_uuid(run_id, "run_id")
     company_uuid = _require_uuid(company_id, "company_id")
     if dimension not in EvidenceRecord.model_fields["dimension"].annotation.__args__:
@@ -61,7 +60,6 @@ def normalize_evidence(
         raw_payload_ref=raw_payload_ref,
         summary=str(provider_result.get("summary") or ""),
     )
-    _persist_structured_evidence(record)
     return record
 
 
@@ -137,18 +135,6 @@ def _persist_raw_payload(
         }
     )
     return raw_payload_ref
-
-
-def _persist_structured_evidence(record: EvidenceRecord) -> None:
-    """Persist canonical company-owned evidence through the repository contract."""
-    agent_run_repo.insert_evidence(
-        run_id=str(record.run_id),
-        company_id=str(record.company_id),
-        evidence_type=record.dimension,
-        source=record.source_type,
-        source_reference=record.source_reference,
-        evidence_snapshot=record.model_dump(mode="json"),
-    )
 
 
 def _require_uuid(value: str, field: str) -> UUID:
