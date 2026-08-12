@@ -4,6 +4,7 @@ import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { getRiskColor } from '../riskColors';
 import type { SourcingResultItem, SourcingRequestDetail } from '../types';
+import SourcingRiskWorkbench from './SourcingRiskWorkbench';
 
 type Step = { label: string; done: boolean };
 
@@ -123,6 +124,10 @@ export default function SourcingPage() {
   return (
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-3xl mx-auto space-y-6">
+        <SourcingRiskWorkbench />
+
+        <div className="border-t border-[var(--color-border)] pt-6">
+          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-4">旧版寻源记录</h2>
         <h2 className="text-lg font-bold text-[var(--color-text)]">智能寻源</h2>
 
         {/* 采购需求表单 */}
@@ -268,6 +273,7 @@ export default function SourcingPage() {
             ))}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

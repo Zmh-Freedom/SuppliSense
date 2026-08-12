@@ -1,0 +1,29 @@
+import type { SourcingRiskCandidate, SourcingRiskEvidence } from '../types';
+
+function EvidenceLabels({ evidence }: { evidence: SourcingRiskEvidence[] }) {
+  const labels = evidence.flatMap(item => {
+    const values: string[] = [];
+    if (item.freshness_status === 'stale') values.push('证据已过期');
+    if (item.conflict_status === 'conflicting') values.push('证据存在冲突');
+    return values;
+  });
+  return labels.length > 0 ? <div className="flex flex-wrap gap-1">{[...new Set(labels)].map(label => <span key={label} className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{label}</span>)}</div> : null;
+}
+
+export default function SourcingRiskCandidateCard({ candidate, evidence }: { candidate: SourcingRiskCandidate; evidence?: SourcingRiskEvidence[] }) {
+  const name = candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
+  const source = candidate.source === 'staged_external' || candidate.status === 'staged_candidate'
+    ? '外部暂存'
+    : '本地库';
+  const candidateEvidence = evidence ?? candidate.evidence ?? candidate.evidence_by_dimension ?? [];
+  return (
+    <article className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 space-y-2">
+      <div className="flex justify-between gap-3">
+        <h4 className="font-semibold text-sm text-[var(--color-text)]">{name}</h4>
+        <span className="text-[10px] shrink-0 rounded-full px-2 py-0.5 bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]">{source}</span>
+      </div>
+      {candidate.identity_status && <p className="text-xs text-[var(--color-text-secondary)]">主体状态：{candidate.identity_status}</p>}
+      <EvidenceLabels evidence={candidateEvidence} />
+    </article>
+  );
+}
