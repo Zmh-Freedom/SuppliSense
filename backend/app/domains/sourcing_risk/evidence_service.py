@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
@@ -13,9 +13,9 @@ from app.domains.agent_run import repo as agent_run_repo
 class EvidenceRecord(BaseModel):
     """Structured evidence index; provider payloads remain in MongoDB."""
 
-    evidence_id: str
-    run_id: str
-    company_id: str
+    evidence_id: UUID
+    run_id: UUID
+    company_id: UUID
     dimension: Literal[
         "company", "financial", "judicial", "sentiment", "sanctions", "esg", "continuity"
     ]
@@ -32,21 +32,23 @@ class EvidenceRecord(BaseModel):
 
 
 def normalize_evidence(
-    run_id: str, company_id: str, dimension: str, provider_result: dict
+    run_id: str, company_id: str, dimension: str, provider_result: dict, *, policy: dict
 ) -> EvidenceRecord:
     """Persist raw input separately and return its normalized structured index."""
+    run_uuid = _require_uuid(run_id, "run_id")
+    company_uuid = _require_uuid(company_id, "company_id")
     if dimension not in EvidenceRecord.model_fields["dimension"].annotation.__args__:
         raise ValueError("unsupported evidence dimension")
 
     collected_at = _parse_timestamp(provider_result.get("collected_at")) or datetime.now(timezone.utc)
     observed_at = _parse_timestamp(provider_result.get("observed_at"))
-    freshness_days = provider_result.get("freshness_days")
+    freshness_days = policy.get("freshness_days", {}).get(dimension)
     freshness_status = _freshness_status(observed_at, collected_at, freshness_days)
-    raw_payload_ref = _persist_raw_payload(run_id, company_id, dimension, provider_result, collected_at)
+    raw_payload_ref = _persist_raw_payload(run_uuid, company_uuid, dimension, provider_result, collected_at)
     record = EvidenceRecord(
-        evidence_id=str(uuid4()),
-        run_id=run_id,
-        company_id=company_id,
+        evidence_id=uuid4(),
+        run_id=run_uuid,
+        company_id=company_uuid,
         dimension=dimension,
         claim_code=str(provider_result.get("claim_code") or "unknown"),
         source_type=str(provider_result.get("source_type") or "unknown"),
@@ -59,14 +61,7 @@ def normalize_evidence(
         raw_payload_ref=raw_payload_ref,
         summary=str(provider_result.get("summary") or ""),
     )
-    agent_run_repo.insert_evidence(
-        run_id=run_id,
-        candidate_id=company_id,
-        evidence_type=dimension,
-        source=record.source_type,
-        source_reference=record.source_reference,
-        evidence_snapshot=record.model_dump(mode="json"),
-    )
+    _persist_structured_evidence(record)
     return record
 
 
@@ -75,53 +70,87 @@ def validate_evidence_set(evidence: list[dict], policy: dict) -> dict:
     required_dimensions = policy.get("required_evidence", [])
     reason_codes: list[str] = []
     status = "clear"
+    evidence_present = True
+    claim_status = "no_risk"
     for dimension in required_dimensions:
         dimension_evidence = [item for item in evidence if item.get("dimension") == dimension]
         if not dimension_evidence:
             reason_codes.append(_reason_code(dimension, "DATA_UNAVAILABLE"))
             status = "needs_review"
+            evidence_present = False
+            claim_status = "missing"
             continue
         claims = {str(item.get("claim_code", "unknown")) for item in dimension_evidence}
         if any(item.get("conflict_status") == "conflicting" for item in dimension_evidence) or len(claims) > 1:
             reason_codes.append("KEY_EVIDENCE_CONFLICT")
             status = "needs_review"
+            claim_status = "conflicting"
             continue
         if claims & {"unavailable", "unknown", "error"}:
             reason_codes.append(_reason_code(dimension, "DATA_UNAVAILABLE"))
             status = "needs_review"
+            claim_status = "unavailable"
             continue
         if claims & {"hit", "match"}:
             reason_codes.append(_reason_code(dimension, "HIT"))
             status = "needs_review"
+            claim_status = "hit"
             continue
         if any(item.get("freshness_status") == "stale" for item in dimension_evidence):
             reason_codes.append(_reason_code(dimension, "DATA_STALE"))
             if status != "needs_review":
                 status = "incomplete"
+                claim_status = "stale"
             continue
         if any(item.get("freshness_status") == "unknown" for item in dimension_evidence):
             reason_codes.append(_reason_code(dimension, "DATA_UNKNOWN"))
             if status != "needs_review":
                 status = "incomplete"
-    return {"status": status, "reason_codes": reason_codes}
+                claim_status = "unknown"
+    return {
+        "status": status,
+        "reason_codes": reason_codes,
+        "evidence_present": evidence_present,
+        "claim_status": claim_status,
+        "score_eligible": status == "clear",
+    }
 
 
 def _persist_raw_payload(
-    run_id: str, company_id: str, dimension: str, provider_result: dict, collected_at: datetime
+    run_id: UUID, company_id: UUID, dimension: str, provider_result: dict, collected_at: datetime
 ) -> str:
     raw_payload_ref = str(uuid4())
     raw_payload = provider_result.get("raw_payload", provider_result)
     get_db()["agent_evidence_payloads"].insert_one(
         {
             "raw_payload_ref": raw_payload_ref,
-            "run_id": run_id,
-            "company_id": company_id,
+            "run_id": str(run_id),
+            "company_id": str(company_id),
             "dimension": dimension,
             "collected_at": collected_at,
             "raw_payload": raw_payload,
         }
     )
     return raw_payload_ref
+
+
+def _persist_structured_evidence(record: EvidenceRecord) -> None:
+    """Adapt canonical company evidence to the legacy candidate-keyed repository."""
+    agent_run_repo.insert_evidence(
+        run_id=str(record.run_id),
+        candidate_id=None,
+        evidence_type=record.dimension,
+        source=record.source_type,
+        source_reference=record.source_reference,
+        evidence_snapshot=record.model_dump(mode="json"),
+    )
+
+
+def _require_uuid(value: str, field: str) -> UUID:
+    try:
+        return UUID(value)
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be a UUID") from exc
 
 
 def _parse_timestamp(value: object) -> datetime | None:
