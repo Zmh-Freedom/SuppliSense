@@ -143,6 +143,20 @@ def stream_events(
         yield {"event_type": "keepalive", "data": {}}
 
 
+def append_orchestration_event(run_id: str, event_type: str, payload: dict[str, Any]) -> int | None:
+    """Append a typed graph event through the service boundary without graph SQL access."""
+    run = get_run(run_id)
+    if run is None:
+        return None
+    event = append_event(run_id, run["version"], event_type, payload)
+    return int(event["event_id"])
+
+
+def get_orchestration_run(run_id: str) -> dict[str, Any] | None:
+    """Load a durable graph input through the run service boundary."""
+    return get_run(run_id)
+
+
 def _event_for_stream(event: dict[str, Any]) -> dict[str, Any]:
     return {
         "event_id": event["event_id"],
