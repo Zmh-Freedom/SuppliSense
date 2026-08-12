@@ -25,6 +25,7 @@ def _candidate(name: str, **overrides: object) -> dict:
         "supplier_id": f"supplier-{name}",
         "supplier_name": name,
         "categories": ["摄像头", "IP67"],
+        "specifications": ["IP67"],
         "regions": ["华东"],
         "status": "active",
         "qualifications": ["ISO9001"],
@@ -99,6 +100,27 @@ def test_sufficiency_requires_every_explicit_constraint_to_be_covered():
     assert discovery_service.is_candidate_supply_sufficient(
         candidates, _requirement(qualifications="ISO9001, ISO14001"), _policy()
     ) is False
+
+
+def test_category_coverage_without_specification_coverage_uses_external_provider(monkeypatch):
+    """Checking specifications against categories would skip needed external discovery."""
+    local = [
+        _candidate(
+            name,
+            categories=["摄像头", "IP67"],
+            specifications=["IP65"],
+        )
+        for name in ("a", "b", "c")
+    ]
+    monkeypatch.setattr(discovery_service, "search_local_suppliers", lambda *_: local)
+    external = Mock(return_value=[])
+    monkeypatch.setattr(discovery_service, "search_external_provider", external)
+
+    result = discovery_service.discover_candidates(_requirement(), _policy())
+
+    assert result["source"] == "local_and_external"
+    assert result["external_status"] == "staged"
+    external.assert_called_once_with(_requirement())
 
 
 def test_local_repository_search_filters_active_category_specification_region_and_qualification(

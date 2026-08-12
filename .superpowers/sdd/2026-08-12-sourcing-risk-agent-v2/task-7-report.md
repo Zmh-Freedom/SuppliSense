@@ -16,3 +16,9 @@
 ## Concerns
 
 - `search_external_provider()` is a no-op adapter until Task 11 supplies the governed timeout/retry provider implementation. On provider exceptions, discovery keeps local candidates and records a failed external status.
+
+## P1 Follow-up
+
+- Corrected sufficiency coverage to evaluate `requirement.specification` only against each candidate's `specifications` field, independently from `categories`.
+- Added a regression test where category metadata contains `IP67` but every real specification is `IP65`; the run now invokes the external provider instead of incorrectly declaring local supply sufficient.
+- Focused discovery plus supplier-creation boundary tests: 10 passed. Compile and diff checks passed.

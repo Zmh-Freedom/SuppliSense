@@ -31,7 +31,7 @@ def is_candidate_supply_sufficient(
 
     for field, candidate_field in (
         ("category", "categories"),
-        ("specification", "categories"),
+        ("specification", "specifications"),
         ("region", "regions"),
         ("qualifications", "qualifications"),
     ):
