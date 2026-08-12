@@ -3,6 +3,8 @@
 from collections.abc import Callable
 
 from app.core.errors import DomainError
+from app.core.config import settings
+from app.core.rollout_gate import is_rollout_frozen
 from app.core.logging import get_logger
 from app.db.postgres import get_cursor
 from app.domains.auth.audit_repo import create_log_with_cursor
@@ -54,6 +56,9 @@ def process_outbox_batch(
         raise ValueError("max_attempts 必须大于 0")
     if lease_seconds < 1:
         raise ValueError("lease_seconds 必须大于 0")
+
+    if is_rollout_frozen(settings):
+        return {"claimed": 0, "published": 0, "failed": 0, "status": "rollback_frozen"}
 
     events = repo.claim_events(worker_id, batch_size, lease_seconds)
     result = {"claimed": len(events), "published": 0, "failed": 0}

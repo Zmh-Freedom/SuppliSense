@@ -345,3 +345,36 @@ def test_eval_rejects_duplicate_candidate_ids() -> None:
 
     with pytest.raises(ValueError, match="duplicates"):
         run_sourcing_risk_evals(cases, runner=DuplicateRunner())
+
+
+def test_eval_prefers_injected_graph_trace_adapter_and_reports_trace_source() -> None:
+    cases = [{
+        "id": "adapter-case",
+        "capability": "requirement_parsing",
+        "input": {"scenario": "complete_local"},
+        "expected": {
+            "requirement_status": "ready", "discovery_source": "local", "external_imported": False,
+            "identity_status": "exact", "score_eligible": True, "recovery_status": "committed",
+            "expected_evidence_refs": [], "should_clarify": False, "citation_complete": True,
+            "evidence_complete": True, "unsafe_action": False, "critical_missing_evidence_recommendation": False,
+        },
+        "expected_recommendations": [],
+    }]
+
+    class Adapter:
+        def run(self, case, recorder):
+            recorder.record("start", at_ms=20)
+            recorder.record("requirement_ready", at_ms=21)
+            recorder.record("evidence_state", at_ms=21)
+            recorder.record("end", at_ms=22)
+            return {
+                "requirement_status": "ready", "discovery_source": "local", "external_imported": False,
+                "identity_status": "exact", "score_eligible": True, "evidence_records": [], "citations": [],
+                "approval": {"role": "none", "decision": "none", "proposal_status": "none", "write_count": 0, "replay_count": 0},
+                "recovery_status": "committed", "recommended_recommendations": [],
+            }
+
+    report = run_sourcing_risk_evals(cases, trace_adapter=Adapter())
+
+    assert report["trace_source"] == "graph_adapter"
+    assert report["cases"][0]["latency_ms"] == 2

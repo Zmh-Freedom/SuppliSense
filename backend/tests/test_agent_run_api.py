@@ -344,7 +344,7 @@ def test_agent_run_create_route_matrix_rejects_non_v2_users(
     assert response.json()["error"]["code"] == expected_code
 
 
-def test_shadow_create_runs_observation_graph_without_action_write(
+def test_shadow_create_rejects_before_persisting_or_starting_graph_legacy_slot(
     agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
 ):
     from app.core.config import settings
@@ -352,20 +352,54 @@ def test_shadow_create_runs_observation_graph_without_action_write(
 
     monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
     monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "shadow")
-    started: list[str] = []
-    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: {"id": RUN_ID, "status": "CREATED"})
-
-    async def start(run_id: str) -> None:
-        started.append(run_id)
-
-    async def schedule(coroutine):
-        await coroutine
-
-    monkeypatch.setattr(api, "start_sourcing_risk_graph", start)
-    monkeypatch.setattr(api, "_schedule_graph", schedule)
+    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: pytest.fail("shadow must not persist a V2 run"))
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", lambda *_: pytest.fail("shadow must not start a V2 graph"))
     response = agent_client.post("/api/v1/agent-runs", headers=agent_headers, json={"requirement_text": "采购工业摄像头"})
-    assert response.status_code == 200
-    assert started == [RUN_ID]
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "AGENT_RUN_V2_SHADOW_READ_ONLY"
+
+
+def test_shadow_create_rejects_before_persisting_or_starting_graph(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    from app.core.config import settings
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "shadow")
+    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: pytest.fail("shadow must not persist a V2 run"))
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", lambda *_: pytest.fail("shadow must not start a V2 graph"))
+
+    response = agent_client.post(
+        "/api/v1/agent-runs", headers=agent_headers, json={"requirement_text": "采购工业摄像头"}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "AGENT_RUN_V2_SHADOW_READ_ONLY"
+
+
+@pytest.mark.parametrize("endpoint", ["clarification", "identity-resolution"])
+def test_shadow_resume_rejects_before_domain_write_or_graph_resume(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch, endpoint: str
+):
+    from app.core.config import settings
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "shadow")
+    monkeypatch.setattr(api, "submit_clarification", lambda *_: pytest.fail("shadow must not write clarification"))
+    monkeypatch.setattr(api, "submit_identity_resolution", lambda *_: pytest.fail("shadow must not write identity"))
+    monkeypatch.setattr(api, "resume_sourcing_risk_graph", lambda *_: pytest.fail("shadow must not resume graph"))
+
+    payload = {"expected_version": 1, "answers": {"specification": "IP67"}}
+    if endpoint == "identity-resolution":
+        payload = {"expected_version": 1, "resolutions": {"candidate-a": "company-a"}}
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/{endpoint}", headers=agent_headers, json=payload
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "AGENT_RUN_V2_SHADOW_READ_ONLY"
 
 
 def test_identity_resolution_persists_input_then_resumes_v2_runner(

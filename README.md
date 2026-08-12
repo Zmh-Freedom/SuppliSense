@@ -486,12 +486,12 @@ python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import j
 | 阶段 | 创建/恢复 API | 用户响应 | 领域动作 | 放行条件 |
 |---|---|---|---|---|
 | disabled | legacy/拒绝 V2 | legacy | legacy API 语义 | `AGENT_RUN_V2_ENABLED=false`，不创建/调度 V2 Run |
-| shadow | V2 仅观测 | legacy | 禁止领域写入与审批 | 记录 V2 trace/metrics，响应不切换 |
+| shadow | 拒绝创建/恢复可执行 V2 | 409 read-only | 禁止领域写入、澄清、身份动作与审批 | 真实 trace 通过 `trace_adapter` 注入；无 adapter 时报告标记 `deterministic_fallback` |
 | internal | `admin`/`analyst` 进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | 角色 gate |
 | canary | 稳定 hash 命中者进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | `AGENT_RUN_V2_CANARY_PERCENT` |
 | default | 全部用户进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | promotion guard + 审批记录 |
 
-Shadow 的 V2 执行仅用于比较结果，不返回 V2 响应且不执行领域动作；Internal/Canary/Default 的 route decision 只控制进入 V2 graph，任何业务写入仍必须经过人工审批和 approved-only Outbox。`rollback_frozen` 对所有新建、澄清恢复、身份恢复和审批请求 fail-closed；在途 Run 保留 checkpoint 并暂停新步骤，pending proposal 冻结并人工复核，leased Outbox 停止新 lease，已有 lease 完成或过期后再验证恢复。
+Shadow 不创建或恢复可执行 V2 graph；create、澄清恢复、身份恢复和审批均 fail-closed，避免领域写入。Internal/Canary/Default 的 route decision 控制进入 V2 graph，任何业务写入仍必须经过人工审批和 approved-only Outbox。`rollback_frozen` 对所有新建、恢复和审批请求 fail-closed；在途 Run 保留 checkpoint 并暂停新步骤，pending proposal 冻结并人工复核，leased Outbox 停止新 lease，已有 lease 完成或过期后再验证恢复。当前进程通过 `rollback_rollout` latch 立即冻结，promotion 通过完整证据和审批后解除冻结。
 
 ### 灰度门槛、观测和回滚
 

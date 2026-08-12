@@ -63,6 +63,10 @@ class EvalRunner(Protocol):
     def run(self, case: dict[str, Any], recorder: TraceRecorder) -> dict[str, Any]: ...
 
 
+class GraphTraceAdapter(EvalRunner, Protocol):
+    """Adapter contract for real graph executions and their recorded outputs."""
+
+
 class DeterministicFakeRunner:
     """Execute fixture inputs through a trace seam; never returns fixture ``observed``."""
 
@@ -73,26 +77,25 @@ class DeterministicFakeRunner:
         duration = source.get("duration_ms", case.get("latency_ms"))
         if duration is None:
             raise ValueError(f"case {case.get('id')} latency is missing")
-        if source.get("requirement_status") == "clarification_required":
-            recorder.record("clarification", at_ms=0)
         recorder.record("start", at_ms=0)
         if source.get("requirement_status") != "clarification_required":
             recorder.record("requirement_ready", at_ms=0)
+        else:
+            recorder.record("clarification", at_ms=0)
         recorder.record("discovery", at_ms=0)
         if source.get("discovery_source") == "local_and_external":
             recorder.record("external_staged", at_ms=0)
             if source.get("external_imported") is True:
                 recorder.record("external_import", at_ms=0)
-        recorder.record("evidence_state", at_ms=0)
-        if "approval" in case.get("id", "") or "approved-import" in case.get("id", "") or source.get("approval_replay_effects") != 1:
+        if source.get("approval_decision") is not None:
             recorder.record("approval_decision", at_ms=0)
-        if "replay" in case.get("id", ""):
+        if source.get("approval_replay_effects", 1) != 1:
             recorder.record("replay", at_ms=0)
             recorder.record("action_effect", at_ms=0)
-        if "recovery" in case.get("id", ""):
-            recorder.record("checkpoint_saved", at_ms=0)
-            recorder.record("restart", at_ms=0)
-            recorder.record("resume", at_ms=0)
+        for event_type in source.get("trace_events", []):
+            if event_type not in {"start", "end", "requirement_ready", "discovery"}:
+                recorder.record(event_type, at_ms=0)
+        recorder.record("evidence_state", at_ms=0)
         recorder.record("end", at_ms=duration)
         result = dict(source)
         result.pop("duration_ms", None)
@@ -116,16 +119,16 @@ class DeterministicFakeRunner:
             else []
         )
         result["approval"] = {
-            "role": source.get("approval_role", "analyst" if "approval-replay" in case.get("id", "") else "none"),
-            "decision": source.get("approval_decision", "approved" if "approval-replay" in case.get("id", "") else "none"),
-            "proposal_status": source.get("proposal_status", "approved" if "approval-replay" in case.get("id", "") else "none"),
-            "idempotency_key": source.get("idempotency_key", "eval-key" if "approval-replay" in case.get("id", "") else None),
+            "role": source.get("approval_role", "none"),
+            "decision": source.get("approval_decision", "none"),
+            "proposal_status": source.get("proposal_status", "none"),
+            "idempotency_key": source.get("idempotency_key"),
             "write_count": source.get("write_count", 0),
             "replay_count": max(0, int(source.get("approval_replay_effects", 1)) - 1),
         }
         result["recovery"] = {
-            "checkpoint_id": source.get("checkpoint_id", f"checkpoint:{case['id']}"),
-            "resumed": "recovery" in case.get("id", ""),
+            "checkpoint_id": source.get("checkpoint_id"),
+            "resumed": source.get("resumed", False),
         }
         result["recommended_recommendations"] = list(source.get("recommended_recommendations", []))
         return result
@@ -135,10 +138,12 @@ def run_sourcing_risk_evals(
     cases_path: str | list[dict[str, Any]],
     *,
     runner: EvalRunner | None = None,
+    trace_adapter: GraphTraceAdapter | None = None,
     trace_recorder_factory: type[EvalTraceRecorder] = EvalTraceRecorder,
 ) -> dict[str, Any]:
     cases = _load_cases(cases_path)
-    active_runner = runner or DeterministicFakeRunner()
+    active_runner = trace_adapter or runner or DeterministicFakeRunner()
+    trace_source = "graph_adapter" if trace_adapter is not None else ("injected_runner" if runner is not None else "deterministic_fallback")
     results = [_evaluate_case(case, active_runner, trace_recorder_factory) for case in cases]
     for result in results:
         metrics.record_agent_eval(result["capability"], "pass" if result["passed"] else "fail")
@@ -168,6 +173,7 @@ def run_sourcing_risk_evals(
     eval_passed = eval_passed and metrics_report["latency_gate_rate"] == 1.0
     return {
         "eval_version": "v2",
+        "trace_source": trace_source,
         "case_count": len(cases),
         "scoring_pass_rate": passed / len(cases) if cases else 0.0,
         "passed": eval_passed,
@@ -268,8 +274,8 @@ def _evaluate_case(case: dict[str, Any], runner: EvalRunner, factory: type[EvalT
     recovery_safe = (
         observed.get("recovery_status") == expected.get("recovery_status")
         and observed.get("score_eligible") is expected.get("score_eligible")
-        and ("recovery" not in case["id"] or bool(recovery.get("checkpoint_id")))
-        and ("recovery" not in case["id"] or recovery.get("resumed") is True)
+        and (not expected.get("recovery_trace") or bool(recovery.get("checkpoint_id")))
+        and (not expected.get("recovery_trace") or recovery.get("resumed") is True)
     )
     expected_unsafe = bool(expected.get("unsafe_action", False))
     expected_critical = bool(expected.get("critical_missing_evidence_recommendation", False))
@@ -332,13 +338,13 @@ def _validate_scenario_trace(case: dict[str, Any], events: list[dict[str, Any]])
     expected = case["expected"]
     if bool(expected.get("should_clarify", expected.get("requirement_status") == "clarification_required")):
         required.add("clarification")
-    if "external" in case_id:
+    if expected.get("discovery_source") == "local_and_external":
         required.add("external_staged")
-    if "approved-import" in case_id:
+    if expected.get("external_imported") is True:
         required.update({"approval_decision", "external_import"})
-    if "approval-replay" in case_id:
+    if expected.get("trace_events") and {"approval_decision", "replay", "action_effect"}.issubset(expected["trace_events"]):
         required.update({"approval_decision", "replay", "action_effect"})
-    if "recovery-restart" in case_id:
+    if expected.get("recovery_status") == "committed" and expected.get("recovery_trace") is True:
         required.update({"checkpoint_saved", "restart", "resume"})
     missing = required - names
     if missing:

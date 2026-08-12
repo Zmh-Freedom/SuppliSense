@@ -25,6 +25,12 @@ THRESHOLDS: dict[str, float] = {
     "local_candidate_p95_ms": 90000.0,
 }
 MIN_SAMPLE_COUNTS = {"shadow": 12, "internal": 50, "canary": 100}
+_ROLLBACK_FROZEN = False
+
+
+def is_rollout_frozen(config: Any) -> bool:
+    """Return the process-local fail-closed latch and configured state."""
+    return _ROLLBACK_FROZEN or getattr(config, "AGENT_RUN_V2_ROLLOUT_STATE", None) == "rollback_frozen"
 
 
 def check_promotion(
@@ -96,15 +102,19 @@ def check_rollback(stage: str, *, reason: str, in_flight: dict[str, int] | None 
 
 def promote_rollout(config: Any, current_stage: str, evidence: dict[str, Any], *, approval: dict[str, Any] | None = None) -> dict[str, Any]:
     """Apply an approved promotion to the runtime config; fail closed otherwise."""
+    global _ROLLBACK_FROZEN
     result = check_promotion(current_stage, evidence, approval=approval)
     if result["allowed"]:
         config.AGENT_RUN_V2_ROLLOUT = result["target_stage"]
         config.AGENT_RUN_V2_ROLLOUT_STATE = "active"
+        _ROLLBACK_FROZEN = False
     return result
 
 
 def rollback_rollout(config: Any, stage: str, *, reason: str, in_flight: dict[str, int] | None = None) -> dict[str, Any]:
     """Freeze new V2 and Shadow work before operators drain durable in-flight work."""
+    global _ROLLBACK_FROZEN
     result = check_rollback(stage, reason=reason, in_flight=in_flight)
     config.AGENT_RUN_V2_ROLLOUT_STATE = "rollback_frozen"
+    _ROLLBACK_FROZEN = True
     return result

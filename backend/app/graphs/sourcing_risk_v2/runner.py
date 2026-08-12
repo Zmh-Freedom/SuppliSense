@@ -9,6 +9,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
 from app.domains.agent_run.service import get_orchestration_run
+from app.core.config import settings
+from app.core.errors import DomainError
+from app.core.rollout_gate import is_rollout_frozen
 from app.graphs.sourcing_risk_v2 import nodes
 from app.graphs.sourcing_risk_v2.checkpointer import compile_sourcing_risk_graph, get_sourcing_risk_checkpointer
 from app.graphs.sourcing_risk_v2.state import SourcingRiskGraphState
@@ -58,6 +61,8 @@ async def resume_sourcing_risk_graph(run_id: str, resume_payload: dict[str, Any]
 
 
 async def _start(run_id: str) -> None:
+    if is_rollout_frozen(settings):
+        raise DomainError("AGENT_RUN_V2_ROLLBACK_FROZEN", "Agent V2 已回滚冻结，禁止启动或恢复", 409)
     run = await asyncio.to_thread(get_orchestration_run, run_id)
     if run is None:
         raise ValueError("agent run 不存在")
@@ -67,6 +72,8 @@ async def _start(run_id: str) -> None:
 
 
 async def _resume(run_id: str, resume_payload: dict[str, Any]) -> None:
+    if is_rollout_frozen(settings):
+        raise DomainError("AGENT_RUN_V2_ROLLBACK_FROZEN", "Agent V2 已回滚冻结，禁止启动或恢复", 409)
     checkpointer = await get_sourcing_risk_checkpointer()
     graph = build_sourcing_risk_graph(checkpointer)
     await graph.ainvoke(Command(resume=resume_payload), _config(run_id))

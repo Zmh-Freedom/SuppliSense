@@ -360,6 +360,24 @@ def test_process_outbox_batch_records_success_and_skips_repeated_delivery(monkey
         _delete_event(str(event_id))
 
 
+def test_process_outbox_batch_does_not_claim_new_work_when_rollout_is_frozen(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT_STATE", "rollback_frozen")
+    monkeypatch.setattr(
+        outbox_service.repo,
+        "claim_events",
+        lambda *_: pytest.fail("rollback must stop new leases before claim"),
+    )
+
+    assert process_outbox_batch("frozen-worker", 1, 3, 60) == {
+        "claimed": 0,
+        "published": 0,
+        "failed": 0,
+        "status": "rollback_frozen",
+    }
+
+
 def test_outbox_consumption_unique_key_rejects_duplicate_delivery_record(monkeypatch):
     """Dropping the schema's consumer key would let one event be recorded as consumed twice."""
     ensure_pg_schema()

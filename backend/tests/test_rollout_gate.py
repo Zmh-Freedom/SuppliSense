@@ -1,4 +1,11 @@
-from app.core.rollout_gate import check_promotion, check_rollback
+from app.core.rollout_gate import (
+    check_promotion,
+    check_rollback,
+    is_rollout_frozen,
+    promote_rollout,
+    rollback_rollout,
+)
+from app.core.config import Settings
 
 
 def _evidence() -> dict:
@@ -69,3 +76,22 @@ def test_latency_thresholds_are_lower_is_better_and_rollback_handles_runs():
     rollback = check_rollback("canary", reason="unsafe action", in_flight={"runs": 2, "pending_proposals": 1, "leased_outbox": 2})
     assert rollback["in_flight_runs"]["pause_new_steps"] is True
     assert rollback["rollout_state"] == "rollback_frozen"
+
+
+def test_rollback_rollout_freezes_runtime_and_promotion_unfreezes_it():
+    config = Settings(_env_file=None, AGENT_RUN_V2_ENABLED=True, AGENT_RUN_V2_ROLLOUT="canary")
+    frozen = rollback_rollout(config, "canary", reason="unsafe action")
+
+    assert frozen["rollout_state"] == "rollback_frozen"
+    assert is_rollout_frozen(config) is True
+
+    promoted = promote_rollout(
+        config,
+        "canary",
+        _evidence(),
+        approval={"decision": "approved", "approver_id": "admin", "record_id": "approval"},
+    )
+
+    assert promoted["allowed"] is True
+    assert config.AGENT_RUN_V2_ROLLOUT_STATE == "active"
+    assert is_rollout_frozen(config) is False

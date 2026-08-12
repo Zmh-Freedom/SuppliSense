@@ -50,6 +50,10 @@ async def _schedule_graph(coroutine: Coroutine[Any, Any, None]) -> None:
 
 
 def _require_v2_route(user: UserInDB, *, allow_shadow: bool = True) -> str:
+    from app.core.rollout_gate import is_rollout_frozen
+
+    if is_rollout_frozen(settings):
+        raise DomainError("AGENT_RUN_V2_ROLLBACK_FROZEN", "Agent V2 已回滚冻结，禁止新建或恢复", 409)
     route = agent_run_v2_route(user.id, user.role.value, settings)
     if route == "legacy":
         if settings.AGENT_RUN_V2_ROLLOUT_STATE == "rollback_frozen":
@@ -64,7 +68,7 @@ def _require_v2_route(user: UserInDB, *, allow_shadow: bool = True) -> str:
 
 @router.post("", summary="创建寻源风险任务")
 async def create_agent_run(data: CreateSourcingRiskRunRequest, current_user: UserInDB = Depends(get_current_user)):
-    _require_v2_route(current_user)
+    _require_v2_route(current_user, allow_shadow=False)
     run = await asyncio.to_thread(create_sourcing_risk_run, data, current_user.id, current_user.role.value)
     await _schedule_graph(start_sourcing_risk_graph(str(run["id"])))
     return run
@@ -115,7 +119,7 @@ async def get_agent_run_events(
 
 @router.post("/{run_id}/clarification", summary="提交澄清答案")
 async def clarify_agent_run(run_id: UUID, data: ClarificationRequest, current_user: UserInDB = Depends(get_current_user)):
-    _require_v2_route(current_user)
+    _require_v2_route(current_user, allow_shadow=False)
     run = await asyncio.to_thread(submit_clarification, str(run_id), data, current_user.id, current_user.role.value)
     await _schedule_graph(
         resume_sourcing_risk_graph(str(run_id), {"requirement_input": dict(run.get("requirement") or {})})
@@ -129,7 +133,7 @@ async def resolve_agent_run_identity(
     data: IdentityResolutionRequest,
     current_user: UserInDB = Depends(get_current_user),
 ):
-    _require_v2_route(current_user)
+    _require_v2_route(current_user, allow_shadow=False)
     run = await asyncio.to_thread(submit_identity_resolution, str(run_id), data, current_user.id, current_user.role.value)
     await _schedule_graph(resume_sourcing_risk_graph(str(run_id), {"identity_resolutions": dict(data.resolutions)}))
     return run

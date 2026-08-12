@@ -10,6 +10,8 @@
 - Eval `passed` 现在同时受实际 trace latency、macro precision/recall、citation/evidence completeness、unsafe action、critical missing evidence 和 clarification expected-vs-observed gates 约束；trace 必须有非负 start/end，duration 为 `end-start`。
 - Promotion latency 按实际 P95 `<= threshold` 判断；promotion/rollback guard 提供 config 状态转换，rollback 设置 `rollback_frozen`，拒绝新 V2/Shadow 请求并明确暂停在途 Run、冻结 proposal、停止新 Outbox lease 和完成/过期既有 lease 的处置。
 - API route 矩阵覆盖 disabled/shadow/internal/canary/default；legacy API 返回结构保持不变，Shadow 仅观测且审批/领域写入被阻断。
+- 第三轮：`create`、澄清恢复和身份恢复在 Shadow 直接返回 read-only 409，不创建/恢复可执行 V2 graph；rollback latch 接入 API、graph runner 和 Outbox worker，停止新 V2 action/lease，promotion 成功后解除当前进程冻结。
+- Eval 增加 `GraphTraceAdapter` 注入接口和 `trace_source` 报告字段；默认 deterministic runner 仅 fallback，关键 approval/recovery 事件不再根据 case ID 伪造。
 
 ## 交付
 
