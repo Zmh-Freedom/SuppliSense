@@ -138,8 +138,8 @@ def _upsert_raw_payload_compensations_with_cursor(
         cur.execute(
             """
             INSERT INTO agent_raw_payload_compensations
-                (run_id, raw_payload_ref, company_id, status, last_error)
-            VALUES (%s, %s, %s, 'pending_compensation', %s)
+                (run_id, raw_payload_ref, company_id, staging_owner, status, last_error)
+            VALUES (%s, %s, %s, %s, 'pending_compensation', %s)
             ON CONFLICT (run_id, raw_payload_ref) DO UPDATE SET
                 status = CASE
                     WHEN agent_raw_payload_compensations.status = 'compensated'
@@ -147,12 +147,14 @@ def _upsert_raw_payload_compensations_with_cursor(
                     ELSE 'pending_compensation'
                 END,
                 last_error = EXCLUDED.last_error,
+                staging_owner = EXCLUDED.staging_owner,
                 updated_at = NOW()
             """,
             (
                 compensation["run_id"],
                 compensation["raw_payload_ref"],
                 compensation.get("company_id"),
+                compensation["staging_owner"],
                 compensation.get("last_error"),
             ),
         )
@@ -162,7 +164,7 @@ def list_raw_payload_compensations(run_id: str) -> list[dict[str, Any]]:
     with get_cursor() as (_, cur):
         cur.execute(
             """
-            SELECT run_id, raw_payload_ref, company_id, status, attempt_count, last_error
+            SELECT run_id, raw_payload_ref, company_id, staging_owner, status, attempt_count, last_error
             FROM agent_raw_payload_compensations
             WHERE run_id = %s
             ORDER BY created_at ASC

@@ -127,3 +127,11 @@ def test_agent_evidence_schema_owns_a_required_company_id_with_compatible_upgrad
     assert "ALTER TABLE agent_evidence ADD COLUMN IF NOT EXISTS company_id UUID" in ddl
     assert "ALTER COLUMN company_id SET NOT NULL" in ddl
     assert "idx_agent_evidence_company" in indexes
+
+
+def test_raw_payload_compensation_schema_requires_recovery_owner():
+    ddl = "\n".join(init_pg.DDL_STATEMENTS)
+
+    assert "CREATE TABLE IF NOT EXISTS agent_raw_payload_compensations" in ddl
+    assert "staging_owner VARCHAR(255) NOT NULL" in ddl
+    assert "ALTER TABLE agent_raw_payload_compensations ADD COLUMN IF NOT EXISTS staging_owner" in ddl

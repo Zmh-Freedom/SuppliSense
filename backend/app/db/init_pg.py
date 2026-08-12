@@ -223,6 +223,7 @@ DDL_STATEMENTS = [
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
         raw_payload_ref VARCHAR(255) NOT NULL,
         company_id UUID,
+        staging_owner VARCHAR(255) NOT NULL,
         status VARCHAR(32) NOT NULL DEFAULT 'pending_compensation',
         attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
         last_error TEXT,
@@ -231,6 +232,9 @@ DDL_STATEMENTS = [
         PRIMARY KEY (run_id, raw_payload_ref)
     )
     """,
+    "ALTER TABLE agent_raw_payload_compensations ADD COLUMN IF NOT EXISTS staging_owner VARCHAR(255)",
+    "UPDATE agent_raw_payload_compensations SET staging_owner = 'legacy-recovery' WHERE staging_owner IS NULL",
+    "ALTER TABLE agent_raw_payload_compensations ALTER COLUMN staging_owner SET NOT NULL",
     """
     CREATE TABLE IF NOT EXISTS sourcing_policy_templates (
         id UUID PRIMARY KEY,

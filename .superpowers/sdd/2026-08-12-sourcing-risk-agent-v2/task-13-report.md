@@ -175,3 +175,23 @@ git diff --check
 ```
 
 The broader PostgreSQL-backed integration suite remains environment-dependent on `localhost:5432`.
+
+## Final P1 repair — recovery fail-closed and commit ambiguity
+
+### Delivered
+
+- Compensation index reads/writes now fail explicitly with `AGENT_RUN_RECOVERY_UNAVAILABLE`; detail and retry never turn an unavailable recovery index into an empty result.
+- PostgreSQL snapshot/status/event success followed by Mongo commit failure records a durable `(run_id, raw_payload_ref, staging_owner)` recovery row, attempts owned cleanup, and keeps detail/decision eligibility fail-closed while raw evidence is pending recovery.
+- Stage, commit, compensate, and retry use the same staging owner; cleanup selectors include owner and cannot delete another attempt's record. Ambiguous Mongo acknowledgement confirmation failures become `RawPayloadStagingError` inputs to the durable recovery path.
+- Compensation schema initialization now verifies `staging_owner` exists, backfills legacy rows with `legacy-recovery`, and enforces `NOT NULL`; duplicate stage/commit/retry behavior remains idempotent and the PyMongo `matched_count` contract is preserved.
+
+### Verification
+
+```text
+cd backend && pytest -q tests/test_sourcing_risk_evidence_service.py tests/test_agent_run_service.py tests/test_sourcing_risk_graph.py tests/test_agent_run_api.py  # 72 passed
+cd backend && pytest -q tests/test_agent_run_models.py::test_raw_payload_compensation_schema_requires_recovery_owner  # 1 passed
+cd backend && python -m compileall -q app  # passed
+git diff --check  # passed
+```
+
+The focused tests use stateful fakes; PostgreSQL/Mongo integration remains environment-dependent on local service availability. This is an explicit retryable cross-store compensation design and does not claim cross-store ACID.

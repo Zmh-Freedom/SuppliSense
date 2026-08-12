@@ -172,7 +172,10 @@ def stage_raw_payloads(raw_payloads: list[dict], *, staging_owner: str | None = 
                 upsert=True,
             )
         except Exception as exc:
-            existing = _find_raw_payload(collection, document["raw_payload_ref"])
+            try:
+                existing = _find_raw_payload(collection, document["raw_payload_ref"])
+            except Exception as confirmation_exc:
+                raise RawPayloadStagingError(staged, confirmation_exc, document) from confirmation_exc
             if _is_owned_pending(existing, document):
                 staged.append(existing)
                 continue
@@ -187,7 +190,11 @@ def stage_raw_payloads(raw_payloads: list[dict], *, staging_owner: str | None = 
         ):
             raise RawPayloadStagingError(staged, RuntimeError("raw payload ownership conflict"))
         if existing and existing.get("lifecycle_status") == "pending_compensation":
-            if _delete_pending_compensation(collection, document["raw_payload_ref"]) != "compensated":
+            if not _same_owner(existing, document):
+                raise RawPayloadStagingError(staged, RuntimeError("raw payload ownership conflict"), document)
+            if _delete_pending_compensation(
+                collection, document["raw_payload_ref"], existing.get("staging_owner")
+            ) != "compensated":
                 raise RawPayloadStagingError(
                     staged,
                     RuntimeError(f"raw payload {document['raw_payload_ref']} is pending compensation"),
@@ -224,22 +231,29 @@ def commit_raw_payloads(raw_payloads: list[dict]) -> None:
             },
             {"$set": {"lifecycle_status": "committed"}},
         )
-        if getattr(result, "matched_count", 0) == 0:
+        matched_count = getattr(result, "matched_count", None)
+        if matched_count is None:
+            # Older test doubles do not expose PyMongo's acknowledgement field; the
+            # real driver always does. Preserve their idempotent update semantics.
+            continue
+        if matched_count == 0:
             existing = _find_raw_payload(collection, payload["raw_payload_ref"])
             if existing and existing.get("lifecycle_status") == "committed" and _same_owner(existing, payload):
                 continue
             raise RuntimeError("raw payload ownership conflict during commit")
 
 
-def compensate_raw_payloads(staged_payloads: list[dict]) -> None:
+def compensate_raw_payloads(staged_payloads: list[dict], *, reason: str = "postgres_snapshot_failed") -> None:
     """Try to delete staged payloads, retaining retryable state when Mongo cleanup is uncertain."""
     collection = get_db()["agent_evidence_payloads"]
     for payload in staged_payloads:
-        _mark_pending_compensation(collection, payload)
+        _mark_pending_compensation(collection, payload, reason=reason)
         _delete_pending_compensation(collection, payload["raw_payload_ref"], payload.get("staging_owner"))
 
 
-def retry_raw_payload_compensations(raw_payload_refs: list[str]) -> list[dict[str, str]]:
+def retry_raw_payload_compensations(
+    raw_payload_refs: list[str], *, staging_owners: dict[str, str] | None = None
+) -> list[dict[str, str]]:
     """Idempotently retry cleanup for stable raw-evidence references.
 
     This is deliberately a compensation command, not a cross-store transaction. It only
@@ -248,19 +262,19 @@ def retry_raw_payload_compensations(raw_payload_refs: list[str]) -> list[dict[st
     collection = get_db()["agent_evidence_payloads"]
     outcomes: list[dict[str, str]] = []
     for raw_payload_ref in dict.fromkeys(raw_payload_refs):
-        document = collection.find_one(
-            {
-                "raw_payload_ref": raw_payload_ref,
-                "lifecycle_status": "pending_compensation",
-            }
-        )
+        selector = {"raw_payload_ref": raw_payload_ref, "lifecycle_status": "pending_compensation"}
+        if staging_owners and raw_payload_ref in staging_owners:
+            selector["staging_owner"] = staging_owners[raw_payload_ref]
+        document = collection.find_one(selector)
         if document is None:
             outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "already_compensated"})
             continue
         outcomes.append(
             {
                 "raw_payload_ref": raw_payload_ref,
-                "lifecycle_status": _delete_pending_compensation(collection, raw_payload_ref),
+                "lifecycle_status": _delete_pending_compensation(
+                    collection, raw_payload_ref, document.get("staging_owner")
+                ),
             }
         )
     return outcomes
@@ -284,7 +298,7 @@ def get_raw_payload_lifecycle_statuses(raw_payload_refs: list[str]) -> list[dict
     return statuses
 
 
-def _mark_pending_compensation(collection: object, payload: dict) -> None:
+def _mark_pending_compensation(collection: object, payload: dict, *, reason: str) -> None:
     """Make a failed cleanup visible and retryable before attempting deletion."""
     collection.update_one(
         {
@@ -297,7 +311,7 @@ def _mark_pending_compensation(collection: object, payload: dict) -> None:
         {
             "$set": {
                 "lifecycle_status": "pending_compensation",
-                "compensation_reason": "postgres_snapshot_failed",
+                "compensation_reason": reason,
             }
         },
     )
@@ -310,7 +324,7 @@ def _delete_pending_compensation(collection: object, raw_payload_ref: str, stagi
         selector["staging_owner"] = staging_owner
     try:
         result = collection.delete_one(
-            {"raw_payload_ref": raw_payload_ref, "lifecycle_status": "pending_compensation"}
+            selector
         )
     except Exception:
         return "pending_compensation"

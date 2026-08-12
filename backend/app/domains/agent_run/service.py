@@ -3,7 +3,7 @@
 import time
 from collections.abc import Iterator
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from app.core.errors import DomainError
 from app.db.postgres import get_cursor
@@ -77,6 +77,14 @@ def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str
     detail = get_run_detail_collections(run_id)
     compensations = get_raw_payload_compensations(run_id)
     raw_payload_refs = _raw_payload_refs(detail["evidence_by_company_id"])
+    try:
+        mongo_statuses = get_raw_payload_lifecycle_statuses(raw_payload_refs)
+    except Exception as exc:
+        raise DomainError(
+            "AGENT_RUN_RECOVERY_UNAVAILABLE", "原始证据恢复状态不可用，请稍后重试", 503
+        ) from exc
+    raw_payload_statuses = _merge_compensation_statuses(mongo_statuses, compensations)
+    detail = _fail_closed_for_raw_payload_recovery(detail, raw_payload_statuses)
     response = AgentRunResponse(
         id=run["id"],
         run_id=run["id"],
@@ -95,9 +103,7 @@ def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str
         **response,
         "id": run["id"],
         "proposals": response["action_proposals"],
-        "raw_payload_statuses": _merge_compensation_statuses(
-            get_raw_payload_lifecycle_statuses(raw_payload_refs), compensations
-        ),
+        "raw_payload_statuses": raw_payload_statuses,
     }
 
 
@@ -110,7 +116,21 @@ def retry_sourcing_risk_raw_payload_compensations(
     compensations = get_raw_payload_compensations(run_id)
     refs = _raw_payload_refs(detail["evidence_by_company_id"])
     refs.extend(item["raw_payload_ref"] for item in compensations)
-    outcomes = retry_raw_payload_compensations(refs)
+    staging_owners = {
+        item["raw_payload_ref"]: item["staging_owner"]
+        for item in compensations
+        if item.get("staging_owner")
+    }
+    try:
+        outcomes = (
+            retry_raw_payload_compensations(refs, staging_owners=staging_owners)
+            if staging_owners
+            else retry_raw_payload_compensations(refs)
+        )
+    except Exception as exc:
+        raise DomainError(
+            "AGENT_RUN_RECOVERY_UNAVAILABLE", "原始证据补偿重试不可用，请稍后重试", 503
+        ) from exc
     compensation_refs = {item["raw_payload_ref"] for item in compensations}
     for outcome in outcomes:
         if isinstance(outcome, dict) and outcome["raw_payload_ref"] in compensation_refs:
@@ -121,8 +141,40 @@ def retry_sourcing_risk_raw_payload_compensations(
 def get_raw_payload_compensations(run_id: str) -> list[dict[str, Any]]:
     try:
         return list_raw_payload_compensations(run_id)
-    except Exception:
-        return []
+    except Exception as exc:
+        raise DomainError(
+            "AGENT_RUN_RECOVERY_UNAVAILABLE", "原始证据补偿索引不可用，请稍后重试", 503
+        ) from exc
+
+
+def _fail_closed_for_raw_payload_recovery(
+    detail: dict[str, Any], statuses: list[dict[str, str]]
+) -> dict[str, Any]:
+    unsafe = {
+        "pending",
+        "pending_compensation",
+        "orphan",
+        "unknown",
+    }
+    if not any(item.get("lifecycle_status") in unsafe for item in statuses):
+        return detail
+    reason = "RAW_PAYLOAD_RECOVERY_REQUIRED"
+    return {
+        **detail,
+        "candidates": [
+            {**candidate, "score_eligible": False, "recovery_required": True}
+            for candidate in detail["candidates"]
+        ],
+        "decisions": [
+            {
+                **decision,
+                "score_eligible": False,
+                "recovery_required": True,
+                "reason_codes": list(dict.fromkeys([*(decision.get("reason_codes") or []), reason])),
+            }
+            for decision in detail["decisions"]
+        ],
+    }
 
 
 def _merge_compensation_statuses(
@@ -313,12 +365,11 @@ def persist_orchestration_snapshot(
         target = AgentRunStatus(status)
     except ValueError as exc:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
-    staging_owner = str(uuid4())
+    staging_owner = _staging_owner(run_id, raw_payloads or [])
     try:
         staged_payloads = stage_raw_payloads(raw_payloads or [], staging_owner=staging_owner)
     except RawPayloadStagingError as exc:
-        _record_compensations(exc.compensation_payloads, "mongo_staging_failed")
-        compensate_raw_payloads(exc.compensation_payloads)
+        _record_and_compensate(exc.compensation_payloads, "mongo_staging_failed")
         raise
     try:
         with get_cursor() as (_, cur):
@@ -345,10 +396,13 @@ def persist_orchestration_snapshot(
                 cur=cur,
             )
     except Exception:
-        _record_compensations(staged_payloads, "postgres_snapshot_failed")
-        compensate_raw_payloads(staged_payloads)
+        _record_and_compensate(staged_payloads, "postgres_snapshot_failed")
         raise
-    commit_raw_payloads(staged_payloads)
+    try:
+        commit_raw_payloads(staged_payloads)
+    except Exception:
+        _record_and_compensate(staged_payloads, "mongo_commit_failed")
+        raise
     return snapshot
 
 
@@ -361,13 +415,39 @@ def _record_compensations(payloads: list[dict[str, Any]], reason: str) -> None:
                     "raw_payload_ref": payload["raw_payload_ref"],
                     "company_id": payload.get("company_id"),
                     "last_error": reason,
+                    "staging_owner": payload["staging_owner"],
                 }
                 for payload in payloads
             ]
         )
-    except Exception:
-        # Mongo remains explicitly pending and can be recovered by an operator.
-        return
+    except Exception as exc:
+        raise DomainError(
+            "AGENT_RUN_RECOVERY_UNAVAILABLE", "原始证据补偿记录无法持久化，请立即重试", 503
+        ) from exc
+
+
+def _record_and_compensate(payloads: list[dict[str, Any]], reason: str) -> None:
+    """Persist recovery metadata and always attempt owned Mongo cleanup."""
+    record_error: Exception | None = None
+    try:
+        _record_compensations(payloads, reason)
+    except Exception as exc:
+        record_error = exc
+    try:
+        compensate_raw_payloads(payloads, reason=reason)
+    except Exception as cleanup_error:
+        if record_error is None:
+            record_error = cleanup_error
+    if record_error is not None:
+        raise record_error
+
+
+def _staging_owner(run_id: str, raw_payloads: list[dict[str, Any]]) -> str:
+    refs = sorted(str(payload["raw_payload_ref"]) for payload in raw_payloads)
+    try:
+        return str(uuid5(UUID(run_id), f"raw-stage:{'|'.join(refs)}"))
+    except (AttributeError, TypeError, ValueError):
+        return str(uuid4())
 
 
 def get_orchestration_run(run_id: str) -> dict[str, Any] | None:
