@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.core.config import Settings, agent_run_v2_route
 from app.core import metrics
-from app.evals.sourcing_risk import ProductionGraphTraceAdapter, run_sourcing_risk_evals
+from app.evals.sourcing_risk import EvalTraceRecorder, ProductionGraphTraceAdapter, run_sourcing_risk_evals
 
 
 FIXTURE_PATH = Path(__file__).parent / "evals" / "sourcing_risk_cases.json"
@@ -44,6 +44,27 @@ def test_production_graph_trace_adapter_forwards_real_executor_trace() -> None:
 
     assert result == {"result": "from-production-graph"}
     assert observed[0][0] == "real"
+
+
+def test_production_graph_trace_adapter_reads_snapshot_events_into_eval_trace() -> None:
+    """Eval must consume the recorder snapshot produced by the production runner."""
+    def execute(case, recorder):
+        recorder.record("start", at_ms=3)
+        recorder.record("node_end", at_ms=7, node="load_run")
+        recorder.record("end", at_ms=11)
+        recorder.set_result({"from": "real-graph"})
+        return recorder.snapshot()
+
+    adapter = ProductionGraphTraceAdapter(execute)
+    recorder = EvalTraceRecorder()
+    result = adapter.run({"id": "real"}, recorder)
+
+    assert result == {"from": "real-graph"}
+    assert [(event["type"], event["at_ms"]) for event in recorder.events] == [
+        ("start", 3),
+        ("node_end", 7),
+        ("end", 11),
+    ]
 
 
 class _FixtureGraphAdapter:

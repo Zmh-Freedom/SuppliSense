@@ -177,6 +177,18 @@ def check_rollback(stage: str, *, reason: str, in_flight: dict[str, int] | None 
     }
 
 
+def execute_rollback_disposition() -> dict[str, int]:
+    """Apply rollback handling to durable V2 work without deleting any records."""
+    from app.domains.agent_run import repo as agent_run_repo
+    from app.domains.outbox import repo as outbox_repo
+
+    return {
+        "runs_frozen": agent_run_repo.freeze_in_flight_v2_runs(),
+        "proposals_frozen": agent_run_repo.freeze_pending_v2_proposals(),
+        "outbox_cancelled": outbox_repo.cancel_leased_v2_action_events(),
+    }
+
+
 def promote_rollout(config: Any, current_stage: str, evidence: dict[str, Any], *, approval: dict[str, Any] | None = None, store: RolloutStateStore | None = None) -> dict[str, Any]:
     """Apply an approved promotion to the runtime config; fail closed otherwise."""
     result = check_promotion(current_stage, evidence, approval=approval)
@@ -197,5 +209,14 @@ def rollback_rollout(config: Any, stage: str, *, reason: str, in_flight: dict[st
         (store or get_rollout_state_store()).set("rollback_frozen", stage)
     except Exception:
         return {**result, "allowed": False, "rollout_state": "unavailable", "reasons": ["rollout_control_plane_unavailable"]}
+    try:
+        execution = execute_rollback_disposition()
+    except Exception:
+        return {
+            **result,
+            "allowed": False,
+            "rollout_state": "rollback_frozen",
+            "reasons": ["rollback_disposition_unavailable"],
+        }
     config.AGENT_RUN_V2_ROLLOUT_STATE = "rollback_frozen"
-    return result
+    return {**result, "execution": execution}

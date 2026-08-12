@@ -48,6 +48,7 @@ TERMINAL_STATUSES = frozenset(
         AgentRunStatus.ACTION_FAILED.value,
         AgentRunStatus.FAILED.value,
         AgentRunStatus.CANCELLED.value,
+        AgentRunStatus.ROLLBACK_FROZEN.value,
     }
 )
 

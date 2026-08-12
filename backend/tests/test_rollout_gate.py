@@ -122,3 +122,21 @@ def test_rollout_state_is_visible_to_independent_readers_and_pg_failure_fails_cl
     blocked = rollback_rollout(config, "canary", reason="unsafe action", store=BrokenStore())
     assert blocked["allowed"] is False
     assert "rollout_control_plane_unavailable" in blocked["reasons"]
+
+
+def test_rollback_rollout_executes_durable_in_flight_disposition(monkeypatch):
+    config = Settings(_env_file=None, AGENT_RUN_V2_ENABLED=True, AGENT_RUN_V2_ROLLOUT="canary")
+    store = InMemoryRolloutStateStore()
+    monkeypatch.setattr(
+        "app.core.rollout_gate.execute_rollback_disposition",
+        lambda: {"runs_frozen": 2, "proposals_frozen": 1, "outbox_cancelled": 3},
+    )
+
+    result = rollback_rollout(config, "canary", reason="unsafe action", store=store)
+
+    assert result["allowed"] is True
+    assert result["execution"] == {
+        "runs_frozen": 2,
+        "proposals_frozen": 1,
+        "outbox_cancelled": 3,
+    }

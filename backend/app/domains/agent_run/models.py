@@ -21,6 +21,7 @@ class AgentRunStatus(str, Enum):
     ACTION_FAILED = "ACTION_FAILED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    ROLLBACK_FROZEN = "ROLLBACK_FROZEN"
 
 
 class CandidateSource(str, Enum):
@@ -63,4 +64,5 @@ ALLOWED_STATUS_TRANSITIONS.update({
     AgentRunStatus.READY_FOR_REVIEW: frozenset({AgentRunStatus.ACTION_PENDING, AgentRunStatus.COMPLETED, AgentRunStatus.PARTIAL, AgentRunStatus.NEEDS_REVIEW, AgentRunStatus.CANCELLED}),
     AgentRunStatus.ACTION_PENDING: frozenset({AgentRunStatus.ACTION_EXECUTING, AgentRunStatus.READY_FOR_REVIEW, AgentRunStatus.CANCELLED}),
     AgentRunStatus.ACTION_EXECUTING: frozenset({AgentRunStatus.COMPLETED, AgentRunStatus.ACTION_FAILED, AgentRunStatus.PARTIAL}),
+    AgentRunStatus.ROLLBACK_FROZEN: frozenset(),
 })

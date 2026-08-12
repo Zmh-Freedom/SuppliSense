@@ -20,6 +20,14 @@ OTHER_RUN_ID = "00000000-0000-4000-8000-000000000802"
 PROPOSAL_ID = "00000000-0000-4000-8000-000000000803"
 
 
+@pytest.fixture(autouse=True)
+def enable_v2_action_control(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "default")
+
+
 @contextmanager
 def _cursor():
     yield None, object()
@@ -117,6 +125,30 @@ def test_shadow_action_boundary_rejects_proposal_before_database_write(monkeypat
     with pytest.raises(DomainError) as error:
         _create_proposal()
     assert error.value.code == "AGENT_RUN_V2_SHADOW_READ_ONLY"
+
+
+@pytest.mark.parametrize("entrypoint", ["create", "decide", "execute"])
+def test_v2_action_entrypoints_read_rollout_control_when_disabled(monkeypatch, entrypoint):
+    """The final action boundary must not bypass durable control when the flag is off."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", False)
+    gate = Mock(side_effect=DomainError("AGENT_RUN_V2_DISABLED", "Agent V2 已禁用", 409))
+    monkeypatch.setattr(action_service, "require_v2_execution", gate)
+    monkeypatch.setattr(action_service, "get_cursor", lambda: pytest.fail("disabled action must not write"))
+
+    with pytest.raises(DomainError) as error:
+        if entrypoint == "create":
+            _create_proposal()
+        elif entrypoint == "decide":
+            action_service.decide_action_proposal(
+                RUN_ID, PROPOSAL_ID, _approved(), "reviewer", "analyst"
+            )
+        else:
+            action_service.execute_sourcing_risk_action({"payload": {}})
+
+    assert error.value.code == "AGENT_RUN_V2_DISABLED"
+    gate.assert_called_once_with(settings)
 
 
 def test_approval_enqueues_one_transactional_event_and_duplicate_replay_is_rejected(monkeypatch):

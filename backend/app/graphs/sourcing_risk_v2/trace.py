@@ -41,6 +41,14 @@ class GraphTraceRecorder:
         """Expose the exact production trace in the evaluator's recorded format."""
         return self.snapshot()
 
+    def load_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Copy a completed production trace into an evaluator-owned recorder."""
+        events = snapshot.get("events")
+        if not isinstance(events, list):
+            raise ValueError("production trace snapshot must contain events")
+        self.events = [dict(event) for event in events]
+        self.result = dict(snapshot.get("result") or {})
+
 
 def current_graph_trace_recorder() -> GraphTraceRecorder | None:
     return _CURRENT_RECORDER.get()

@@ -26,7 +26,7 @@
 
 ```text
 cd backend && pytest -q tests/test_rollout_gate.py tests/test_sourcing_risk_evals.py tests/test_agent_run_api.py
-52 passed（本轮 focused suite，含生产 runner/action/API/Eval contract）
+85 passed, 1 deselected, 8 warnings（本轮 focused suite；已排除需要本地 PostgreSQL 的真实集成用例）
 
 cd backend && python -m compileall -q app
 passed
@@ -35,6 +35,8 @@ git diff --check
 passed
 
 本轮 focused suite 未包含需要本地 PostgreSQL 的真实 Outbox/事务集成用例；该环境的 localhost:5432 访问受限，已单独保留为环境阻塞，不将其误报为通过。
+
+补充验证：包含 `tests/test_outbox_service.py` 的扩展集合实际为 95 passed、17 failed、8 warnings；17 项失败均在 PostgreSQL 连接/真实事务初始化处因当前沙箱禁止访问 `localhost:5432`，并非断言失败。未将这些环境受限用例计入通过数。
 ```
 
 前端未受影响，未修改 service 层或既有 API 返回结构。既存的 `task-9-review.md` 至 `task-13-review.md` 为用户工作区文件，未纳入提交。

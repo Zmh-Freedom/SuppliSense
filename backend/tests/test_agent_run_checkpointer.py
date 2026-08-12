@@ -176,3 +176,41 @@ def test_runner_records_production_graph_trace(monkeypatch: pytest.MonkeyPatch) 
     asyncio.run(runner._start("run-id"))
 
     assert Recorder.instances[0].events == ["start", "end"]
+
+
+def test_runner_records_actual_graph_node_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Production trace must include node updates emitted by the real graph runner."""
+    from app.core import rollout_gate
+    from app.core.config import settings
+    from app.graphs.sourcing_risk_v2 import runner
+
+    class Recorder:
+        instances: list["Recorder"] = []
+
+        def __init__(self, run_id: str, sink=None) -> None:
+            self.run_id = run_id
+            self.events: list[str] = []
+            self.__class__.instances.append(self)
+
+        def record(self, event_type: str, **_: object) -> None:
+            self.events.append(event_type)
+
+        def set_result(self, result):
+            self.result = result
+
+    async def stream(*_args, **_kwargs):
+        yield {"load_run": {"status": "CREATED"}}
+        yield {"parse_requirement": {"status": "CREATED"}}
+
+    graph = Mock()
+    graph.astream = stream
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(rollout_gate, "get_rollout_state_snapshot", lambda: {"state": "active", "stage": "default"})
+    monkeypatch.setattr(runner, "GraphTraceRecorder", Recorder)
+    monkeypatch.setattr(runner, "get_orchestration_run", lambda _: {"id": "run-id", "requirement": {}})
+    monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=graph))
+
+    asyncio.run(runner._start("run-id"))
+
+    assert Recorder.instances[0].events == ["start", "node_end", "node_end", "end"]

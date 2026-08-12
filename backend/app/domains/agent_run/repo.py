@@ -19,6 +19,35 @@ def get_rollout_control_state() -> dict[str, str]:
     return {"state": str(row[0]), "stage": str(row[1])}
 
 
+def freeze_in_flight_v2_runs() -> int:
+    """Safely stop non-terminal V2 runs while retaining checkpoints and audit."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'ROLLBACK_FROZEN', error_code = 'AGENT_RUN_ROLLBACK_FROZEN', updated_at = NOW(), completed_at = NOW()
+            WHERE run_type = 'sourcing_risk_v2'
+              AND status NOT IN ('COMPLETED', 'PARTIAL', 'NEEDS_REVIEW', 'ACTION_FAILED', 'FAILED', 'CANCELLED')
+            RETURNING id
+            """
+        )
+        return len(cur.fetchall())
+
+
+def freeze_pending_v2_proposals() -> int:
+    """Freeze pending proposals without deleting their approval/audit history."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE agent_action_proposals
+            SET status = 'frozen', execution_state = 'frozen', updated_at = NOW()
+            WHERE status = 'pending' AND execution_state = 'pending'
+            RETURNING id
+            """
+        )
+        return len(cur.fetchall())
+
+
 def set_rollout_control_state(state: str, stage: str | None = None) -> dict[str, str]:
     if state not in {"active", "rollback_frozen"}:
         raise ValueError("invalid rollout control state")

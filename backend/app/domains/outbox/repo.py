@@ -72,6 +72,23 @@ def claim_events(worker_id: str, batch_size: int, lease_seconds: int) -> list[di
         return events
 
 
+def cancel_leased_v2_action_events() -> int:
+    """Release and cancel leased V2 action events during rollback; retain rows for audit."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE outbox_events
+            SET locked_by = NULL, locked_until = NULL,
+                last_error = 'agent_v2_rollback_frozen', dead_lettered_at = NOW()
+            WHERE event_type = 'agent.action.approved'
+              AND published_at IS NULL AND dead_lettered_at IS NULL
+              AND locked_by IS NOT NULL
+            RETURNING event_id
+            """
+        )
+        return len(cur.fetchall())
+
+
 def get_pending_stats() -> dict:
     """Return the current unpublished backlog size and its oldest event age."""
     with get_cursor() as (_, cur):

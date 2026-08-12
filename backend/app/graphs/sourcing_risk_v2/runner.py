@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -72,7 +73,7 @@ async def _start(run_id: str) -> None:
     token = bind_graph_trace_recorder(recorder)
     recorder.record("start")
     try:
-        result = await graph.ainvoke({"run_id": run_id, "requirement_input": dict(run.get("requirement") or {})}, _config(run_id))
+        result = await _run_graph(graph, {"run_id": run_id, "requirement_input": dict(run.get("requirement") or {})}, recorder)
         if hasattr(recorder, "set_result"):
             recorder.set_result(result if isinstance(result, dict) else None)
     finally:
@@ -88,7 +89,7 @@ async def _resume(run_id: str, resume_payload: dict[str, Any]) -> None:
     token = bind_graph_trace_recorder(recorder)
     recorder.record("start", resume=True)
     try:
-        result = await graph.ainvoke(Command(resume=resume_payload), _config(run_id))
+        result = await _run_graph(graph, Command(resume=resume_payload), recorder)
         if hasattr(recorder, "set_result"):
             recorder.set_result(result if isinstance(result, dict) else None)
     finally:
@@ -96,5 +97,64 @@ async def _resume(run_id: str, resume_payload: dict[str, Any]) -> None:
         reset_graph_trace_recorder(token)
 
 
+def execute_sourcing_risk_graph_for_eval(case: dict[str, Any], recorder: GraphTraceRecorder) -> dict[str, Any]:
+    """Execute one real graph run for Eval and return its recorder snapshot."""
+    return asyncio.run(_execute_sourcing_risk_graph_for_eval(case, recorder))
+
+
+async def _execute_sourcing_risk_graph_for_eval(case: dict[str, Any], recorder: GraphTraceRecorder) -> dict[str, Any]:
+    run_id = str(
+        getattr(recorder, "run_id", None)
+        or (case.get("input") or {}).get("run_id")
+        or case.get("run_id")
+        or ""
+    )
+    if not run_id:
+        raise ValueError("production Eval case must provide run_id")
+    require_v2_execution(settings)
+    checkpointer = await get_sourcing_risk_checkpointer()
+    graph = build_sourcing_risk_graph(checkpointer)
+    token = bind_graph_trace_recorder(recorder)
+    recorder.record("start")
+    try:
+        run = await asyncio.to_thread(get_orchestration_run, run_id)
+        if run is None:
+            raise ValueError("agent run 不存在")
+        result = await _run_graph(
+            graph,
+            {"run_id": run_id, "requirement_input": dict(run.get("requirement") or {})},
+            recorder,
+        )
+        recorder.set_result(result if isinstance(result, dict) else None)
+    finally:
+        recorder.record("end")
+        reset_graph_trace_recorder(token)
+    return recorder.snapshot()
+
+
 def _config(run_id: str) -> dict[str, dict[str, str]]:
     return {"configurable": {"thread_id": run_id}}
+
+
+async def _run_graph(graph: Any, input_data: Any, recorder: GraphTraceRecorder) -> dict[str, Any] | None:
+    """Run the real LangGraph stream and record every emitted node update."""
+    if not hasattr(graph, "astream"):
+        return await graph.ainvoke(input_data, _config(recorder.run_id))
+    stream = graph.astream(input_data, _config(recorder.run_id), stream_mode="updates")
+    if inspect.isawaitable(stream):
+        stream = await stream
+    if hasattr(stream, "__aiter__"):
+        result: dict[str, Any] | None = None
+        async for update in stream:
+            current_run = await asyncio.to_thread(get_orchestration_run, recorder.run_id)
+            if current_run is not None and current_run.get("status") == "ROLLBACK_FROZEN":
+                from app.core.errors import DomainError
+
+                raise DomainError("AGENT_RUN_V2_ROLLBACK_FROZEN", "Agent V2 已回滚冻结，运行已安全停止", 409)
+            if isinstance(update, dict):
+                result = {**(result or {}), **update}
+                for node_name, node_output in update.items():
+                    recorder.record("node_end", node=node_name, output=node_output)
+        if result is not None:
+            return result
+    return await graph.ainvoke(input_data, _config(recorder.run_id))

@@ -32,6 +32,7 @@ _EVENTS = {
     "checkpoint_saved",
     "restart",
     "resume",
+    "node_end",
 }
 _EVIDENCE_STATUSES = {"available", "missing", "conflicting", "unavailable"}
 _DEFAULT_MAX_LATENCY_MS = 2000
@@ -40,7 +41,7 @@ _MACRO_RECALL_MIN = 0.95
 
 
 class TraceRecorder(Protocol):
-    def record(self, event_type: str, *, at_ms: int | float) -> None: ...
+    def record(self, event_type: str, *, at_ms: int | float, **payload: Any) -> None: ...
 
 
 class EvalTraceRecorder:
@@ -49,14 +50,27 @@ class EvalTraceRecorder:
     def __init__(self) -> None:
         self.events: list[dict[str, Any]] = []
 
-    def record(self, event_type: str, *, at_ms: int | float) -> None:
+    def record(self, event_type: str, *, at_ms: int | float, **payload: Any) -> None:
         if event_type not in _EVENTS:
             raise ValueError(f"unknown Eval trace event: {event_type}")
         if isinstance(at_ms, bool) or not isinstance(at_ms, (int, float)) or not math.isfinite(at_ms):
             raise ValueError("trace timestamp must be a finite number")
         if at_ms < 0:
             raise ValueError("trace timestamp cannot be negative")
-        self.events.append({"type": event_type, "at_ms": at_ms})
+        self.events.append({"type": event_type, "at_ms": at_ms, "payload": dict(payload)})
+
+    def set_result(self, result: dict[str, Any] | None) -> None:
+        self.result = dict(result or {})
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"events": list(self.events), "result": dict(getattr(self, "result", {}))}
+
+    def load_snapshot(self, snapshot: dict[str, Any]) -> None:
+        events = snapshot.get("events")
+        if not isinstance(events, list):
+            raise ValueError("production trace snapshot must contain events")
+        self.events = [dict(event) for event in events]
+        self.result = dict(snapshot.get("result") or {})
 
 
 class EvalRunner(Protocol):
@@ -81,9 +95,26 @@ class ProductionGraphTraceAdapter:
 
     def run(self, case: dict[str, Any], recorder: TraceRecorder) -> dict[str, Any]:
         result = self._executor(case, recorder)
+        if hasattr(result, "__await__"):
+            import asyncio
+
+            result = asyncio.run(result)
+        if isinstance(result, dict) and isinstance(result.get("events"), list):
+            if hasattr(recorder, "load_snapshot"):
+                recorder.load_snapshot(result)
+            observed = result.get("result")
+            if isinstance(observed, dict) and observed:
+                return observed
         if not isinstance(result, dict) or not result:
             raise ValueError(f"production graph executor returned no observed output for case {case.get('id')}")
         return result
+
+
+def production_sourcing_risk_trace_adapter() -> ProductionGraphTraceAdapter:
+    """Build the adapter backed by the real sourcing-risk graph runner."""
+    from app.graphs.sourcing_risk_v2.runner import execute_sourcing_risk_graph_for_eval
+
+    return ProductionGraphTraceAdapter(execute_sourcing_risk_graph_for_eval)
 
 
 def run_sourcing_risk_evals(
