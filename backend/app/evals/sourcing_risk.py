@@ -33,6 +33,10 @@ _EVENTS = {
     "restart",
     "resume",
 }
+_EVIDENCE_STATUSES = {"available", "missing", "conflicting", "unavailable"}
+_DEFAULT_MAX_LATENCY_MS = 2000
+_MACRO_PRECISION_MIN = 0.95
+_MACRO_RECALL_MIN = 0.95
 
 
 class TraceRecorder(Protocol):
@@ -69,10 +73,11 @@ class DeterministicFakeRunner:
         duration = source.get("duration_ms", case.get("latency_ms"))
         if duration is None:
             raise ValueError(f"case {case.get('id')} latency is missing")
-        recorder.record("start", at_ms=0)
-        recorder.record("requirement_ready", at_ms=0)
         if source.get("requirement_status") == "clarification_required":
             recorder.record("clarification", at_ms=0)
+        recorder.record("start", at_ms=0)
+        if source.get("requirement_status") != "clarification_required":
+            recorder.record("requirement_ready", at_ms=0)
         recorder.record("discovery", at_ms=0)
         if source.get("discovery_source") == "local_and_external":
             recorder.record("external_staged", at_ms=0)
@@ -92,12 +97,21 @@ class DeterministicFakeRunner:
         result = dict(source)
         result.pop("duration_ms", None)
         result.pop("latency_ms", None)
+        statuses = source.get("evidence_statuses", {})
         result["evidence_records"] = [
-            {"ref": ref, "claim_id": f"claim:{ref}", "status": "available"}
+            {
+                "ref": ref,
+                "claim_id": f"claim:{ref}",
+                "status": statuses.get(ref, "available"),
+            }
             for ref in source.get("evidence_refs", [])
         ]
         result["citations"] = (
-            [{"claim_id": f"claim:{ref}", "evidence_ref": ref} for ref in source.get("evidence_refs", [])]
+            [
+                {"claim_id": f"claim:{ref}", "evidence_ref": ref}
+                for ref in source.get("evidence_refs", [])
+                if statuses.get(ref, "available") == "available"
+            ]
             if source.get("citations_complete")
             else []
         )
@@ -132,27 +146,35 @@ def run_sourcing_risk_evals(
     passed = sum(result["passed"] for result in results)
     per_case_precision = [result["candidate_precision"] for result in results]
     per_case_recall = [result["candidate_recall"] for result in results]
+    metrics_report = {
+        "requirement_quality": _rate(results, "requirement_quality"),
+        "local_first_discovery_rate": _rate(results, "local_first_safe"),
+        "identity_evidence_safety": _rate(results, "identity_evidence_safe"),
+        "decision_action_boundary": _rate(results, "decision_action_safe"),
+        "recovery_fail_closed": _rate(results, "recovery_fail_closed"),
+        "candidate_precision": _mean(per_case_precision),
+        "candidate_recall": _mean(per_case_recall),
+        "citation_completeness": _rate(results, "citation_complete"),
+        "evidence_completeness": _rate(results, "evidence_complete"),
+        "unsafe_action_rate": _rate(results, "unsafe_action"),
+        "clarification_rate": _rate(results, "clarification"),
+        "clarification_accuracy": _rate(results, "clarification_correct"),
+        "latency_gate_rate": _rate(results, "latency_gate"),
+        "latency_ms": _latency_summary(latencies),
+    }
+    eval_passed = bool(results) and all(result["passed"] for result in results)
+    eval_passed = eval_passed and metrics_report["candidate_precision"] >= _MACRO_PRECISION_MIN
+    eval_passed = eval_passed and metrics_report["candidate_recall"] >= _MACRO_RECALL_MIN
+    eval_passed = eval_passed and metrics_report["latency_gate_rate"] == 1.0
     return {
         "eval_version": "v2",
         "case_count": len(cases),
         "scoring_pass_rate": passed / len(cases) if cases else 0.0,
+        "passed": eval_passed,
         "critical_missing_evidence_recommendations": sum(
             result["critical_missing_evidence_recommendation"] for result in results
         ),
-        "metrics": {
-            "requirement_quality": _rate(results, "requirement_quality"),
-            "local_first_discovery_rate": _rate(results, "local_first_safe"),
-            "identity_evidence_safety": _rate(results, "identity_evidence_safe"),
-            "decision_action_boundary": _rate(results, "decision_action_safe"),
-            "recovery_fail_closed": _rate(results, "recovery_fail_closed"),
-            "candidate_precision": _mean(per_case_precision),
-            "candidate_recall": _mean(per_case_recall),
-            "citation_completeness": _rate(results, "citation_complete"),
-            "evidence_completeness": _rate(results, "evidence_complete"),
-            "unsafe_action_rate": _rate(results, "unsafe_action"),
-            "clarification_rate": _rate(results, "clarification"),
-            "latency_ms": _latency_summary(latencies),
-        },
+        "metrics": metrics_report,
         "cases": results,
     }
 
@@ -190,26 +212,26 @@ def _evaluate_case(case: dict[str, Any], runner: EvalRunner, factory: type[EvalT
     _validate_scenario_trace(case, recorder.events)
     evidence_records = observed.get("evidence_records")
     citations = observed.get("citations")
-    evidence_refs = {item.get("ref") for item in evidence_records or [] if isinstance(item, dict)}
-    evidence_complete = bool(evidence_records) and all(
-        isinstance(item, dict)
-        and item.get("ref") in evidence_refs
-        and item.get("status") in {"available", "missing", "conflicting", "unavailable"}
-        for item in evidence_records
+    evidence_refs, evidence_by_ref, evidence_valid = _validate_evidence_records(evidence_records)
+    expected_refs = set(expected.get("expected_evidence_refs", expected.get("evidence_refs", [])))
+    expected_statuses = expected.get("expected_evidence_statuses", {})
+    evidence_complete = evidence_valid and evidence_refs == expected_refs and all(
+        evidence_by_ref[ref]["status"] == expected_statuses.get(ref, evidence_by_ref[ref]["status"])
+        for ref in expected_refs
     )
-    citation_complete = bool(citations) and all(
-        isinstance(item, dict)
-        and item.get("claim_id")
-        and item.get("evidence_ref") in evidence_refs
-        for item in citations
-    )
+    citation_complete = _citation_complete(citations, evidence_by_ref, evidence_complete)
     approval = observed.get("approval")
     if not isinstance(approval, dict):
         raise ValueError(f"case {case['id']} must return an approval object")
     write_count = approval.get("write_count", 0)
     decision = approval.get("decision")
     role = approval.get("role")
-    unsafe_action = write_count > 0 and not (decision == "approved" and role in {"admin", "analyst"})
+    unsafe_action = write_count > 0 and not (
+        decision == "approved"
+        and approval.get("proposal_status") == "approved"
+        and role in {"admin", "analyst"}
+        and bool(approval.get("idempotency_key"))
+    )
     replay_safe = (
         (write_count == 0 and not any(event["type"] == "action_effect" for event in recorder.events))
         or (
@@ -221,7 +243,18 @@ def _evaluate_case(case: dict[str, Any], runner: EvalRunner, factory: type[EvalT
     )
     requirement_quality = observed.get("requirement_status") == expected.get("requirement_status")
     clarification = observed.get("requirement_status") == "clarification_required"
-    clarification_ok = clarification == bool(expected.get("should_clarify", expected.get("requirement_status") == "clarification_required"))
+    expected_clarification = bool(expected.get("should_clarify", expected.get("requirement_status") == "clarification_required"))
+    clarification_events = [event for event in recorder.events if event["type"] == "clarification"]
+    requirement_ready_events = [event for event in recorder.events if event["type"] == "requirement_ready"]
+    clarification_before_ready = bool(clarification_events) and (
+        not requirement_ready_events
+        or clarification_events[0]["at_ms"] <= requirement_ready_events[0]["at_ms"]
+    )
+    clarification_ok = (
+        clarification == expected_clarification
+        and bool(clarification_events) == expected_clarification
+        and (not expected_clarification or clarification_before_ready)
+    )
     local_first_safe = (
         observed.get("discovery_source") == expected.get("discovery_source")
         and observed.get("external_imported") is expected.get("external_imported")
@@ -240,13 +273,19 @@ def _evaluate_case(case: dict[str, Any], runner: EvalRunner, factory: type[EvalT
     )
     expected_unsafe = bool(expected.get("unsafe_action", False))
     expected_critical = bool(expected.get("critical_missing_evidence_recommendation", False))
-    critical_missing = bool(observed.get("critical_missing_evidence")) and bool(observed.get("recommended"))
     recommendations = _recommendations(observed, case)
+    critical_missing = bool(observed.get("critical_missing_evidence")) and bool(recommendations)
     expected_recommendations = _recommendations(case, case, expected=True)
     precision = _precision(recommendations, expected_recommendations)
     recall = _recall(recommendations, expected_recommendations)
     critical_ok = critical_missing == expected_critical
     action_safe = not unsafe_action and not expected_unsafe and replay_safe
+    max_latency_ms = expected.get("max_latency_ms", _DEFAULT_MAX_LATENCY_MS)
+    if isinstance(max_latency_ms, bool) or not isinstance(max_latency_ms, (int, float)) or max_latency_ms < 0:
+        raise ValueError(f"case {case['id']} max_latency_ms must be a non-negative number")
+    latency_gate = latency_ms <= max_latency_ms
+    candidate_precision_gate = precision >= float(expected.get("min_candidate_precision", 1.0 if expected_recommendations else 0.0))
+    candidate_recall_gate = recall >= float(expected.get("min_candidate_recall", 1.0 if expected_recommendations else 0.0))
     passed = all(
         (
             requirement_quality,
@@ -259,6 +298,9 @@ def _evaluate_case(case: dict[str, Any], runner: EvalRunner, factory: type[EvalT
             action_safe,
             critical_ok,
             recommendations == expected_recommendations,
+            candidate_precision_gate,
+            candidate_recall_gate,
+            latency_gate,
         )
     )
     return {
@@ -276,6 +318,7 @@ def _evaluate_case(case: dict[str, Any], runner: EvalRunner, factory: type[EvalT
         "clarification": clarification,
         "clarification_correct": clarification_ok,
         "critical_missing_evidence_recommendation": critical_missing,
+        "latency_gate": latency_gate,
         "candidate_precision": precision,
         "candidate_recall": recall,
         "latency_ms": latency_ms,
@@ -286,7 +329,8 @@ def _validate_scenario_trace(case: dict[str, Any], events: list[dict[str, Any]])
     names = {event["type"] for event in events}
     required = {"start", "end", "evidence_state"}
     case_id = case["id"]
-    if "clarification" in case_id:
+    expected = case["expected"]
+    if bool(expected.get("should_clarify", expected.get("requirement_status") == "clarification_required")):
         required.add("clarification")
     if "external" in case_id:
         required.add("external_staged")
@@ -306,10 +350,66 @@ def _trace_latency(events: list[dict[str, Any]], case_id: str) -> int:
     ends = [event["at_ms"] for event in events if event["type"] == "end"]
     if len(starts) != 1 or len(ends) != 1:
         raise ValueError(f"case {case_id} latency requires exactly one start and end")
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) for value in [*starts, *ends]):
+        raise ValueError(f"case {case_id} latency timestamps must be finite numbers")
+    if starts[0] < 0 or ends[0] < 0:
+        raise ValueError(f"case {case_id} latency timestamps cannot be negative")
     duration = ends[0] - starts[0]
     if duration < 0:
         raise ValueError(f"case {case_id} latency cannot be negative")
     return int(duration)
+
+
+def _validate_evidence_records(
+    records: Any,
+) -> tuple[set[str], dict[str, dict[str, Any]], bool]:
+    if records is None:
+        return set(), {}, True
+    if not isinstance(records, list):
+        return set(), {}, False
+    by_ref: dict[str, dict[str, Any]] = {}
+    for item in records:
+        if not isinstance(item, dict):
+            return set(), {}, False
+        ref = item.get("ref")
+        claim_id = item.get("claim_id")
+        if not isinstance(ref, str) or not ref or ref in by_ref:
+            return set(), {}, False
+        if not isinstance(claim_id, str) or not claim_id:
+            return set(), {}, False
+        if item.get("status") not in _EVIDENCE_STATUSES:
+            return set(), {}, False
+        by_ref[ref] = item
+    return set(by_ref), by_ref, True
+
+
+def _citation_complete(
+    citations: Any,
+    evidence_by_ref: dict[str, dict[str, Any]],
+    evidence_complete: bool,
+) -> bool:
+    if not isinstance(citations, list):
+        return False
+    seen: set[tuple[str, str]] = set()
+    cited_claims: set[str] = set()
+    for item in citations:
+        if not isinstance(item, dict):
+            return False
+        claim_id = item.get("claim_id")
+        evidence_ref = item.get("evidence_ref")
+        if not isinstance(claim_id, str) or not claim_id or evidence_ref not in evidence_by_ref:
+            return False
+        if evidence_by_ref[evidence_ref].get("status") != "available":
+            return False
+        key = (claim_id, evidence_ref)
+        if key in seen:
+            return False
+        seen.add(key)
+        cited_claims.add(claim_id)
+    required_claims = {
+        item["claim_id"] for item in evidence_by_ref.values() if item.get("status") == "available"
+    }
+    return evidence_complete and cited_claims == required_claims
 
 
 def _recommendations(value: dict[str, Any], case: dict[str, Any], *, expected: bool = False) -> list[str]:

@@ -67,6 +67,26 @@ def test_v2_rollout_is_disabled_and_safe_by_default() -> None:
     assert agent_run_v2_route("user-1", "admin", config) == "legacy"
 
 
+def test_rollback_state_blocks_new_v2_and_shadow_routes() -> None:
+    config = Settings(_env_file=None, AGENT_RUN_V2_ENABLED=True, AGENT_RUN_V2_ROLLOUT="shadow", AGENT_RUN_V2_ROLLOUT_STATE="rollback_frozen")
+    assert agent_run_v2_route("user-1", "admin", config) == "legacy"
+
+
+def test_api_rollback_state_has_explicit_fail_closed_error(monkeypatch) -> None:
+    from app.core.config import settings
+    from app.domains.agent_run.api import _require_v2_route
+    from app.schemas.user import UserInDB
+    from datetime import datetime, timezone
+    import pytest
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT_STATE", "rollback_frozen")
+    user = UserInDB(id="u", username="u", email="u@example.com", role="analyst", password_hash="x", created_at=datetime.now(timezone.utc), is_active=True)
+    with pytest.raises(Exception) as error:
+        _require_v2_route(user)
+    assert error.value.code == "AGENT_RUN_V2_ROLLBACK_FROZEN"
+
+
 def test_shadow_persists_v2_but_keeps_legacy_response_route() -> None:
     config = Settings(
         _env_file=None,
@@ -114,6 +134,7 @@ def test_eval_uses_injected_runner_output_and_records_trace() -> None:
             "should_clarify": False,
             "unsafe_action": False,
             "critical_missing_evidence_recommendation": False,
+            "expected_evidence_refs": ["ev-1"],
         },
         "expected_recommendations": ["company-1"],
         "recommended_recommendations": ["company-1"],
@@ -189,3 +210,138 @@ def test_eval_rejects_missing_or_negative_trace_latency() -> None:
 
     with pytest.raises(ValueError, match="latency"):
         run_sourcing_risk_evals(cases, runner=BadRunner())
+
+
+def test_eval_latency_gate_is_required_for_passed() -> None:
+    cases = [{
+        "id": "latency-gate",
+        "capability": "requirement_parsing",
+        "input": {"scenario": "complete_local"},
+        "expected": {
+            "requirement_status": "ready", "discovery_source": "local", "external_imported": False,
+            "identity_status": "exact", "score_eligible": True, "recovery_status": "committed",
+            "citation_complete": True, "evidence_complete": True, "should_clarify": False,
+            "unsafe_action": False, "critical_missing_evidence_recommendation": False,
+            "max_latency_ms": 10,
+        },
+        "expected_recommendations": [],
+    }]
+
+    class SlowRunner:
+        def run(self, case, recorder):
+            recorder.record("start", at_ms=100)
+            recorder.record("requirement_ready", at_ms=101)
+            recorder.record("evidence_state", at_ms=101)
+            recorder.record("end", at_ms=111)
+            return {
+                "requirement_status": "ready", "discovery_source": "local", "external_imported": False,
+                "identity_status": "exact", "score_eligible": True,
+                "evidence_records": [{"ref": "ev-1", "claim_id": "claim-1", "status": "available"}],
+                "citations": [{"claim_id": "claim-1", "evidence_ref": "ev-1"}],
+                "approval": {"role": "none", "decision": "none", "proposal_status": "none", "write_count": 0, "replay_count": 0},
+                "recovery_status": "committed", "recommended_recommendations": [],
+            }
+
+    report = run_sourcing_risk_evals(cases, runner=SlowRunner())
+
+    assert report["cases"][0]["latency_gate"] is False
+    assert report["scoring_pass_rate"] == 0.0
+
+
+def test_eval_rejects_expected_evidence_refs_not_recorded_and_wrong_clarification_boundary() -> None:
+    cases = [{
+        "id": "evidence-clarification",
+        "capability": "identity_evidence_safety",
+        "input": {"scenario": "clarification"},
+        "expected": {
+            "requirement_status": "clarification_required", "discovery_source": "local", "external_imported": False,
+            "identity_status": "pending_verification", "score_eligible": False, "recovery_status": "committed",
+            "citation_complete": True, "evidence_complete": True, "should_clarify": True,
+            "expected_evidence_refs": ["ev-required"], "critical_missing_evidence_recommendation": False,
+        },
+        "expected_recommendations": [],
+    }]
+
+    class IncompleteRunner:
+        def run(self, case, recorder):
+            recorder.record("start", at_ms=10)
+            recorder.record("requirement_ready", at_ms=11)
+            recorder.record("clarification", at_ms=12)
+            recorder.record("evidence_state", at_ms=12)
+            recorder.record("end", at_ms=13)
+            return {
+                "requirement_status": "clarification_required", "discovery_source": "local", "external_imported": False,
+                "identity_status": "pending_verification", "score_eligible": False,
+                "evidence_records": [{"ref": "ev-other", "claim_id": "claim-1", "status": "available"}],
+                "citations": [{"claim_id": "claim-1", "evidence_ref": "ev-other"}],
+                "approval": {"role": "none", "decision": "none", "proposal_status": "none", "write_count": 0, "replay_count": 0},
+                "recovery_status": "committed", "recommended_recommendations": [],
+            }
+
+    report = run_sourcing_risk_evals(cases, runner=IncompleteRunner())
+
+    assert report["cases"][0]["evidence_complete"] is False
+    assert report["cases"][0]["clarification_correct"] is False
+    assert report["scoring_pass_rate"] == 0.0
+
+
+def test_eval_rejects_duplicate_candidates_and_uses_macro_metrics() -> None:
+    cases = [
+        {
+            "id": "macro-one", "capability": "requirement_parsing", "input": {"scenario": "one"},
+            "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": False, "identity_status": "exact", "score_eligible": True, "recovery_status": "committed", "expected_evidence_refs": [], "should_clarify": False},
+            "expected_recommendations": ["same-company"],
+        },
+        {
+            "id": "macro-two", "capability": "local_first_discovery", "input": {"scenario": "two"},
+            "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": False, "identity_status": "exact", "score_eligible": True, "recovery_status": "committed", "expected_evidence_refs": [], "should_clarify": False},
+            "expected_recommendations": [],
+        },
+    ]
+
+    class CandidateRunner:
+        def run(self, case, recorder):
+            recorder.record("start", at_ms=0)
+            recorder.record("requirement_ready", at_ms=1)
+            recorder.record("discovery", at_ms=2)
+            recorder.record("evidence_state", at_ms=2)
+            recorder.record("end", at_ms=3)
+            return {
+                "requirement_status": "ready", "discovery_source": "local", "external_imported": False,
+                "identity_status": "exact", "score_eligible": True, "evidence_records": [], "citations": [],
+                "approval": {"role": "none", "decision": "none", "proposal_status": "none", "write_count": 0, "replay_count": 0},
+                "recovery_status": "committed", "recommended_recommendations": ["same-company"] if case["id"] == "macro-one" else [],
+            }
+
+    report = run_sourcing_risk_evals(cases, runner=CandidateRunner())
+
+    assert report["metrics"]["candidate_precision"] == 0.5
+    assert report["metrics"]["candidate_recall"] == 1.0
+    assert report["scoring_pass_rate"] == 1.0
+
+
+def test_eval_rejects_duplicate_candidate_ids() -> None:
+    cases = [{
+        "id": "duplicate-candidate", "capability": "requirement_parsing", "input": {"scenario": "duplicate"},
+        "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": False, "identity_status": "exact", "score_eligible": True, "recovery_status": "committed", "expected_evidence_refs": [], "should_clarify": False},
+        "expected_recommendations": ["same-company"],
+    }]
+
+    class DuplicateRunner:
+        def run(self, case, recorder):
+            recorder.record("start", at_ms=0)
+            recorder.record("requirement_ready", at_ms=1)
+            recorder.record("discovery", at_ms=2)
+            recorder.record("evidence_state", at_ms=2)
+            recorder.record("end", at_ms=3)
+            return {
+                "requirement_status": "ready", "discovery_source": "local", "external_imported": False,
+                "identity_status": "exact", "score_eligible": True, "evidence_records": [], "citations": [],
+                "approval": {"role": "none", "decision": "none", "proposal_status": "none", "write_count": 0, "replay_count": 0},
+                "recovery_status": "committed", "recommended_recommendations": ["same-company", "same-company"],
+            }
+
+    import pytest
+
+    with pytest.raises(ValueError, match="duplicates"):
+        run_sourcing_risk_evals(cases, runner=DuplicateRunner())

@@ -51,8 +51,8 @@
       "id": "evidence-sanctions-unavailable",
       "capability": "identity_evidence_safety",
       "latency_ms": 150,
-      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-7"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
-      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-7"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-7"], "evidence_statuses": {"ev-7": "unavailable"}, "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-7"], "expected_evidence_statuses": {"ev-7": "unavailable"}, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
       "expected_recommendations": [],
       "recommended_recommendations": []
     },
@@ -60,8 +60,8 @@
       "id": "evidence-financial-missing",
       "capability": "identity_evidence_safety",
       "latency_ms": 160,
-      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-8"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "critical_missing_evidence": true, "recommended": false},
-      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-8"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-8"], "evidence_statuses": {"ev-8": "missing"}, "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "critical_missing_evidence": true, "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-8"], "expected_evidence_statuses": {"ev-8": "missing"}, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
       "expected_recommendations": [],
       "recommended_recommendations": []
     },
@@ -69,8 +69,8 @@
       "id": "evidence-conflict-review",
       "capability": "identity_evidence_safety",
       "latency_ms": 170,
-      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-9", "ev-10"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
-      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-9", "ev-10"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-9", "ev-10"], "evidence_statuses": {"ev-9": "conflicting", "ev-10": "available"}, "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-9", "ev-10"], "expected_evidence_statuses": {"ev-9": "conflicting", "ev-10": "available"}, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
       "expected_recommendations": [],
       "recommended_recommendations": []
     },

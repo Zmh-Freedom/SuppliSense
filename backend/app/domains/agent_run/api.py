@@ -52,7 +52,10 @@ async def _schedule_graph(coroutine: Coroutine[Any, Any, None]) -> None:
 def _require_v2_route(user: UserInDB, *, allow_shadow: bool = True) -> str:
     route = agent_run_v2_route(user.id, user.role.value, settings)
     if route == "legacy":
-        code = "AGENT_RUN_V2_DISABLED" if not settings.AGENT_RUN_V2_ENABLED else "AGENT_RUN_V2_NOT_IN_ROLLOUT"
+        if settings.AGENT_RUN_V2_ROLLOUT_STATE == "rollback_frozen":
+            code = "AGENT_RUN_V2_ROLLBACK_FROZEN"
+        else:
+            code = "AGENT_RUN_V2_DISABLED" if not settings.AGENT_RUN_V2_ENABLED else "AGENT_RUN_V2_NOT_IN_ROLLOUT"
         raise DomainError(code, "当前用户未进入 Agent V2 灰度范围", 409)
     if route == "shadow" and not allow_shadow:
         raise DomainError("AGENT_RUN_V2_SHADOW_READ_ONLY", "Shadow 模式禁止执行领域写入", 409)

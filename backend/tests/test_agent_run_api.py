@@ -317,6 +317,57 @@ def test_shadow_route_blocks_approval_before_domain_write(
     assert response.json()["error"]["code"] == "AGENT_RUN_V2_SHADOW_READ_ONLY"
 
 
+@pytest.mark.parametrize(
+    ("rollout", "role", "canary_percent", "expected_code"),
+    [
+        ("internal", "viewer", 0, "AGENT_RUN_V2_NOT_IN_ROLLOUT"),
+        ("canary", "analyst", 0, "AGENT_RUN_V2_NOT_IN_ROLLOUT"),
+    ],
+)
+def test_agent_run_create_route_matrix_rejects_non_v2_users(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch, rollout, role, canary_percent, expected_code
+):
+    from app.core.config import settings
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", rollout)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_CANARY_PERCENT", canary_percent)
+    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: pytest.fail("must not create non-V2 run"))
+    monkeypatch.setattr(api, "get_current_user", lambda: None)
+    monkeypatch.setattr("app.core.deps.get_user_by_id", lambda _: UserInDB(
+        id="00000000-0000-0000-0000-000000000011", username="u", email="u@example.com",
+        role=role, password_hash="unused", created_at=datetime.now(timezone.utc), is_active=True,
+    ))
+    response = agent_client.post("/api/v1/agent-runs", headers=agent_headers, json={"requirement_text": "采购工业摄像头"})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == expected_code
+
+
+def test_shadow_create_runs_observation_graph_without_action_write(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    from app.core.config import settings
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "shadow")
+    started: list[str] = []
+    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: {"id": RUN_ID, "status": "CREATED"})
+
+    async def start(run_id: str) -> None:
+        started.append(run_id)
+
+    async def schedule(coroutine):
+        await coroutine
+
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", start)
+    monkeypatch.setattr(api, "_schedule_graph", schedule)
+    response = agent_client.post("/api/v1/agent-runs", headers=agent_headers, json={"requirement_text": "采购工业摄像头"})
+    assert response.status_code == 200
+    assert started == [RUN_ID]
+
+
 def test_identity_resolution_persists_input_then_resumes_v2_runner(
     agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
 ):

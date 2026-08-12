@@ -481,14 +481,23 @@ python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import j
 | `AGENT_RUN_V2_ENABLED` | `true/false` | 总开关，关闭时始终走 legacy |
 | `AGENT_RUN_V2_ROLLOUT` | `shadow/internal/canary/default` | 灰度阶段 |
 | `AGENT_RUN_V2_CANARY_PERCENT` | `0..100` | Canary 按 user ID 的稳定 SHA-256 bucket 放量 |
+| `AGENT_RUN_V2_ROLLOUT_STATE` | `active/rollback_frozen` | 回滚冻结时拒绝新 V2/Shadow 创建、恢复和审批；保留已有 Run/checkpoint/audit |
 
-Shadow 可执行并持久化 V2 以比较结果，但用户响应仍走 legacy，且不执行领域动作。Internal 仅 `admin`/`analyst` 可进入 V2；Canary 使用确定性用户 hash；Default 才面向全部用户。所有导入、监控、准入等业务写入仍必须经过人工审批和 approved-only Outbox。
+| 阶段 | 创建/恢复 API | 用户响应 | 领域动作 | 放行条件 |
+|---|---|---|---|---|
+| disabled | legacy/拒绝 V2 | legacy | legacy API 语义 | `AGENT_RUN_V2_ENABLED=false`，不创建/调度 V2 Run |
+| shadow | V2 仅观测 | legacy | 禁止领域写入与审批 | 记录 V2 trace/metrics，响应不切换 |
+| internal | `admin`/`analyst` 进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | 角色 gate |
+| canary | 稳定 hash 命中者进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | `AGENT_RUN_V2_CANARY_PERCENT` |
+| default | 全部用户进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | promotion guard + 审批记录 |
+
+Shadow 的 V2 执行仅用于比较结果，不返回 V2 响应且不执行领域动作；Internal/Canary/Default 的 route decision 只控制进入 V2 graph，任何业务写入仍必须经过人工审批和 approved-only Outbox。`rollback_frozen` 对所有新建、澄清恢复、身份恢复和审批请求 fail-closed；在途 Run 保留 checkpoint 并暂停新步骤，pending proposal 冻结并人工复核，leased Outbox 停止新 lease，已有 lease 完成或过期后再验证恢复。
 
 ### 灰度门槛、观测和回滚
 
-Shadow → Internal → Canary → Default 逐阶段推进。每阶段至少观察完整业务周期，并确认离线 Eval 评分 100%、关键缺证据误推荐 0%、身份唯一命中精确率 ≥99%、需求字段准确率 ≥95%、关键证据支持率 ≥98%、未审批写入 0%、重复动作 0%、恢复成功率 ≥99%、P95 首事件 ≤2 秒、本地候选 P95 完成 ≤90 秒。Prometheus 只使用固定枚举标签；企业名、run/user ID 和查询文本进入日志/追踪属性，不进入 label。
+Shadow → Internal → Canary → Default 逐阶段推进。Promotion 必须同时具备完整观测窗口、当前阶段最小样本（Shadow 12、Internal 50、Canary 100）、人工审批记录（approver/decision/record_id）、在途 Run/proposal/outbox 清零，以及离线 Eval 评分 100%、macro precision/recall ≥95%、citation/evidence completeness 100%、clarification accuracy 100%、关键缺证据误推荐 0%、身份唯一命中精确率 ≥99%、需求字段准确率 ≥95%、关键证据支持率 ≥98%、未审批写入 0%、重复动作 0%、恢复成功率 ≥99%、实际 P95 首事件 ≤2 秒、本地候选 P95 完成 ≤90 秒。latency 是 trace 的 `end - start`，实际值越低越好；缺失或负值直接拒绝。Prometheus 低基数承诺仅适用于 Task 14 新增 V2 metrics；历史 metrics（包括既有 company label）不在本任务修改范围。
 
-发现主体错绑、制裁不可用仍推荐、未经审批写入、恢复重复执行、评分不可复现或证据不一致时立即停止推进。回滚只需将 rollout 设置为 `shadow`（保留 V2 影子观测）或 `internal`（仅内部用户），必要时再将 `AGENT_RUN_V2_ENABLED=false`；不得删除已有 Run、checkpoint、审批或审计记录。回滚后由人工审批人确认未完成 proposal 状态，再恢复业务流量。
+发现主体错绑、制裁不可用仍推荐、未经审批写入、恢复重复执行、评分不可复现或证据不一致时立即停止推进。回滚入口必须先调用 `rollback_rollout(settings, stage, reason, in_flight)`，将 `AGENT_RUN_V2_ROLLOUT_STATE=rollback_frozen`，再由人工处理在途状态；不得删除已有 Run、checkpoint、审批或审计记录。恢复前需有新的人工审批记录、proposal/outbox 处置结果、V2 Eval/metrics 窗口验证和 `agent_run_v2_route()` 矩阵验证，之后才可调用 `promote_rollout(...)` 或重新设置 active。
 
 | 文档 | 说明 |
 |------|------|

@@ -13,6 +13,11 @@ THRESHOLDS: dict[str, float] = {
     "identity_precision": 0.99,
     "requirement_accuracy": 0.95,
     "evidence_support_rate": 0.98,
+    "macro_precision": 0.95,
+    "macro_recall": 0.95,
+    "citation_completeness": 1.0,
+    "evidence_completeness": 1.0,
+    "clarification_accuracy": 1.0,
     "unsafe_action_rate": 0.0,
     "duplicate_action_rate": 0.0,
     "recovery_success_rate": 0.99,
@@ -43,10 +48,18 @@ def check_promotion(
             "critical_missing_evidence_recommendations",
             "unsafe_action_rate",
             "duplicate_action_rate",
+            "first_event_p95_ms",
+            "local_candidate_p95_ms",
         }
         if not isinstance(value, (int, float)) or (value > threshold if lower_is_better else value < threshold):
             reasons.append(f"threshold_failed:{key}")
-    if evidence.get("in_flight_runs", 0) or evidence.get("pending_proposals", 0) or evidence.get("leased_outbox", 0):
+    for key in ("in_flight_runs", "pending_proposals", "leased_outbox"):
+        value = evidence.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            reasons.append(f"invalid_in_flight_count:{key}")
+        elif value:
+            reasons.append("in_flight_work_not_drained")
+    if "in_flight_work_not_drained" in reasons:
         reasons.append("in_flight_work_not_drained")
     if not isinstance(approval, dict) or approval.get("decision") != "approved" or not approval.get("approver_id") or not approval.get("record_id"):
         reasons.append("human_approval_record_missing")
@@ -56,6 +69,7 @@ def check_promotion(
         "target_stage": target,
         "reasons": reasons,
         "approval_record_id": approval.get("record_id") if isinstance(approval, dict) else None,
+        "rollout_state": "active" if not reasons else "blocked",
     }
 
 
@@ -73,6 +87,24 @@ def check_rollback(stage: str, *, reason: str, in_flight: dict[str, int] | None 
         "preserve_runs_checkpoints_audit": True,
         "pending_proposals": {"freeze": work.get("pending_proposals", 0), "manual_review": True},
         "leased_outbox": {"stop_new_leases": True, "finish_or_expire": work.get("leased_outbox", 0)},
+        "in_flight_runs": {"pause_new_steps": True, "preserve_checkpoint": True, "count": work.get("runs", work.get("in_flight_runs", 0))},
+        "rollout_state": "rollback_frozen",
         "resume_requires_approval": True,
         "reason": reason.strip(),
     }
+
+
+def promote_rollout(config: Any, current_stage: str, evidence: dict[str, Any], *, approval: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Apply an approved promotion to the runtime config; fail closed otherwise."""
+    result = check_promotion(current_stage, evidence, approval=approval)
+    if result["allowed"]:
+        config.AGENT_RUN_V2_ROLLOUT = result["target_stage"]
+        config.AGENT_RUN_V2_ROLLOUT_STATE = "active"
+    return result
+
+
+def rollback_rollout(config: Any, stage: str, *, reason: str, in_flight: dict[str, int] | None = None) -> dict[str, Any]:
+    """Freeze new V2 and Shadow work before operators drain durable in-flight work."""
+    result = check_rollback(stage, reason=reason, in_flight=in_flight)
+    config.AGENT_RUN_V2_ROLLOUT_STATE = "rollback_frozen"
+    return result

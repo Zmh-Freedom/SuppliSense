@@ -7,6 +7,9 @@
 - 创建、澄清恢复、身份恢复和审批 API 接入 `agent_run_v2_route`；disabled/未进入灰度明确拒绝 V2，Shadow 审批只读并禁止领域写入，Internal/Canary/Default 继续由 role/stable hash 决定。
 - 新增 `backend/app/core/rollout_gate.py`：阶段顺序、最小样本、完整观测窗口、全部质量/安全门槛、人工审批记录和在途 Run/proposal/outbox 检查；rollback 明确冻结新 V2 动作、保留 Run/checkpoint/audit、处置 pending proposal/leased outbox 并要求人工复核后恢复。
 - 高基数指标说明限定为 V2 新增 metrics scope，未扩大历史 metrics 改动。
+- Eval `passed` 现在同时受实际 trace latency、macro precision/recall、citation/evidence completeness、unsafe action、critical missing evidence 和 clarification expected-vs-observed gates 约束；trace 必须有非负 start/end，duration 为 `end-start`。
+- Promotion latency 按实际 P95 `<= threshold` 判断；promotion/rollback guard 提供 config 状态转换，rollback 设置 `rollback_frozen`，拒绝新 V2/Shadow 请求并明确暂停在途 Run、冻结 proposal、停止新 Outbox lease 和完成/过期既有 lease 的处置。
+- API route 矩阵覆盖 disabled/shadow/internal/canary/default；legacy API 返回结构保持不变，Shadow 仅观测且审批/领域写入被阻断。
 
 ## 交付
 
@@ -21,7 +24,7 @@
 
 ```text
 cd backend && pytest -q tests/test_rollout_gate.py tests/test_sourcing_risk_evals.py tests/test_agent_run_api.py
-28 passed
+38 passed（本轮 focused suite）
 
 cd backend && python -m compileall -q app
 passed

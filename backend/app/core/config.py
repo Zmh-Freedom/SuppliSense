@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     AGENT_RUN_V2_ROLLOUT: Literal["shadow", "internal", "canary", "default"] = os.getenv(
         "AGENT_RUN_V2_ROLLOUT", "shadow"
     )
+    AGENT_RUN_V2_ROLLOUT_STATE: Literal["active", "rollback_frozen"] = os.getenv(
+        "AGENT_RUN_V2_ROLLOUT_STATE", "active"
+    )
     AGENT_RUN_V2_CANARY_PERCENT: int = Field(
         default=int(os.getenv("AGENT_RUN_V2_CANARY_PERCENT", "0")), ge=0, le=100
     )
@@ -112,7 +115,7 @@ def agent_run_v2_route(
     Canary assignment is deterministic so retries and reconnects do not move a
     user between routes.
     """
-    if not config.AGENT_RUN_V2_ENABLED:
+    if not config.AGENT_RUN_V2_ENABLED or config.AGENT_RUN_V2_ROLLOUT_STATE == "rollback_frozen":
         return "legacy"
     if config.AGENT_RUN_V2_ROLLOUT == "shadow":
         return "shadow"
