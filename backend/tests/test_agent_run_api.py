@@ -30,6 +30,10 @@ def agent_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 @pytest.fixture
 def agent_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "default")
     user = UserInDB(
         id="00000000-0000-0000-0000-000000000011",
         username="agent-run-user",
@@ -274,6 +278,43 @@ def test_create_agent_run_starts_v2_runner_after_persisting_run(
     assert response.status_code == 200
     assert response.json()["id"] == RUN_ID
     assert started == [RUN_ID]
+
+
+def test_create_agent_run_rejects_when_v2_route_is_disabled(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    from app.domains.agent_run import api
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", False)
+    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: pytest.fail("must not create V2 run"))
+
+    response = agent_client.post(
+        "/api/v1/agent-runs", headers=agent_headers, json={"requirement_text": "采购工业摄像头"}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "AGENT_RUN_V2_DISABLED"
+
+
+def test_shadow_route_blocks_approval_before_domain_write(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    from app.domains.agent_run import api
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "shadow")
+    monkeypatch.setattr(api, "decide_action_proposal", lambda *_: pytest.fail("shadow must not write"))
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/approvals/{RUN_ID}/decisions",
+        headers=agent_headers,
+        json={"expected_version": 4, "decision": "approved"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "AGENT_RUN_V2_SHADOW_READ_ONLY"
 
 
 def test_identity_resolution_persists_input_then_resumes_v2_runner(

@@ -9,6 +9,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header
 from fastapi.responses import StreamingResponse
 
+from app.core.config import agent_run_v2_route, settings
+from app.core.errors import DomainError
 from app.core.deps import get_current_user
 from app.domains.agent_run.service import (
     cancel_run,
@@ -47,8 +49,19 @@ async def _schedule_graph(coroutine: Coroutine[Any, Any, None]) -> None:
     asyncio.create_task(coroutine)
 
 
+def _require_v2_route(user: UserInDB, *, allow_shadow: bool = True) -> str:
+    route = agent_run_v2_route(user.id, user.role.value, settings)
+    if route == "legacy":
+        code = "AGENT_RUN_V2_DISABLED" if not settings.AGENT_RUN_V2_ENABLED else "AGENT_RUN_V2_NOT_IN_ROLLOUT"
+        raise DomainError(code, "当前用户未进入 Agent V2 灰度范围", 409)
+    if route == "shadow" and not allow_shadow:
+        raise DomainError("AGENT_RUN_V2_SHADOW_READ_ONLY", "Shadow 模式禁止执行领域写入", 409)
+    return route
+
+
 @router.post("", summary="创建寻源风险任务")
 async def create_agent_run(data: CreateSourcingRiskRunRequest, current_user: UserInDB = Depends(get_current_user)):
+    _require_v2_route(current_user)
     run = await asyncio.to_thread(create_sourcing_risk_run, data, current_user.id, current_user.role.value)
     await _schedule_graph(start_sourcing_risk_graph(str(run["id"])))
     return run
@@ -99,6 +112,7 @@ async def get_agent_run_events(
 
 @router.post("/{run_id}/clarification", summary="提交澄清答案")
 async def clarify_agent_run(run_id: UUID, data: ClarificationRequest, current_user: UserInDB = Depends(get_current_user)):
+    _require_v2_route(current_user)
     run = await asyncio.to_thread(submit_clarification, str(run_id), data, current_user.id, current_user.role.value)
     await _schedule_graph(
         resume_sourcing_risk_graph(str(run_id), {"requirement_input": dict(run.get("requirement") or {})})
@@ -112,6 +126,7 @@ async def resolve_agent_run_identity(
     data: IdentityResolutionRequest,
     current_user: UserInDB = Depends(get_current_user),
 ):
+    _require_v2_route(current_user)
     run = await asyncio.to_thread(submit_identity_resolution, str(run_id), data, current_user.id, current_user.role.value)
     await _schedule_graph(resume_sourcing_risk_graph(str(run_id), {"identity_resolutions": dict(data.resolutions)}))
     return run
@@ -120,6 +135,7 @@ async def resolve_agent_run_identity(
 @router.post("/{run_id}/approvals/{approval_id}/decisions", summary="提交审批决定")
 @router.post("/{run_id}/approvals/{approval_id}", summary="提交审批决定（兼容旧路径）", deprecated=True)
 async def approve_agent_run(run_id: UUID, approval_id: UUID, data: ApprovalDecisionRequest, current_user: UserInDB = Depends(get_current_user)):
+    _require_v2_route(current_user, allow_shadow=False)
     return await asyncio.to_thread(decide_action_proposal, str(run_id), str(approval_id), data, current_user.id, current_user.role.value)
 
 

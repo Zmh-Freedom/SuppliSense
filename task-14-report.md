@@ -1,5 +1,13 @@
 # Task 14 Report
 
+## P1 修复交付
+
+- Offline Eval 改为 executable input + injectable runner/trace recorder；默认 deterministic fake 也必须产出 observed 和 trace，禁止 fixture 提供 `observed` 真值。
+- 指标按 case 聚合 precision/recall（空预测 precision=0），校验 citation 覆盖 evidence ref、evidence state、审批角色/决定/提案/幂等键/写入、重放副作用、澄清、关键缺证据推荐和 start/end latency；上述安全指标全部纳入 passed gate。
+- 创建、澄清恢复、身份恢复和审批 API 接入 `agent_run_v2_route`；disabled/未进入灰度明确拒绝 V2，Shadow 审批只读并禁止领域写入，Internal/Canary/Default 继续由 role/stable hash 决定。
+- 新增 `backend/app/core/rollout_gate.py`：阶段顺序、最小样本、完整观测窗口、全部质量/安全门槛、人工审批记录和在途 Run/proposal/outbox 检查；rollback 明确冻结新 V2 动作、保留 Run/checkpoint/audit、处置 pending proposal/leased outbox 并要求人工复核后恢复。
+- 高基数指标说明限定为 V2 新增 metrics scope，未扩大历史 metrics 改动。
+
 ## 交付
 
 - 新增 `backend/app/evals/sourcing_risk.py` 离线评估 runner 与固定 12 场景 JSON 集。
@@ -12,8 +20,8 @@
 ## 验证
 
 ```text
-cd backend && pytest -q tests/test_sourcing_risk_evals.py
-12 cases, all quality and rollout contracts passed
+cd backend && pytest -q tests/test_rollout_gate.py tests/test_sourcing_risk_evals.py tests/test_agent_run_api.py
+28 passed
 
 cd backend && python -m compileall -q app
 passed

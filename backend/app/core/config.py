@@ -97,12 +97,14 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+AgentRunRoute = Literal["legacy", "shadow", "v2"]
+
 
 def agent_run_v2_route(
     user_id: str,
     user_role: str,
     config: Settings = settings,
-) -> Literal["legacy", "shadow", "v2"]:
+) -> AgentRunRoute:
     """Return the safe routing decision for a V2 request.
 
     The feature must be explicitly enabled. Shadow still allows execution and
