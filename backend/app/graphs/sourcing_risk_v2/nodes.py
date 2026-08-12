@@ -27,11 +27,19 @@ from app.graphs.sourcing_risk_v2.state import SourcingRiskGraphState
 PROVIDER_TIMEOUT_SECONDS = 20
 PROVIDER_ATTEMPTS = 2
 PROVIDER_DIMENSIONS = ("financial", "judicial", "sentiment", "sanctions", "esg", "continuity")
+PROVIDER_MAX_CONCURRENCY = 6
+_provider_semaphore: asyncio.Semaphore | None = None
+_provider_semaphore_loop: asyncio.AbstractEventLoop | None = None
 
 
 def append_typed_event(run_id: str, event_type: str, payload: dict[str, Any]) -> int | None:
     """Delegate durable event emission to the framework-independent run service."""
     return agent_run_service.append_orchestration_event(run_id, event_type, payload)
+
+
+def record_orchestration_state(run_id: str, status: str, event_type: str, payload: dict[str, Any]) -> int | None:
+    """Keep LangGraph state and the durable run/SSE state machine aligned."""
+    return agent_run_service.record_orchestration_state(run_id, status, event_type, payload)
 
 
 async def load_run(state: SourcingRiskGraphState) -> dict[str, Any]:
@@ -54,7 +62,7 @@ async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any
     raw_text = str(input_data.pop("requirement_text", ""))
     result = await asyncio.to_thread(parse_requirement, raw_text, input_data)
     if result.get("status") != "ready":
-        await _event(state["run_id"], "clarification", {"missing": result.get("missing", [])})
+        await _event(state["run_id"], "clarification", {"missing": result.get("missing", [])}, "CLARIFYING")
         return {"status": "CLARIFYING", "next_action": "clarification_required", "error_code": None}
     await _event(state["run_id"], "stage", {"stage": "requirement_ready"})
     return {"status": "POLICY_LOCKING", "requirement": dict(result["requirement"]), "next_action": None}
@@ -63,7 +71,7 @@ async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any
 async def lock_policy(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Freeze the policy once for this durable run."""
     policy = await asyncio.to_thread(freeze_policy_snapshot, state["run_id"], state["requirement"]["category"])
-    await _event(state["run_id"], "policy_locked", {"checksum": policy["checksum"]})
+    await _event(state["run_id"], "policy_locked", {"checksum": policy["checksum"]}, "POLICY_LOCKED")
     return {
         "status": "POLICY_LOCKED",
         "policy_snapshot": dict(policy),
@@ -77,7 +85,7 @@ async def local_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
     if candidates is None:
         candidates = await asyncio.to_thread(discover_local_candidates, state["requirement"], state["policy_snapshot"])
     sufficient = is_candidate_supply_sufficient(candidates, state["requirement"], state["policy_snapshot"])
-    await _event(state["run_id"], "discovery", {"source": "local", "count": len(candidates), "sufficient": sufficient})
+    await _event(state["run_id"], "discovery", {"source": "local", "count": len(candidates), "sufficient": sufficient}, "LOCAL_SEARCHING")
     return {
         "status": "LOCAL_SEARCHING",
         "candidates": candidates,
@@ -95,7 +103,7 @@ async def external_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
         await _event(state["run_id"], "provider_failed", {"provider": "external_discovery", "error": type(exc).__name__})
         return {"status": "PARTIAL", "external_candidates": [], "provider_failures": ["external_discovery"]}
     staged = stage_external_candidates(state["run_id"], found)
-    await _event(state["run_id"], "discovery", {"source": "external_staged", "count": len(staged)})
+    await _event(state["run_id"], "discovery", {"source": "external_staged", "count": len(staged)}, "EXTERNAL_REVIEW")
     return {
         "status": "EXTERNAL_REVIEW",
         "candidates": [*local_candidates, *staged],
@@ -116,9 +124,9 @@ async def identity_resolution(state: SourcingRiskGraphState) -> dict[str, Any]:
             pending.append(_review_id(candidate, identity))
         resolved.append(item)
     if pending:
-        await _event(state["run_id"], "identity_review", {"pending_review_ids": pending})
+        await _event(state["run_id"], "identity_review", {"pending_review_ids": pending}, "IDENTITY_REVIEW")
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
-    await _event(state["run_id"], "identity_resolved", {"count": len(resolved)})
+    await _event(state["run_id"], "identity_resolved", {"count": len(resolved)}, "IDENTITY_RESOLVING")
     return {"status": "IDENTITY_RESOLVING", "next_action": None, "pending_review_ids": [], "candidates": resolved, "candidate_ids": _candidate_ids(resolved)}
 
 
@@ -129,7 +137,7 @@ async def identity_review(state: SourcingRiskGraphState) -> dict[str, Any]:
     resolved, pending = _apply_identity_resolutions(state.get("candidates", []), resolutions)
     if pending:
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
-    await _event(state["run_id"], "identity_resolved", {"count": len(resolved)})
+    await _event(state["run_id"], "identity_resolved", {"count": len(resolved)}, "IDENTITY_RESOLVING")
     return {"status": "IDENTITY_RESOLVING", "next_action": None, "pending_review_ids": [], "candidates": resolved, "candidate_ids": _candidate_ids(resolved)}
 
 
@@ -146,7 +154,7 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
         )
     failures = sorted(set([*state.get("provider_failures", []), *failures]))
     candidates = _mark_sanctions_failures_for_review(state.get("candidates", []), normalized_evidence)
-    await _event(state["run_id"], "investigation", {"failed_dimensions": failures})
+    await _event(state["run_id"], "investigation", {"failed_dimensions": failures}, "INVESTIGATING")
     return {
         "status": "PARTIAL" if failures else "INVESTIGATING",
         "candidates": candidates,
@@ -179,7 +187,10 @@ async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:
         for company_id, evidence in state.get("evidence_by_company_id", {}).items()
     }
     requires_review = any(result["status"] == "needs_review" for result in reviews.values())
-    await _event(state["run_id"], "evidence_validated", {"requires_review": requires_review})
+    if requires_review:
+        await _event(state["run_id"], "evidence_validated", {"requires_review": True}, "EVIDENCE_REVIEW")
+    else:
+        await _event(state["run_id"], "evidence_validated", {"requires_review": False})
     return {
         "status": "EVIDENCE_REVIEW" if requires_review else state.get("status", "INVESTIGATING"),
         "evidence_reviews": reviews,
@@ -190,7 +201,7 @@ async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:
 async def score_candidates(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Delegate deterministic scoring to the decision service."""
     decisions = decide_candidates(state["requirement"], state["policy_snapshot"], state.get("candidates", []), state.get("evidence_by_company_id", {}))
-    await _event(state["run_id"], "decision", {"count": len(decisions)})
+    await _event(state["run_id"], "decision", {"count": len(decisions)}, "SCORING")
     return {"status": "SCORING", "decisions": decisions}
 
 
@@ -201,7 +212,7 @@ async def ready_for_review(state: SourcingRiskGraphState) -> dict[str, Any]:
     has_review = any(item.get("group") == "needs_review" for item in decisions)
     status = "NEEDS_REVIEW" if has_review else "PARTIAL" if failures else "READY_FOR_REVIEW"
     next_action = "evidence_review_required" if has_review else "review_required"
-    await _event(state["run_id"], "ready_for_review", {"status": status, "provider_failures": failures})
+    await _event(state["run_id"], "ready_for_review", {"provider_failures": failures}, status)
     return {"status": status, "next_action": next_action}
 
 
@@ -252,25 +263,37 @@ async def _fetch_dimension(dimension: str, candidate: dict[str, Any]) -> tuple[s
 async def _call_provider(name: str, provider: Callable[..., Any], *args: Any) -> Any:
     """Use exactly one retry with exponential backoff and a hard per-attempt limit."""
     last_error: Exception | None = None
-    for attempt in range(PROVIDER_ATTEMPTS):
-        try:
-            if inspect.iscoroutinefunction(provider):
-                result = provider(*args)
-            else:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(provider, *args), timeout=PROVIDER_TIMEOUT_SECONDS
-                )
-                if inspect.isawaitable(result):
-                    result = await asyncio.wait_for(result, timeout=PROVIDER_TIMEOUT_SECONDS)
-                return result
-            return await asyncio.wait_for(result, timeout=PROVIDER_TIMEOUT_SECONDS)
-        except (TimeoutError, ConnectionError, OSError) as exc:
-            last_error = exc
-            if attempt + 1 < PROVIDER_ATTEMPTS:
-                await _maybe_await(_sleep(2**attempt))
-                continue
-            raise
+    async with _get_provider_semaphore():
+        for attempt in range(PROVIDER_ATTEMPTS):
+            try:
+                if inspect.iscoroutinefunction(provider):
+                    result = provider(*args)
+                else:
+                    result = await asyncio.wait_for(
+                        asyncio.to_thread(provider, *args), timeout=PROVIDER_TIMEOUT_SECONDS
+                    )
+                    if inspect.isawaitable(result):
+                        result = await asyncio.wait_for(result, timeout=PROVIDER_TIMEOUT_SECONDS)
+                    return result
+                return await asyncio.wait_for(result, timeout=PROVIDER_TIMEOUT_SECONDS)
+            except (TimeoutError, ConnectionError, OSError) as exc:
+                last_error = exc
+                if attempt + 1 < PROVIDER_ATTEMPTS:
+                    await _maybe_await(_sleep(2**attempt))
+                    continue
+                raise
     raise last_error or RuntimeError(f"{name} provider failed")
+
+
+def _get_provider_semaphore() -> asyncio.Semaphore:
+    """Share one bounded provider budget across every candidate in this event loop."""
+    global _provider_semaphore, _provider_semaphore_loop
+
+    loop = asyncio.get_running_loop()
+    if _provider_semaphore is None or _provider_semaphore_loop is not loop:
+        _provider_semaphore = asyncio.Semaphore(PROVIDER_MAX_CONCURRENCY)
+        _provider_semaphore_loop = loop
+    return _provider_semaphore
 
 
 async def _sleep(delay: float) -> None:
@@ -358,5 +381,8 @@ def _mark_sanctions_failures_for_review(
     return updated
 
 
-async def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> None:
+async def _event(run_id: str, event_type: str, payload: dict[str, Any], status: str | None = None) -> None:
+    if status is not None:
+        await asyncio.to_thread(record_orchestration_state, run_id, status, event_type, payload)
+        return
     await asyncio.to_thread(append_typed_event, run_id, event_type, payload)

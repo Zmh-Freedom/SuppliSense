@@ -20,6 +20,7 @@ from app.domains.agent_run.schemas import (
     ApprovalDecisionRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
+    IdentityResolutionRequest,
 )
 
 TERMINAL_STATUSES = frozenset(
@@ -77,6 +78,30 @@ def submit_clarification(
         append_event(
             run_id, updated["version"], "clarification",
             {"answers": dict(request.answers), "status": updated["status"]}, cur=cur,
+        )
+    return updated
+
+
+def submit_identity_resolution(
+    run_id: str,
+    request: IdentityResolutionRequest,
+    user_id: str,
+    user_role: str,
+) -> dict[str, Any]:
+    """Durably record reviewer-selected company identities before graph resume."""
+    run = get_sourcing_risk_run(run_id, user_id, user_role)
+    _require_version(run, request.expected_version)
+    _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+    with get_cursor() as (_, cur):
+        updated = update_run_status(run_id, request.expected_version, AgentRunStatus.IDENTITY_REVIEW.value, cur=cur)
+        if updated is None:
+            _raise_version_conflict()
+        append_event(
+            run_id,
+            updated["version"],
+            "identity_resolution",
+            {"identity_resolutions": dict(request.resolutions), "status": updated["status"]},
+            cur=cur,
         )
     return updated
 
@@ -152,6 +177,32 @@ def append_orchestration_event(run_id: str, event_type: str, payload: dict[str, 
     return int(event["event_id"])
 
 
+def record_orchestration_state(
+    run_id: str, status: str, event_type: str, payload: dict[str, Any]
+) -> int | None:
+    """Atomically transition a graph run and append the SSE-visible typed event."""
+    run = get_run(run_id)
+    if run is None:
+        return None
+    try:
+        target = AgentRunStatus(status)
+    except ValueError as exc:
+        raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
+    _require_transition(run, target)
+    with get_cursor() as (_, cur):
+        updated = update_run_status(run_id, run["version"], target.value, cur=cur)
+        if updated is None:
+            _raise_version_conflict()
+        event = append_event(
+            run_id,
+            updated["version"],
+            event_type,
+            {**payload, "status": updated["status"]},
+            cur=cur,
+        )
+    return int(event["event_id"])
+
+
 def get_orchestration_run(run_id: str) -> dict[str, Any] | None:
     """Load a durable graph input through the run service boundary."""
     return get_run(run_id)
@@ -179,5 +230,5 @@ def _require_transition(run: dict[str, Any], target: AgentRunStatus) -> None:
         current = AgentRunStatus(run["status"])
     except ValueError as exc:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
-    if target not in ALLOWED_STATUS_TRANSITIONS[current]:
+    if target != current and target not in ALLOWED_STATUS_TRANSITIONS[current]:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许此操作", 409)

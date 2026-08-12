@@ -111,3 +111,20 @@ def test_build_sourcing_graph_binds_initialized_default_saver(
 
     assert result is graph.compile.return_value
     graph.compile.assert_called_once_with(checkpointer=saver)
+
+
+def test_resume_runner_uses_persistent_saver_and_identity_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replacing the saver or resume payload would prevent cross-process identity recovery."""
+    from app.graphs.sourcing_risk_v2 import runner
+
+    saver = object()
+    graph = AsyncMock()
+    monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(return_value=saver))
+    monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=graph))
+
+    asyncio.run(runner._resume("run-id", {"identity_resolutions": {"candidate-a": "company-a"}}))
+
+    runner.build_sourcing_risk_graph.assert_called_once_with(saver)
+    command, config = graph.ainvoke.await_args.args
+    assert command.resume == {"identity_resolutions": {"candidate-a": "company-a"}}
+    assert config == {"configurable": {"thread_id": "run-id"}}

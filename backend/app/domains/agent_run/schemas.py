@@ -61,6 +61,18 @@ class ClarificationRequest(_ImmutableModel):
         return _deep_freeze(value)
 
 
+class IdentityResolutionRequest(_ImmutableModel):
+    expected_version: int = Field(ge=1)
+    resolutions: dict[str, str] = Field(min_length=1)
+
+    @field_validator("resolutions")
+    @classmethod
+    def validate_resolutions(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not review_id.strip() or not company_id.strip() for review_id, company_id in value.items()):
+            raise ValueError("身份审核结果不能为空")
+        return _deep_freeze(value)
+
+
 class ApprovalDecisionRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
     decision: Literal["approved", "rejected"]

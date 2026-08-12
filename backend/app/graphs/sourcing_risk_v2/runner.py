@@ -47,14 +47,14 @@ def build_sourcing_risk_graph(checkpointer: Any = None) -> Any:
     return compile_sourcing_risk_graph(graph, checkpointer=checkpointer)
 
 
-def start_sourcing_risk_graph(run_id: str) -> None:
+async def start_sourcing_risk_graph(run_id: str) -> None:
     """Start a run from its persisted requirement under the persistent checkpointer."""
-    asyncio.run(_start(run_id))
+    await _start(run_id)
 
 
-def resume_sourcing_risk_graph(run_id: str) -> None:
+async def resume_sourcing_risk_graph(run_id: str, resume_payload: dict[str, Any]) -> None:
     """Resume a checkpointed reviewer pause without any process-local storage."""
-    asyncio.run(_resume(run_id))
+    await _resume(run_id, resume_payload)
 
 
 async def _start(run_id: str) -> None:
@@ -66,10 +66,10 @@ async def _start(run_id: str) -> None:
     await graph.ainvoke({"run_id": run_id, "requirement_input": dict(run.get("requirement") or {})}, _config(run_id))
 
 
-async def _resume(run_id: str) -> None:
+async def _resume(run_id: str, resume_payload: dict[str, Any]) -> None:
     checkpointer = await get_sourcing_risk_checkpointer()
     graph = build_sourcing_risk_graph(checkpointer)
-    await graph.ainvoke(Command(resume={}), _config(run_id))
+    await graph.ainvoke(Command(resume=resume_payload), _config(run_id))
 
 
 def _config(run_id: str) -> dict[str, dict[str, str]]:

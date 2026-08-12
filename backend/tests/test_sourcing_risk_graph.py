@@ -72,6 +72,7 @@ def _state_with_candidate() -> dict:
 def enable_v2_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
     monkeypatch.setattr(nodes, "append_typed_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(nodes, "record_orchestration_state", lambda *_args, **_kwargs: None)
 
 
 def test_ambiguous_identity_interrupts_before_investigation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,6 +286,29 @@ def test_sanctions_failure_marks_candidate_needs_review(monkeypatch: pytest.Monk
 
     assert update["status"] == "PARTIAL"
     assert update["candidates"] == [{**candidate, "status": "needs_review", "score_eligible": False}]
+
+
+def test_provider_calls_share_a_global_concurrency_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Launching 6N provider calls at once would overwhelm governed provider capacity."""
+    active = 0
+    max_active = 0
+
+    async def provider(_candidate: dict) -> dict:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return {"claim_code": "clear"}
+
+    monkeypatch.setattr(nodes, "PROVIDER_MAX_CONCURRENCY", 2)
+    monkeypatch.setattr(nodes, "_provider_semaphore", None)
+    for dimension in nodes.PROVIDER_DIMENSIONS:
+        monkeypatch.setattr(nodes, f"fetch_{dimension}", provider)
+
+    asyncio.run(nodes.investigate_candidates([_candidate(), _candidate(), _candidate()]))
+
+    assert max_active <= 2
 
 
 def test_v2_graph_never_imports_process_local_interrupt_store() -> None:

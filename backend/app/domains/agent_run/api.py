@@ -2,7 +2,8 @@
 
 import asyncio
 import json
-from typing import Annotated, Iterator
+from collections.abc import Coroutine
+from typing import Annotated, Any, Iterator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header
@@ -16,13 +17,16 @@ from app.domains.agent_run.service import (
     get_sourcing_risk_run,
     stream_events,
     submit_clarification,
+    submit_identity_resolution,
 )
 from app.domains.agent_run.schemas import (
     ApprovalDecisionRequest,
     CancelRunRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
+    IdentityResolutionRequest,
 )
+from app.graphs.sourcing_risk_v2.runner import resume_sourcing_risk_graph, start_sourcing_risk_graph
 from app.schemas.user import UserInDB
 
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"], dependencies=[Depends(get_current_user)])
@@ -36,9 +40,16 @@ def _agent_run_sse_event(event: dict) -> str:
     )
 
 
+async def _schedule_graph(coroutine: Coroutine[Any, Any, None]) -> None:
+    """Detach durable graph execution so HTTP handlers remain responsive."""
+    asyncio.create_task(coroutine)
+
+
 @router.post("", summary="创建寻源风险任务")
 async def create_agent_run(data: CreateSourcingRiskRunRequest, current_user: UserInDB = Depends(get_current_user)):
-    return await asyncio.to_thread(create_sourcing_risk_run, data, current_user.id, current_user.role.value)
+    run = await asyncio.to_thread(create_sourcing_risk_run, data, current_user.id, current_user.role.value)
+    await _schedule_graph(start_sourcing_risk_graph(str(run["id"])))
+    return run
 
 
 @router.get("/{run_id}", summary="获取寻源风险任务")
@@ -72,7 +83,20 @@ async def get_agent_run_events(
 
 @router.post("/{run_id}/clarification", summary="提交澄清答案")
 async def clarify_agent_run(run_id: UUID, data: ClarificationRequest, current_user: UserInDB = Depends(get_current_user)):
-    return await asyncio.to_thread(submit_clarification, str(run_id), data, current_user.id, current_user.role.value)
+    run = await asyncio.to_thread(submit_clarification, str(run_id), data, current_user.id, current_user.role.value)
+    await _schedule_graph(start_sourcing_risk_graph(str(run_id)))
+    return run
+
+
+@router.post("/{run_id}/identity-resolution", summary="提交身份审核结果")
+async def resolve_agent_run_identity(
+    run_id: UUID,
+    data: IdentityResolutionRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    run = await asyncio.to_thread(submit_identity_resolution, str(run_id), data, current_user.id, current_user.role.value)
+    await _schedule_graph(resume_sourcing_risk_graph(str(run_id), {"identity_resolutions": dict(data.resolutions)}))
+    return run
 
 
 @router.post("/{run_id}/approvals/{approval_id}", summary="提交审批决定")

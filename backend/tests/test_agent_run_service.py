@@ -6,7 +6,7 @@ import pytest
 
 from app.core.errors import DomainError
 from app.domains.agent_run import service
-from app.domains.agent_run.schemas import ClarificationRequest, CreateSourcingRiskRunRequest
+from app.domains.agent_run.schemas import ClarificationRequest, CreateSourcingRiskRunRequest, IdentityResolutionRequest
 
 
 def _run(status: str = "CREATED", version: int = 1, user_id: str = "user-id") -> dict:
@@ -91,6 +91,94 @@ def test_create_run_persists_created_event(monkeypatch: pytest.MonkeyPatch):
 
     assert result["status"] == "CREATED"
     assert events == [(result["id"], 1, "stage", {"status": "CREATED"})]
+
+
+def test_identity_resolution_versions_a_durable_resume_event(monkeypatch: pytest.MonkeyPatch):
+    """A stale reviewer must not overwrite a newer durable identity resolution."""
+    events: list[dict] = []
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(
+        service,
+        "update_run_status",
+        lambda run_id, expected_version, status, **_: _run(status, expected_version + 1),
+    )
+    monkeypatch.setattr(
+        service,
+        "append_event",
+        lambda run_id, version, event_type, payload, **_: events.append(
+            {"run_id": run_id, "version": version, "event_type": event_type, "payload": payload}
+        ),
+    )
+
+    result = service.submit_identity_resolution(
+        "run-id",
+        IdentityResolutionRequest(expected_version=2, resolutions={"candidate-a": "company-a"}),
+        "user-id",
+        "analyst",
+    )
+
+    assert result["version"] == 3
+    assert events == [{
+        "run_id": "run-id",
+        "version": 3,
+        "event_type": "identity_resolution",
+        "payload": {"identity_resolutions": {"candidate-a": "company-a"}, "status": "IDENTITY_REVIEW"},
+    }]
+
+
+def test_orchestration_state_transition_writes_typed_event_with_new_version(monkeypatch: pytest.MonkeyPatch):
+    """Keeping graph status in the checkpoint alone would strand SSE before its terminal event."""
+    events: list[dict] = []
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_run", lambda *_: _run("SCORING", 7))
+    monkeypatch.setattr(
+        service,
+        "update_run_status",
+        lambda run_id, expected_version, status, **_: _run(status, expected_version + 1),
+    )
+    monkeypatch.setattr(
+        service,
+        "append_event",
+        lambda run_id, version, event_type, payload, **_: events.append(
+            {"run_id": run_id, "version": version, "event_type": event_type, "payload": payload}
+        ) or {"event_id": 12},
+    )
+
+    event_id = service.record_orchestration_state(
+        "run-id", "READY_FOR_REVIEW", "ready_for_review", {"provider_failures": []}
+    )
+
+    assert event_id == 12
+    assert events == [{
+        "run_id": "run-id",
+        "version": 8,
+        "event_type": "ready_for_review",
+        "payload": {"provider_failures": [], "status": "READY_FOR_REVIEW"},
+    }]
+
+
+def test_stream_events_stops_after_replaying_a_durable_terminal_stage(monkeypatch: pytest.MonkeyPatch):
+    """Continuing after a final stage would keep completed SSE subscriptions open forever."""
+    run = _run("PARTIAL", 8)
+    monkeypatch.setattr(service, "get_sourcing_risk_run", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "list_events_after",
+        lambda *_: [{
+            "event_id": 12,
+            "event_type": "ready_for_review",
+            "payload": {"status": "PARTIAL", "provider_failures": ["financial"]},
+        }],
+    )
+
+    events = list(service.stream_events("run-id", 11, "user-id", "analyst"))
+
+    assert events == [{
+        "event_id": 12,
+        "event_type": "ready_for_review",
+        "data": {"status": "PARTIAL", "provider_failures": ["financial"]},
+    }]
 
 
 def _no_cursor():

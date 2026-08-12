@@ -146,3 +146,97 @@ def test_cancel_propagates_stale_version_conflict(agent_client, agent_headers, m
 
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "AGENT_RUN_VERSION_CONFLICT"
+
+
+def test_create_agent_run_starts_v2_runner_after_persisting_run(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    """Removing the API-to-runner seam would leave durable runs permanently CREATED."""
+    from app.domains.agent_run import api
+
+    started: list[str] = []
+    monkeypatch.setattr(api, "create_sourcing_risk_run", lambda *_: {"id": RUN_ID, "status": "CREATED"})
+
+    async def start(run_id: str) -> None:
+        started.append(run_id)
+
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", start)
+    async def schedule(coroutine):
+        await coroutine
+
+    monkeypatch.setattr(api, "_schedule_graph", schedule)
+
+    response = agent_client.post(
+        "/api/v1/agent-runs",
+        headers=agent_headers,
+        json={"requirement_text": "采购工业摄像头"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["id"] == RUN_ID
+    assert started == [RUN_ID]
+
+
+def test_identity_resolution_persists_input_then_resumes_v2_runner(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    """Dropping a reviewer's resolution before resume would re-interrupt the same checkpoint."""
+    from app.domains.agent_run import api
+
+    resumed: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        api,
+        "submit_identity_resolution",
+        lambda *_: {"id": RUN_ID, "status": "IDENTITY_REVIEW", "version": 3},
+    )
+
+    async def resume(run_id: str, payload: dict[str, object]) -> None:
+        resumed.append((run_id, payload))
+
+    monkeypatch.setattr(api, "resume_sourcing_risk_graph", resume)
+    async def schedule(coroutine):
+        await coroutine
+
+    monkeypatch.setattr(api, "_schedule_graph", schedule)
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/identity-resolution",
+        headers=agent_headers,
+        json={"expected_version": 2, "resolutions": {"candidate-a": "company-a"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["version"] == 3
+    assert resumed == [(RUN_ID, {"identity_resolutions": {"candidate-a": "company-a"}})]
+
+
+def test_clarification_restarts_v2_runner_after_durable_answer_event(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    """Leaving clarification on the legacy event path would strand a clarified V2 run."""
+    from app.domains.agent_run import api
+
+    started: list[str] = []
+    monkeypatch.setattr(
+        api,
+        "submit_clarification",
+        lambda *_: {"id": RUN_ID, "status": "CREATED", "version": 2},
+    )
+
+    async def start(run_id: str) -> None:
+        started.append(run_id)
+
+    async def schedule(coroutine):
+        await coroutine
+
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", start)
+    monkeypatch.setattr(api, "_schedule_graph", schedule)
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/clarification",
+        headers=agent_headers,
+        json={"expected_version": 1, "answers": {"specification": "IP67"}},
+    )
+
+    assert response.status_code == 200
+    assert started == [RUN_ID]
