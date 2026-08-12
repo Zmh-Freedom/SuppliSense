@@ -21,6 +21,11 @@
 - Registered an Outbox consumer for approved V2 actions. It checks approval
   state before dispatch, tracks success/retry/dead-letter `action_status`, and
   does not mark `ACTION_FAILED` until dead letter.
+- Isolated the approved V2 action dispatch seam from legacy fan-out: the V2
+  event type now routes only to the fixed `sourcing_risk_action` consumer slot.
+  Additional consumers cannot intercept the event before the action handler;
+  the real retry/dead-letter test replaces that slot to exercise the intended
+  failure path.
 - V2 action events use a fixed five-attempt retry ceiling independently of the
   existing global Outbox setting. Existing Outbox behavior remains unchanged.
 - Added explicit supplier-master import, watchlist, access-application, and
@@ -45,6 +50,9 @@
 - `cd backend && pytest tests/test_agent_run_service.py tests/test_outbox_worker.py -q` — 19 passed.
 - `cd backend && python -m compileall -q app/domains/sourcing_risk/action_service.py app/domains/agent_run/repo.py app/domains/outbox/repo.py app/domains/outbox/service.py app/domains/outbox/worker.py` — passed.
 - `git diff --check` — passed.
+- V2 dispatch regression: `pytest tests/test_outbox_service.py -q -k
+  v2_action_dispatch_does_not_run_an_additional_consumer` — passed; the test
+  proves an additional approved-action consumer is not invoked.
 
 ## Concerns
 

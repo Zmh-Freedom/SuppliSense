@@ -13,6 +13,7 @@ logger = get_logger(__name__)
 
 _CONSUMERS: dict[tuple[str, str], Callable[[dict], None]] = {}
 V2_ACTION_EVENT_TYPE = "agent.action.approved"
+V2_ACTION_CONSUMER_NAME = "sourcing_risk_action"
 V2_ACTION_MAX_ATTEMPTS = 5
 
 
@@ -60,11 +61,21 @@ def process_outbox_batch(
         event_id = event["event_id"]
         event_max_attempts = V2_ACTION_MAX_ATTEMPTS if event["event_type"] == V2_ACTION_EVENT_TYPE else max_attempts
         try:
-            consumers = [
-                (consumer_name, handler)
-                for (event_type, consumer_name), handler in _CONSUMERS.items()
-                if event_type == event["event_type"]
-            ]
+            if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                action_handler = _CONSUMERS.get(
+                    (V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME)
+                )
+                consumers = (
+                    [(V2_ACTION_CONSUMER_NAME, action_handler)]
+                    if action_handler is not None
+                    else []
+                )
+            else:
+                consumers = [
+                    (consumer_name, handler)
+                    for (event_type, consumer_name), handler in _CONSUMERS.items()
+                    if event_type == event["event_type"]
+                ]
             if not consumers:
                 raise _OutboxDeliveryError("consumer_not_registered")
             for consumer_name, handler in consumers:
@@ -247,4 +258,4 @@ for _event_type in (
 
 from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
 
-register_consumer(V2_ACTION_EVENT_TYPE, "sourcing_risk_action", execute_sourcing_risk_action)
+register_consumer(V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME, execute_sourcing_risk_action)

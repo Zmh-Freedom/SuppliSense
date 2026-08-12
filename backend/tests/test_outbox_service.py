@@ -12,6 +12,7 @@ from app.core.errors import DomainError
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, get_cursor, put_conn
 from app.domains.outbox import repo as outbox_repo
+from app.domains.outbox import service as outbox_service
 from app.domains.outbox.repo import (
     claim_events,
     enqueue_event,
@@ -393,7 +394,7 @@ def test_v2_action_event_dead_letters_after_five_real_repository_attempts(monkey
     event_id = UUID("00000000-0000-4000-8000-000000000381")
     aggregate_id = UUID("00000000-0000-4000-8000-000000000382")
     event_type = "agent.action.approved"
-    consumer_name = "test_outbox_v2_failing_consumer_20260812"
+    consumer_name = "sourcing_risk_action"
     attempts: list[str] = []
 
     def fail_handler(event: dict) -> None:
@@ -401,7 +402,11 @@ def test_v2_action_event_dead_letters_after_five_real_repository_attempts(monkey
         raise RuntimeError("planned V2 failure")
 
     try:
-        register_consumer(event_type, consumer_name, fail_handler)
+        monkeypatch.setitem(
+            outbox_service._CONSUMERS,
+            (event_type, consumer_name),
+            fail_handler,
+        )
         _enqueue_committed(
             monkeypatch,
             event_id,
@@ -946,3 +951,42 @@ def test_register_consumer_rejects_a_different_handler_for_the_same_key():
     register_consumer(event_type, consumer_name, first_handler)
     with pytest.raises(ValueError, match="消费者已注册"):
         register_consumer(event_type, consumer_name, second_handler)
+
+
+def test_v2_action_dispatch_does_not_run_an_additional_consumer(monkeypatch):
+    """V2 approved actions have one business consumer, not legacy-style fan-out."""
+    event = {
+        "event_id": "event-v2-routing",
+        "event_type": "agent.action.approved",
+        "attempt_count": 0,
+        "payload": {},
+    }
+    calls: list[str] = []
+
+    def action_handler(_: dict) -> None:
+        calls.append("action")
+
+    def unrelated_handler(_: dict) -> None:
+        calls.append("unrelated")
+        raise RuntimeError("must not intercept V2 action")
+
+    monkeypatch.setattr(outbox_service.repo, "claim_events", lambda *_: [event])
+    monkeypatch.setattr(outbox_service.repo, "is_consumed", lambda *_: False)
+    monkeypatch.setattr(outbox_service.repo, "record_consumption", lambda *_: True)
+    monkeypatch.setattr(outbox_service.repo, "mark_published", lambda *_: True)
+    monkeypatch.setattr(outbox_service.repo, "mark_failed", lambda *args: False)
+    monkeypatch.setattr(
+        outbox_service,
+        "_CONSUMERS",
+        {
+            ("agent.action.approved", "sourcing_risk_action"): action_handler,
+            ("agent.action.approved", "unrelated_consumer"): unrelated_handler,
+        },
+    )
+
+    assert outbox_service.process_outbox_batch("worker", 1, 99, 60) == {
+        "claimed": 1,
+        "published": 1,
+        "failed": 0,
+    }
+    assert calls == ["action"]
