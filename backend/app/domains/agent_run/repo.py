@@ -76,7 +76,10 @@ def append_event(
     version: int,
     event_type: str,
     payload: dict[str, Any],
+    cur: PgCursor | None = None,
 ) -> dict[str, Any]:
+    if cur is not None:
+        return append_event_with_cursor(cur, run_id, version, event_type, payload)
     with get_cursor() as (_, cur):
         return append_event_with_cursor(cur, run_id, version, event_type, payload)
 

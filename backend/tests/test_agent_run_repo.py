@@ -8,6 +8,32 @@ from app.db.postgres import get_conn, put_conn
 from app.domains.agent_run import repo
 
 
+class _EventCursor:
+    def __init__(self) -> None:
+        self._results = [("run-id",), (1,), ("run-id", 1, 1, "stage", {}, None)]
+
+    def execute(self, query: str, params: tuple[object, ...]) -> None:
+        del query, params
+
+    def fetchone(self) -> tuple[object, ...]:
+        return self._results.pop(0)
+
+    @property
+    def description(self) -> list[tuple[str]]:
+        return [
+            ("run_id",), ("event_id",), ("version",), ("event_type",),
+            ("payload",), ("occurred_at",),
+        ]
+
+
+def test_append_event_accepts_callers_cursor_without_owning_it():
+    """The wrapper must not require a new transaction when a cursor is supplied."""
+    event = repo.append_event(
+        "run-id", 1, "stage", {"status": "CREATED"}, cur=_EventCursor()
+    )
+    assert event["event_id"] == 1
+
+
 @contextmanager
 def _real_connection() -> Iterator[tuple[object, object]]:
     conn = get_conn()
@@ -50,6 +76,32 @@ def test_append_event_assigns_monotonic_event_ids_for_one_run():
         _delete_run(run["id"])
 
 
+def test_append_event_uses_callers_transaction_when_cursor_is_supplied():
+    """A rollback of the business transaction must also remove its event."""
+    ensure_pg_schema()
+    run = _insert_run_for_test()
+    try:
+        with _real_connection() as (writer_conn, writer_cur):
+            with _real_connection() as (observer_conn, observer_cur):
+                repo.append_event(
+                    run["id"], 1, "stage", {"status": "CREATED"}, cur=writer_cur
+                )
+                observer_cur.execute(
+                    "SELECT COUNT(*) FROM agent_run_events WHERE run_id = %s",
+                    (run["id"],),
+                )
+                assert observer_cur.fetchone() == (0,)
+                writer_conn.rollback()
+                observer_conn.rollback()
+                observer_cur.execute(
+                    "SELECT COUNT(*) FROM agent_run_events WHERE run_id = %s",
+                    (run["id"],),
+                )
+                assert observer_cur.fetchone() == (0,)
+    finally:
+        _delete_run(run["id"])
+
+
 def test_update_run_status_requires_expected_version():
     """Removing the version predicate must not permit stale status changes."""
     ensure_pg_schema()
@@ -70,3 +122,29 @@ def test_update_run_status_increments_version():
         assert (updated["status"], updated["version"]) == ("CANCELLED", 2)
     finally:
         _delete_run(run["id"])
+
+
+def test_insert_approval_decision_rejects_proposal_from_another_run():
+    """Removing the composite foreign key must allow an invalid cross-run approval."""
+    ensure_pg_schema()
+    first_run = _insert_run_for_test()
+    second_run = _insert_run_for_test()
+    try:
+        proposal = repo.insert_action_proposal(
+            first_run["id"], "create_supplier", {}, f"test-{first_run['id']}"
+        )
+        with _real_connection() as (_, cur):
+            cur.execute(
+                """
+                INSERT INTO agent_approval_decisions (id, run_id, proposal_id, decision)
+                VALUES (gen_random_uuid(), %s, %s, 'approved')
+                """,
+                (second_run["id"], proposal["id"]),
+            )
+    except Exception as exc:
+        assert exc.__class__.__name__ == "ForeignKeyViolation"
+    else:
+        raise AssertionError("跨 Run 审批记录不应被数据库接受")
+    finally:
+        _delete_run(first_run["id"])
+        _delete_run(second_run["id"])

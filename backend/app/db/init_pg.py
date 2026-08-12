@@ -284,18 +284,21 @@ DDL_STATEMENTS = [
         payload JSONB NOT NULL,
         idempotency_key VARCHAR(255) NOT NULL UNIQUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (run_id, id)
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS agent_approval_decisions (
         id UUID PRIMARY KEY,
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-        proposal_id UUID NOT NULL REFERENCES agent_action_proposals(id) ON DELETE CASCADE,
+        proposal_id UUID NOT NULL,
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
         decision VARCHAR(32) NOT NULL,
         comment TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        FOREIGN KEY (run_id, proposal_id)
+            REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE
     )
     """,
 ]
@@ -359,6 +362,32 @@ def _ensure_verified_evidence_constraint(cur: object) -> None:
             "ALTER TABLE companies VALIDATE CONSTRAINT companies_verified_evidence_check"
         )
 
+
+def _ensure_agent_run_constraints(cur: object) -> None:
+    """Add V2 constraints when upgrading a database initialized before them."""
+    cur.execute(
+        """
+        DO $$ BEGIN
+            ALTER TABLE agent_action_proposals
+            ADD CONSTRAINT agent_action_proposals_run_id_id_key UNIQUE (run_id, id);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+        """
+    )
+    cur.execute(
+        """
+        DO $$ BEGIN
+            ALTER TABLE agent_approval_decisions
+            DROP CONSTRAINT IF EXISTS agent_approval_decisions_proposal_id_fkey;
+            ALTER TABLE agent_approval_decisions
+            ADD CONSTRAINT agent_approval_decisions_run_id_proposal_id_fkey
+            FOREIGN KEY (run_id, proposal_id)
+            REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$
+        """
+    )
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
     "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
@@ -395,6 +424,7 @@ def ensure_pg_schema() -> None:
             for stmt in DDL_STATEMENTS:
                 cur.execute(stmt)
             _ensure_verified_evidence_constraint(cur)
+            _ensure_agent_run_constraints(cur)
             for stmt in INDEX_STATEMENTS:
                 cur.execute(stmt)
             # Create ivfflat index for vector search (after data exists)
