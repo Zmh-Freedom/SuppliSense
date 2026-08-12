@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from app.evals.sourcing_risk import (
-    EvalTraceRecorder,
     ProductionGraphTraceAdapter,
     production_sourcing_risk_trace_adapter,
     run_sourcing_risk_evals,
 )
+from app.graphs.sourcing_risk_v2.trace import GraphTraceRecorder
 
 
 class RecordedProductionTraceAdapter:
@@ -45,7 +45,8 @@ def _record_production_traces(cases_path: str, artifact_path: str) -> dict[str, 
     cases = _load_cases(cases_path)
     traces: list[dict[str, Any]] = []
     for case in cases:
-        recorder = EvalTraceRecorder()
+        run_id = str((case.get("input") or {}).get("run_id") or case.get("run_id") or case["id"])
+        recorder = GraphTraceRecorder(run_id)
         observed = adapter.run(case, recorder)
         snapshot = recorder.snapshot()
         if snapshot.get("result") != observed:

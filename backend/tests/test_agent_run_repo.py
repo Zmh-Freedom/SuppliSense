@@ -43,6 +43,34 @@ def test_freeze_pending_proposals_scopes_updates_to_v2_runs(monkeypatch) -> None
     assert "RETURNING agent_action_proposals.id" in query
 
 
+def test_rollback_outbox_update_scopes_action_events_to_v2_runs(monkeypatch) -> None:
+    from app.domains.outbox import repo as outbox_repo
+
+    cursor = _RollbackCursor()
+    monkeypatch.setattr(outbox_repo, "get_cursor", lambda: _RollbackContext(cursor))
+
+    assert outbox_repo.cancel_leased_v2_action_events() == 1
+
+    query = cursor.queries[0]
+    assert "agent_runs" in query
+    assert "run_type = 'sourcing_risk_v2'" in query
+    assert "payload->>'run_id'" in query
+
+
+def test_rollback_outbox_update_preserves_legacy_action_events(monkeypatch) -> None:
+    """Legacy action events remain outside the V2 rollback update scope."""
+    from app.domains.outbox import repo as outbox_repo
+
+    cursor = _RollbackCursor()
+    monkeypatch.setattr(outbox_repo, "get_cursor", lambda: _RollbackContext(cursor))
+
+    outbox_repo.cancel_leased_v2_action_events()
+
+    query = cursor.queries[0]
+    assert "agent_runs.run_type = 'sourcing_risk_v2'" in query
+    assert "agent_runs.run_type <> 'sourcing_risk_v2'" not in query
+
+
 class _EventCursor:
     def __init__(self) -> None:
         self._results = [("run-id",), (1,), ("run-id", 1, 1, "stage", {}, None)]

@@ -80,7 +80,10 @@ def cancel_leased_v2_action_events() -> int:
             UPDATE outbox_events
             SET locked_by = NULL, locked_until = NULL,
                 last_error = 'agent_v2_rollback_frozen', dead_lettered_at = NOW()
+            FROM agent_runs
             WHERE event_type = 'agent.action.approved'
+              AND outbox_events.payload->>'run_id' = agent_runs.id::text
+              AND agent_runs.run_type = 'sourcing_risk_v2'
               AND published_at IS NULL AND dead_lettered_at IS NULL
               AND locked_by IS NOT NULL
             RETURNING event_id
