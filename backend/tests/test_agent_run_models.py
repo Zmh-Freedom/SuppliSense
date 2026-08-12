@@ -76,6 +76,40 @@ def test_event_response_contains_replay_fields_and_response_is_immutable():
         event.version = 3
 
 
+def test_nested_request_payloads_reject_in_place_mutation():
+    request = ClarificationRequest(
+        expected_version=1,
+        answers={"region": {"name": "华东"}},
+    )
+    with pytest.raises(TypeError):
+        request.answers["region"]["name"] = "华南"
+
+
+def test_nested_event_and_candidate_payloads_reject_in_place_mutation():
+    run_id = uuid4()
+    event = AgentRunEventResponse(
+        event_id=1,
+        run_id=run_id,
+        version=1,
+        event_type="candidate_batch",
+        occurred_at=datetime.now(timezone.utc),
+        data={"items": [{"name": "供应商 A"}]},
+    )
+    response = AgentRunResponse(
+        run_id=run_id,
+        status=AgentRunStatus.CREATED,
+        version=1,
+        requirement=CreateSourcingRiskRunRequest(requirement_text="采购摄像头"),
+        candidates=[{"name": "供应商 A", "tags": ["local"]}],
+    )
+    with pytest.raises(TypeError):
+        event.data["items"].append({"name": "供应商 B"})
+    with pytest.raises(TypeError):
+        response.candidates[0]["name"] = "供应商 B"
+    with pytest.raises(TypeError):
+        response.candidates.append({"name": "供应商 C"})
+
+
 def test_public_contracts_expose_core_enum_values():
     assert CandidateSource.LOCAL.value == "local"
     assert CandidateSource.STAGED_EXTERNAL.value == "staged_external"

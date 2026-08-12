@@ -7,6 +7,32 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.domains.agent_run.models import AgentRunStatus
 
 
+class _FrozenDict(dict[str, Any]):
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("immutable payload")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _immutable
+
+
+class _FrozenList(list[Any]):
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("immutable payload")
+
+    __setitem__ = __delitem__ = append = clear = extend = insert = pop = remove = reverse = sort = _immutable
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, dict):
+        return _FrozenDict({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return _FrozenList(_deep_freeze(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_deep_freeze(item) for item in value)
+    return value
+
+
 class _ImmutableModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -29,6 +55,11 @@ class ClarificationRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
     answers: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("answers")
+    @classmethod
+    def freeze_answers(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _deep_freeze(value)
+
 
 class ApprovalDecisionRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
@@ -43,6 +74,11 @@ class AgentRunResponse(_ImmutableModel):
     requirement: CreateSourcingRiskRunRequest
     candidates: list[dict[str, Any]] = Field(default_factory=list)
 
+    @field_validator("candidates")
+    @classmethod
+    def freeze_candidates(cls, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return _deep_freeze(value)
+
 
 class AgentRunEventResponse(_ImmutableModel):
     event_id: int = Field(ge=1)
@@ -51,3 +87,8 @@ class AgentRunEventResponse(_ImmutableModel):
     event_type: str = Field(min_length=1, max_length=64)
     occurred_at: datetime
     data: dict[str, Any]
+
+    @field_validator("data")
+    @classmethod
+    def freeze_data(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return _deep_freeze(value)
