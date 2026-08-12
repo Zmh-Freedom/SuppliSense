@@ -27,6 +27,7 @@ from app.domains.sourcing_risk.policy_service import freeze_policy_snapshot
 from app.domains.sourcing_risk.requirement_service import parse_requirement
 
 from app.graphs.sourcing_risk_v2.state import SourcingRiskGraphState
+from app.graphs.sourcing_risk_v2.trace import record_graph_trace
 
 PROVIDER_TIMEOUT_SECONDS = 20
 PROVIDER_ATTEMPTS = 2
@@ -441,6 +442,7 @@ def _mark_sanctions_failures_for_review(
 
 
 async def _event(run_id: str, event_type: str, payload: dict[str, Any], status: str | None = None) -> None:
+    record_graph_trace(event_type, run_id=run_id, status=status, **payload)
     if status is not None:
         await asyncio.to_thread(record_orchestration_state, run_id, status, event_type, payload)
         return
@@ -450,6 +452,7 @@ async def _event(run_id: str, event_type: str, payload: dict[str, Any], status: 
 async def _snapshot_event(
     run_id: str, status: str, event_type: str, payload: dict[str, Any], **collections: Any,
 ) -> dict[str, Any]:
+    record_graph_trace(event_type, run_id=run_id, status=status, **payload)
     return await asyncio.to_thread(
         persist_orchestration_snapshot, run_id, status, event_type, payload, **collections
     )

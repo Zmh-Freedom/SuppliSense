@@ -317,6 +317,55 @@ def test_shadow_route_blocks_approval_before_domain_write(
     assert response.json()["error"]["code"] == "AGENT_RUN_V2_SHADOW_READ_ONLY"
 
 
+def test_rollout_control_api_reaches_promotion_and_rollback_guards(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import asyncio
+
+    from app.domains.agent_run import rollout_api
+
+    admin = UserInDB(
+        id="admin-id",
+        username="admin",
+        email="admin@example.com",
+        role="admin",
+        password_hash="unused",
+        created_at=datetime.now(timezone.utc),
+        is_active=True,
+    )
+    promoted: list[str] = []
+    rolled_back: list[str] = []
+    monkeypatch.setattr(
+        rollout_api,
+        "promote_rollout",
+        lambda *_args, **kwargs: promoted.append(kwargs["approval"]["record_id"]) or {"allowed": True},
+    )
+    monkeypatch.setattr(
+        rollout_api,
+        "rollback_rollout",
+        lambda *_args, **kwargs: rolled_back.append(kwargs["reason"]) or {"allowed": True},
+    )
+
+    promote = asyncio.run(
+        rollout_api.promote_agent_run_rollout(
+            rollout_api.PromoteRolloutRequest(
+                current_stage="shadow", evidence={}, approval={"record_id": "record-1"}
+            ),
+            admin,
+        )
+    )
+    rollback = asyncio.run(
+        rollout_api.rollback_agent_run_rollout(
+            rollout_api.RollbackRolloutRequest(stage="shadow", reason="unsafe action"), admin
+        )
+    )
+
+    assert promote == {"allowed": True}
+    assert rollback == {"allowed": True}
+    assert promoted == ["record-1"]
+    assert rolled_back == ["unsafe action"]
+
+
 @pytest.mark.parametrize(
     ("rollout", "role", "canary_percent", "expected_code"),
     [

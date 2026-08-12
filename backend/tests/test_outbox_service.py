@@ -993,6 +993,7 @@ def test_v2_action_dispatch_does_not_run_an_additional_consumer(monkeypatch):
     monkeypatch.setattr(outbox_service.repo, "record_consumption", lambda *_: True)
     monkeypatch.setattr(outbox_service.repo, "mark_published", lambda *_: True)
     monkeypatch.setattr(outbox_service.repo, "mark_failed", lambda *args: False)
+    monkeypatch.setattr(outbox_service, "require_v2_execution", lambda *_: {"state": "active", "stage": "default"})
     monkeypatch.setattr(
         outbox_service,
         "_CONSUMERS",

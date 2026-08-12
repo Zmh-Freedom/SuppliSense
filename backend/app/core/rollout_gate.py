@@ -94,6 +94,22 @@ def is_rollout_frozen(config: Any, *, store: RolloutStateStore | None = None) ->
     return snapshot is None or snapshot["state"] == "rollback_frozen"
 
 
+def require_v2_execution(config: Any, *, allow_shadow: bool = False) -> dict[str, str]:
+    """Read durable rollout control at the final execution boundary."""
+    from app.core.errors import DomainError
+
+    snapshot = get_rollout_state_snapshot()
+    if snapshot is None:
+        raise DomainError("AGENT_RUN_V2_CONTROL_UNAVAILABLE", "Agent V2 控制面不可用，已拒绝请求", 503)
+    if snapshot["state"] == "rollback_frozen":
+        raise DomainError("AGENT_RUN_V2_ROLLBACK_FROZEN", "Agent V2 已回滚冻结，禁止启动或恢复", 409)
+    if not config.AGENT_RUN_V2_ENABLED:
+        raise DomainError("AGENT_RUN_V2_DISABLED", "Agent V2 已禁用", 409)
+    if snapshot["stage"] == "shadow" and not allow_shadow:
+        raise DomainError("AGENT_RUN_V2_SHADOW_READ_ONLY", "Shadow 模式禁止执行领域写入", 409)
+    return snapshot
+
+
 def check_promotion(
     current_stage: str,
     evidence: dict[str, Any],

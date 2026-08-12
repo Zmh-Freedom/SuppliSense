@@ -104,6 +104,21 @@ def test_unapproved_import_only_persists_proposal_without_outbox_or_master_write
     importer.assert_not_called()
 
 
+def test_shadow_action_boundary_rejects_proposal_before_database_write(monkeypatch):
+    """Shadow must be read-only even when the action service is called directly."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(action_service, "require_v2_execution", lambda *_: (_ for _ in ()).throw(
+        DomainError("AGENT_RUN_V2_SHADOW_READ_ONLY", "Shadow 模式禁止执行领域写入", 409)
+    ))
+    monkeypatch.setattr(action_service, "get_cursor", lambda: (_ for _ in ()).throw(AssertionError("shadow must not write")))
+
+    with pytest.raises(DomainError) as error:
+        _create_proposal()
+    assert error.value.code == "AGENT_RUN_V2_SHADOW_READ_ONLY"
+
+
 def test_approval_enqueues_one_transactional_event_and_duplicate_replay_is_rejected(monkeypatch):
     """Dropping the pending-state gate could enqueue the same approved action twice."""
     decisions: list[dict] = []

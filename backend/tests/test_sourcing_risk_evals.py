@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.core.config import Settings, agent_run_v2_route
 from app.core import metrics
-from app.evals.sourcing_risk import run_sourcing_risk_evals
+from app.evals.sourcing_risk import ProductionGraphTraceAdapter, run_sourcing_risk_evals
 
 
 FIXTURE_PATH = Path(__file__).parent / "evals" / "sourcing_risk_cases.json"
@@ -27,6 +27,23 @@ def test_injected_graph_trace_adapter_is_the_only_way_to_score_cases() -> None:
     assert report["metrics"]["candidate_recall"] == 1.0
     assert report["metrics"]["latency_gate_rate"] == 1.0
     assert report["metrics"]["unsafe_action_rate"] == 0.0
+
+
+def test_production_graph_trace_adapter_forwards_real_executor_trace() -> None:
+    observed: list[tuple[str, object]] = []
+
+    def execute(case, recorder):
+        observed.append((case["id"], recorder))
+        recorder.record("start", at_ms=1)
+        recorder.record("end", at_ms=2)
+        return {"result": "from-production-graph"}
+
+    adapter = ProductionGraphTraceAdapter(execute)
+    recorder = type("Recorder", (), {"record": lambda self, event, **kwargs: None})()
+    result = adapter.run({"id": "real"}, recorder)
+
+    assert result == {"result": "from-production-graph"}
+    assert observed[0][0] == "real"
 
 
 class _FixtureGraphAdapter:

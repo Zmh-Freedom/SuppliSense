@@ -116,9 +116,12 @@ def test_build_sourcing_graph_binds_initialized_default_saver(
 def test_resume_runner_uses_persistent_saver_and_identity_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replacing the saver or resume payload would prevent cross-process identity recovery."""
     from app.graphs.sourcing_risk_v2 import runner
+    from app.core.config import settings
 
     saver = object()
     graph = AsyncMock()
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(runner, "require_v2_execution", lambda *_: {"state": "active", "stage": "default"})
     monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(return_value=saver))
     monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=graph))
 
@@ -128,3 +131,48 @@ def test_resume_runner_uses_persistent_saver_and_identity_resolution(monkeypatch
     command, config = graph.ainvoke.await_args.args
     assert command.resume == {"identity_resolutions": {"candidate-a": "company-a"}}
     assert config == {"configurable": {"thread_id": "run-id"}}
+
+
+def test_shadow_runner_rejects_direct_graph_execution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The graph boundary must not be bypassed by callers that skip the HTTP API."""
+    from app.core import rollout_gate
+    from app.core.config import settings
+    from app.graphs.sourcing_risk_v2 import runner
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(rollout_gate, "get_rollout_state_snapshot", lambda: {"state": "active", "stage": "shadow"})
+    monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(side_effect=AssertionError("shadow must not compile")))
+
+    with pytest.raises(Exception) as error:
+        asyncio.run(runner._start("run-id"))
+    assert error.value.code == "AGENT_RUN_V2_SHADOW_READ_ONLY"
+
+
+def test_runner_records_production_graph_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The durable runner must feed its real execution into the trace recorder seam."""
+    from app.core import rollout_gate
+    from app.core.config import settings
+    from app.graphs.sourcing_risk_v2 import runner
+
+    class Recorder:
+        instances: list["Recorder"] = []
+
+        def __init__(self, run_id: str, sink=None) -> None:
+            self.run_id = run_id
+            self.events: list[str] = []
+            self.__class__.instances.append(self)
+
+        def record(self, event_type: str, **_: object) -> None:
+            self.events.append(event_type)
+
+    graph = AsyncMock()
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(rollout_gate, "get_rollout_state_snapshot", lambda: {"state": "active", "stage": "default"})
+    monkeypatch.setattr(runner, "GraphTraceRecorder", Recorder)
+    monkeypatch.setattr(runner, "get_orchestration_run", lambda _: {"id": "run-id", "requirement": {}})
+    monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(return_value=object()))
+    monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=graph))
+
+    asyncio.run(runner._start("run-id"))
+
+    assert Recorder.instances[0].events == ["start", "end"]

@@ -10,6 +10,8 @@ from typing import Any
 from pymongo import ReturnDocument
 
 from app.core.errors import DomainError
+from app.core.config import settings
+from app.core.rollout_gate import require_v2_execution
 from app.db.mongo import get_db
 from app.db.postgres import PgCursor, get_cursor
 from app.domains.agent_run.repo import (
@@ -47,6 +49,8 @@ def create_action_proposal(
     expected_version: int,
 ) -> dict[str, Any]:
     """Persist a proposed write only; dispatch is deliberately approval-gated."""
+    if settings.AGENT_RUN_V2_ENABLED:
+        require_v2_execution(settings)
     _require_action_type(action_type)
     normalized_key = _require_idempotency_key(idempotency_key)
     with get_cursor() as (_, cur):
@@ -91,6 +95,8 @@ def decide_action_proposal(
     user_role: str,
 ) -> dict[str, Any]:
     """Approve/reject exactly one proposal and enqueue only an approved action."""
+    if settings.AGENT_RUN_V2_ENABLED:
+        require_v2_execution(settings)
     _require_approval_role(user_role)
     run = _get_authorized_run(run_id, user_id, user_role)
     _require_expected_version(run, request.expected_version)
@@ -156,6 +162,8 @@ def decide_action_proposal(
 
 def execute_sourcing_risk_action(event: dict) -> None:
     """Run an approved action once; every adapter owns its durable idempotency key."""
+    if settings.AGENT_RUN_V2_ENABLED:
+        require_v2_execution(settings)
     payload = dict(event.get("payload") or {})
     run_id = _required_event_value(payload, "run_id")
     proposal_id = _required_event_value(payload, "proposal_id")

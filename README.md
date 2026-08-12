@@ -462,12 +462,12 @@ SuppliSense/
 
 ## Agent V2 离线评估与灰度发布
 
-Task 14 提供不依赖 MongoDB、PostgreSQL、Redis、LLM 或外部 Provider 的固定评估集：
+Task 14 提供固定评估契约；发布证据必须来自生产 GraphTraceAdapter，控制面和 graph 依赖不可用时评估 fail-closed：
 
 ```bash
 cd backend
 pytest -q tests/test_sourcing_risk_evals.py
-python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import json; print(json.dumps(run_sourcing_risk_evals("tests/evals/sourcing_risk_cases.json"), ensure_ascii=False, indent=2))'
+python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import json; print(json.dumps(run_sourcing_risk_evals("tests/evals/sourcing_risk_cases.json"), ensure_ascii=False, indent=2))'  # 未接入 adapter 时明确返回 unavailable/failed
 ```
 
 评估报告包含需求解析质量、本地优先发现、身份/证据安全、决策/审批边界、恢复 fail-closed、候选 precision/recall、citation/evidence completeness、unsafe action rate、clarification rate 和 p50/p95/max latency。固定 12 个场景覆盖完整本地流、澄清、外部候选暂存/审批导入、身份歧义、制裁不可用、财务缺失、证据冲突、审批重放、重启恢复、未知 recovery 和越权授权。
@@ -478,7 +478,7 @@ python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import j
 
 | Flag | 值 | 行为 |
 |---|---|---|
-| `AGENT_RUN_V2_ENABLED` | `true/false` | 总开关，关闭时始终走 legacy |
+| `AGENT_RUN_V2_ENABLED` | `true/false` | 总开关，关闭时 V2 API 维持 409 fail-closed，不创建/调度 V2 Run |
 | `AGENT_RUN_V2_ROLLOUT` | `shadow/internal/canary/default` | 灰度阶段 |
 | `AGENT_RUN_V2_CANARY_PERCENT` | `0..100` | Canary 按 user ID 的稳定 SHA-256 bucket 放量 |
 | `AGENT_RUN_V2_ROLLOUT_STATE` | `active/rollback_frozen` | 回滚冻结时拒绝新 V2/Shadow 创建、恢复和审批；保留已有 Run/checkpoint/audit |
@@ -486,12 +486,12 @@ python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import j
 | 阶段 | 创建/恢复 API | 用户响应 | 领域动作 | 放行条件 |
 |---|---|---|---|---|
 | disabled | legacy/拒绝 V2 | legacy | legacy API 语义 | `AGENT_RUN_V2_ENABLED=false`，不创建/调度 V2 Run |
-| shadow | 拒绝创建/恢复可执行 V2 | 409 read-only | 禁止领域写入、澄清、身份动作与审批 | 真实 trace 通过 `trace_adapter` 注入；无 adapter 时报告标记 `deterministic_fallback` |
+| shadow | 拒绝创建/恢复可执行 V2 | 409 read-only | graph/service/action/outbox 全边界禁止领域写入 | 真实生产 trace adapter；无 adapter 时报告 `trace_source=unavailable, passed=false` |
 | internal | `admin`/`analyst` 进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | 角色 gate |
 | canary | 稳定 hash 命中者进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | `AGENT_RUN_V2_CANARY_PERCENT` |
 | default | 全部用户进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | promotion guard + 审批记录 |
 
-Shadow 不创建或恢复可执行 V2 graph；create、澄清恢复、身份恢复和审批均 fail-closed，避免领域写入。Internal/Canary/Default 的 route decision 控制进入 V2 graph，任何业务写入仍必须经过人工审批和 approved-only Outbox。`rollback_frozen` 对所有新建、恢复和审批请求 fail-closed；在途 Run 保留 checkpoint 并暂停新步骤，pending proposal 冻结并人工复核，leased Outbox 停止新 lease，已有 lease 完成或过期后再验证恢复。当前进程通过 `rollback_rollout` latch 立即冻结，promotion 通过完整证据和审批后解除冻结。
+Shadow 不创建或恢复可执行 V2 graph；create、澄清恢复、身份恢复、审批、取消、补偿重试和领域 action 均 fail-closed，避免领域写入。Internal/Canary/Default 的 route decision 控制进入 V2 graph，任何业务写入仍必须经过人工审批和 approved-only Outbox。`rollback_frozen` 对所有新建、恢复、审批、graph step 和 V2 Outbox lease fail-closed；在途 Run 保留 checkpoint 并暂停新步骤，pending proposal 冻结并人工复核，已 lease 事件只能完成或过期。promotion/rollback 通过 `/api/v1/admin/agent-run-rollout/{promote,rollback}` 写入 PostgreSQL 控制面，跨 worker/重启生效。
 
 ### 灰度门槛、观测和回滚
 

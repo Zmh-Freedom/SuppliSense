@@ -85,6 +85,7 @@ async def create_agent_run(data: CreateSourcingRiskRunRequest, current_user: Use
 
 @router.get("/{run_id}", summary="获取寻源风险任务", response_model=AgentRunResponse)
 async def get_agent_run(run_id: UUID, current_user: UserInDB = Depends(get_current_user)) -> AgentRunResponse:
+    _require_v2_route(current_user)
     detail = await asyncio.to_thread(get_sourcing_risk_run, str(run_id), current_user.id, current_user.role.value)
     return AgentRunResponse.model_validate({**detail, "run_id": detail.get("run_id") or detail["id"]})
 
@@ -93,6 +94,7 @@ async def get_agent_run(run_id: UUID, current_user: UserInDB = Depends(get_curre
 async def retry_agent_run_raw_payload_compensations(
     run_id: UUID, current_user: UserInDB = Depends(get_current_user)
 ) -> dict[str, list[dict[str, str]]]:
+    _require_v2_route(current_user, allow_shadow=False)
     statuses = await asyncio.to_thread(
         retry_sourcing_risk_raw_payload_compensations,
         str(run_id),
@@ -108,6 +110,7 @@ async def get_agent_run_events(
     last_event_id: Annotated[int | None, Header(alias="Last-Event-ID")] = None,
     current_user: UserInDB = Depends(get_current_user),
 ):
+    _require_v2_route(current_user)
     await asyncio.to_thread(
         get_sourcing_risk_run,
         str(run_id),
@@ -157,4 +160,5 @@ async def approve_agent_run(run_id: UUID, approval_id: UUID, data: ApprovalDecis
 
 @router.post("/{run_id}/cancel", summary="取消任务")
 async def cancel_agent_run(run_id: UUID, data: CancelRunRequest, current_user: UserInDB = Depends(get_current_user)):
+    _require_v2_route(current_user, allow_shadow=False)
     return await asyncio.to_thread(cancel_run, str(run_id), data.expected_version, current_user.id, current_user.role.value)

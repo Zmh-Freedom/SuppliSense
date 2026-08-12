@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from app.core.errors import DomainError
 from app.core.config import settings
-from app.core.rollout_gate import is_rollout_frozen
+from app.core.rollout_gate import is_rollout_frozen, require_v2_execution
 from app.core.logging import get_logger
 from app.db.postgres import get_cursor
 from app.domains.auth.audit_repo import create_log_with_cursor
@@ -67,6 +67,7 @@ def process_outbox_batch(
         event_max_attempts = V2_ACTION_MAX_ATTEMPTS if event["event_type"] == V2_ACTION_EVENT_TYPE else max_attempts
         try:
             if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                require_v2_execution(settings)
                 action_handler = _CONSUMERS.get(
                     (V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME)
                 )

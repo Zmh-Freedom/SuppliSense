@@ -67,6 +67,25 @@ class GraphTraceAdapter(EvalRunner, Protocol):
     """Adapter contract for real graph executions and their recorded outputs."""
 
 
+class ProductionGraphTraceAdapter:
+    """Bridge a production graph executor to the evaluator.
+
+    The executor must run the real graph and call ``recorder.record`` for every
+    lifecycle event; this adapter never synthesizes observations from fixture input.
+    """
+
+    def __init__(self, executor: Any) -> None:
+        if not callable(executor):
+            raise TypeError("production graph executor is required")
+        self._executor = executor
+
+    def run(self, case: dict[str, Any], recorder: TraceRecorder) -> dict[str, Any]:
+        result = self._executor(case, recorder)
+        if not isinstance(result, dict) or not result:
+            raise ValueError(f"production graph executor returned no observed output for case {case.get('id')}")
+        return result
+
+
 def run_sourcing_risk_evals(
     cases_path: str | list[dict[str, Any]],
     *,
