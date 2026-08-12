@@ -205,22 +205,48 @@ def _fail_closed_for_raw_payload_recovery(
 def _merge_compensation_statuses(
     mongo_statuses: list[dict[str, str]], compensations: list[dict[str, Any]]
 ) -> list[dict[str, str]]:
+    mongo_by_ref = {
+        item["raw_payload_ref"]: _normalize_mongo_lifecycle_status(item.get("lifecycle_status"))
+        for item in mongo_statuses
+    }
     merged = {
         item["raw_payload_ref"]: {
             "raw_payload_ref": item["raw_payload_ref"],
-            "lifecycle_status": _normalize_mongo_lifecycle_status(item.get("lifecycle_status")),
+            "lifecycle_status": mongo_status,
         }
         for item in mongo_statuses
+        for mongo_status in [_normalize_mongo_lifecycle_status(item.get("lifecycle_status"))]
     }
     for item in compensations:
         raw_payload_ref = item["raw_payload_ref"]
         compensation_status = _normalize_pg_recovery_status(
             item.get("status") or item.get("lifecycle_status") or "pending_compensation"
         )
-        current_status = merged.get(raw_payload_ref, {}).get("lifecycle_status")
-        lifecycle_status = "compensated" if current_status == "compensated" or compensation_status == "compensated" else compensation_status
+        mongo_status = mongo_by_ref.get(raw_payload_ref)
+        if mongo_status is None:
+            # A recovery row without a Mongo observation is not proof of cleanup.
+            lifecycle_status = (
+                "pending_compensation"
+                if compensation_status == "pending_compensation"
+                else "unknown"
+            )
+        elif mongo_status in _SAFE_RAW_PAYLOAD_STATUSES and compensation_status in _SAFE_RAW_PAYLOAD_STATUSES:
+            lifecycle_status = (
+                "compensated"
+                if "compensated" in {mongo_status, compensation_status}
+                else "committed"
+            )
+        elif mongo_status in {"pending_compensation", "orphan", "unknown"}:
+            lifecycle_status = mongo_status
+        elif compensation_status in {"pending_compensation", "unknown"}:
+            lifecycle_status = compensation_status
+        else:
+            lifecycle_status = mongo_status
         merged[raw_payload_ref] = {"raw_payload_ref": raw_payload_ref, "lifecycle_status": lifecycle_status}
     return list(merged.values())
+
+
+_SAFE_RAW_PAYLOAD_STATUSES = frozenset({"committed", "compensated"})
 
 
 def _normalize_mongo_lifecycle_status(value: object) -> str:

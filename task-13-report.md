@@ -44,6 +44,9 @@ git diff --check
 
 ## 本次修复
 
+- 修复跨存储 compensation 合并：PG `compensated` 只有在 Mongo 同一 `raw_payload_ref` 明确为 `committed`/`compensated` 时才可合并为完成；Mongo `pending`、`pending_compensation`、`unknown` 或缺失时保留不安全状态并触发 fail-closed。
+- detail 返回的候选/决策、API DTO 与 SSE durable detail 继续共享该门禁；补充反向组合矩阵、PG compensated + Mongo pending 的 detail/decision gate 回归，以及重复 retry 不降级回归。
+
 - recovery/retry 对 Mongo 记录缺失、查询异常、非 pending 状态及 owner 不匹配统一返回 `unknown`，不再误报 `already_compensated`；service 保留或创建 durable recovery 状态，detail/decision 继续 fail-closed。
 - 每次 orchestration snapshot attempt 使用新的 `staging_owner` token，stage/commit/compensate/retry 继续按 owner 做状态转换，避免并发 attempt 相互覆盖或删除。
 - 修复 Mongo commit failure 回归测试的 `reason` keyword-only mock 契约，并保留重复 stage/commit 的幂等语义。

@@ -132,6 +132,46 @@ def test_merge_compensation_statuses_preserves_known_pg_recovery_lifecycle():
     ) == [{"raw_payload_ref": "raw-1", "lifecycle_status": "pending_compensation"}]
 
 
+@pytest.mark.parametrize(
+    ("mongo_status", "expected_status"),
+    [
+        ("pending", "pending"),
+        ("pending_compensation", "pending_compensation"),
+        ("unknown", "unknown"),
+    ],
+)
+def test_merge_compensation_statuses_never_promotes_pg_compensated_over_unsafe_mongo(
+    mongo_status: str, expected_status: str
+):
+    """A stale PG recovery row must not hide an uncommitted Mongo payload."""
+    assert service._merge_compensation_statuses(
+        [{"raw_payload_ref": "raw-1", "lifecycle_status": mongo_status}],
+        [{"raw_payload_ref": "raw-1", "status": "compensated"}],
+    ) == [{"raw_payload_ref": "raw-1", "lifecycle_status": expected_status}]
+
+
+def test_merge_compensation_statuses_marks_pg_compensated_with_missing_mongo_as_unknown():
+    """A missing Mongo observation is not proof that compensation completed."""
+    assert service._merge_compensation_statuses(
+        [], [{"raw_payload_ref": "raw-1", "status": "compensated"}]
+    ) == [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}]
+
+
+def test_merge_compensation_statuses_allows_only_two_explicitly_safe_lifecycles():
+    """Cross-store completion requires an explicit safe lifecycle in both stores."""
+    for mongo_status in ("committed", "compensated"):
+        for pg_status in ("committed", "compensated"):
+            assert service._merge_compensation_statuses(
+                [{"raw_payload_ref": "raw-1", "lifecycle_status": mongo_status}],
+                [{"raw_payload_ref": "raw-1", "status": pg_status}],
+            ) == [{
+                "raw_payload_ref": "raw-1",
+                "lifecycle_status": "compensated"
+                if "compensated" in {mongo_status, pg_status}
+                else "committed",
+            }]
+
+
 def test_get_sourcing_risk_run_fails_closed_when_raw_payload_record_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -223,6 +263,45 @@ def test_get_sourcing_risk_run_fails_closed_for_unknown_recovery_lifecycle(
     assert result["decisions"][0]["score_eligible"] is False
 
 
+def test_get_sourcing_risk_run_fails_closed_when_pg_compensated_conflicts_with_mongo_pending(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A stale compensated index must not make an uncommitted payload scoreable."""
+    run = _run("SCORING", 4)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [{"id": "candidate-1", "score_eligible": True}],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [{"candidate_id": "candidate-1", "score_eligible": True}],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "get_raw_payload_lifecycle_statuses",
+        lambda refs: [{"raw_payload_ref": refs[0], "lifecycle_status": "pending"}],
+    )
+    monkeypatch.setattr(
+        service,
+        "list_raw_payload_compensations",
+        lambda *_: [{"raw_payload_ref": "raw-1", "status": "compensated"}],
+    )
+
+    result = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
+
+    assert result["raw_payload_statuses"] == [
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "pending"}
+    ]
+    assert result["candidates"][0]["score_eligible"] is False
+    assert result["decisions"][0]["score_eligible"] is False
+    assert result["decisions"][0]["recovery_required"] is True
+
+
 def test_retry_missing_raw_payload_keeps_recovery_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -299,6 +378,45 @@ def test_retry_after_compensation_keeps_compensated_state(monkeypatch: pytest.Mo
 
     assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
     assert updated == []
+
+
+def test_repeated_retry_after_compensation_keeps_compensated_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A second ambiguous retry must not downgrade the first successful retry."""
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("SCORING", 4))
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    compensation = [{"raw_payload_ref": "raw-1", "status": "pending_compensation"}]
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: compensation)
+    outcomes = iter(
+        [
+            [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}],
+            [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}],
+        ]
+    )
+    monkeypatch.setattr(service, "retry_raw_payload_compensations", lambda *_args, **_kwargs: next(outcomes))
+
+    def update(_run_id: str, _ref: str, status: str, last_error: str | None = None) -> None:
+        compensation[0]["status"] = status
+
+    monkeypatch.setattr(service, "update_raw_payload_compensation", update)
+
+    first = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
+    second = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
+
+    assert first == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
+    assert second == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
 
 
 def test_retry_run_raw_payload_compensations_uses_only_authorized_evidence_refs(
