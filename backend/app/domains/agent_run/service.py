@@ -3,6 +3,7 @@
 import time
 from collections.abc import Iterator
 from typing import Any
+from uuid import uuid4
 
 from app.core.errors import DomainError
 from app.db.postgres import get_cursor
@@ -27,6 +28,9 @@ from app.domains.agent_run.repo import (
     persist_run_snapshot,
     update_run_requirement,
     update_run_status,
+    list_raw_payload_compensations,
+    update_raw_payload_compensation,
+    upsert_raw_payload_compensations,
 )
 from app.domains.agent_run.schemas import (
     AgentRunResponse,
@@ -71,6 +75,7 @@ def create_sourcing_risk_run(
 def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
     run = _get_authorized_run(run_id, user_id, user_role)
     detail = get_run_detail_collections(run_id)
+    compensations = get_raw_payload_compensations(run_id)
     raw_payload_refs = _raw_payload_refs(detail["evidence_by_company_id"])
     response = AgentRunResponse(
         id=run["id"],
@@ -90,7 +95,9 @@ def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str
         **response,
         "id": run["id"],
         "proposals": response["action_proposals"],
-        "raw_payload_statuses": get_raw_payload_lifecycle_statuses(raw_payload_refs),
+        "raw_payload_statuses": _merge_compensation_statuses(
+            get_raw_payload_lifecycle_statuses(raw_payload_refs), compensations
+        ),
     }
 
 
@@ -100,7 +107,34 @@ def retry_sourcing_risk_raw_payload_compensations(
     """Retry only the raw payload cleanups referenced by an authorized Run's evidence."""
     _get_authorized_run(run_id, user_id, user_role)
     detail = get_run_detail_collections(run_id)
-    return retry_raw_payload_compensations(_raw_payload_refs(detail["evidence_by_company_id"]))
+    compensations = get_raw_payload_compensations(run_id)
+    refs = _raw_payload_refs(detail["evidence_by_company_id"])
+    refs.extend(item["raw_payload_ref"] for item in compensations)
+    outcomes = retry_raw_payload_compensations(refs)
+    compensation_refs = {item["raw_payload_ref"] for item in compensations}
+    for outcome in outcomes:
+        if isinstance(outcome, dict) and outcome["raw_payload_ref"] in compensation_refs:
+            update_raw_payload_compensation(run_id, outcome["raw_payload_ref"], outcome["lifecycle_status"])
+    return outcomes
+
+
+def get_raw_payload_compensations(run_id: str) -> list[dict[str, Any]]:
+    try:
+        return list_raw_payload_compensations(run_id)
+    except Exception:
+        return []
+
+
+def _merge_compensation_statuses(
+    mongo_statuses: list[dict[str, str]], compensations: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    merged = {item["raw_payload_ref"]: item for item in mongo_statuses}
+    for item in compensations:
+        merged[item["raw_payload_ref"]] = {
+            "raw_payload_ref": item["raw_payload_ref"],
+            "lifecycle_status": str(item.get("status") or item.get("lifecycle_status") or "pending_compensation"),
+        }
+    return list(merged.values())
 
 
 def _raw_payload_refs(evidence_by_company_id: dict[str, list[dict[str, Any]]]) -> list[str]:
@@ -279,10 +313,12 @@ def persist_orchestration_snapshot(
         target = AgentRunStatus(status)
     except ValueError as exc:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
+    staging_owner = str(uuid4())
     try:
-        staged_payloads = stage_raw_payloads(raw_payloads or [])
+        staged_payloads = stage_raw_payloads(raw_payloads or [], staging_owner=staging_owner)
     except RawPayloadStagingError as exc:
-        compensate_raw_payloads(exc.staged_payloads)
+        _record_compensations(exc.compensation_payloads, "mongo_staging_failed")
+        compensate_raw_payloads(exc.compensation_payloads)
         raise
     try:
         with get_cursor() as (_, cur):
@@ -309,10 +345,29 @@ def persist_orchestration_snapshot(
                 cur=cur,
             )
     except Exception:
+        _record_compensations(staged_payloads, "postgres_snapshot_failed")
         compensate_raw_payloads(staged_payloads)
         raise
-    commit_raw_payloads(raw_payloads or [])
+    commit_raw_payloads(staged_payloads)
     return snapshot
+
+
+def _record_compensations(payloads: list[dict[str, Any]], reason: str) -> None:
+    try:
+        upsert_raw_payload_compensations(
+            [
+                {
+                    "run_id": payload["run_id"],
+                    "raw_payload_ref": payload["raw_payload_ref"],
+                    "company_id": payload.get("company_id"),
+                    "last_error": reason,
+                }
+                for payload in payloads
+            ]
+        )
+    except Exception:
+        # Mongo remains explicitly pending and can be recovered by an operator.
+        return
 
 
 def get_orchestration_run(run_id: str) -> dict[str, Any] | None:

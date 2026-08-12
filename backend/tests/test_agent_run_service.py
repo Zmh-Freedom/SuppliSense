@@ -155,6 +155,34 @@ def test_retry_run_raw_payload_compensations_uses_only_authorized_evidence_refs(
     assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
 
 
+def test_detail_and_retry_discover_compensation_record_after_snapshot_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A rolled-back evidence snapshot must not hide its durable recovery record."""
+    run = _run("INVESTIGATING", 4)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [], "evidence_by_company_id": {}, "evidence_reviews": {},
+            "decisions": [], "action_proposals": [], "approvals": [],
+        },
+    )
+    compensation = [{"raw_payload_ref": "raw-1", "run_id": run["id"], "lifecycle_status": "pending_compensation"}]
+    monkeypatch.setattr(service, "get_raw_payload_compensations", lambda *_: compensation)
+    monkeypatch.setattr(service, "get_raw_payload_lifecycle_statuses", lambda refs: [])
+    monkeypatch.setattr(service, "retry_raw_payload_compensations", lambda refs: refs)
+
+    detail = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
+    retry = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
+
+    assert detail["raw_payload_statuses"] == [
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "pending_compensation"}
+    ]
+    assert retry == ["raw-1"]
+
+
 def test_stream_events_embeds_renderable_durable_detail(monkeypatch: pytest.MonkeyPatch):
     """A count-only event cannot update candidates, evidence, decisions, or approvals after replay."""
     run = {

@@ -196,3 +196,56 @@ def test_future_observed_at_is_invalid_not_fresh(monkeypatch):
     )
 
     assert record.freshness_status == "stale"
+
+
+def test_ambiguous_stage_write_recovers_inserted_document_for_compensation(monkeypatch):
+    """A write timeout after Mongo inserted the row must retain this attempt's ownership."""
+    class Result:
+        upserted_id = None
+        matched_count = 1
+
+    class Collection:
+        def __init__(self):
+            self.document = None
+
+        def update_one(self, selector, update, *, upsert=False):
+            if self.document is None:
+                self.document = dict(update["$setOnInsert"])
+                raise RuntimeError("write acknowledgement lost")
+            return Result()
+
+        def find_one(self, selector):
+            return dict(self.document) if self.document and self.document["raw_payload_ref"] == selector["raw_payload_ref"] else None
+
+    collection = Collection()
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": collection})
+
+    payload = {"raw_payload_ref": "raw-1", "run_id": "run-1", "company_id": "company-1"}
+    staged = evidence_service.stage_raw_payloads([payload], staging_owner="owner-1")
+
+    assert staged == [{**payload, "lifecycle_status": "pending", "staging_owner": "owner-1"}]
+
+
+def test_staging_owner_cannot_commit_another_run_payload(monkeypatch):
+    """A replay from another run must not change or delete a pending owner's lifecycle."""
+    class Result:
+        matched_count = 0
+
+    class Collection:
+        def __init__(self):
+            self.document = {"raw_payload_ref": "raw-1", "run_id": "run-a", "company_id": "company-a", "lifecycle_status": "pending", "staging_owner": "owner-a"}
+
+        def update_one(self, selector, update, *, upsert=False):
+            assert selector["run_id"] == "run-b"
+            return Result()
+
+        def find_one(self, selector):
+            return dict(self.document)
+
+    collection = Collection()
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": collection})
+
+    with pytest.raises(RuntimeError, match="ownership"):
+        evidence_service.commit_raw_payloads(
+            [{"raw_payload_ref": "raw-1", "run_id": "run-b", "company_id": "company-b", "staging_owner": "owner-b"}]
+        )

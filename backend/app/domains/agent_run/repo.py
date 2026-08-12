@@ -118,6 +118,78 @@ def get_run_detail_collections(run_id: str) -> dict[str, Any]:
     }
 
 
+def upsert_raw_payload_compensations(
+    compensations: list[dict[str, Any]], cur: PgCursor | None = None
+) -> None:
+    """Persist cross-store recovery metadata independently from a failed snapshot."""
+    if not compensations:
+        return
+    if cur is not None:
+        _upsert_raw_payload_compensations_with_cursor(cur, compensations)
+        return
+    with get_cursor() as (_, cursor):
+        _upsert_raw_payload_compensations_with_cursor(cursor, compensations)
+
+
+def _upsert_raw_payload_compensations_with_cursor(
+    cur: PgCursor, compensations: list[dict[str, Any]]
+) -> None:
+    for compensation in compensations:
+        cur.execute(
+            """
+            INSERT INTO agent_raw_payload_compensations
+                (run_id, raw_payload_ref, company_id, status, last_error)
+            VALUES (%s, %s, %s, 'pending_compensation', %s)
+            ON CONFLICT (run_id, raw_payload_ref) DO UPDATE SET
+                status = CASE
+                    WHEN agent_raw_payload_compensations.status = 'compensated'
+                    THEN agent_raw_payload_compensations.status
+                    ELSE 'pending_compensation'
+                END,
+                last_error = EXCLUDED.last_error,
+                updated_at = NOW()
+            """,
+            (
+                compensation["run_id"],
+                compensation["raw_payload_ref"],
+                compensation.get("company_id"),
+                compensation.get("last_error"),
+            ),
+        )
+
+
+def list_raw_payload_compensations(run_id: str) -> list[dict[str, Any]]:
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT run_id, raw_payload_ref, company_id, status, attempt_count, last_error
+            FROM agent_raw_payload_compensations
+            WHERE run_id = %s
+            ORDER BY created_at ASC
+            """,
+            (run_id,),
+        )
+        columns = [column[0] for column in cur.description]
+        return [_row_to_dict_from_columns(columns, row) for row in cur.fetchall()]
+
+
+def update_raw_payload_compensation(
+    run_id: str, raw_payload_ref: str, status: str, last_error: str | None = None
+) -> None:
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE agent_raw_payload_compensations
+            SET status = %s,
+                attempt_count = attempt_count + 1,
+                last_error = %s,
+                updated_at = NOW()
+            WHERE run_id = %s AND raw_payload_ref = %s
+            """,
+            (status, last_error, run_id, raw_payload_ref),
+        )
+
+
 def update_run_status(
     run_id: str,
     expected_version: int,

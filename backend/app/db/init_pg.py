@@ -219,6 +219,19 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS agent_raw_payload_compensations (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        raw_payload_ref VARCHAR(255) NOT NULL,
+        company_id UUID,
+        status VARCHAR(32) NOT NULL DEFAULT 'pending_compensation',
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, raw_payload_ref)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS sourcing_policy_templates (
         id UUID PRIMARY KEY,
         name VARCHAR(128) NOT NULL,

@@ -153,3 +153,25 @@ git diff --check
 ### Remaining environment constraint
 
 The existing PostgreSQL integration tests still require a reachable `localhost:5432`, which this sandbox denies. The compensation paths use stateful Mongo fakes to verify all failure-injection contracts; real Mongo/PostgreSQL integration should be rerun in an environment where both services are available.
+
+## Final P1 repair — durable compensation discovery and Mongo ownership
+
+### Delivered
+
+- Added the PostgreSQL `agent_raw_payload_compensations` recovery record keyed by `(run_id, raw_payload_ref)`, with status, attempt count, company ownership and last error. It is written outside the failed snapshot transaction, so a rolled-back evidence snapshot cannot hide a pending cleanup.
+- Run detail merges the authorized Run's durable compensation records into `raw_payload_statuses`; the existing protected retry endpoint also derives and retries those records server-side, idempotently, without accepting arbitrary raw references.
+- Mongo staging now carries a per-attempt `staging_owner` and checks stable `raw_payload_ref`, `run_id`, and `company_id` ownership. Commit and compensation use conditional lifecycle transitions, so a concurrent replay cannot commit or delete another Run's pending payload.
+- An ambiguous `update_one` acknowledgement is reconciled by reading the stable reference and retaining an owned pending document for this attempt; staging exceptions expose all known owned payloads for compensation. Pending and compensation states never become committed evidence or decision input.
+- This remains an explicit retryable cross-store compensation design; it does not claim Mongo/PostgreSQL ACID atomicity.
+
+### Focused verification
+
+Passed:
+
+```text
+cd backend && pytest -q <nine Task 13 compensation/detail/ownership tests>  # 9 passed
+cd backend && python -m compileall -q app
+git diff --check
+```
+
+The broader PostgreSQL-backed integration suite remains environment-dependent on `localhost:5432`.
