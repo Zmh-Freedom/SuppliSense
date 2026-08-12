@@ -272,6 +272,11 @@ export interface SourcingRiskApproval {
   comment?: string | null;
 }
 
+export interface SourcingRiskRawPayloadStatus {
+  raw_payload_ref: string;
+  lifecycle_status: 'committed' | 'pending' | 'pending_compensation' | string;
+}
+
 export interface SourcingRiskAgentRun {
   id?: string;
   run_id?: string;
@@ -285,6 +290,7 @@ export interface SourcingRiskAgentRun {
   proposals?: SourcingRiskApprovalProposal[];
   action_proposals?: SourcingRiskApprovalProposal[];
   approvals?: SourcingRiskApproval[];
+  raw_payload_statuses?: SourcingRiskRawPayloadStatus[];
   next_action?: string | null;
   error_code?: string | null;
 }

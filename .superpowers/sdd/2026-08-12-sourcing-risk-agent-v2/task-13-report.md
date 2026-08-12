@@ -120,3 +120,36 @@ git diff --check
 ### Remaining environment constraint
 
 The repository's PostgreSQL integration cases still require a reachable `localhost:5432`; this sandbox denies that connection. The compensation and idempotency seams are covered by stateful unit fakes and should be run against the real PostgreSQL/MongoDB deployment environment as part of integration validation.
+
+---
+
+## Final P1 raw-evidence compensation recovery repair
+
+### Delivered
+
+- MongoDB raw evidence remains explicitly outside the PostgreSQL transaction; this change does not claim cross-store ACID. Each document is keyed by the existing deterministic `raw_payload_ref` and can only be `pending`, `committed`, or `pending_compensation` during this workflow. Cleanup failure is never relabeled as committed or a terminal orphan.
+- Partial Mongo staging now raises a `RawPayloadStagingError` carrying every already-created ref. The orchestration command compensates that exact set before re-raising, so an interruption halfway through a batch cannot silently strand an ordinary `pending` payload.
+- PostgreSQL snapshot/status/event failure first changes each newly staged document to `pending_compensation` with `compensation_reason=postgres_snapshot_failed`, then attempts a conditional delete. A Mongo delete exception or `deleted_count == 0` leaves that stable record as explicitly retryable state.
+- `retry_raw_payload_compensations()` is idempotent: duplicate refs collapse to one cleanup attempt; a missing ref reports `already_compensated`; repeated delete failure stays `pending_compensation` without creating or committing a duplicate. Re-staging never downgrades a `committed` payload.
+- Detail responses include status-only `raw_payload_statuses` for refs already present in the authorized Run's PostgreSQL evidence snapshot. `POST /api/v1/agent-runs/{run_id}/raw-payload-compensations/retry` is the deterministic recovery entrance: it authorizes the Run first, derives refs server-side from that Run, and never accepts arbitrary client-supplied Mongo keys. Candidate and approval/master-data boundaries are unchanged.
+- Added the unique Mongo index for `agent_evidence_payloads.raw_payload_ref` to enforce the stable idempotency key in deployment.
+
+### TDD evidence
+
+- RED: seven new stateful failure-injection tests failed against the previous implementation: mid-batch Mongo staging left `pending`, PG event/snapshot failures with delete errors or zero-delete became `orphan`, no retry API existed, and detail could not expose lifecycle status.
+- GREEN: the tests cover mid-stage cleanup, PG event failure/delete exception, PG snapshot failure/zero delete, recovery success, repeated recovery failure, committed-state preservation, authorized Run-scoped retry, and status-only detail audit metadata.
+
+### Verification
+
+Passed:
+
+```text
+cd backend && pytest -q tests/test_sourcing_risk_evidence_service.py tests/test_agent_run_service.py tests/test_sourcing_risk_graph.py tests/test_agent_run_api.py  # 66 passed
+cd backend && python -m compileall -q app
+cd frontend && npm run typecheck
+git diff --check
+```
+
+### Remaining environment constraint
+
+The existing PostgreSQL integration tests still require a reachable `localhost:5432`, which this sandbox denies. The compensation paths use stateful Mongo fakes to verify all failure-injection contracts; real Mongo/PostgreSQL integration should be rerun in an environment where both services are available.

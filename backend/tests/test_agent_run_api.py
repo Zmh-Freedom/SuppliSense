@@ -155,6 +155,31 @@ def test_detail_returns_workbench_collections(agent_client, agent_headers, monke
     assert response.json()["approvals"][0]["comment"] == "复核通过"
 
 
+def test_raw_payload_compensation_retry_uses_authorized_run_endpoint(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    """Recovery must be scoped by the server-authorized Run, never by caller-supplied raw references."""
+    from app.domains.agent_run import api
+
+    observed: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        api,
+        "retry_sourcing_risk_raw_payload_compensations",
+        lambda run_id, user_id, role: observed.append((run_id, user_id, role)) or [
+            {"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}
+        ],
+    )
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/raw-payload-compensations/retry",
+        headers=agent_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"raw_payload_statuses": [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]}
+    assert observed[0][0] == RUN_ID
+
+
 def test_approval_decision_uses_canonical_nested_path(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
     """The documented nested decisions path keeps approval intent unambiguous while old clients retain their route."""
     from app.domains.agent_run import api

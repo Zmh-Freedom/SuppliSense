@@ -7,8 +7,11 @@ from typing import Any
 from app.core.errors import DomainError
 from app.db.postgres import get_cursor
 from app.domains.sourcing_risk.evidence_service import (
+    RawPayloadStagingError,
     commit_raw_payloads,
     compensate_raw_payloads,
+    get_raw_payload_lifecycle_statuses,
+    retry_raw_payload_compensations,
     stage_raw_payloads,
 )
 from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunStatus
@@ -68,6 +71,7 @@ def create_sourcing_risk_run(
 def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
     run = _get_authorized_run(run_id, user_id, user_role)
     detail = get_run_detail_collections(run_id)
+    raw_payload_refs = _raw_payload_refs(detail["evidence_by_company_id"])
     response = AgentRunResponse(
         id=run["id"],
         run_id=run["id"],
@@ -81,7 +85,33 @@ def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str
         action_proposals=detail["action_proposals"],
         approvals=detail["approvals"],
     ).model_dump(mode="json")
-    return {**run, **response, "id": run["id"], "proposals": response["action_proposals"]}
+    return {
+        **run,
+        **response,
+        "id": run["id"],
+        "proposals": response["action_proposals"],
+        "raw_payload_statuses": get_raw_payload_lifecycle_statuses(raw_payload_refs),
+    }
+
+
+def retry_sourcing_risk_raw_payload_compensations(
+    run_id: str, user_id: str, user_role: str
+) -> list[dict[str, str]]:
+    """Retry only the raw payload cleanups referenced by an authorized Run's evidence."""
+    _get_authorized_run(run_id, user_id, user_role)
+    detail = get_run_detail_collections(run_id)
+    return retry_raw_payload_compensations(_raw_payload_refs(detail["evidence_by_company_id"]))
+
+
+def _raw_payload_refs(evidence_by_company_id: dict[str, list[dict[str, Any]]]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(evidence["raw_payload_ref"])
+            for evidence_items in evidence_by_company_id.values()
+            for evidence in evidence_items
+            if evidence.get("raw_payload_ref")
+        )
+    )
 
 
 def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
@@ -249,7 +279,11 @@ def persist_orchestration_snapshot(
         target = AgentRunStatus(status)
     except ValueError as exc:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
-    staged_payloads = stage_raw_payloads(raw_payloads or [])
+    try:
+        staged_payloads = stage_raw_payloads(raw_payloads or [])
+    except RawPayloadStagingError as exc:
+        compensate_raw_payloads(exc.staged_payloads)
+        raise
     try:
         with get_cursor() as (_, cur):
             run = get_orchestration_run_for_update(run_id, cur)

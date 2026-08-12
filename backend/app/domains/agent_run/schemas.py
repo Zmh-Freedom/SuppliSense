@@ -95,6 +95,7 @@ class AgentRunResponse(_ImmutableModel):
     decisions: list[dict[str, Any]] = Field(default_factory=list)
     action_proposals: list[dict[str, Any]] = Field(default_factory=list)
     approvals: list[dict[str, Any]] = Field(default_factory=list)
+    raw_payload_statuses: list[dict[str, str]] = Field(default_factory=list)
 
     @field_validator("candidates")
     @classmethod

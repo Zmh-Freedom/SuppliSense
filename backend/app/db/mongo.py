@@ -87,6 +87,9 @@ def ensure_indexes() -> None:
         db["agent_report_exports"].create_index(
             [("agent_action_key", 1)], unique=True, sparse=True, background=True
         )
+        db["agent_evidence_payloads"].create_index(
+            [("raw_payload_ref", 1)], unique=True, sparse=True, background=True
+        )
         # alerts: 按时间倒序查询
         db["alerts"].create_index([("created_at", -1)], background=True)
         # sentiment_results: 按企业+时间查询

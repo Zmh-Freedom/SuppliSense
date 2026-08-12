@@ -10,6 +10,14 @@ from pydantic import BaseModel, Field
 from app.db.mongo import get_db
 
 
+class RawPayloadStagingError(RuntimeError):
+    """Expose the documents that need compensation after a partial Mongo stage."""
+
+    def __init__(self, staged_payloads: list[dict], cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.staged_payloads = staged_payloads
+
+
 class EvidenceRecord(BaseModel):
     """Structured evidence index; provider payloads remain in MongoDB."""
 
@@ -142,13 +150,35 @@ def stage_raw_payloads(raw_payloads: list[dict]) -> list[dict]:
     staged: list[dict] = []
     for payload in raw_payloads:
         document = {**payload, "lifecycle_status": "pending"}
-        result = collection.update_one(
-            {"raw_payload_ref": document["raw_payload_ref"]},
-            {"$setOnInsert": document},
-            upsert=True,
-        )
+        try:
+            result = collection.update_one(
+                {"raw_payload_ref": document["raw_payload_ref"]},
+                {"$setOnInsert": document},
+                upsert=True,
+            )
+        except Exception as exc:
+            raise RawPayloadStagingError(staged, exc) from exc
         if result.upserted_id is not None:
             staged.append(document)
+            continue
+        find_one = getattr(collection, "find_one", None)
+        existing = find_one({"raw_payload_ref": document["raw_payload_ref"]}) if find_one else None
+        if existing and existing.get("lifecycle_status") == "pending_compensation":
+            if _delete_pending_compensation(collection, document["raw_payload_ref"]) != "compensated":
+                raise RawPayloadStagingError(
+                    staged,
+                    RuntimeError(f"raw payload {document['raw_payload_ref']} is pending compensation"),
+                )
+            try:
+                restaged = collection.update_one(
+                    {"raw_payload_ref": document["raw_payload_ref"]},
+                    {"$setOnInsert": document},
+                    upsert=True,
+                )
+            except Exception as exc:
+                raise RawPayloadStagingError(staged, exc) from exc
+            if restaged.upserted_id is not None:
+                staged.append(document)
     return staged
 
 
@@ -163,26 +193,82 @@ def commit_raw_payloads(raw_payloads: list[dict]) -> None:
 
 
 def compensate_raw_payloads(staged_payloads: list[dict]) -> None:
-    """Delete newly staged Mongo documents, retaining an orphan marker only if deletion fails."""
+    """Try to delete staged payloads, retaining retryable state when Mongo cleanup is uncertain."""
     collection = get_db()["agent_evidence_payloads"]
     for payload in staged_payloads:
-        selector = {
-            "raw_payload_ref": payload["raw_payload_ref"],
-            "lifecycle_status": "pending",
-        }
-        try:
-            result = collection.delete_one(selector)
-        except Exception:
-            collection.update_one(
-                {"raw_payload_ref": payload["raw_payload_ref"]},
-                {"$set": {"lifecycle_status": "orphan"}},
+        _mark_pending_compensation(collection, payload["raw_payload_ref"])
+        _delete_pending_compensation(collection, payload["raw_payload_ref"])
+
+
+def retry_raw_payload_compensations(raw_payload_refs: list[str]) -> list[dict[str, str]]:
+    """Idempotently retry cleanup for stable raw-evidence references.
+
+    This is deliberately a compensation command, not a cross-store transaction. It only
+    acts on records already marked for remediation and never creates or commits payloads.
+    """
+    collection = get_db()["agent_evidence_payloads"]
+    outcomes: list[dict[str, str]] = []
+    for raw_payload_ref in dict.fromkeys(raw_payload_refs):
+        document = collection.find_one(
+            {
+                "raw_payload_ref": raw_payload_ref,
+                "lifecycle_status": "pending_compensation",
+            }
+        )
+        if document is None:
+            outcomes.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": "already_compensated"})
+            continue
+        outcomes.append(
+            {
+                "raw_payload_ref": raw_payload_ref,
+                "lifecycle_status": _delete_pending_compensation(collection, raw_payload_ref),
+            }
+        )
+    return outcomes
+
+
+def get_raw_payload_lifecycle_statuses(raw_payload_refs: list[str]) -> list[dict[str, str]]:
+    """Return status-only raw payload metadata for already-authorized evidence detail reads."""
+    if not raw_payload_refs:
+        return []
+    collection = get_db()["agent_evidence_payloads"]
+    statuses: list[dict[str, str]] = []
+    for raw_payload_ref in dict.fromkeys(raw_payload_refs):
+        document = collection.find_one({"raw_payload_ref": raw_payload_ref})
+        if document is not None:
+            statuses.append(
+                {
+                    "raw_payload_ref": raw_payload_ref,
+                    "lifecycle_status": str(document.get("lifecycle_status") or "pending_compensation"),
+                }
             )
-        else:
-            if result.deleted_count == 0:
-                collection.update_one(
-                    {"raw_payload_ref": payload["raw_payload_ref"]},
-                    {"$set": {"lifecycle_status": "orphan"}},
-                )
+    return statuses
+
+
+def _mark_pending_compensation(collection: object, raw_payload_ref: str) -> None:
+    """Make a failed cleanup visible and retryable before attempting deletion."""
+    collection.update_one(
+        {"raw_payload_ref": raw_payload_ref},
+        {
+            "$set": {
+                "lifecycle_status": "pending_compensation",
+                "compensation_reason": "postgres_snapshot_failed",
+            }
+        },
+    )
+
+
+def _delete_pending_compensation(collection: object, raw_payload_ref: str) -> str:
+    """Delete only an explicitly compensating record; uncertain results remain retryable."""
+    try:
+        result = collection.delete_one(
+            {"raw_payload_ref": raw_payload_ref, "lifecycle_status": "pending_compensation"}
+        )
+    except Exception:
+        return "pending_compensation"
+    if result.deleted_count == 1:
+        return "compensated"
+    return "pending_compensation"
 
 
 def _raw_payload_ref(run_id: UUID, company_id: UUID, dimension: str, provider_result: dict) -> str:

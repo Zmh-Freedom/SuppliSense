@@ -15,6 +15,7 @@ from app.domains.agent_run.service import (
     create_sourcing_risk_run,
     decide_action_proposal,
     get_sourcing_risk_run,
+    retry_sourcing_risk_raw_payload_compensations,
     stream_events,
     submit_clarification,
     submit_identity_resolution,
@@ -57,6 +58,19 @@ async def create_agent_run(data: CreateSourcingRiskRunRequest, current_user: Use
 async def get_agent_run(run_id: UUID, current_user: UserInDB = Depends(get_current_user)) -> AgentRunResponse:
     detail = await asyncio.to_thread(get_sourcing_risk_run, str(run_id), current_user.id, current_user.role.value)
     return AgentRunResponse.model_validate({**detail, "run_id": detail.get("run_id") or detail["id"]})
+
+
+@router.post("/{run_id}/raw-payload-compensations/retry", summary="重试原始证据补偿")
+async def retry_agent_run_raw_payload_compensations(
+    run_id: UUID, current_user: UserInDB = Depends(get_current_user)
+) -> dict[str, list[dict[str, str]]]:
+    statuses = await asyncio.to_thread(
+        retry_sourcing_risk_raw_payload_compensations,
+        str(run_id),
+        current_user.id,
+        current_user.role.value,
+    )
+    return {"raw_payload_statuses": statuses}
 
 
 @router.get("/{run_id}/events", summary="订阅任务事件")
