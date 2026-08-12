@@ -25,18 +25,16 @@
 ## 验证
 
 ```text
-cd backend && pytest -q tests/test_rollout_gate.py tests/test_sourcing_risk_evals.py tests/test_agent_run_api.py
-85 passed, 1 deselected, 8 warnings（本轮 focused suite；已排除需要本地 PostgreSQL 的真实集成用例）
+cd backend && pytest -q tests/test_release_verification.py tests/test_agent_run_repo.py::test_freeze_pending_proposals_scopes_updates_to_v2_runs
+2 passed, 1 warning（本轮最后 3 项修复的最小 focused suite）
 
 cd backend && python -m compileall -q app
-passed
+exit 0
 
 git diff --check
-passed
+exit 0
 
-本轮 focused suite 未包含需要本地 PostgreSQL 的真实 Outbox/事务集成用例；该环境的 localhost:5432 访问受限，已单独保留为环境阻塞，不将其误报为通过。
-
-补充验证：包含 `tests/test_outbox_service.py` 的扩展集合实际为 95 passed、17 failed、8 warnings；17 项失败均在 PostgreSQL 连接/真实事务初始化处因当前沙箱禁止访问 `localhost:5432`，并非断言失败。未将这些环境受限用例计入通过数。
+PG 环境阻塞：本轮未将真实 PostgreSQL repo/Outbox 集成用例计入通过数；当前沙箱无法访问 `localhost:5432`，因此无法在本环境验证真实 legacy/V2 行隔离，只验证了生成 SQL 的 V2 run 作用域回归。该阻塞不属于断言失败。
 ```
 
 前端未受影响，未修改 service 层或既有 API 返回结构。既存的 `task-9-review.md` 至 `task-13-review.md` 为用户工作区文件，未纳入提交。

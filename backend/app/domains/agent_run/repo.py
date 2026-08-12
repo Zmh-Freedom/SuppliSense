@@ -41,8 +41,12 @@ def freeze_pending_v2_proposals() -> int:
             """
             UPDATE agent_action_proposals
             SET status = 'frozen', execution_state = 'frozen', updated_at = NOW()
-            WHERE status = 'pending' AND execution_state = 'pending'
-            RETURNING id
+            FROM agent_runs
+            WHERE agent_action_proposals.run_id = agent_runs.id
+              AND agent_runs.run_type = 'sourcing_risk_v2'
+              AND agent_action_proposals.status = 'pending'
+              AND agent_action_proposals.execution_state = 'pending'
+            RETURNING agent_action_proposals.id
             """
         )
         return len(cur.fetchall())

@@ -8,6 +8,41 @@ from app.db.postgres import get_conn, put_conn
 from app.domains.agent_run import repo
 
 
+class _RollbackCursor:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def execute(self, query: str, params: tuple[object, ...] = ()) -> None:
+        del params
+        self.queries.append(query)
+
+    def fetchall(self) -> list[tuple[str]]:
+        return [("proposal-id",)]
+
+
+class _RollbackContext:
+    def __init__(self, cursor: _RollbackCursor) -> None:
+        self.cursor = cursor
+
+    def __enter__(self) -> tuple[None, _RollbackCursor]:
+        return None, self.cursor
+
+    def __exit__(self, *args: object) -> None:
+        del args
+
+
+def test_freeze_pending_proposals_scopes_updates_to_v2_runs(monkeypatch) -> None:
+    cursor = _RollbackCursor()
+    monkeypatch.setattr(repo, "get_cursor", lambda: _RollbackContext(cursor))
+
+    assert repo.freeze_pending_v2_proposals() == 1
+
+    query = cursor.queries[0]
+    assert "FROM agent_runs" in query
+    assert "run_type = 'sourcing_risk_v2'" in query
+    assert "RETURNING agent_action_proposals.id" in query
+
+
 class _EventCursor:
     def __init__(self) -> None:
         self._results = [("run-id",), (1,), ("run-id", 1, 1, "stage", {}, None)]
