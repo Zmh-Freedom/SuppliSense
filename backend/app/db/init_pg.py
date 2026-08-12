@@ -189,6 +189,115 @@ DDL_STATEMENTS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+
+    # Agent run V2
+    """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id UUID PRIMARY KEY,
+        run_type VARCHAR(32) NOT NULL CHECK (run_type = 'sourcing_risk_v2'),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        status VARCHAR(32) NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        requirement JSONB NOT NULL DEFAULT '{}',
+        policy_snapshot_id UUID,
+        decision_id UUID,
+        error_code VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_run_events (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        event_id BIGINT NOT NULL,
+        version INTEGER NOT NULL,
+        event_type VARCHAR(48) NOT NULL,
+        payload JSONB NOT NULL,
+        occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, event_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_policy_templates (
+        id UUID PRIMARY KEY,
+        name VARCHAR(128) NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        policy JSONB NOT NULL,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (name, version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_policy_snapshots (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL UNIQUE REFERENCES agent_runs(id) ON DELETE CASCADE,
+        template_id UUID REFERENCES sourcing_policy_templates(id) ON DELETE SET NULL,
+        policy JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_run_candidates (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        source VARCHAR(32) NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        candidate_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_evidence (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
+        evidence_type VARCHAR(64) NOT NULL,
+        source VARCHAR(64) NOT NULL,
+        source_reference VARCHAR(512),
+        evidence_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS candidate_decisions (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
+        decision VARCHAR(32) NOT NULL,
+        score_snapshot JSONB NOT NULL DEFAULT '{}',
+        reason_snapshot JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_action_proposals (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE SET NULL,
+        action_type VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        execution_state VARCHAR(32) NOT NULL DEFAULT 'pending',
+        payload JSONB NOT NULL,
+        idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_approval_decisions (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        proposal_id UUID NOT NULL REFERENCES agent_action_proposals(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        decision VARCHAR(32) NOT NULL,
+        comment TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
 ]
 
 VERIFIED_EVIDENCE_CONDITION = """
@@ -269,6 +378,14 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_user ON assessment_history (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_supplier_embedding ON supplier_profiles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)",
     "CREATE INDEX IF NOT EXISTS idx_supplier_name ON supplier_profiles (supplier_name)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_event ON agent_run_events (run_id, event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_run_candidates_run_status ON agent_run_candidates (run_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evidence_run ON agent_evidence (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_candidate_decisions_run ON candidate_decisions (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_action_proposals_pending_execution "
+    "ON agent_action_proposals (execution_state, created_at) WHERE execution_state = 'pending'",
+    "CREATE INDEX IF NOT EXISTS idx_agent_approval_decisions_run ON agent_approval_decisions (run_id)",
 ]
 
 
