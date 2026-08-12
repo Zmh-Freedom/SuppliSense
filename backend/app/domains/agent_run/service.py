@@ -10,6 +10,7 @@ from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunSta
 from app.domains.agent_run.repo import (
     append_event,
     get_run,
+    get_run_detail_collections,
     get_run_for_user,
     insert_approval_decision,
     insert_run,
@@ -18,6 +19,7 @@ from app.domains.agent_run.repo import (
     update_run_status,
 )
 from app.domains.agent_run.schemas import (
+    AgentRunResponse,
     ApprovalDecisionRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
@@ -57,6 +59,25 @@ def create_sourcing_risk_run(
 
 
 def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
+    run = _get_authorized_run(run_id, user_id, user_role)
+    detail = get_run_detail_collections(run_id)
+    response = AgentRunResponse(
+        id=run["id"],
+        run_id=run["id"],
+        status=run["status"],
+        version=run["version"],
+        requirement=run["requirement"],
+        candidates=detail["candidates"],
+        evidence_by_company_id=detail["evidence_by_company_id"],
+        evidence_reviews=detail["evidence_reviews"],
+        decisions=detail["decisions"],
+        action_proposals=detail["action_proposals"],
+        approvals=detail["approvals"],
+    ).model_dump(mode="json")
+    return {**run, **response, "id": run["id"], "proposals": response["action_proposals"]}
+
+
+def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
     run = get_run(run_id) if can_read_all_agent_runs(user_role) else get_run_for_user(run_id, user_id)
     if run is None:
         raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
@@ -69,7 +90,7 @@ def submit_clarification(
     user_id: str,
     user_role: str,
 ) -> dict[str, Any]:
-    run = get_sourcing_risk_run(run_id, user_id, user_role)
+    run = _get_authorized_run(run_id, user_id, user_role)
     _require_version(run, request.expected_version)
     _require_transition(run, AgentRunStatus.CREATED)
     requirement = {**dict(run.get("requirement") or {}), **dict(request.answers)}
@@ -97,7 +118,7 @@ def submit_identity_resolution(
     user_role: str,
 ) -> dict[str, Any]:
     """Durably record reviewer-selected company identities before graph resume."""
-    run = get_sourcing_risk_run(run_id, user_id, user_role)
+    run = _get_authorized_run(run_id, user_id, user_role)
     _require_version(run, request.expected_version)
     _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
     with get_cursor() as (_, cur):
@@ -117,7 +138,7 @@ def submit_identity_resolution(
 def cancel_run(
     run_id: str, expected_version: int, user_id: str, user_role: str
 ) -> dict[str, Any]:
-    run = get_sourcing_risk_run(run_id, user_id, user_role)
+    run = _get_authorized_run(run_id, user_id, user_role)
     _require_version(run, expected_version)
     _require_transition(run, AgentRunStatus.CANCELLED)
     with get_cursor() as (_, cur):
@@ -150,7 +171,7 @@ def stream_events(
         if events:
             for event in events:
                 cursor = event["event_id"]
-                yield _event_for_stream(event)
+                yield _event_for_stream(event, run)
             if run["status"] in TERMINAL_STATUSES:
                 return
             continue
@@ -200,11 +221,22 @@ def get_orchestration_run(run_id: str) -> dict[str, Any] | None:
     return get_run(run_id)
 
 
-def _event_for_stream(event: dict[str, Any]) -> dict[str, Any]:
+def _event_for_stream(event: dict[str, Any], run: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(event["payload"])
+    renderable_fields = {
+        "version": event.get("version", run["version"]),
+        "candidates": run.get("candidates", []),
+        "evidence_by_company_id": run.get("evidence_by_company_id", {}),
+        "evidence_reviews": run.get("evidence_reviews", {}),
+        "decisions": run.get("decisions", []),
+        "action_proposals": run.get("action_proposals", []),
+        "approvals": run.get("approvals", []),
+        "run": run,
+    }
     return {
         "event_id": event["event_id"],
         "event_type": event["event_type"],
-        "data": event["payload"],
+        "data": {**payload, **renderable_fields},
     }
 
 

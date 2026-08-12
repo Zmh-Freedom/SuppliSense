@@ -66,6 +66,71 @@ def test_get_sourcing_risk_run_hides_foreign_run_from_non_admin(monkeypatch: pyt
     assert (exc.value.code, exc.value.status_code) == ("AGENT_RUN_NOT_FOUND", 404)
 
 
+def test_get_sourcing_risk_run_assembles_authorized_workbench_detail(monkeypatch: pytest.MonkeyPatch):
+    """Returning only the run row leaves the V2 workbench without persisted results."""
+    run = _run("ACTION_PENDING", 4)
+    collections = {
+        "candidates": [{"id": "candidate-1", "company_id": "company-1", "supplier_name": "示例供应商"}],
+        "evidence_by_company_id": {"company-1": [{"evidence_id": "evidence-1", "dimension": "sanctions"}]},
+        "evidence_reviews": {"company-1": {"status": "clear"}},
+        "decisions": [{"candidate_id": "candidate-1", "group": "recommended", "final_score": 91.0}],
+        "action_proposals": [{"id": "approval-1", "action_type": "add_watchlist", "status": "pending"}],
+        "approvals": [{"proposal_id": "approval-1", "decision": "approved", "comment": "复核通过"}],
+    }
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
+    monkeypatch.setattr(service, "get_run_detail_collections", lambda run_id: collections)
+
+    result = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
+
+    assert result["run_id"] == run["id"]
+    assert result["id"] == run["id"]
+    assert result["requirement"]["requirement_text"] == run["requirement"]["requirement_text"]
+    assert result["candidates"] == collections["candidates"]
+    assert result["evidence_by_company_id"] == collections["evidence_by_company_id"]
+    assert result["decisions"] == collections["decisions"]
+    assert result["action_proposals"] == collections["action_proposals"]
+    assert result["approvals"] == collections["approvals"]
+    assert result["proposals"] == collections["action_proposals"]
+
+
+def test_stream_events_embeds_renderable_durable_detail(monkeypatch: pytest.MonkeyPatch):
+    """A count-only event cannot update candidates, evidence, decisions, or approvals after replay."""
+    run = {
+        **_run("EVIDENCE_REVIEW", 6),
+        "candidates": [{"id": "candidate-1", "company_id": "company-1"}],
+        "evidence_by_company_id": {"company-1": [{"evidence_id": "evidence-1"}]},
+        "evidence_reviews": {"company-1": {"status": "needs_review"}},
+        "decisions": [{"candidate_id": "candidate-1", "group": "needs_review"}],
+        "action_proposals": [{"id": "approval-1", "status": "pending"}],
+        "approvals": [],
+    }
+    monkeypatch.setattr(service, "get_sourcing_risk_run", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "list_events_after",
+        lambda *_: [{"event_id": 7, "version": 6, "event_type": "evidence_validated", "payload": {"stage": "evidence_review", "status": "EVIDENCE_REVIEW"}}],
+    )
+
+    event = next(service.stream_events("run-id", 6, "user-id", "analyst"))
+
+    assert event == {
+        "event_id": 7,
+        "event_type": "evidence_validated",
+        "data": {
+            "stage": "evidence_review",
+            "status": "EVIDENCE_REVIEW",
+            "version": 6,
+            "candidates": run["candidates"],
+            "evidence_by_company_id": run["evidence_by_company_id"],
+            "evidence_reviews": run["evidence_reviews"],
+            "decisions": run["decisions"],
+            "action_proposals": run["action_proposals"],
+            "approvals": [],
+            "run": run,
+        },
+    }
+
+
 def test_submit_clarification_resumes_only_clarifying_run(monkeypatch: pytest.MonkeyPatch):
     """Allowing answers on arbitrary states could overwrite an executing run's workflow input."""
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("LOCAL_SEARCHING", 1))
@@ -241,11 +306,20 @@ def test_stream_events_stops_after_replaying_a_durable_terminal_stage(monkeypatc
 
     events = list(service.stream_events("run-id", 11, "user-id", "analyst"))
 
-    assert events == [{
-        "event_id": 12,
-        "event_type": "ready_for_review",
-        "data": {"status": "PARTIAL", "provider_failures": ["financial"]},
-    }]
+    assert events[0]["event_id"] == 12
+    assert events[0]["event_type"] == "ready_for_review"
+    assert events[0]["data"] == {
+        "status": "PARTIAL",
+        "provider_failures": ["financial"],
+        "version": 8,
+        "candidates": [],
+        "evidence_by_company_id": {},
+        "evidence_reviews": {},
+        "decisions": [],
+        "action_proposals": [],
+        "approvals": [],
+        "run": run,
+    }
 
 
 def _no_cursor():

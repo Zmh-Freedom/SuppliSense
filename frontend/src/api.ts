@@ -307,13 +307,17 @@ export async function agentRunEventStream(
     let eventId: number | null = null;
     let eventType = 'message';
     let dataLines: string[] = [];
+    let receivedTerminalEvent = false;
 
     const dispatch = () => {
       if (eventId === null || dataLines.length === 0) return;
       try {
         const event = { eventId, eventType, data: JSON.parse(dataLines.join('\n')) };
         callbacks.onEvent?.(event);
-        if (eventType === 'done') callbacks.onDone?.(event);
+        if (eventType === 'done') {
+          receivedTerminalEvent = true;
+          callbacks.onDone?.(event);
+        }
       } catch {
         // A malformed event must not break later durable event replays.
       } finally {
@@ -342,6 +346,9 @@ export async function agentRunEventStream(
       }
     }
     dispatch();
+    if (!signal?.aborted && !receivedTerminalEvent) {
+      callbacks.onError?.(new Error('事件流连接已断开'));
+    }
   } catch (error) {
     if (!signal?.aborted) callbacks.onError?.(error instanceof Error ? error : new Error('事件流连接失败'));
   }

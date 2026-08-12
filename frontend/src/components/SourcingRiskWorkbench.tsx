@@ -8,13 +8,12 @@ import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
 
 const STAGES = [
-  ['CREATED', '创建任务'],
-  ['POLICY_LOCKED', '锁定规则'],
-  ['LOCAL_SEARCHING', '检索候选'],
-  ['IDENTITY_RESOLVING', '核验主体'],
-  ['INVESTIGATING', '调查证据'],
-  ['SCORING', '形成决策'],
-  ['READY_FOR_REVIEW', '人工复核'],
+  ['CREATED', '创建任务'], ['CLARIFYING', '等待需求澄清'], ['POLICY_LOCKED', '锁定规则'],
+  ['LOCAL_SEARCHING', '检索本地候选'], ['EXTERNAL_REVIEW', '审核外部候选'], ['IDENTITY_RESOLVING', '核验企业主体'],
+  ['IDENTITY_REVIEW', '企业主体人工复核'], ['INVESTIGATING', '调查风险证据'], ['EVIDENCE_REVIEW', '证据人工复核'],
+  ['SCORING', '形成候选决策'], ['READY_FOR_REVIEW', '人工复核'], ['ACTION_PENDING', '等待操作审批'],
+  ['ACTION_EXECUTING', '执行批准操作'], ['COMPLETED', '已完成'], ['PARTIAL', '部分完成'],
+  ['NEEDS_REVIEW', '需要人工复核'], ['ACTION_FAILED', '操作执行失败'], ['FAILED', '任务失败'], ['CANCELLED', '已取消'],
 ] as const;
 
 const GROUP_TITLES: Record<string, string> = {
@@ -60,8 +59,9 @@ function IdentityReviewCard({ runId, version, candidates }: { runId: string; ver
 }
 
 function StageTimeline({ status }: { status: string }) {
-  const currentIndex = Math.max(0, STAGES.findIndex(([stage]) => stage === status));
-  return <ol className="flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">{STAGES.map(([stage, label], index) => <li key={stage} className={`rounded-full px-2.5 py-1 ${index <= currentIndex ? 'bg-[var(--color-primary-bg)] text-white' : 'bg-[var(--color-surface-hover)]'}`}>{label}</li>)}</ol>;
+  const currentIndex = STAGES.findIndex(([stage]) => stage === status);
+  if (currentIndex < 0) return <p className="text-xs text-amber-700">未知阶段：{status}</p>;
+  return <ol className="flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">{STAGES.map(([stage, label], index) => <li key={stage} aria-current={index === currentIndex ? 'step' : undefined} className={`rounded-full px-2.5 py-1 ${index <= currentIndex ? 'bg-[var(--color-primary-bg)] text-white' : 'bg-[var(--color-surface-hover)]'}`}>{label}</li>)}</ol>;
 }
 
 function DecisionGroup({ title, decisions, candidates }: { title: string; decisions: SourcingRiskDecision[]; candidates: SourcingRiskCandidate[] }) {

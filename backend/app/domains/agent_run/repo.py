@@ -67,6 +67,44 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def get_run_detail_collections(run_id: str) -> dict[str, Any]:
+    """Load persisted workbench data for an already-authorized Run."""
+    with get_cursor() as (_, cur):
+        candidates = _list_rows(
+            cur,
+            "SELECT * FROM agent_run_candidates WHERE run_id = %s ORDER BY created_at ASC",
+            (run_id,),
+        )
+        evidence = _list_rows(
+            cur,
+            "SELECT * FROM agent_evidence WHERE run_id = %s ORDER BY created_at ASC",
+            (run_id,),
+        )
+        decisions = _list_rows(
+            cur,
+            "SELECT * FROM candidate_decisions WHERE run_id = %s ORDER BY created_at ASC",
+            (run_id,),
+        )
+        proposals = _list_rows(
+            cur,
+            "SELECT * FROM agent_action_proposals WHERE run_id = %s ORDER BY created_at ASC",
+            (run_id,),
+        )
+        approvals = _list_rows(
+            cur,
+            "SELECT * FROM agent_approval_decisions WHERE run_id = %s ORDER BY created_at ASC",
+            (run_id,),
+        )
+    return {
+        "candidates": [_candidate_detail(candidate) for candidate in candidates],
+        "evidence_by_company_id": _evidence_by_company(evidence),
+        "evidence_reviews": {},
+        "decisions": [_decision_detail(decision) for decision in decisions],
+        "action_proposals": [_proposal_detail(proposal) for proposal in proposals],
+        "approvals": approvals,
+    }
+
+
 def update_run_status(
     run_id: str,
     expected_version: int,
@@ -318,3 +356,59 @@ def _row_to_dict_from_columns(columns: list[str], row: tuple[Any, ...]) -> dict[
         if isinstance(value, uuid.UUID):
             result[key] = str(value)
     return result
+
+
+def _list_rows(cur: PgCursor, query: str, params: tuple[object, ...]) -> list[dict[str, Any]]:
+    cur.execute(query, params)
+    columns = [column[0] for column in cur.description]
+    return [_row_to_dict_from_columns(columns, row) for row in cur.fetchall()]
+
+
+def _candidate_detail(candidate: dict[str, Any]) -> dict[str, Any]:
+    snapshot = dict(candidate.get("candidate_snapshot") or {})
+    return {
+        **snapshot,
+        "id": candidate["id"],
+        "candidate_id": candidate["id"],
+        "company_id": candidate.get("company_id"),
+        "source": candidate.get("source"),
+        "status": candidate.get("status"),
+    }
+
+
+def _evidence_by_company(evidence: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in evidence:
+        company_id = item.get("company_id")
+        if company_id is None:
+            continue
+        snapshot = dict(item.get("evidence_snapshot") or {})
+        grouped.setdefault(str(company_id), []).append({
+            **snapshot,
+            "evidence_id": str(snapshot.get("evidence_id") or item["id"]),
+            "dimension": snapshot.get("dimension") or item.get("evidence_type"),
+            "source": snapshot.get("source_type") or item.get("source"),
+            "source_reference": snapshot.get("source_reference") or item.get("source_reference"),
+        })
+    return grouped
+
+
+def _decision_detail(decision: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **dict(decision.get("score_snapshot") or {}),
+        **dict(decision.get("reason_snapshot") or {}),
+        "id": decision["id"],
+        "candidate_id": decision.get("candidate_id"),
+        "group": dict(decision.get("score_snapshot") or {}).get("group", decision["decision"]),
+    }
+
+
+def _proposal_detail(proposal: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": proposal["id"],
+        "candidate_id": proposal.get("candidate_id"),
+        "action_type": proposal["action_type"],
+        "status": proposal["status"],
+        "execution_state": proposal["execution_state"],
+        "payload": dict(proposal.get("payload") or {}),
+    }

@@ -20,6 +20,7 @@ from app.domains.agent_run.service import (
     submit_identity_resolution,
 )
 from app.domains.agent_run.schemas import (
+    AgentRunResponse,
     ApprovalDecisionRequest,
     CancelRunRequest,
     ClarificationRequest,
@@ -52,9 +53,10 @@ async def create_agent_run(data: CreateSourcingRiskRunRequest, current_user: Use
     return run
 
 
-@router.get("/{run_id}", summary="获取寻源风险任务")
-async def get_agent_run(run_id: UUID, current_user: UserInDB = Depends(get_current_user)):
-    return await asyncio.to_thread(get_sourcing_risk_run, str(run_id), current_user.id, current_user.role.value)
+@router.get("/{run_id}", summary="获取寻源风险任务", response_model=AgentRunResponse)
+async def get_agent_run(run_id: UUID, current_user: UserInDB = Depends(get_current_user)) -> AgentRunResponse:
+    detail = await asyncio.to_thread(get_sourcing_risk_run, str(run_id), current_user.id, current_user.role.value)
+    return AgentRunResponse.model_validate({**detail, "run_id": detail.get("run_id") or detail["id"]})
 
 
 @router.get("/{run_id}/events", summary="订阅任务事件")
@@ -101,7 +103,8 @@ async def resolve_agent_run_identity(
     return run
 
 
-@router.post("/{run_id}/approvals/{approval_id}", summary="提交审批决定")
+@router.post("/{run_id}/approvals/{approval_id}/decisions", summary="提交审批决定")
+@router.post("/{run_id}/approvals/{approval_id}", summary="提交审批决定（兼容旧路径）", deprecated=True)
 async def approve_agent_run(run_id: UUID, approval_id: UUID, data: ApprovalDecisionRequest, current_user: UserInDB = Depends(get_current_user)):
     return await asyncio.to_thread(decide_action_proposal, str(run_id), str(approval_id), data, current_user.id, current_user.role.value)
 

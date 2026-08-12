@@ -84,11 +84,17 @@ class CancelRunRequest(_ImmutableModel):
 
 
 class AgentRunResponse(_ImmutableModel):
+    id: UUID
     run_id: UUID
     status: AgentRunStatus
     version: int = Field(ge=1)
     requirement: CreateSourcingRiskRunRequest
     candidates: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_by_company_id: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    evidence_reviews: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    decisions: list[dict[str, Any]] = Field(default_factory=list)
+    action_proposals: list[dict[str, Any]] = Field(default_factory=list)
+    approvals: list[dict[str, Any]] = Field(default_factory=list)
 
     @field_validator("candidates")
     @classmethod

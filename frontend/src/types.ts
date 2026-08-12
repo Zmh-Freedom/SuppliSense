@@ -265,6 +265,13 @@ export interface SourcingRiskApprovalProposal {
   execution_state?: string;
 }
 
+export interface SourcingRiskApproval {
+  id?: string;
+  proposal_id: string;
+  decision: 'approved' | 'rejected' | string;
+  comment?: string | null;
+}
+
 export interface SourcingRiskAgentRun {
   id?: string;
   run_id?: string;
@@ -277,6 +284,7 @@ export interface SourcingRiskAgentRun {
   decisions?: SourcingRiskDecision[];
   proposals?: SourcingRiskApprovalProposal[];
   action_proposals?: SourcingRiskApprovalProposal[];
+  approvals?: SourcingRiskApproval[];
   next_action?: string | null;
   error_code?: string | null;
 }

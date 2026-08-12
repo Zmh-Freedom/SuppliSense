@@ -6,6 +6,7 @@ import type { AgentRunEvent, SourcingRiskAgentRun, SourcingRiskRequirement } fro
 
 const EVENT_CURSOR_PREFIX = 'agent_run_event_cursor:';
 const RECONNECT_DELAY_MS = 1_000;
+const TERMINAL_STATUSES = new Set(['COMPLETED', 'PARTIAL', 'NEEDS_REVIEW', 'ACTION_FAILED', 'FAILED', 'CANCELLED']);
 
 function runIdOf(run: SourcingRiskAgentRun): string | undefined {
   return run.id ?? run.run_id;
@@ -23,6 +24,12 @@ function applyEvent(run: SourcingRiskAgentRun, event: AgentRunEvent): SourcingRi
     ...(Array.isArray(payload.candidates) ? { candidates: payload.candidates as SourcingRiskAgentRun['candidates'] } : {}),
     ...(Array.isArray(payload.decisions) ? { decisions: payload.decisions as SourcingRiskAgentRun['decisions'] } : {}),
     ...(Array.isArray(payload.proposals) ? { proposals: payload.proposals as SourcingRiskAgentRun['proposals'] } : {}),
+    ...(Array.isArray(payload.action_proposals) ? { action_proposals: payload.action_proposals as SourcingRiskAgentRun['action_proposals'] } : {}),
+    ...(typeof payload.evidence_by_company_id === 'object' && payload.evidence_by_company_id !== null
+      ? { evidence_by_company_id: payload.evidence_by_company_id as SourcingRiskAgentRun['evidence_by_company_id'] } : {}),
+    ...(typeof payload.evidence_reviews === 'object' && payload.evidence_reviews !== null
+      ? { evidence_reviews: payload.evidence_reviews as SourcingRiskAgentRun['evidence_reviews'] } : {}),
+    ...(Array.isArray(payload.approvals) ? { approvals: payload.approvals as SourcingRiskAgentRun['approvals'] } : {}),
     ...(event.eventType === 'identity_review' ? { status: 'IDENTITY_REVIEW', next_action: 'identity_review_required' } : {}),
   };
 }
@@ -47,10 +54,12 @@ export function useSourcingRiskRun(initialRunId?: string) {
     let stopped = false;
 
     const connect = async () => {
+      let terminal = false;
       const storedCursor = sessionStorage.getItem(cursorKey);
       const lastEventId = storedCursor ? Number(storedCursor) : null;
       await agentRunEventStream(initialRunId, Number.isFinite(lastEventId) ? lastEventId : null, {
         onEvent: (event) => {
+          terminal = typeof event.data.status === 'string' && TERMINAL_STATUSES.has(event.data.status);
           sessionStorage.setItem(cursorKey, String(event.eventId));
           queryClient.setQueryData<SourcingRiskAgentRun>(queryKeys.agentRunDetail(initialRunId), current =>
             current ? applyEvent(current, event) : current,
@@ -58,7 +67,7 @@ export function useSourcingRiskRun(initialRunId?: string) {
         },
         onDone: () => queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(initialRunId) }),
         onError: () => {
-          if (!stopped) retryTimer.current = window.setTimeout(connect, RECONNECT_DELAY_MS);
+          if (!stopped && !terminal) retryTimer.current = window.setTimeout(connect, RECONNECT_DELAY_MS);
         },
       }, controller.signal);
     };

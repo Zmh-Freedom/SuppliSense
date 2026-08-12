@@ -126,6 +126,54 @@ def test_detail_maps_foreign_run_to_not_found(agent_client, agent_headers, monke
     assert response.json()["error"]["code"] == "AGENT_RUN_NOT_FOUND"
 
 
+def test_detail_returns_workbench_collections(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
+    """The HTTP detail contract must expose persisted V2 collections, not only run metadata."""
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(api, "get_sourcing_risk_run", lambda *_: {
+        "id": RUN_ID,
+        "status": "ACTION_PENDING",
+        "version": 4,
+        "requirement": {"requirement_text": "采购工业摄像头"},
+        "candidates": [{"id": "candidate-1", "supplier_name": "示例供应商"}],
+        "evidence_by_company_id": {"company-1": [{"evidence_id": "evidence-1"}]},
+        "evidence_reviews": {"company-1": {"status": "clear"}},
+        "decisions": [{"candidate_id": "candidate-1", "group": "recommended"}],
+        "action_proposals": [{"id": "approval-1", "action_type": "add_watchlist", "status": "pending", "payload": {}}],
+        "approvals": [{"proposal_id": "approval-1", "decision": "approved", "comment": "复核通过"}],
+    })
+
+    response = agent_client.get(f"/api/v1/agent-runs/{RUN_ID}", headers=agent_headers)
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] == RUN_ID
+    assert response.json()["id"] == RUN_ID
+    assert response.json()["candidates"][0]["id"] == "candidate-1"
+    assert response.json()["evidence_by_company_id"]["company-1"][0]["evidence_id"] == "evidence-1"
+    assert response.json()["decisions"][0]["group"] == "recommended"
+    assert response.json()["action_proposals"][0]["id"] == "approval-1"
+    assert response.json()["approvals"][0]["comment"] == "复核通过"
+
+
+def test_approval_decision_uses_canonical_nested_path(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
+    """The documented nested decisions path keeps approval intent unambiguous while old clients retain their route."""
+    from app.domains.agent_run import api
+
+    observed: list[object] = []
+    monkeypatch.setattr(api, "decide_action_proposal", lambda *args: observed.append(args) or {"run": {"id": RUN_ID}})
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/approvals/{RUN_ID}/decisions",
+        headers=agent_headers,
+        json={"expected_version": 4, "decision": "rejected", "comment": "缺少合规材料"},
+    )
+
+    assert response.status_code == 200
+    assert observed[0][2].expected_version == 4
+    assert observed[0][2].decision == "rejected"
+    assert observed[0][2].comment == "缺少合规材料"
+
+
 def test_cancel_propagates_stale_version_conflict(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
     """Swallowing a service conflict would make clients believe a stale cancellation succeeded."""
     from app.domains.agent_run import api
