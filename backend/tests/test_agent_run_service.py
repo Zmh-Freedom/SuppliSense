@@ -79,6 +79,7 @@ def test_get_sourcing_risk_run_assembles_authorized_workbench_detail(monkeypatch
     }
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
     monkeypatch.setattr(service, "get_run_detail_collections", lambda run_id: collections)
+    monkeypatch.setattr(service, "get_raw_payload_lifecycle_statuses", lambda refs: [])
     monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: [])
 
     result = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
@@ -122,6 +123,13 @@ def test_get_sourcing_risk_run_exposes_pending_raw_payload_compensation_status(m
     assert result["raw_payload_statuses"] == [
         {"raw_payload_ref": "raw-1", "lifecycle_status": "pending_compensation"}
     ]
+
+
+def test_merge_compensation_statuses_preserves_known_pg_recovery_lifecycle():
+    """PG recovery states stay actionable instead of being collapsed into unknown."""
+    assert service._merge_compensation_statuses(
+        [], [{"raw_payload_ref": "raw-1", "status": "pending_compensation"}]
+    ) == [{"raw_payload_ref": "raw-1", "lifecycle_status": "pending_compensation"}]
 
 
 def test_get_sourcing_risk_run_fails_closed_when_raw_payload_record_is_missing(
@@ -327,6 +335,37 @@ def test_retry_run_raw_payload_compensations_uses_only_authorized_evidence_refs(
     assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
 
 
+def test_retry_run_excludes_synthetic_missing_raw_payload_refs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A detail-only missing ref must never become a Mongo deletion target."""
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("INVESTIGATING", 4))
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": None}]},
+            "evidence_reviews": {},
+            "decisions": [],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: [])
+    observed: list[list[str]] = []
+    monkeypatch.setattr(
+        service,
+        "retry_raw_payload_compensations",
+        lambda refs: observed.append(refs) or [],
+    )
+
+    assert service.retry_sourcing_risk_raw_payload_compensations(
+        "run-id", "user-id", "analyst"
+    ) == []
+    assert observed == [[]]
+
+
 def test_detail_and_retry_discover_compensation_record_after_snapshot_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -344,7 +383,12 @@ def test_detail_and_retry_discover_compensation_record_after_snapshot_rollback(
     compensation = [{"raw_payload_ref": "raw-1", "run_id": run["id"], "lifecycle_status": "pending_compensation"}]
     monkeypatch.setattr(service, "get_raw_payload_compensations", lambda *_: compensation)
     monkeypatch.setattr(service, "get_raw_payload_lifecycle_statuses", lambda refs: [])
-    monkeypatch.setattr(service, "retry_raw_payload_compensations", lambda refs: refs)
+    monkeypatch.setattr(service, "update_raw_payload_compensation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        service,
+        "retry_raw_payload_compensations",
+        lambda refs: [{"raw_payload_ref": ref, "lifecycle_status": "compensated"} for ref in refs],
+    )
 
     detail = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
     retry = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
@@ -352,7 +396,7 @@ def test_detail_and_retry_discover_compensation_record_after_snapshot_rollback(
     assert detail["raw_payload_statuses"] == [
         {"raw_payload_ref": "raw-1", "lifecycle_status": "pending_compensation"}
     ]
-    assert retry == ["raw-1"]
+    assert retry == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
 
 
 def test_stream_events_embeds_renderable_durable_detail(monkeypatch: pytest.MonkeyPatch):

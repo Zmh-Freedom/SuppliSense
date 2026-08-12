@@ -114,8 +114,12 @@ def retry_sourcing_risk_raw_payload_compensations(
     _get_authorized_run(run_id, user_id, user_role)
     detail = get_run_detail_collections(run_id)
     compensations = get_raw_payload_compensations(run_id)
-    refs = _raw_payload_refs(detail["evidence_by_company_id"])
-    refs.extend(item["raw_payload_ref"] for item in compensations)
+    refs = _raw_payload_refs(detail["evidence_by_company_id"], include_missing=False)
+    refs.extend(
+        item["raw_payload_ref"]
+        for item in compensations
+        if not _is_synthetic_raw_payload_ref(item["raw_payload_ref"])
+    )
     staging_owners = {
         item["raw_payload_ref"]: item["staging_owner"]
         for item in compensations
@@ -204,13 +208,13 @@ def _merge_compensation_statuses(
     merged = {
         item["raw_payload_ref"]: {
             "raw_payload_ref": item["raw_payload_ref"],
-            "lifecycle_status": _normalize_recovery_status(item.get("lifecycle_status")),
+            "lifecycle_status": _normalize_mongo_lifecycle_status(item.get("lifecycle_status")),
         }
         for item in mongo_statuses
     }
     for item in compensations:
         raw_payload_ref = item["raw_payload_ref"]
-        compensation_status = _normalize_recovery_status(
+        compensation_status = _normalize_pg_recovery_status(
             item.get("status") or item.get("lifecycle_status") or "pending_compensation"
         )
         current_status = merged.get(raw_payload_ref, {}).get("lifecycle_status")
@@ -219,19 +223,33 @@ def _merge_compensation_statuses(
     return list(merged.values())
 
 
-def _normalize_recovery_status(value: object) -> str:
+def _normalize_mongo_lifecycle_status(value: object) -> str:
     status = str(value or "unknown")
-    return status if status in {"committed", "compensated"} else "unknown"
+    return status if status in {"pending", "pending_compensation", "committed", "compensated", "orphan", "unknown"} else "unknown"
 
 
-def _raw_payload_refs(evidence_by_company_id: dict[str, list[dict[str, Any]]]) -> list[str]:
+def _normalize_pg_recovery_status(value: object) -> str:
+    status = str(value or "unknown")
+    return status if status in {"pending_compensation", "committed", "compensated"} else "unknown"
+
+
+def _raw_payload_refs(
+    evidence_by_company_id: dict[str, list[dict[str, Any]]], *, include_missing: bool = True
+) -> list[str]:
     refs: list[str] = []
     for company_id, evidence_items in evidence_by_company_id.items():
         for evidence in evidence_items:
-            raw_payload_ref = evidence.get("raw_payload_ref") or _missing_raw_payload_ref(company_id, evidence)
+            raw_payload_ref = evidence.get("raw_payload_ref")
+            if not raw_payload_ref and not include_missing:
+                continue
+            raw_payload_ref = raw_payload_ref or _missing_raw_payload_ref(company_id, evidence)
             if raw_payload_ref not in refs:
                 refs.append(str(raw_payload_ref))
     return refs
+
+
+def _is_synthetic_raw_payload_ref(raw_payload_ref: object) -> bool:
+    return str(raw_payload_ref).startswith("missing:")
 
 
 def _missing_raw_payload_ref(company_id: str, evidence: dict[str, Any]) -> str:

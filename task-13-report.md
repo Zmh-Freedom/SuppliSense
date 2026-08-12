@@ -24,6 +24,24 @@ git diff --check
 
 未修改 `task-13-review.md`。
 
+## 最后非环境回归修复（2026-08-12）
+
+- 保留 PostgreSQL recovery index 的已知 `pending_compensation`、`committed`、`compensated` 状态；只有 Mongo 缺失/非法 lifecycle 或真正未知的 PG 状态才规范化为 `unknown`，并继续由 detail/decision fail-closed。
+- 详情仍为缺失 `raw_payload_ref` 生成 `missing:*` synthetic 状态以触发恢复门禁，但 retry 只收集真实 Mongo ref，不会把 synthetic ref 传给 Mongo 删除命令；授权 Run 和 durable compensation refs 约束保持不变。
+- 补充 PG recovery lifecycle 保留、synthetic ref retry 过滤，以及新增 Mongo lifecycle 查询后的详情测试替身契约回归。
+
+验证：
+
+```text
+cd backend && pytest -q tests/test_sourcing_risk_evidence_service.py tests/test_agent_run_service.py tests/test_agent_run_api.py tests/test_sourcing_risk_graph.py
+# 85 passed
+
+cd backend && python -m compileall -q app
+git diff --check
+```
+
+`tests/test_agent_run_repo.py` 中需要真实 PostgreSQL 的集成测试仍受当前环境 `localhost:5432 Operation not permitted` 阻塞；未将该环境失败计入本次非 PG 回归结果。未修改 `task-13-review.md`。
+
 ## 本次修复
 
 - recovery/retry 对 Mongo 记录缺失、查询异常、非 pending 状态及 owner 不匹配统一返回 `unknown`，不再误报 `already_compensated`；service 保留或创建 durable recovery 状态，detail/decision 继续 fail-closed。
