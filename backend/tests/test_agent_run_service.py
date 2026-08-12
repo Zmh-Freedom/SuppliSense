@@ -153,6 +153,68 @@ def test_get_sourcing_risk_run_fails_closed_when_raw_payload_record_is_missing(
     assert result["decisions"][0]["recovery_required"] is True
 
 
+def test_get_sourcing_risk_run_fails_closed_when_evidence_raw_payload_ref_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _run("SCORING", 4)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [{"id": "candidate-1", "score_eligible": True}],
+            "evidence_by_company_id": {"company-1": [{"evidence_id": "evidence-1", "dimension": "sanctions"}]},
+            "evidence_reviews": {},
+            "decisions": [{"candidate_id": "candidate-1", "score_eligible": True}],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    monkeypatch.setattr(service, "get_raw_payload_lifecycle_statuses", lambda refs: [
+        {"raw_payload_ref": refs[0], "lifecycle_status": "unknown"}
+    ])
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: [])
+
+    result = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
+
+    assert result["raw_payload_statuses"] == [
+        {"raw_payload_ref": "missing:company-1:evidence-1", "lifecycle_status": "unknown"}
+    ]
+    assert result["candidates"][0]["score_eligible"] is False
+    assert result["decisions"][0]["recovery_required"] is True
+
+
+def test_get_sourcing_risk_run_fails_closed_for_unknown_recovery_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    run = _run("SCORING", 4)
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [{"id": "candidate-1", "score_eligible": True}],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [{"candidate_id": "candidate-1", "score_eligible": True}],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    monkeypatch.setattr(service, "get_raw_payload_lifecycle_statuses", lambda refs: [
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "future_state"}
+    ])
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: [])
+
+    result = service.get_sourcing_risk_run("run-id", "user-id", "analyst")
+
+    assert result["raw_payload_statuses"] == [
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}
+    ]
+    assert result["candidates"][0]["score_eligible"] is False
+    assert result["decisions"][0]["score_eligible"] is False
+
+
 def test_retry_missing_raw_payload_keeps_recovery_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -192,6 +254,43 @@ def test_retry_missing_raw_payload_keeps_recovery_unknown(
 
     assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}]
     assert updated == [("raw-1", "unknown", "")]
+
+
+def test_retry_after_compensation_keeps_compensated_state(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("SCORING", 4))
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    compensation = [{
+        "raw_payload_ref": "raw-1",
+        "run_id": _run()["id"],
+        "staging_owner": "attempt-1",
+        "status": "compensated",
+    }]
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: compensation)
+    monkeypatch.setattr(service, "retry_raw_payload_compensations", lambda *_args, **_kwargs: [
+        {"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}
+    ])
+    updated: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        service,
+        "update_raw_payload_compensation",
+        lambda run_id, ref, status, last_error=None: updated.append((ref, status)),
+    )
+
+    result = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
+
+    assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
+    assert updated == []
 
 
 def test_retry_run_raw_payload_compensations_uses_only_authorized_evidence_refs(

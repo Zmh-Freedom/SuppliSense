@@ -182,7 +182,10 @@ def update_raw_payload_compensation(
         cur.execute(
             """
             UPDATE agent_raw_payload_compensations
-            SET status = %s,
+            SET status = CASE
+                    WHEN status = 'compensated' THEN status
+                    ELSE %s
+                END,
                 attempt_count = attempt_count + 1,
                 last_error = %s,
                 updated_at = NOW()

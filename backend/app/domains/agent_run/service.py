@@ -132,10 +132,21 @@ def retry_sourcing_risk_raw_payload_compensations(
             "AGENT_RUN_RECOVERY_UNAVAILABLE", "原始证据补偿重试不可用，请稍后重试", 503
         ) from exc
     compensation_refs = {item["raw_payload_ref"] for item in compensations}
+    compensated_refs = {
+        item["raw_payload_ref"]
+        for item in compensations
+        if str(item.get("status") or item.get("lifecycle_status")) == "compensated"
+    }
+    stable_outcomes: list[dict[str, str]] = []
     for outcome in outcomes:
         if not isinstance(outcome, dict):
             continue
         raw_payload_ref = outcome["raw_payload_ref"]
+        if raw_payload_ref in compensated_refs:
+            stable_outcomes.append(
+                {"raw_payload_ref": raw_payload_ref, "lifecycle_status": "compensated"}
+            )
+            continue
         if raw_payload_ref in compensation_refs:
             update_raw_payload_compensation(run_id, raw_payload_ref, outcome["lifecycle_status"])
         elif outcome.get("lifecycle_status") == "unknown":
@@ -147,7 +158,8 @@ def retry_sourcing_risk_raw_payload_compensations(
                 }],
                 "mongo_recovery_state_unknown",
             )
-    return outcomes
+        stable_outcomes.append(outcome)
+    return stable_outcomes
 
 
 def get_raw_payload_compensations(run_id: str) -> list[dict[str, Any]]:
@@ -162,13 +174,10 @@ def get_raw_payload_compensations(run_id: str) -> list[dict[str, Any]]:
 def _fail_closed_for_raw_payload_recovery(
     detail: dict[str, Any], statuses: list[dict[str, str]]
 ) -> dict[str, Any]:
-    unsafe = {
-        "pending",
-        "pending_compensation",
-        "orphan",
-        "unknown",
-    }
-    if not any(item.get("lifecycle_status") in unsafe for item in statuses):
+    safe = {"committed", "compensated"}
+    if statuses and all(item.get("lifecycle_status") in safe for item in statuses):
+        return detail
+    if not statuses:
         return detail
     reason = "RAW_PAYLOAD_RECOVERY_REQUIRED"
     return {
@@ -192,24 +201,42 @@ def _fail_closed_for_raw_payload_recovery(
 def _merge_compensation_statuses(
     mongo_statuses: list[dict[str, str]], compensations: list[dict[str, Any]]
 ) -> list[dict[str, str]]:
-    merged = {item["raw_payload_ref"]: item for item in mongo_statuses}
-    for item in compensations:
-        merged[item["raw_payload_ref"]] = {
+    merged = {
+        item["raw_payload_ref"]: {
             "raw_payload_ref": item["raw_payload_ref"],
-            "lifecycle_status": str(item.get("status") or item.get("lifecycle_status") or "pending_compensation"),
+            "lifecycle_status": _normalize_recovery_status(item.get("lifecycle_status")),
         }
+        for item in mongo_statuses
+    }
+    for item in compensations:
+        raw_payload_ref = item["raw_payload_ref"]
+        compensation_status = _normalize_recovery_status(
+            item.get("status") or item.get("lifecycle_status") or "pending_compensation"
+        )
+        current_status = merged.get(raw_payload_ref, {}).get("lifecycle_status")
+        lifecycle_status = "compensated" if current_status == "compensated" or compensation_status == "compensated" else compensation_status
+        merged[raw_payload_ref] = {"raw_payload_ref": raw_payload_ref, "lifecycle_status": lifecycle_status}
     return list(merged.values())
 
 
+def _normalize_recovery_status(value: object) -> str:
+    status = str(value or "unknown")
+    return status if status in {"committed", "compensated"} else "unknown"
+
+
 def _raw_payload_refs(evidence_by_company_id: dict[str, list[dict[str, Any]]]) -> list[str]:
-    return list(
-        dict.fromkeys(
-            str(evidence["raw_payload_ref"])
-            for evidence_items in evidence_by_company_id.values()
-            for evidence in evidence_items
-            if evidence.get("raw_payload_ref")
-        )
-    )
+    refs: list[str] = []
+    for company_id, evidence_items in evidence_by_company_id.items():
+        for evidence in evidence_items:
+            raw_payload_ref = evidence.get("raw_payload_ref") or _missing_raw_payload_ref(company_id, evidence)
+            if raw_payload_ref not in refs:
+                refs.append(str(raw_payload_ref))
+    return refs
+
+
+def _missing_raw_payload_ref(company_id: str, evidence: dict[str, Any]) -> str:
+    identity = evidence.get("evidence_id") or evidence.get("source_reference") or evidence.get("dimension")
+    return f"missing:{company_id}:{identity or 'unknown'}"
 
 
 def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:

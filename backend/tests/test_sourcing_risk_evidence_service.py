@@ -285,3 +285,27 @@ def test_retry_raw_payload_non_pending_record_is_unknown(monkeypatch):
     assert evidence_service.retry_raw_payload_compensations(["raw-committed"]) == [
         {"raw_payload_ref": "raw-committed", "lifecycle_status": "unknown"}
     ]
+
+
+def test_lifecycle_status_for_missing_mongo_document_is_unknown(monkeypatch):
+    class Collection:
+        def find_one(self, selector):
+            return None
+
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": Collection()})
+
+    assert evidence_service.get_raw_payload_lifecycle_statuses(["raw-missing"]) == [
+        {"raw_payload_ref": "raw-missing", "lifecycle_status": "unknown"}
+    ]
+
+
+def test_lifecycle_status_for_unknown_mongo_lifecycle_is_unknown(monkeypatch):
+    class Collection:
+        def find_one(self, selector):
+            return {"raw_payload_ref": "raw-corrupt", "lifecycle_status": "future_state"}
+
+    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": Collection()})
+
+    assert evidence_service.get_raw_payload_lifecycle_statuses(["raw-corrupt"]) == [
+        {"raw_payload_ref": "raw-corrupt", "lifecycle_status": "unknown"}
+    ]

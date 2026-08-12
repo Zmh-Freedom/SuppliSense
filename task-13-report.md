@@ -1,5 +1,29 @@
 # Task 13 P1 修复报告
 
+## 最后状态机修复（2026-08-12）
+
+- detail/API 对 evidence 缺失 `raw_payload_ref`、Mongo 文档缺失及未知 lifecycle 生成稳定 `unknown` recovery 状态；detail、决策和 SSE 使用的候选评分统一 fail closed。
+- compensation retry 状态单调化：已 `compensated` 的 recovery 记录不会被重复 retry 的 `unknown` 覆盖；service 返回保持 `compensated`，repository 更新也由 SQL 防止回退。
+- 新增最小回归测试覆盖上述缺失/未知状态、fail-closed 与重复 retry 幂等行为。
+
+验证：
+
+```text
+cd backend && pytest -q \
+  tests/test_sourcing_risk_evidence_service.py::test_lifecycle_status_for_missing_mongo_document_is_unknown \
+  tests/test_sourcing_risk_evidence_service.py::test_lifecycle_status_for_unknown_mongo_lifecycle_is_unknown \
+  tests/test_agent_run_service.py::test_get_sourcing_risk_run_fails_closed_when_evidence_raw_payload_ref_is_missing \
+  tests/test_agent_run_service.py::test_get_sourcing_risk_run_fails_closed_for_unknown_recovery_lifecycle \
+  tests/test_agent_run_service.py::test_retry_after_compensation_keeps_compensated_state
+# 5 passed
+
+cd backend && python -m compileall -q app
+git diff --check
+# 均 exit 0
+```
+
+未修改 `task-13-review.md`。
+
 ## 本次修复
 
 - recovery/retry 对 Mongo 记录缺失、查询异常、非 pending 状态及 owner 不匹配统一返回 `unknown`，不再误报 `already_compensated`；service 保留或创建 durable recovery 状态，detail/decision 继续 fail-closed。

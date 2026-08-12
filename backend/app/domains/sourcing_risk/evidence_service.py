@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field
 from app.db.mongo import get_db
 
 
+_KNOWN_RAW_PAYLOAD_LIFECYCLE_STATUSES = frozenset(
+    {"pending", "pending_compensation", "committed", "compensated", "orphan", "unknown"}
+)
+
+
 class RawPayloadStagingError(RuntimeError):
     """Expose the documents that need compensation after a partial Mongo stage."""
 
@@ -296,14 +301,16 @@ def get_raw_payload_lifecycle_statuses(raw_payload_refs: list[str]) -> list[dict
     statuses: list[dict[str, str]] = []
     for raw_payload_ref in dict.fromkeys(raw_payload_refs):
         document = collection.find_one({"raw_payload_ref": raw_payload_ref})
+        lifecycle_status = "unknown"
         if document is not None:
-            statuses.append(
-                {
-                    "raw_payload_ref": raw_payload_ref,
-                    "lifecycle_status": str(document.get("lifecycle_status") or "pending_compensation"),
-                }
-            )
+            lifecycle_status = _normalize_raw_payload_lifecycle_status(document.get("lifecycle_status"))
+        statuses.append({"raw_payload_ref": raw_payload_ref, "lifecycle_status": lifecycle_status})
     return statuses
+
+
+def _normalize_raw_payload_lifecycle_status(value: object) -> str:
+    lifecycle_status = str(value or "unknown")
+    return lifecycle_status if lifecycle_status in _KNOWN_RAW_PAYLOAD_LIFECYCLE_STATUSES else "unknown"
 
 
 def _mark_pending_compensation(collection: object, payload: dict, *, reason: str) -> None:
