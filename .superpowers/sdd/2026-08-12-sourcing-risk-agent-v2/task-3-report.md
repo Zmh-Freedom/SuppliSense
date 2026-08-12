@@ -19,6 +19,12 @@
 
 The sandbox disallows TCP connections to local PostgreSQL (`localhost:5432`) and MongoDB (`localhost:27017`), so tests using the application lifespan or real repository database cannot run here. API unit tests deliberately replace only the lifespan with a no-op and retain real routing/auth/error handling. Transactional repository behavior remains covered by Task 2's real-PostgreSQL tests but requires an environment with database access to execute.
 
+## Follow-up P1 fixes
+
+- Added `Last-Event-ID` to the CORS allow-list and a cross-origin preflight regression test, so browser reconnects can send their event cursor.
+- The SSE route now checks creator/admin authorization and Run existence before constructing `StreamingResponse`; foreign or missing Runs return the standard 404 error envelope instead of a 200 response followed by a generator exception.
+- Follow-up focused verification: `11 passed`; `python -m compileall -q app` and `git diff --check` pass.
+
 ## Scope boundary
 
 No LangGraph/checkpointer work and no changes to legacy `/api/v1/sourcing` or `/api/v1/chat` APIs were made. Full action-proposal validation/outbox dispatch is deferred to the dedicated action-service task.

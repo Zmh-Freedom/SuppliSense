@@ -52,6 +52,13 @@ async def get_agent_run_events(
     last_event_id: Annotated[int | None, Header(alias="Last-Event-ID")] = None,
     current_user: UserInDB = Depends(get_current_user),
 ):
+    await asyncio.to_thread(
+        get_sourcing_risk_run,
+        str(run_id),
+        current_user.id,
+        current_user.role.value,
+    )
+
     def event_generator() -> Iterator[str]:
         events = stream_events(str(run_id), last_event_id or 0, current_user.id, current_user.role.value)
         for event in events:

@@ -60,6 +60,7 @@ def test_event_endpoint_replays_events_after_last_event_id(agent_client, agent_h
         observed.extend([last_event_id])
         return iter([{"event_id": 4, "event_type": "stage", "data": {"status": "SCORING"}}])
 
+    monkeypatch.setattr(api, "get_sourcing_risk_run", lambda *_: {"id": RUN_ID})
     monkeypatch.setattr(api, "stream_events", fake_stream)
 
     response = agent_client.get(
@@ -72,6 +73,41 @@ def test_event_endpoint_replays_events_after_last_event_id(agent_client, agent_h
     assert "id: 4" in response.text
     assert "event: stage" in response.text
     assert 'data: {"status": "SCORING"}' in response.text
+
+
+def test_event_endpoint_cors_preflight_allows_last_event_id(agent_client):
+    """Omitting this header blocks browser SSE resume before the event route is reached."""
+    response = agent_client.options(
+        f"/api/v1/agent-runs/{RUN_ID}/events",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Last-Event-ID",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "last-event-id" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_event_endpoint_rejects_foreign_or_missing_run_before_opening_stream(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+):
+    """Lazy authorization turns a missing Run into a 200 response with an in-stream failure."""
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(
+        api,
+        "get_sourcing_risk_run",
+        lambda *_: (_ for _ in ()).throw(DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)),
+    )
+
+    response = agent_client.get(f"/api/v1/agent-runs/{RUN_ID}/events", headers=agent_headers)
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {"code": "AGENT_RUN_NOT_FOUND", "message": "任务不存在", "detail": None}
+    }
 
 
 def test_detail_maps_foreign_run_to_not_found(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
