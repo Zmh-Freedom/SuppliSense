@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from uuid import UUID
 
 from app.domains.sourcing_risk.evidence_service import validate_evidence_set
 
@@ -12,6 +13,14 @@ GROUP_ORDER = {"recommended": 0, "alternative": 1, "needs_review": 2, "rejected"
 RECOMMENDED_SCORE = Decimal("80")
 ALTERNATIVE_SCORE = Decimal("60")
 FINANCIAL_DIMENSION = "risk"
+WEIGHT_DIMENSIONS = (
+    "match",
+    "capacity",
+    "performance",
+    "quality",
+    "risk",
+    "commercial",
+)
 
 
 def decide_candidates(
@@ -99,6 +108,18 @@ def _first_hard_gate(
     hard_gates = policy_snapshot.get("hard_gates")
     if not isinstance(hard_gates, Mapping):
         raise ValueError("policy snapshot must define hard gates")
+    sanctions_hit = any(
+        item.get("dimension") == "sanctions"
+        and item.get("claim_code") in {"hit", "match"}
+        for item in evidence
+    )
+    sanctions_unavailable = (
+        evidence_outcome["status"] != "clear" or not evidence_outcome["score_eligible"]
+    )
+    if sanctions_hit:
+        return "rejected", ["SANCTIONS_HIT"]
+    if sanctions_unavailable:
+        return "needs_review", list(evidence_outcome["reason_codes"])
     triggered = {
         "unmatched_category": (not _matches_category(candidate, requirement.get("category")), ["UNMATCHED_CATEGORY"]),
         "supplier_not_active": (candidate.get("active") is not True, ["SUPPLIER_NOT_ACTIVE"]),
@@ -107,21 +128,11 @@ def _first_hard_gate(
             ["MANDATORY_QUALIFICATION_MISSING"],
         ),
         "identity_unverified": (
-            candidate.get("identity_status") != "exact" or candidate.get("score_eligible") is not True,
+            not _has_verified_identity(candidate),
             ["IDENTITY_UNVERIFIED"],
         ),
-        "sanctions_hit": (
-            any(
-                item.get("dimension") == "sanctions"
-                and item.get("claim_code") in {"hit", "match"}
-                for item in evidence
-            ),
-            ["SANCTIONS_HIT"],
-        ),
-        "sanctions_available": (
-            evidence_outcome["status"] != "clear" or not evidence_outcome["score_eligible"],
-            list(evidence_outcome["reason_codes"]),
-        ),
+        "sanctions_hit": (False, ["SANCTIONS_HIT"]),
+        "sanctions_available": (False, list(evidence_outcome["reason_codes"])),
         "key_evidence_conflict": (
             "KEY_EVIDENCE_CONFLICT" in evidence_outcome["reason_codes"],
             list(evidence_outcome["reason_codes"]),
@@ -138,12 +149,27 @@ def _first_hard_gate(
 
 def _validated_weights(policy_snapshot: Mapping[str, Any]) -> dict[str, Decimal]:
     raw_weights = policy_snapshot.get("weights")
-    if not isinstance(raw_weights, Mapping) or not raw_weights:
-        raise ValueError("policy snapshot must define weights")
+    if not isinstance(raw_weights, Mapping) or set(raw_weights) != set(WEIGHT_DIMENSIONS):
+        raise ValueError("policy weights must define exactly the six scoring dimensions")
     weights = {str(name): _decimal(value, "weight") for name, value in raw_weights.items()}
     if any(value < 0 for value in weights.values()) or sum(weights.values()) != Decimal("1"):
         raise ValueError("policy weights must sum to one exactly")
     return weights
+
+
+def _has_verified_identity(candidate: dict) -> bool:
+    if candidate.get("identity_status") != "exact" or candidate.get("score_eligible") is not True:
+        return False
+    company_id = candidate.get("company_id")
+    identity_company_id = candidate.get("identity_company_id", company_id)
+    if not isinstance(company_id, str) or not isinstance(identity_company_id, str):
+        return False
+    try:
+        canonical_company_id = str(UUID(company_id))
+        canonical_identity_company_id = str(UUID(identity_company_id))
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return canonical_company_id == canonical_identity_company_id
 
 
 def _dimension_scores(candidate: dict, weights: Mapping[str, Decimal]) -> tuple[dict[str, Decimal], list[str]]:
