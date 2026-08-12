@@ -12,6 +12,8 @@ from app.domains.outbox.sanitization import sanitize_delivery_error
 logger = get_logger(__name__)
 
 _CONSUMERS: dict[tuple[str, str], Callable[[dict], None]] = {}
+V2_ACTION_EVENT_TYPE = "agent.action.approved"
+V2_ACTION_MAX_ATTEMPTS = 5
 
 
 class _OutboxDeliveryError(Exception):
@@ -56,6 +58,7 @@ def process_outbox_batch(
     result = {"claimed": len(events), "published": 0, "failed": 0}
     for event in events:
         event_id = event["event_id"]
+        event_max_attempts = V2_ACTION_MAX_ATTEMPTS if event["event_type"] == V2_ACTION_EVENT_TYPE else max_attempts
         try:
             consumers = [
                 (consumer_name, handler)
@@ -72,6 +75,8 @@ def process_outbox_batch(
             if repo.mark_published(event_id, worker_id):
                 result["published"] += 1
                 _notify_outcome(outcome_observer, event["event_type"], "published")
+                if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                    notify_sourcing_risk_action_outcome(event, "published")
             else:
                 logger.info(
                     "outbox_event_lease_lost",
@@ -89,7 +94,7 @@ def process_outbox_batch(
             if repo.mark_failed(
                 event_id,
                 safe_error,
-                max_attempts,
+                event_max_attempts,
                 retry_delay_seconds(attempt),
                 worker_id,
             ):
@@ -101,8 +106,10 @@ def process_outbox_batch(
                     error=safe_error,
                 )
                 result["failed"] += 1
-                outcome = "dead_lettered" if attempt >= max_attempts else "retry"
+                outcome = "dead_lettered" if attempt >= event_max_attempts else "retry"
                 _notify_outcome(outcome_observer, event["event_type"], outcome)
+                if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                    notify_sourcing_risk_action_outcome(event, outcome)
             else:
                 logger.info(
                     "outbox_event_lease_lost",
@@ -127,6 +134,20 @@ def _notify_outcome(
         logger.exception(
             "outbox_outcome_observer_failed",
             event_type=event_type,
+            outcome=outcome,
+        )
+
+
+def notify_sourcing_risk_action_outcome(event: dict, outcome: str) -> None:
+    """Record V2 action retries/dead letters without changing legacy event semantics."""
+    from app.domains.sourcing_risk.action_service import record_action_delivery_outcome
+
+    try:
+        record_action_delivery_outcome(event, outcome)
+    except Exception:
+        logger.exception(
+            "sourcing_risk_action_outcome_record_failed",
+            event_id=event.get("event_id"),
             outcome=outcome,
         )
 
@@ -222,3 +243,8 @@ for _event_type in (
     "company.merged",
 ):
     register_consumer(_event_type, "company_event_audit", _company_event_audit)
+
+
+from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
+
+register_consumer(V2_ACTION_EVENT_TYPE, "sourcing_risk_action", execute_sourcing_risk_action)

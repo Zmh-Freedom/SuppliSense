@@ -135,25 +135,9 @@ def decide_action_proposal(
     user_id: str,
     user_role: str,
 ) -> dict[str, Any]:
-    if user_role not in {"admin", "analyst"}:
-        raise DomainError("AGENT_RUN_APPROVAL_FORBIDDEN", "没有审批权限", 403)
-    run = get_sourcing_risk_run(run_id, user_id, user_role)
-    _require_version(run, request.expected_version)
-    _require_transition(run, AgentRunStatus.ACTION_EXECUTING if request.decision == "approved" else AgentRunStatus.READY_FOR_REVIEW)
-    with get_cursor() as (_, cur):
-        updated = update_run_status(
-            run_id, request.expected_version,
-            AgentRunStatus.ACTION_EXECUTING.value if request.decision == "approved" else AgentRunStatus.READY_FOR_REVIEW.value,
-            cur=cur,
-        )
-        if updated is None:
-            _raise_version_conflict()
-        decision = insert_approval_decision(run_id, approval_id, request.decision, user_id, request.comment, cur=cur)
-        append_event(
-            run_id, updated["version"], "approval",
-            {"approval_id": approval_id, "decision": request.decision, "status": updated["status"]}, cur=cur,
-        )
-    return {"run": updated, "approval": decision}
+    from app.domains.sourcing_risk.action_service import decide_action_proposal as decide_v2_action_proposal
+
+    return decide_v2_action_proposal(run_id, approval_id, request, user_id, user_role)
 
 
 def stream_events(

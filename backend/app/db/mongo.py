@@ -77,6 +77,16 @@ def ensure_indexes() -> None:
         )
         # watchlist: 按企业名查询
         db["watchlist"].create_index([("company_name", 1)], unique=True, background=True)
+        # V2 approved actions: durable external side-effect idempotency
+        db["suppliers"].create_index(
+            [("agent_action_key", 1)], unique=True, sparse=True, background=True
+        )
+        db["access_applications"].create_index(
+            [("agent_action_key", 1)], unique=True, sparse=True, background=True
+        )
+        db["agent_report_exports"].create_index(
+            [("agent_action_key", 1)], unique=True, sparse=True, background=True
+        )
         # alerts: 按时间倒序查询
         db["alerts"].create_index([("created_at", -1)], background=True)
         # sentiment_results: 按企业+时间查询
