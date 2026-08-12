@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "4"))
     PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "20"))
 
+    # Agent Run V2 LangGraph checkpoints (managed with a dedicated psycopg3 connection)
+    AGENT_RUN_V2_ENABLED: bool = os.getenv("AGENT_RUN_V2_ENABLED", "false").lower() == "true"
+    AGENT_RUN_CHECKPOINT_SCHEMA: str = os.getenv("AGENT_RUN_CHECKPOINT_SCHEMA", "agent_checkpoint")
+
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)

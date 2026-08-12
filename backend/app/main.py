@@ -61,6 +61,10 @@ from app.core.sentry import init_sentry
 from app.db.mongo import close_db, ensure_indexes
 from app.db.postgres import close_pool
 from app.db.init_pg import ensure_pg_schema
+from app.graphs.sourcing_risk_v2.checkpointer import (
+    close_sourcing_risk_checkpointer,
+    get_sourcing_risk_checkpointer,
+)
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Setup logging
@@ -142,6 +146,8 @@ async def lifespan(app: FastAPI):
     ensure_indexes()
     ensure_pg_schema()
     create_default_admin()
+    if settings.AGENT_RUN_V2_ENABLED:
+        await get_sourcing_risk_checkpointer()
     # 预热 embedding 模型，避免首次调用阻塞 30s+
     from app.domains.knowledge.embedding import warmup as warmup_embedding
     warmup_embedding()
@@ -150,6 +156,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("application_shutting_down")
     stop_scheduler()
+    await close_sourcing_risk_checkpointer()
     close_db()
     close_pool()
     logger.info("application_stopped")
