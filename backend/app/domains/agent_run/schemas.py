@@ -67,6 +67,10 @@ class ApprovalDecisionRequest(_ImmutableModel):
     comment: str | None = Field(default=None, max_length=2000)
 
 
+class CancelRunRequest(_ImmutableModel):
+    expected_version: int = Field(ge=1)
+
+
 class AgentRunResponse(_ImmutableModel):
     run_id: UUID
     status: AgentRunStatus

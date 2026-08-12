@@ -23,18 +23,32 @@ def insert_run(
     requirement: dict[str, Any],
     user_id: str | None = None,
     status: str = "CREATED",
+    cur: PgCursor | None = None,
 ) -> dict[str, Any]:
     run_id = str(uuid.uuid4())
+    if cur is not None:
+        return _insert_run_with_cursor(cur, run_id, run_type, requirement, user_id, status)
     with get_cursor() as (_, cur):
-        cur.execute(
-            """
-            INSERT INTO agent_runs (id, run_type, user_id, status, requirement)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING *
-            """,
-            (run_id, run_type, user_id, status, Json(requirement)),
-        )
-        return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+        return _insert_run_with_cursor(cur, run_id, run_type, requirement, user_id, status)
+
+
+def _insert_run_with_cursor(
+    cur: PgCursor,
+    run_id: str,
+    run_type: str,
+    requirement: dict[str, Any],
+    user_id: str | None,
+    status: str,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO agent_runs (id, run_type, user_id, status, requirement)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (run_id, run_type, user_id, status, Json(requirement)),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
 
 
 def get_run_for_user(run_id: str, user_id: str) -> dict[str, Any] | None:
@@ -43,6 +57,13 @@ def get_run_for_user(run_id: str, user_id: str) -> dict[str, Any] | None:
             "SELECT * FROM agent_runs WHERE id = %s AND user_id = %s",
             (run_id, user_id),
         )
+        return _row_to_dict(cur, cur.fetchone())
+
+
+def get_run(run_id: str) -> dict[str, Any] | None:
+    """Return a Run for a separately-authorized administrative read."""
+    with get_cursor() as (_, cur):
+        cur.execute("SELECT * FROM agent_runs WHERE id = %s", (run_id,))
         return _row_to_dict(cur, cur.fetchone())
 
 
@@ -195,13 +216,25 @@ def insert_action_proposal(
 
 
 def insert_approval_decision(
-    run_id: str, proposal_id: str, decision: str, user_id: str | None = None, comment: str | None = None
+    run_id: str, proposal_id: str, decision: str, user_id: str | None = None,
+    comment: str | None = None, cur: PgCursor | None = None,
 ) -> dict[str, Any]:
-    return _insert_returning(
-        "agent_approval_decisions",
-        {"id": str(uuid.uuid4()), "run_id": run_id, "proposal_id": proposal_id, "user_id": user_id, "decision": decision, "comment": comment},
-        set(),
+    if cur is not None:
+        return _insert_approval_decision_with_cursor(cur, run_id, proposal_id, decision, user_id, comment)
+    with get_cursor() as (_, cur):
+        return _insert_approval_decision_with_cursor(cur, run_id, proposal_id, decision, user_id, comment)
+
+
+def _insert_approval_decision_with_cursor(
+    cur: PgCursor, run_id: str, proposal_id: str, decision: str, user_id: str | None, comment: str | None
+) -> dict[str, Any]:
+    values = {"id": str(uuid.uuid4()), "run_id": run_id, "proposal_id": proposal_id, "user_id": user_id, "decision": decision, "comment": comment}
+    columns = list(values)
+    cur.execute(
+        f"INSERT INTO agent_approval_decisions ({', '.join(columns)}) VALUES ({', '.join('%s' for _ in columns)}) RETURNING *",
+        [values[column] for column in columns],
     )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
 
 
 def _insert_returning(table: str, values: dict[str, Any], json_columns: set[str]) -> dict[str, Any]:

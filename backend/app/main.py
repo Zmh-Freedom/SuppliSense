@@ -40,6 +40,7 @@ from app.domains.risk.api_trend import router as trend_router
 from app.domains.sourcing.api import router as sourcing_router
 from app.domains.supplier.api import router as supplier_router
 from app.domains.sourcing.api_access import router as access_router
+from app.domains.agent_run.api import router as agent_run_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.errors import (
@@ -179,6 +180,7 @@ app = FastAPI(
         {"name": "compare", "description": "多企业横向对比"},
         {"name": "notifications", "description": "用户通知中心"},
         {"name": "async", "description": "异步任务管理"},
+        {"name": "agent-runs", "description": "智能寻源与风险 Agent V2 任务"},
     ],
 )
 
@@ -275,6 +277,7 @@ api_v1.include_router(access_router)
 api_v1.include_router(trend_router)
 api_v1.include_router(compare_router)
 api_v1.include_router(notifications_router)
+api_v1.include_router(agent_run_router)
 
 app.include_router(api_v1)
 app.include_router(health_router)
