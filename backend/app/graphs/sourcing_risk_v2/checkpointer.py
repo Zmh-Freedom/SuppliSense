@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
 from app.core.config import settings
@@ -78,6 +78,20 @@ async def get_sourcing_risk_checkpointer() -> AsyncPostgresSaver:
 def is_sourcing_risk_checkpointer_ready() -> bool:
     """Report whether the persistent saver completed setup in this process."""
     return _checkpointer is not None
+
+
+def compile_graph(graph: Any) -> Any:
+    """Compile a V2 graph with its persistent saver when the feature is enabled."""
+    if not settings.AGENT_RUN_V2_ENABLED:
+        return graph.compile(checkpointer=None)
+    if not is_sourcing_risk_checkpointer_ready():
+        raise RuntimeError("Sourcing Risk Agent V2 checkpoint saver is not initialized")
+    return graph.compile(checkpointer=_checkpointer)
+
+
+def compile_sourcing_risk_graph(graph: Any) -> Any:
+    """Public V2-specific alias for the common checkpointer-aware compiler."""
+    return compile_graph(graph)
 
 
 async def close_sourcing_risk_checkpointer() -> None:

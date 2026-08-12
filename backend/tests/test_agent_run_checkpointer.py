@@ -1,7 +1,7 @@
 """Lifecycle contracts for the Agent Run V2 LangGraph checkpointer."""
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -52,3 +52,30 @@ def test_close_checkpointer_releases_context_and_allows_reinitialization() -> No
     context.__aexit__.assert_awaited_once_with(None, None, None)
     assert checkpointer._checkpointer is None
     assert checkpointer._checkpointer_context is None
+
+
+def test_compile_graph_binds_initialized_saver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """V2 graph compilation must persist checkpoints through the initialized saver."""
+    graph = Mock()
+    saver = object()
+    monkeypatch.setattr(checkpointer.settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(checkpointer, "is_sourcing_risk_checkpointer_ready", lambda: True)
+    monkeypatch.setattr(checkpointer, "_checkpointer", saver)
+
+    result = checkpointer.compile_graph(graph)
+
+    assert result is graph.compile.return_value
+    graph.compile.assert_called_once_with(checkpointer=saver)
+
+
+def test_compile_graph_omits_checkpointer_when_v2_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Feature-off compilation must be explicit and never open a database saver."""
+    graph = Mock()
+    monkeypatch.setattr(checkpointer.settings, "AGENT_RUN_V2_ENABLED", False)
+
+    result = checkpointer.compile_sourcing_risk_graph(graph)
+
+    assert result is graph.compile.return_value
+    graph.compile.assert_called_once_with(checkpointer=None)
