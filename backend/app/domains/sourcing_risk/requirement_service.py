@@ -77,24 +77,66 @@ def missing_requirement_fields(requirement: dict[str, Any]) -> list[str]:
 def parse_requirement(raw_text: str, provided: dict | None = None) -> dict:
     """Extract, validate once, and route incomplete requirements to clarification."""
     provided_values = provided or {}
-    extracted = extract_requirement(raw_text, provided_values)
-    candidate = {**extracted, **provided_values}
+    try:
+        candidate = _extract_candidate(raw_text, provided_values)
+    except (TypeError, ValueError) as exc:
+        return _repair_or_clarify(raw_text, provided_values, _errors_from_exception(exc))
 
     if _contains_multiple_categories(candidate.get("category")):
-        return _clarification(candidate)
+        return _clarification_for_fields(["category"], candidate)
 
     try:
         requirement = SourcingRequirement.model_validate(candidate)
     except ValidationError as exc:
-        repaired = repair_requirement(raw_text, provided_values, exc.errors())
-        candidate = {**repaired, **provided_values}
-        if _contains_multiple_categories(candidate.get("category")):
-            return _clarification(candidate)
-        try:
-            requirement = SourcingRequirement.model_validate(candidate)
-        except ValidationError:
-            return _clarification(candidate)
+        return _repair_or_clarify(raw_text, provided_values, exc.errors())
 
+    return _validated_result(requirement)
+
+
+def _repair_or_clarify(
+    raw_text: str,
+    provided: dict[str, Any],
+    validation_errors: list[dict[str, Any]],
+) -> dict:
+    """Use the one permitted repair response, then report its actual violations."""
+    try:
+        candidate = _extract_candidate(
+            raw_text,
+            provided,
+            validation_errors,
+            repair=True,
+        )
+    except (TypeError, ValueError) as exc:
+        return _clarification_for_errors(_errors_from_exception(exc), provided)
+
+    if _contains_multiple_categories(candidate.get("category")):
+        return _clarification_for_fields(["category"], candidate)
+
+    try:
+        requirement = SourcingRequirement.model_validate(candidate)
+    except ValidationError as exc:
+        return _clarification_for_errors(exc.errors(), candidate)
+
+    return _validated_result(requirement)
+
+
+def _extract_candidate(
+    raw_text: str,
+    provided: dict[str, Any],
+    validation_errors: list[dict[str, Any]] | None = None,
+    repair: bool = False,
+) -> dict[str, Any]:
+    extracted = (
+        repair_requirement(raw_text, provided, validation_errors or [])
+        if repair
+        else extract_requirement(raw_text, provided)
+    )
+    if not isinstance(extracted, dict):
+        raise TypeError("LLM requirement response must be a JSON object")
+    return {**extracted, **provided}
+
+
+def _validated_result(requirement: SourcingRequirement) -> dict:
     data = requirement.model_dump()
     missing = missing_requirement_fields(data)
     if missing:
@@ -108,8 +150,25 @@ def _contains_multiple_categories(category: Any) -> bool:
     )
 
 
-def _clarification(requirement: dict[str, Any]) -> dict:
-    missing = missing_requirement_fields(requirement)
-    if "category" not in missing:
-        missing.insert(0, "category")
+def _clarification_for_errors(
+    validation_errors: list[dict[str, Any]], requirement: dict[str, Any]
+) -> dict:
+    fields = [
+        str(error["loc"][0])
+        for error in validation_errors
+        if error.get("loc") and isinstance(error["loc"][0], str)
+    ]
+    return _clarification_for_fields(fields, requirement)
+
+
+def _clarification_for_fields(fields: list[str], requirement: dict[str, Any]) -> dict:
+    missing = list(dict.fromkeys(fields))
+    for field in missing_requirement_fields(requirement):
+        if field not in missing:
+            missing.append(field)
     return {"status": "clarification_required", "missing": missing}
+
+
+def _errors_from_exception(exc: Exception) -> list[dict[str, Any]]:
+    """Represent unparseable adapter output without inventing a requirement field."""
+    return [{"loc": (), "type": exc.__class__.__name__}]
