@@ -84,7 +84,9 @@ async def get_agent_run_events(
 @router.post("/{run_id}/clarification", summary="提交澄清答案")
 async def clarify_agent_run(run_id: UUID, data: ClarificationRequest, current_user: UserInDB = Depends(get_current_user)):
     run = await asyncio.to_thread(submit_clarification, str(run_id), data, current_user.id, current_user.role.value)
-    await _schedule_graph(start_sourcing_risk_graph(str(run_id)))
+    await _schedule_graph(
+        resume_sourcing_risk_graph(str(run_id), {"requirement_input": dict(run.get("requirement") or {})})
+    )
     return run
 
 

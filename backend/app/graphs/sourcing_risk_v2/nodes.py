@@ -63,6 +63,14 @@ async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any
     result = await asyncio.to_thread(parse_requirement, raw_text, input_data)
     if result.get("status") != "ready":
         await _event(state["run_id"], "clarification", {"missing": result.get("missing", [])}, "CLARIFYING")
+        clarification = interrupt({"next_action": "clarification_required", "missing": result.get("missing", [])})
+        if isinstance(clarification, Mapping):
+            input_data = dict(clarification.get("requirement_input", input_data))
+            raw_text = str(input_data.pop("requirement_text", raw_text))
+            result = await asyncio.to_thread(parse_requirement, raw_text, input_data)
+        if result.get("status") == "ready":
+            await _event(state["run_id"], "stage", {"stage": "requirement_ready"}, "CREATED")
+            return {"status": "CREATED", "requirement": dict(result["requirement"]), "next_action": None}
         return {"status": "CLARIFYING", "next_action": "clarification_required", "error_code": None}
     await _event(state["run_id"], "stage", {"stage": "requirement_ready"}, "CREATED")
     return {"status": "CREATED", "requirement": dict(result["requirement"]), "next_action": None}
@@ -129,6 +137,7 @@ async def identity_resolution(state: SourcingRiskGraphState) -> dict[str, Any]:
             pending.append(_review_id(candidate, identity))
         resolved.append(item)
     if pending:
+        await _event(state["run_id"], "identity_resolving", {"count": len(resolved)}, "IDENTITY_RESOLVING")
         await _event(state["run_id"], "identity_review", {"pending_review_ids": pending}, "IDENTITY_REVIEW")
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
     await _event(state["run_id"], "identity_resolved", {"count": len(resolved)}, "IDENTITY_RESOLVING")

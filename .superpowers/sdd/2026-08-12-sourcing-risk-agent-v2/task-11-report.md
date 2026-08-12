@@ -37,3 +37,15 @@
 - `cd backend && pytest tests/test_agent_run_api.py tests/test_agent_run_service.py tests/test_agent_run_checkpointer.py tests/test_sourcing_risk_graph.py tests/test_sourcing_risk_requirement_service.py tests/test_sourcing_risk_policy_service.py tests/test_sourcing_risk_discovery_service.py tests/test_sourcing_risk_identity_service.py tests/test_sourcing_risk_evidence_service.py tests/test_sourcing_risk_decision_service.py -q` — 99 passed (existing dependency deprecation warnings only).
 - `cd backend && python -m compileall -q app/graphs/sourcing_risk_v2 app/domains/agent_run` — passed.
 - `git diff --check` — passed.
+
+## Final P0/P1 Repair (2026-08-12)
+
+- Clarification now resumes the existing V2 checkpoint instead of starting a second graph execution. The API passes the transactionally persisted requirement patch through `Command(resume={"requirement_input": ...})`; `parse_requirement_node()` records `CLARIFYING`, interrupts, and on resume consumes that patch before continuing to policy lock.
+- Added an API → real clarification service → runner → checkpointed graph seam test. It asserts the resume command payload and `thread_id`, verifies no start call occurs, and proves the resumed graph consumes the submitted `specification`.
+- Pending identity candidates now take the legal durable route `LOCAL_SEARCHING`/`EXTERNAL_REVIEW → IDENTITY_RESOLVING → IDENTITY_REVIEW`. Each transition uses the existing atomic status-and-event command before the graph reaches its identity-review interrupt.
+- Added state-machine tests for both source states using the real service transition guard, preventing a regression to the previously invalid direct `IDENTITY_REVIEW` write.
+
+## Final Repair Verification
+
+- RED: the clarification seam failed because the API invoked `start_sourcing_risk_graph`; the pending-identity parameterized test failed with `AGENT_RUN_INVALID_STATE` for both discovery states.
+- GREEN: `cd backend && pytest -q tests/test_agent_run_api.py tests/test_agent_run_service.py tests/test_agent_run_checkpointer.py tests/test_sourcing_risk_graph.py` — 45 passed (existing dependency deprecation warnings only).

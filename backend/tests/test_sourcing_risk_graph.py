@@ -128,6 +128,39 @@ def test_resume_after_identity_review_continues_from_checkpoint(monkeypatch: pyt
     assert resumed["decisions"] == [{"company_id": candidate["company_id"], "group": "recommended", "final_score": 88.0}]
 
 
+@pytest.mark.parametrize("current_status", ["LOCAL_SEARCHING", "EXTERNAL_REVIEW"])
+def test_pending_identity_uses_identity_resolving_before_identity_review(
+    current_status: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing IDENTITY_REVIEW directly from discovery states violates the durable status machine."""
+    from app.domains.agent_run import service as agent_run_service
+
+    run = {"id": "run-id", "status": current_status, "version": 1}
+    transitions: list[str] = []
+
+    monkeypatch.setattr(agent_run_service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(agent_run_service, "get_run", lambda *_: dict(run))
+
+    def update_status(_run_id: str, expected_version: int, status: str, **_kwargs):
+        run.update({"status": status, "version": expected_version + 1})
+        transitions.append(status)
+        return dict(run)
+
+    monkeypatch.setattr(agent_run_service, "update_run_status", update_status)
+    monkeypatch.setattr(agent_run_service, "append_event", lambda *_args, **_kwargs: {"event_id": 1})
+    monkeypatch.setattr(nodes, "record_orchestration_state", agent_run_service.record_orchestration_state)
+    monkeypatch.setattr(
+        nodes,
+        "resolve_candidate_identity",
+        lambda *_: {"identity_status": "candidates", "identity_candidates": [{"company_id": "company-a"}]},
+    )
+
+    result = asyncio.run(nodes.identity_resolution({"run_id": "run-id", "candidates": [{"supplier_name": "供应商 A"}]}))
+
+    assert result["status"] == "IDENTITY_REVIEW"
+    assert transitions == ["IDENTITY_RESOLVING", "IDENTITY_REVIEW"]
+
+
 def test_sanctions_timeout_retries_once_and_closes_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
     """Treating a sanctions timeout as clear would score an unverified supplier."""
     candidate = _candidate()
@@ -146,6 +179,17 @@ def test_sanctions_timeout_retries_once_and_closes_candidate(monkeypatch: pytest
     assert attempts == 2
     assert failures == ["sanctions"]
     assert [item for item in evidence if item["dimension"] == "sanctions"] == [{"dimension": "sanctions", "claim_code": "unavailable", "freshness_status": "unknown", "conflict_status": "unknown", "source_type": "provider_error"}]
+
+
+def _no_cursor():
+    class CursorContext:
+        def __enter__(self):
+            return None, object()
+
+        def __exit__(self, *_):
+            return False
+
+    return CursorContext()
 
 
 def test_noncritical_provider_failure_preserves_successful_evidence_as_partial(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -184,8 +228,8 @@ def test_clarification_stops_before_policy_lock(monkeypatch: pytest.MonkeyPatch)
 
     result = asyncio.run(graph.ainvoke({"run_id": str(uuid4()), "requirement_input": {"requirement_text": "找摄像头供应商"}}, {"configurable": {"thread_id": "clarify-run"}}))
 
-    assert result["status"] == "CLARIFYING"
-    assert result["next_action"] == "clarification_required"
+    assert result["__interrupt__"]
+    assert result["__interrupt__"][0].value == {"next_action": "clarification_required", "missing": ["specification"]}
     assert policy_locked is False
 
 

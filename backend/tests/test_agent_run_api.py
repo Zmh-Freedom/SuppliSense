@@ -210,26 +210,26 @@ def test_identity_resolution_persists_input_then_resumes_v2_runner(
     assert resumed == [(RUN_ID, {"identity_resolutions": {"candidate-a": "company-a"}})]
 
 
-def test_clarification_restarts_v2_runner_after_durable_answer_event(
+def test_clarification_resumes_v2_runner_with_durable_requirement_patch(
     agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
 ):
-    """Leaving clarification on the legacy event path would strand a clarified V2 run."""
+    """Restarting a clarified V2 run would abandon its durable checkpoint interrupt."""
     from app.domains.agent_run import api
 
-    started: list[str] = []
+    resumed: list[tuple[str, dict[str, object]]] = []
     monkeypatch.setattr(
         api,
         "submit_clarification",
-        lambda *_: {"id": RUN_ID, "status": "CREATED", "version": 2},
+        lambda *_: {"id": RUN_ID, "status": "CREATED", "version": 2, "requirement": {"requirement_text": "采购工业摄像头", "specification": "IP67"}},
     )
 
-    async def start(run_id: str) -> None:
-        started.append(run_id)
+    async def resume(run_id: str, payload: dict[str, object]) -> None:
+        resumed.append((run_id, payload))
 
     async def schedule(coroutine):
         await coroutine
 
-    monkeypatch.setattr(api, "start_sourcing_risk_graph", start)
+    monkeypatch.setattr(api, "resume_sourcing_risk_graph", resume)
     monkeypatch.setattr(api, "_schedule_graph", schedule)
 
     response = agent_client.post(
@@ -239,17 +239,20 @@ def test_clarification_restarts_v2_runner_after_durable_answer_event(
     )
 
     assert response.status_code == 200
-    assert started == [RUN_ID]
+    assert resumed == [(RUN_ID, {"requirement_input": {"requirement_text": "采购工业摄像头", "specification": "IP67"}})]
 
 
 def test_clarification_api_service_runner_seam_consumes_durable_requirement_patch(
     agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
 ):
-    """Dropping the patch between HTTP, service, and runner would re-enter CLARIFYING after restart."""
+    """Restarting instead of resuming would strand a clarification checkpoint or ignore its answers."""
+    import asyncio
     from unittest.mock import AsyncMock, Mock
 
     from app.domains.agent_run import api, service
-    from app.graphs.sourcing_risk_v2 import runner
+    from app.graphs.sourcing_risk_v2 import nodes, runner
+    from app.graphs.sourcing_risk_v2.checkpointer import settings
+    from langgraph.checkpoint.memory import InMemorySaver
 
     durable_run = {
         "id": RUN_ID,
@@ -259,8 +262,22 @@ def test_clarification_api_service_runner_seam_consumes_durable_requirement_patc
         "requirement": {"requirement_text": "采购工业摄像头"},
     }
     persisted_events: list[dict] = []
-    graph = AsyncMock()
-    saver = object()
+    candidate = {
+        "supplier_name": "示例供应商",
+        "company_id": "company-a",
+        "identity_company_id": "company-a",
+        "active": True,
+        "categories": ["摄像头"],
+        "specifications": ["IP67"],
+    }
+    saver = InMemorySaver()
+    invocations: list[tuple[object, dict]] = []
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+
+    class RecordingGraph:
+        async def ainvoke(self, input_value, config):
+            invocations.append((input_value, config))
+            return await graph.ainvoke(input_value, config)
 
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: dict(durable_run))
@@ -277,10 +294,31 @@ def test_clarification_api_service_runner_seam_consumes_durable_requirement_patc
             {"run_id": run_id, "version": version, "event_type": event_type, "payload": payload}
         ),
     )
-    monkeypatch.setattr(runner, "get_orchestration_run", lambda *_: dict(durable_run))
+    monkeypatch.setattr(nodes, "record_orchestration_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(nodes, "parse_requirement", lambda raw_text, data: {
+        "status": "ready", "requirement": {"category": "摄像头", "specification": data["specification"]}
+    } if data.get("specification") else {"status": "clarification_required", "missing": ["specification"]})
+    monkeypatch.setattr(nodes, "freeze_policy_snapshot", lambda *_: {"checksum": "policy-1"})
+    monkeypatch.setattr(nodes, "discover_local_candidates", lambda *_: [candidate])
+    monkeypatch.setattr(nodes, "is_candidate_supply_sufficient", lambda *_: True)
+    monkeypatch.setattr(nodes, "resolve_candidate_identity", lambda *_: {"identity_status": "exact", "company_id": "company-a"})
+    monkeypatch.setattr(nodes, "investigate_candidates", AsyncMock(return_value=({"company-a": []}, [])))
+    monkeypatch.setattr(nodes, "validate_evidence_set", lambda *_: {"status": "clear", "reason_codes": []})
+    monkeypatch.setattr(nodes, "decide_candidates", lambda *_: [])
+    graph = runner.build_sourcing_risk_graph(saver)
+    config = {"configurable": {"thread_id": RUN_ID}}
+    paused = asyncio.run(graph.ainvoke({"run_id": RUN_ID, "requirement_input": dict(durable_run["requirement"])}, config))
+    assert paused["__interrupt__"]
+
+    started: list[str] = []
+
+    async def start(run_id: str) -> None:
+        started.append(run_id)
+
     monkeypatch.setattr(runner, "get_sourcing_risk_checkpointer", AsyncMock(return_value=saver))
-    monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=graph))
-    monkeypatch.setattr(api, "start_sourcing_risk_graph", runner._start)
+    monkeypatch.setattr(runner, "build_sourcing_risk_graph", Mock(return_value=RecordingGraph()))
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", start)
+    monkeypatch.setattr(api, "resume_sourcing_risk_graph", runner._resume)
 
     async def schedule(coroutine):
         await coroutine
@@ -301,10 +339,11 @@ def test_clarification_api_service_runner_seam_consumes_durable_requirement_patc
         "event_type": "clarification",
         "payload": {"answers": {"specification": "IP67"}, "status": "CREATED"},
     }]
-    assert graph.ainvoke.await_args.args[0] == {
-        "run_id": RUN_ID,
-        "requirement_input": {"requirement_text": "采购工业摄像头", "specification": "IP67"},
-    }
+    assert started == []
+    command, config = invocations[-1]
+    assert command.resume == {"requirement_input": {"requirement_text": "采购工业摄像头", "specification": "IP67"}}
+    assert config == {"configurable": {"thread_id": RUN_ID}}
+    assert graph.get_state(config).values["requirement"]["specification"] == "IP67"
 
 
 def _no_cursor():
