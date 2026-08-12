@@ -248,7 +248,7 @@ def insert_decision(
 
 def insert_action_proposal(
     run_id: str, action_type: str, payload: dict[str, Any], idempotency_key: str, status: str = "pending", execution_state: str = "pending", candidate_id: str | None = None, cur: PgCursor | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     if cur is not None:
         return _insert_action_proposal_with_cursor(
             cur, run_id, action_type, payload, idempotency_key, status, execution_state, candidate_id
@@ -263,7 +263,7 @@ def insert_action_proposal(
 def _insert_action_proposal_with_cursor(
     cur: PgCursor, run_id: str, action_type: str, payload: dict[str, Any], idempotency_key: str,
     status: str, execution_state: str, candidate_id: str | None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     values = {
         "id": str(uuid.uuid4()), "run_id": run_id, "candidate_id": candidate_id,
         "action_type": action_type, "status": status, "execution_state": execution_state,
@@ -271,10 +271,11 @@ def _insert_action_proposal_with_cursor(
     }
     columns = list(values)
     cur.execute(
-        f"INSERT INTO agent_action_proposals ({', '.join(columns)}) VALUES ({', '.join('%s' for _ in columns)}) RETURNING *",
+        f"INSERT INTO agent_action_proposals ({', '.join(columns)}) VALUES ({', '.join('%s' for _ in columns)}) "
+        "ON CONFLICT (idempotency_key) DO NOTHING RETURNING *",
         [Json(values[column]) if column == "payload" else values[column] for column in columns],
     )
-    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+    return _row_to_dict(cur, cur.fetchone())
 
 
 def insert_approval_decision(

@@ -17,6 +17,7 @@ from app.domains.outbox.repo import (
     enqueue_event,
     mark_failed,
     mark_published,
+    record_consumption,
 )
 from app.domains.outbox.service import (
     list_events,
@@ -354,6 +355,80 @@ def test_process_outbox_batch_records_success_and_skips_repeated_delivery(monkey
                 (str(event_id),),
             )
             assert cur.fetchone() == (True, 1)
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_outbox_consumption_unique_key_rejects_duplicate_delivery_record(monkeypatch):
+    """Dropping the schema's consumer key would let one event be recorded as consumed twice."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000371")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000372")
+    consumer_name = "test_outbox_unique_consumer_20260812"
+
+    try:
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            "test.outbox.consumption-unique.20260812",
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+
+        assert record_consumption(str(event_id), consumer_name) is True
+        assert record_consumption(str(event_id), consumer_name) is False
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "SELECT COUNT(*) FROM outbox_consumptions WHERE event_id = %s AND consumer_name = %s",
+                (str(event_id), consumer_name),
+            )
+            assert cur.fetchone() == (1,)
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_v2_action_event_dead_letters_after_five_real_repository_attempts(monkeypatch):
+    """Using the global retry maximum would leave V2 actions retriable after their fifth failed delivery."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000381")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000382")
+    event_type = "agent.action.approved"
+    consumer_name = "test_outbox_v2_failing_consumer_20260812"
+    attempts: list[str] = []
+
+    def fail_handler(event: dict) -> None:
+        attempts.append(event["event_id"])
+        raise RuntimeError("planned V2 failure")
+
+    try:
+        register_consumer(event_type, consumer_name, fail_handler)
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            event_type,
+            aggregate_id,
+            {"run_id": str(aggregate_id), "proposal_id": str(aggregate_id)},
+        )
+
+        for attempt in range(1, 6):
+            assert process_outbox_batch("test-v2-worker", 1, 99, 60) == {
+                "claimed": 1,
+                "published": 0,
+                "failed": 1,
+            }
+            with get_cursor() as (_, cur):
+                cur.execute(
+                    "SELECT attempt_count, dead_lettered_at IS NOT NULL FROM outbox_events WHERE event_id = %s",
+                    (str(event_id),),
+                )
+                assert cur.fetchone() == (attempt, attempt == 5)
+                if attempt < 5:
+                    cur.execute(
+                        "UPDATE outbox_events SET next_attempt_at = NOW() WHERE event_id = %s",
+                        (str(event_id),),
+                    )
+
+        assert attempts == [str(event_id)] * 5
     finally:
         _delete_event(str(event_id))
 

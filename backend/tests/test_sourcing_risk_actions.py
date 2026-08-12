@@ -7,6 +7,9 @@ import pytest
 
 from app.core.errors import DomainError
 from app.db import mongo
+from app.db.init_pg import ensure_pg_schema
+from app.db.postgres import get_cursor
+from app.domains.agent_run import repo as agent_run_repo
 from app.domains.agent_run.schemas import ApprovalDecisionRequest
 from app.domains.outbox import service as outbox_service
 from app.domains.sourcing_risk import action_service
@@ -43,6 +46,28 @@ def _approved(version: int = 3) -> ApprovalDecisionRequest:
     return ApprovalDecisionRequest(expected_version=version, decision="approved")
 
 
+def _create_proposal(
+    *,
+    action_type: str = "import_external_supplier",
+    payload: dict | None = None,
+    idempotency_key: str = "import:external:company-a",
+    candidate_id: str | None = "candidate-a",
+    user_id: str = "owner",
+    user_role: str = "analyst",
+    expected_version: int = 3,
+) -> dict:
+    return action_service.create_action_proposal(
+        RUN_ID,
+        action_type,
+        payload or {"company_name": "外部企业 A", "risk_level": "low"},
+        idempotency_key,
+        candidate_id=candidate_id,
+        user_id=user_id,
+        user_role=user_role,
+        expected_version=expected_version,
+    )
+
+
 def test_unapproved_import_only_persists_proposal_without_outbox_or_master_write(monkeypatch):
     """Calling an import adapter while proposing would bypass human approval."""
     persisted: list[dict] = []
@@ -56,16 +81,22 @@ def test_unapproved_import_only_persists_proposal_without_outbox_or_master_write
     monkeypatch.setattr(action_service, "get_cursor", _cursor)
     monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
     monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
-    monkeypatch.setattr(action_service, "validate_action_proposal_ownership", lambda *_: None)
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {
+            "id": "candidate-a",
+            "run_id": RUN_ID,
+            "source": "external",
+            "status": "staged_candidate",
+            "candidate_snapshot": {"company_name": "外部企业 A", "risk_level": "low"},
+        },
+        raising=False,
+    )
     monkeypatch.setattr(action_service, "enqueue_event", enqueue)
     monkeypatch.setattr(action_service, "import_external_supplier", importer)
 
-    result = action_service.create_action_proposal(
-        RUN_ID,
-        "import_external_supplier",
-        {"company_name": "外部企业 A", "risk_level": "low"},
-        "import:external:company-a",
-    )
+    result = _create_proposal()
 
     assert result["status"] == "pending"
     assert persisted[0]["action_type"] == "import_external_supplier"
@@ -175,18 +206,224 @@ def test_proposal_rejects_candidate_or_company_from_another_run(monkeypatch):
     monkeypatch.setattr(action_service, "get_cursor", _cursor)
     monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
     monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
-    monkeypatch.setattr(action_service, "validate_action_proposal_ownership", lambda *_: (_ for _ in ()).throw(DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)))
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {"id": "foreign-candidate", "run_id": OTHER_RUN_ID},
+        raising=False,
+    )
 
     with pytest.raises(DomainError) as exc:
-        action_service.create_action_proposal(
-            RUN_ID,
-            "import_external_supplier",
-            {"company_name": "外部企业 A"},
-            "import:external:foreign-candidate",
+        _create_proposal(
+            payload={"company_name": "外部企业 A"},
+            idempotency_key="import:external:foreign-candidate",
             candidate_id="foreign-candidate",
         )
 
     assert exc.value.code == "AGENT_ACTION_CANDIDATE_NOT_FOUND"
+
+
+@pytest.mark.parametrize(
+    ("candidate", "expected_code"),
+    [
+        (None, "AGENT_ACTION_CANDIDATE_REQUIRED"),
+        ({"id": "candidate-a", "run_id": RUN_ID, "source": "local", "status": "staged_candidate", "candidate_snapshot": {}}, "AGENT_ACTION_CANDIDATE_INVALID"),
+        ({"id": "candidate-a", "run_id": RUN_ID, "source": "external", "status": "reviewed", "candidate_snapshot": {}}, "AGENT_ACTION_CANDIDATE_INVALID"),
+        ({"id": "candidate-a", "run_id": OTHER_RUN_ID, "source": "external", "status": "staged_candidate", "candidate_snapshot": {}}, "AGENT_ACTION_CANDIDATE_NOT_FOUND"),
+    ],
+)
+def test_external_import_requires_current_run_staged_external_candidate(monkeypatch, candidate, expected_code):
+    """Removing candidate source/state checks would allow unreviewed supplier-master imports."""
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
+    monkeypatch.setattr(action_service, "get_action_candidate_for_update", lambda *_: candidate, raising=False)
+
+    with pytest.raises(DomainError) as exc:
+        _create_proposal(candidate_id="candidate-a" if candidate is not None else None)
+
+    assert (exc.value.code, exc.value.status_code) == (expected_code, 404 if expected_code.endswith("NOT_FOUND") else 422)
+
+
+def test_external_import_uses_persisted_staged_candidate_snapshot(monkeypatch):
+    """Accepting caller payload would let an approved candidate import different master data."""
+    persisted: list[dict] = []
+    snapshot = {"company_name": "已暂存企业", "risk_level": "high", "unified_code": "91310000TEST00001"}
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {"id": "candidate-a", "run_id": RUN_ID, "source": "external", "status": "staged_candidate", "candidate_snapshot": snapshot},
+        raising=False,
+    )
+    monkeypatch.setattr(action_service, "insert_action_proposal", lambda **kwargs: persisted.append(kwargs) or _proposal(payload=kwargs["payload"]))
+
+    _create_proposal(payload={"company_name": "调用方伪造企业", "risk_level": "low"})
+
+    assert persisted[0]["payload"] == snapshot
+
+
+def test_proposal_creation_requires_authorized_creator_and_current_version(monkeypatch):
+    """Skipping creator scope or optimistic locking would create approvable writes for stale or foreign Runs."""
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run(user_id="owner"))
+
+    with pytest.raises(DomainError) as forbidden:
+        _create_proposal(user_id="foreign")
+    assert (forbidden.value.code, forbidden.value.status_code) == ("AGENT_ACTION_PROPOSAL_FORBIDDEN", 403)
+
+    with pytest.raises(DomainError) as stale:
+        _create_proposal(expected_version=2)
+    assert (stale.value.code, stale.value.status_code) == ("AGENT_RUN_VERSION_CONFLICT", 409)
+
+
+def test_idempotency_key_rejects_changed_payload_for_the_same_action(monkeypatch):
+    """Returning a proposal for mismatched request data would hide an idempotency-key collision."""
+    existing = _proposal(candidate_id="candidate-a", payload={"company_name": "已暂存企业", "risk_level": "high"})
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: existing)
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {"id": "candidate-a", "run_id": RUN_ID, "source": "external", "status": "staged_candidate", "candidate_snapshot": {"company_name": "其他企业", "risk_level": "high"}},
+        raising=False,
+    )
+
+    with pytest.raises(DomainError) as exc:
+        _create_proposal()
+
+    assert (exc.value.code, exc.value.status_code) == ("AGENT_ACTION_IDEMPOTENCY_CONFLICT", 409)
+
+
+def test_concurrent_idempotency_insert_rechecks_the_durable_proposal(monkeypatch):
+    """A unique-key race must return the durable replay result instead of leaking a database error."""
+    existing = _proposal(candidate_id="candidate-a", payload={"company_name": "外部企业 A", "risk_level": "low"})
+    reads = iter((None, existing))
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: next(reads))
+    monkeypatch.setattr(action_service, "insert_action_proposal", lambda **_: None)
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {"id": "candidate-a", "run_id": RUN_ID, "source": "external", "status": "staged_candidate", "candidate_snapshot": {"company_name": "外部企业 A", "risk_level": "low"}},
+        raising=False,
+    )
+
+    assert _create_proposal() == existing
+
+
+@pytest.mark.parametrize("action_type", ("add_watchlist", "submit_access_application"))
+def test_existing_company_actions_require_a_target_owned_by_the_current_run(monkeypatch, action_type):
+    """Accepting a bare company name would create a proposal detached from the reviewed Run target."""
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
+    monkeypatch.setattr(action_service, "insert_action_proposal", lambda **_: _proposal())
+
+    with pytest.raises(DomainError) as exc:
+        _create_proposal(
+            action_type=action_type,
+            payload={"company_name": "未绑定企业", "applicant_id": "requester"},
+            idempotency_key=f"{action_type}:missing-target",
+            candidate_id=None,
+        )
+
+    assert (exc.value.code, exc.value.status_code) == ("AGENT_ACTION_TARGET_REQUIRED", 422)
+
+
+def test_existing_company_action_rejects_company_that_does_not_match_its_current_run_candidate(monkeypatch):
+    """Permitting a candidate/company mix-up would approve a write against a different supplier target."""
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(action_service, "get_run_for_update", lambda *_: _run())
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
+    monkeypatch.setattr(action_service, "insert_action_proposal", lambda **_: _proposal())
+    monkeypatch.setattr(
+        action_service,
+        "get_action_candidate_for_update",
+        lambda *_: {"id": "candidate-a", "run_id": RUN_ID, "company_id": "company-a"},
+        raising=False,
+    )
+
+    with pytest.raises(DomainError) as exc:
+        _create_proposal(
+            action_type="add_watchlist",
+            payload={"company_id": "company-b", "company_name": "企业 B"},
+            idempotency_key="watchlist:candidate-company-mismatch",
+            candidate_id="candidate-a",
+        )
+
+    assert (exc.value.code, exc.value.status_code) == ("AGENT_ACTION_COMPANY_INVALID", 422)
+
+
+def _delete_real_action_run(run_id: str) -> None:
+    with get_cursor() as (_, cur):
+        cur.execute("DELETE FROM outbox_events WHERE aggregate_id = %s", (run_id,))
+        cur.execute("DELETE FROM agent_runs WHERE id = %s", (run_id,))
+
+
+def test_real_postgres_action_transaction_keeps_one_approval_outbox_and_conflict_contract():
+    """Replacing proposal locking, transaction reuse, or conflict checks breaks durable approval state."""
+    ensure_pg_schema()
+    run = agent_run_repo.insert_run(
+        "sourcing_risk_v2",
+        {"requirement_text": "真实事务测试"},
+        status="ACTION_PENDING",
+    )
+    try:
+        candidate = agent_run_repo.insert_candidate(
+            run["id"],
+            "external",
+            "staged_candidate",
+            {"company_name": "真实暂存外部企业", "risk_level": "low"},
+        )
+        proposal = action_service.create_action_proposal(
+            run["id"],
+            "import_external_supplier",
+            {"company_name": "调用方企业"},
+            f"test-real-action-{run['id']}",
+            candidate_id=candidate["id"],
+            user_id="test-admin",
+            user_role="admin",
+            expected_version=1,
+        )
+        assert proposal["payload"] == {"company_name": "真实暂存外部企业", "risk_level": "low"}
+
+        decided = action_service.decide_action_proposal(
+            run["id"],
+            proposal["id"],
+            ApprovalDecisionRequest(expected_version=1, decision="approved"),
+            None,  # type: ignore[arg-type]
+            "admin",
+        )
+        assert decided["run"]["status"] == "ACTION_EXECUTING"
+
+        with get_cursor() as (_, cur):
+            cur.execute("SELECT COUNT(*) FROM agent_approval_decisions WHERE proposal_id = %s", (proposal["id"],))
+            assert cur.fetchone() == (1,)
+            cur.execute("SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = %s", (proposal["id"],))
+            assert cur.fetchone() == (1,)
+
+        with pytest.raises(DomainError) as duplicate:
+            action_service.decide_action_proposal(
+                run["id"],
+                proposal["id"],
+                ApprovalDecisionRequest(expected_version=2, decision="approved"),
+                None,  # type: ignore[arg-type]
+                "admin",
+            )
+        assert (duplicate.value.code, duplicate.value.status_code) == ("AGENT_ACTION_ALREADY_DECIDED", 409)
+
+        with get_cursor() as (_, cur):
+            cur.execute("SELECT COUNT(*) FROM agent_approval_decisions WHERE proposal_id = %s", (proposal["id"],))
+            assert cur.fetchone() == (1,)
+            cur.execute("SELECT COUNT(*) FROM outbox_events WHERE aggregate_id = %s", (proposal["id"],))
+            assert cur.fetchone() == (1,)
+    finally:
+        _delete_real_action_run(run["id"])
 
 
 def test_unapproved_event_never_imports_and_approved_event_imports_once(monkeypatch):

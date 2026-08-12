@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+import json
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -40,27 +41,45 @@ def create_action_proposal(
     payload: dict[str, Any],
     idempotency_key: str,
     candidate_id: str | None = None,
+    *,
+    user_id: str,
+    user_role: str,
+    expected_version: int,
 ) -> dict[str, Any]:
     """Persist a proposed write only; dispatch is deliberately approval-gated."""
     _require_action_type(action_type)
     normalized_key = _require_idempotency_key(idempotency_key)
     with get_cursor() as (_, cur):
-        if get_run_for_update(cur, run_id) is None:
+        run = get_run_for_update(cur, run_id)
+        if run is None:
             raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
-        validate_action_proposal_ownership(cur, run_id, candidate_id, payload)
+        _require_proposal_creator(run, user_id, user_role)
+        _require_expected_version(run, expected_version)
+        persisted_payload = _bind_action_target(
+            cur, run_id, action_type, candidate_id, payload
+        )
         existing = get_action_proposal_for_idempotency_key(cur, normalized_key)
         if existing is not None:
-            if existing["run_id"] != run_id or existing["action_type"] != action_type:
+            if not _is_same_proposal_request(
+                existing, run_id, action_type, candidate_id, persisted_payload
+            ):
                 raise DomainError("AGENT_ACTION_IDEMPOTENCY_CONFLICT", "幂等键已用于其他操作", 409)
             return existing
         proposal = insert_action_proposal(
             run_id=run_id,
             action_type=action_type,
-            payload=dict(payload),
+            payload=persisted_payload,
             idempotency_key=normalized_key,
             candidate_id=candidate_id,
             cur=cur,
         )
+        if proposal is None:
+            existing = get_action_proposal_for_idempotency_key(cur, normalized_key)
+            if existing is None or not _is_same_proposal_request(
+                existing, run_id, action_type, candidate_id, persisted_payload
+            ):
+                raise DomainError("AGENT_ACTION_IDEMPOTENCY_CONFLICT", "幂等键已用于其他操作", 409)
+            return existing
     return proposal
 
 
@@ -260,20 +279,48 @@ def get_action_proposal_for_idempotency_key(cur: PgCursor, idempotency_key: str)
     return _row_to_dict(cur, cur.fetchone())
 
 
-def validate_action_proposal_ownership(
+def get_action_candidate_for_update(
+    cur: PgCursor, candidate_id: str
+) -> dict[str, Any] | None:
+    cur.execute(
+        "SELECT * FROM agent_run_candidates WHERE id = %s FOR UPDATE", (candidate_id,)
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
+def _bind_action_target(
     cur: PgCursor,
     run_id: str,
+    action_type: str,
     candidate_id: str | None,
     payload: dict[str, Any],
-) -> None:
-    """Bind candidate/company references to this Run before it can propose a write."""
-    if candidate_id is not None:
-        cur.execute(
-            "SELECT 1 FROM agent_run_candidates WHERE id = %s AND run_id = %s",
-            (candidate_id, run_id),
-        )
-        if cur.fetchone() is None:
+) -> dict[str, Any]:
+    """Bind every writable target to this Run before it becomes approvable."""
+    if action_type == "import_external_supplier":
+        if candidate_id is None:
+            raise DomainError("AGENT_ACTION_CANDIDATE_REQUIRED", "外部导入必须指定候选企业", 422)
+        candidate = get_action_candidate_for_update(cur, candidate_id)
+        if candidate is None or candidate["run_id"] != run_id:
             raise DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)
+        if candidate["source"] != "external" or candidate["status"] != "staged_candidate":
+            raise DomainError("AGENT_ACTION_CANDIDATE_INVALID", "候选企业不是可导入的外部暂存候选", 422)
+        snapshot = candidate.get("candidate_snapshot")
+        if not isinstance(snapshot, dict):
+            raise DomainError("AGENT_ACTION_CANDIDATE_INVALID", "候选企业快照无效", 422)
+        return dict(snapshot)
+
+    if action_type in {"add_watchlist", "submit_access_application"} and candidate_id is None and payload.get("company_id") is None:
+        raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "操作必须绑定当前任务企业或候选企业", 422)
+
+    if candidate_id is not None:
+        candidate = get_action_candidate_for_update(cur, candidate_id)
+        if candidate is None or candidate["run_id"] != run_id:
+            raise DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)
+        candidate_company_id = candidate.get("company_id")
+        if candidate_company_id is not None and payload.get("company_id") not in {None, candidate_company_id}:
+            raise DomainError("AGENT_ACTION_COMPANY_INVALID", "企业标识与候选企业不一致", 422)
+        if candidate_company_id is not None:
+            return {**dict(payload), "company_id": candidate_company_id}
     company_id = payload.get("company_id")
     if company_id is not None:
         if not isinstance(company_id, str) or not company_id.strip():
@@ -284,6 +331,26 @@ def validate_action_proposal_ownership(
         )
         if cur.fetchone() is None:
             raise DomainError("AGENT_ACTION_COMPANY_NOT_FOUND", "企业不属于任务", 404)
+    return dict(payload)
+
+
+def _is_same_proposal_request(
+    existing: dict[str, Any],
+    run_id: str,
+    action_type: str,
+    candidate_id: str | None,
+    payload: dict[str, Any],
+) -> bool:
+    return (
+        existing["run_id"] == run_id
+        and existing["action_type"] == action_type
+        and existing.get("candidate_id") == candidate_id
+        and _canonical_payload(existing.get("payload") or {}) == _canonical_payload(payload)
+    )
+
+
+def _canonical_payload(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def get_action_proposal_for_execution(run_id: str, proposal_id: str) -> dict[str, Any] | None:
@@ -379,6 +446,13 @@ def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, 
     if run is None:
         raise DomainError("AGENT_ACTION_APPROVAL_FORBIDDEN", "没有审批该操作的权限", 403)
     return run
+
+
+def _require_proposal_creator(run: dict[str, Any], user_id: str, user_role: str) -> None:
+    if user_role not in {"admin", "analyst"}:
+        raise DomainError("AGENT_ACTION_PROPOSAL_FORBIDDEN", "没有创建操作提案的权限", 403)
+    if user_role != "admin" and run.get("user_id") != user_id:
+        raise DomainError("AGENT_ACTION_PROPOSAL_FORBIDDEN", "没有创建该任务操作提案的权限", 403)
 
 
 def _require_approval_role(user_role: str) -> None:

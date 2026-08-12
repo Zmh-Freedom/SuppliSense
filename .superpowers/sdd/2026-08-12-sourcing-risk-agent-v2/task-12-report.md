@@ -9,9 +9,15 @@
   and a maker-checker restriction for high-risk imports. Approval decision,
   Run/status event, proposal update, and `agent.action.approved` Outbox event
   use one PostgreSQL transaction.
-- Proposal creation locks and validates Run/candidate/company ownership and
-  idempotency keys. Repeated matching keys return the original proposal; a
-  conflicting key is rejected deterministically.
+- Proposal creation now requires creator identity/role and `expected_version`.
+  It locks and validates Run/candidate/company ownership: imports require an
+  `external` + `staged_candidate` candidate from the current Run and take their
+  payload only from its persisted snapshot; existing-company actions require a
+  current-Run target and reject candidate/company mismatches. Repeated matching
+  idempotency keys return the original proposal; canonical payload, candidate,
+  or target conflicts are rejected deterministically. The repository handles a
+  concurrent unique-key insert by returning the durable replay result rather
+  than leaking a PostgreSQL uniqueness exception.
 - Registered an Outbox consumer for approved V2 actions. It checks approval
   state before dispatch, tracks success/retry/dead-letter `action_status`, and
   does not mark `ACTION_FAILED` until dead letter.
@@ -25,24 +31,29 @@
 
 - RED: `cd backend && pytest tests/test_sourcing_risk_actions.py -v` failed
   during collection because `action_service` did not exist.
-- GREEN: focused tests cover unapproved imports, duplicated approvals,
-  unauthorized/stale/cross-Run approvals, high-risk self-approval, proposal
-  ownership, worker replay idempotency, V2 five-attempt dead letter, and durable
-  Mongo idempotency indexes.
+- RED/GREEN: added and verified focused failures for creator authorization and
+  stale versions, missing/local/non-staged/cross-Run import candidates,
+  snapshot substitution, current-Run targets, candidate/company mismatch,
+  canonical idempotency conflicts, and the concurrent unique-key replay seam.
+- Added real PostgreSQL seam tests for create → approve → Outbox persistence,
+  duplicate consumption unique keys, and V2 five-attempt dead letters. These
+  use real repository/database state assertions rather than mock call checks.
 
 ## Verification
 
-- `cd backend && pytest tests/test_sourcing_risk_actions.py -q` — 9 passed.
+- `cd backend && pytest tests/test_sourcing_risk_actions.py -q -k 'not real_postgres'` — 20 passed, 1 deselected.
 - `cd backend && pytest tests/test_agent_run_service.py tests/test_outbox_worker.py -q` — 19 passed.
-- `cd backend && python -m compileall -q app/db/mongo.py app/domains/sourcing_risk/action_service.py app/domains/agent_run/repo.py app/domains/agent_run/service.py app/domains/outbox/service.py` — passed.
+- `cd backend && python -m compileall -q app/domains/sourcing_risk/action_service.py app/domains/agent_run/repo.py app/domains/outbox/repo.py app/domains/outbox/service.py app/domains/outbox/worker.py` — passed.
 - `git diff --check` — passed.
 
 ## Concerns
 
-- Existing real-PostgreSQL Outbox integration tests cannot run in this sandbox:
-  connections to `localhost:5432` are blocked (`Operation not permitted`) before
-  test assertions. Run `cd backend && pytest tests/test_outbox_service.py -q`
-  in CI or a database-enabled environment to validate the shared transaction and
-  lease paths end to end.
+- The three new real-PostgreSQL seam tests cannot run in this task environment:
+  sandbox execution blocks `localhost:5432`; elevated execution reaches the
+  server but has no `PG_PASSWORD` and fails with `fe_sendauth: no password
+  supplied`. Run `cd backend && pytest tests/test_sourcing_risk_actions.py -q`
+  and `pytest tests/test_outbox_service.py -q` with the project PostgreSQL
+  credentials in CI or a database-enabled shell to verify the real transaction,
+  duplicate-consumption, and five-attempt dead-letter paths.
 - Mongo unique indexes are created by the existing index bootstrap. Deployment
   must run that bootstrap before processing the first approved V2 action.
