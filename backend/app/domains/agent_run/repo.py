@@ -1,5 +1,7 @@
 """PostgreSQL persistence primitives for sourcing-risk agent runs."""
 
+import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -440,8 +442,8 @@ def persist_run_snapshot(
         if company_id:
             candidate_ids[str(company_id)] = persisted["id"]
     for company_id, evidence_items in (evidence_by_company_id or {}).items():
-        for index, evidence in enumerate(evidence_items):
-            _upsert_evidence(run_id, str(company_id), evidence, index, candidate_ids.get(str(company_id)), cur)
+        for evidence in evidence_items:
+            _upsert_evidence(run_id, str(company_id), evidence, candidate_ids.get(str(company_id)), cur)
     for company_id, review in (evidence_reviews or {}).items():
         upsert_evidence_review(run_id, str(company_id), dict(review), cur=cur)
     for index, decision in enumerate(decisions or []):
@@ -607,13 +609,12 @@ def _candidate_status(candidate: dict[str, Any]) -> str:
 
 
 def _upsert_evidence(
-    run_id: str, company_id: str, evidence: dict[str, Any], index: int,
-    candidate_id: str | None, cur: PgCursor,
+    run_id: str, company_id: str, evidence: dict[str, Any], candidate_id: str | None, cur: PgCursor,
 ) -> None:
-    evidence_key = evidence.get("source_reference") or evidence.get("provider_key") or evidence.get("dimension") or index
+    evidence_key = _evidence_key(evidence)
     evidence_id = _stable_id(
         run_id,
-        f"evidence:{company_id}:{evidence_key}:{index}",
+        f"evidence:{company_id}:{evidence_key}",
     )
     cur.execute(
         """
@@ -634,3 +635,18 @@ def _upsert_evidence(
             evidence.get("source_reference"), Json(evidence),
         ),
     )
+
+
+def _evidence_key(evidence: dict[str, Any]) -> str:
+    """Return a replay-stable evidence identity without any list-position input."""
+    dimension = str(evidence.get("dimension") or "unknown")
+    claim_code = str(evidence.get("claim_code") or "unknown")
+    source_type = str(evidence.get("source_type") or evidence.get("source") or "unknown")
+    source_identity = evidence.get("source_reference") or evidence.get("provider_key") or evidence.get("raw_payload_ref")
+    if source_identity:
+        return f"{dimension}:{claim_code}:{source_type}:{source_identity}"
+    stable_snapshot = {key: value for key, value in evidence.items() if key != "evidence_id"}
+    digest = hashlib.sha256(
+        json.dumps(stable_snapshot, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+    return f"{dimension}:{claim_code}:{source_type}:snapshot:{digest}"

@@ -17,7 +17,11 @@ from app.domains.sourcing_risk.discovery_service import (
     search_external_provider,
     stage_external_candidates,
 )
-from app.domains.sourcing_risk.evidence_service import normalize_evidence, validate_evidence_set
+from app.domains.sourcing_risk.evidence_service import (
+    normalize_evidence,
+    raw_payload_document,
+    validate_evidence_set,
+)
 from app.domains.sourcing_risk.identity_service import resolve_candidate_identity
 from app.domains.sourcing_risk.policy_service import freeze_policy_snapshot
 from app.domains.sourcing_risk.requirement_service import parse_requirement
@@ -184,18 +188,20 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Gather independent provider evidence with isolated failures."""
     evidence, failures = await investigate_candidates(state.get("candidates", []))
     normalized_evidence: dict[str, list[dict[str, Any]]] = {}
+    raw_payloads: list[dict[str, Any]] = []
     for candidate in state.get("candidates", []):
         company_id = candidate.get("company_id")
         if not company_id:
             continue
-        normalized_evidence[str(company_id)] = await _normalize_candidate_evidence(
+        normalized_evidence[str(company_id)], candidate_raw_payloads = await _normalize_candidate_evidence(
             state["run_id"], str(company_id), evidence.get(str(company_id), []), state["policy_snapshot"]
         )
+        raw_payloads.extend(candidate_raw_payloads)
     failures = sorted(set([*state.get("provider_failures", []), *failures]))
     candidates = _mark_sanctions_failures_for_review(state.get("candidates", []), normalized_evidence)
     await _snapshot_event(
         state["run_id"], "INVESTIGATING", "investigation", {"failed_dimensions": failures},
-        candidates=candidates, evidence_by_company_id=normalized_evidence,
+        candidates=candidates, evidence_by_company_id=normalized_evidence, raw_payloads=raw_payloads,
     )
     return {
         "status": "INVESTIGATING",
@@ -207,9 +213,10 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
 
 async def _normalize_candidate_evidence(
     run_id: str, company_id: str, evidence: list[dict[str, Any]], policy: dict[str, Any]
-) -> list[dict[str, Any]]:
-    """Persist provider evidence only through the evidence service contract."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Normalize evidence and hand raw payloads to the snapshot compensation boundary."""
     normalized: list[dict[str, Any]] = []
+    raw_payloads: list[dict[str, Any]] = []
     for item in evidence:
         try:
             record = await asyncio.to_thread(
@@ -219,7 +226,8 @@ async def _normalize_candidate_evidence(
             normalized.append(item)
         else:
             normalized.append(record.model_dump(mode="json"))
-    return normalized
+            raw_payloads.append(raw_payload_document(record, item))
+    return normalized, raw_payloads
 
 
 async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:

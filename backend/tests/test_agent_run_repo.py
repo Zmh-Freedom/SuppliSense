@@ -105,30 +105,49 @@ def test_snapshot_writes_share_the_caller_transaction(monkeypatch):
     ]
 
 
-def test_evidence_snapshot_retries_reuse_a_stable_provider_key():
-    """Basing upserts on a newly normalized UUID would duplicate evidence after graph retry."""
-    observed_ids: list[str] = []
+def test_evidence_snapshot_retry_reuses_provider_evidence_after_reordering():
+    """A list position in the evidence key would duplicate one provider record after a replay reorder."""
+    observed_ids_by_source: dict[str, list[str]] = {}
+    persisted_rows: dict[str, str] = {}
 
     class Cursor:
         def execute(self, _query: str, params: tuple[object, ...]) -> None:
-            observed_ids.append(str(params[0]))
+            evidence_id = str(params[0])
+            source_reference = str(params[6])
+            observed_ids_by_source.setdefault(source_reference, []).append(evidence_id)
+            persisted_rows[evidence_id] = source_reference
 
     run_id = "00000000-0000-4000-8000-000000000001"
-    for evidence_id in ("first-normalization", "second-normalization"):
+    for evidence in (
+        {
+            "dimension": "financial",
+            "claim_code": "clear",
+            "source_type": "financial_provider",
+            "source_reference": "provider-record-99",
+        },
+        {
+            "dimension": "sanctions",
+            "claim_code": "clear",
+            "source_type": "sanctions_provider",
+            "source_reference": "provider-record-42",
+        },
+        {
+            "dimension": "sanctions",
+            "claim_code": "clear",
+            "source_type": "sanctions_provider",
+            "source_reference": "provider-record-42",
+        },
+    ):
         repo._upsert_evidence(
             run_id,
             "company-id",
-            {
-                "evidence_id": evidence_id,
-                "dimension": "sanctions",
-                "source_reference": "provider-record-42",
-            },
-            0,
+            evidence,
             "candidate-id",
             Cursor(),
         )
 
-    assert observed_ids[0] == observed_ids[1]
+    assert len(set(observed_ids_by_source["provider-record-42"])) == 1
+    assert len(persisted_rows) == 2
 
 
 @contextmanager

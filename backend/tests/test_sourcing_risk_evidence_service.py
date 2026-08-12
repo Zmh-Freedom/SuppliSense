@@ -63,16 +63,14 @@ def test_stale_required_evidence_is_incomplete_not_clear():
     }
 
 
-def test_normalize_clear_claim_defers_structured_persistence_to_run_snapshot(monkeypatch):
-    """An independent PostgreSQL write would survive a later snapshot-event rollback."""
+def test_normalize_clear_claim_defers_all_persistence_to_run_snapshot(monkeypatch):
+    """Writing Mongo here would leave a raw-payload orphan when the snapshot event rolls back."""
     observed_at = datetime.now(timezone.utc) - timedelta(days=2)
-    persisted: dict[str, object] = {}
-
-    class FakeCollection:
-        def insert_one(self, document: dict) -> None:
-            persisted["raw"] = document
-
-    monkeypatch.setattr(evidence_service, "get_db", lambda: {"agent_evidence_payloads": FakeCollection()})
+    monkeypatch.setattr(
+        evidence_service,
+        "get_db",
+        lambda: (_ for _ in ()).throw(AssertionError("normalization must not write MongoDB")),
+    )
     run_id = str(uuid4())
     company_id = str(uuid4())
     record = evidence_service.normalize_evidence(
@@ -95,8 +93,6 @@ def test_normalize_clear_claim_defers_structured_persistence_to_run_snapshot(mon
     assert str(record.company_id) == company_id
     assert record.raw_payload_ref
     assert "raw_payload" not in record.model_dump()
-    assert persisted["raw"]["raw_payload"] == {"unbounded": "provider response"}
-    assert "structured" not in persisted
 
 
 def test_normalize_rejects_non_uuid_run_or_company_id():

@@ -6,6 +6,11 @@ from typing import Any
 
 from app.core.errors import DomainError
 from app.db.postgres import get_cursor
+from app.domains.sourcing_risk.evidence_service import (
+    commit_raw_payloads,
+    compensate_raw_payloads,
+    stage_raw_payloads,
+)
 from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunStatus
 from app.domains.agent_run.repo import (
     append_event,
@@ -233,6 +238,7 @@ def persist_orchestration_snapshot(
     evidence_by_company_id: dict[str, list[dict[str, Any]]] | None = None,
     evidence_reviews: dict[str, dict[str, Any]] | None = None,
     decisions: list[dict[str, Any]] | None = None,
+    raw_payloads: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Atomically persist graph-owned collections, status, and replay event.
 
@@ -243,29 +249,35 @@ def persist_orchestration_snapshot(
         target = AgentRunStatus(status)
     except ValueError as exc:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
-    with get_cursor() as (_, cur):
-        run = get_orchestration_run_for_update(run_id, cur)
-        if run is None:
-            raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
-        _require_transition(run, target)
-        snapshot = persist_run_snapshot(
-            run_id,
-            candidates=candidates,
-            evidence_by_company_id=evidence_by_company_id,
-            evidence_reviews=evidence_reviews,
-            decisions=decisions,
-            cur=cur,
-        )
-        updated = update_run_status(run_id, run["version"], target.value, cur=cur)
-        if updated is None:
-            _raise_version_conflict()
-        append_event(
-            run_id,
-            updated["version"],
-            event_type,
-            {**payload, "status": updated["status"]},
-            cur=cur,
-        )
+    staged_payloads = stage_raw_payloads(raw_payloads or [])
+    try:
+        with get_cursor() as (_, cur):
+            run = get_orchestration_run_for_update(run_id, cur)
+            if run is None:
+                raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+            _require_transition(run, target)
+            snapshot = persist_run_snapshot(
+                run_id,
+                candidates=candidates,
+                evidence_by_company_id=evidence_by_company_id,
+                evidence_reviews=evidence_reviews,
+                decisions=decisions,
+                cur=cur,
+            )
+            updated = update_run_status(run_id, run["version"], target.value, cur=cur)
+            if updated is None:
+                _raise_version_conflict()
+            append_event(
+                run_id,
+                updated["version"],
+                event_type,
+                {**payload, "status": updated["status"]},
+                cur=cur,
+            )
+    except Exception:
+        compensate_raw_payloads(staged_payloads)
+        raise
+    commit_raw_payloads(raw_payloads or [])
     return snapshot
 
 

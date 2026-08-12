@@ -90,3 +90,33 @@ git diff --check
 ### Remaining environment constraint
 
 The existing PostgreSQL integration test needs `localhost:5432`, which this sandbox denies (`Operation not permitted`). It remains excluded from the focused command above; rerun it where PostgreSQL is reachable.
+
+---
+
+## Final P1 evidence idempotency and raw-payload compensation repair
+
+### Delivered
+
+- Evidence snapshot IDs now derive solely from `run_id`, `company_id`, `dimension`, `claim_code`, source type, and a stable provider/source/raw-payload identity. They never include a mutable evidence-list index; when a provider does not provide an identifier, a canonical snapshot digest is the deterministic fallback.
+- `normalize_evidence()` is now a pure normalization step: it deterministically derives `raw_payload_ref` but does not write MongoDB. The investigation node passes bounded raw-payload documents to `persist_orchestration_snapshot()` with the structured evidence snapshot.
+- Raw MongoDB documents use the stable `raw_payload_ref` as an upsert key. The orchestration command stages them as `pending`, commits their visibility only after the PostgreSQL snapshot/status/event transaction commits, and deletes newly-created staged documents on any PostgreSQL failure. If cleanup itself cannot delete, it marks the document `orphan` for safe remediation. This is an explicit cross-store compensation seam, not a claim of Mongo/PostgreSQL ACID atomicity.
+- The change preserves `company_id` on both structured and raw evidence, keeps the existing audit-bearing PostgreSQL snapshot/event transaction, and leaves legacy Mongo collections untouched.
+
+### TDD evidence
+
+- RED: a retry with a provider record moved from evidence index 1 to index 2 generated a second durable ID; normalization attempted a direct Mongo write; and the snapshot command had no raw payload boundary.
+- GREEN: focused tests prove reordered provider evidence maps to one upsert row, a PostgreSQL event failure removes the newly staged raw payload, and a successful retry upserts/commits exactly one raw document under its stable reference.
+
+### Verification
+
+Passed:
+
+```text
+cd backend && pytest -q tests/test_sourcing_risk_evidence_service.py tests/test_sourcing_risk_graph.py tests/test_agent_run_service.py tests/test_agent_run_repo.py::test_snapshot_writes_share_the_caller_transaction tests/test_agent_run_repo.py::test_evidence_snapshot_retry_reuses_provider_evidence_after_reordering tests/test_sourcing_risk_actions.py -k 'not real_postgres_action_transaction'  # 68 passed, 1 deselected
+cd backend && python -m compileall -q app
+git diff --check
+```
+
+### Remaining environment constraint
+
+The repository's PostgreSQL integration cases still require a reachable `localhost:5432`; this sandbox denies that connection. The compensation and idempotency seams are covered by stateful unit fakes and should be run against the real PostgreSQL/MongoDB deployment environment as part of integration validation.

@@ -1,8 +1,9 @@
 """Normalize sourcing-risk provider results into auditable evidence records."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, Field
 
@@ -33,7 +34,7 @@ class EvidenceRecord(BaseModel):
 def normalize_evidence(
     run_id: str, company_id: str, dimension: str, provider_result: dict, *, policy: dict
 ) -> EvidenceRecord:
-    """Persist raw input separately and return normalized evidence for the run snapshot."""
+    """Normalize provider input; raw payload persistence belongs to the snapshot compensation seam."""
     run_uuid = _require_uuid(run_id, "run_id")
     company_uuid = _require_uuid(company_id, "company_id")
     if dimension not in EvidenceRecord.model_fields["dimension"].annotation.__args__:
@@ -43,7 +44,7 @@ def normalize_evidence(
     observed_at = _parse_timestamp(provider_result.get("observed_at"))
     freshness_days = policy.get("freshness_days", {}).get(dimension)
     freshness_status = _freshness_status(observed_at, collected_at, freshness_days)
-    raw_payload_ref = _persist_raw_payload(run_uuid, company_uuid, dimension, provider_result, collected_at)
+    raw_payload_ref = _raw_payload_ref(run_uuid, company_uuid, dimension, provider_result)
     record = EvidenceRecord(
         evidence_id=uuid4(),
         run_id=run_uuid,
@@ -119,22 +120,79 @@ def validate_evidence_set(evidence: list[dict], policy: dict) -> dict:
     }
 
 
-def _persist_raw_payload(
-    run_id: UUID, company_id: UUID, dimension: str, provider_result: dict, collected_at: datetime
-) -> str:
-    raw_payload_ref = str(uuid4())
-    raw_payload = provider_result.get("raw_payload", provider_result)
-    get_db()["agent_evidence_payloads"].insert_one(
-        {
-            "raw_payload_ref": raw_payload_ref,
-            "run_id": str(run_id),
-            "company_id": str(company_id),
-            "dimension": dimension,
-            "collected_at": collected_at,
-            "raw_payload": raw_payload,
+def raw_payload_document(record: EvidenceRecord, provider_result: dict) -> dict:
+    """Build the Mongo document outside LangGraph state and PostgreSQL snapshots."""
+    return {
+        "raw_payload_ref": record.raw_payload_ref,
+        "run_id": str(record.run_id),
+        "company_id": str(record.company_id),
+        "dimension": record.dimension,
+        "collected_at": record.collected_at,
+        "raw_payload": provider_result.get("raw_payload", provider_result),
+    }
+
+
+def stage_raw_payloads(raw_payloads: list[dict]) -> list[dict]:
+    """Idempotently stage Mongo documents before the PostgreSQL snapshot transaction.
+
+    Mongo and PostgreSQL do not share an ACID transaction. Callers must compensate the
+    returned newly-created documents if the PostgreSQL transaction fails.
+    """
+    collection = get_db()["agent_evidence_payloads"]
+    staged: list[dict] = []
+    for payload in raw_payloads:
+        document = {**payload, "lifecycle_status": "pending"}
+        result = collection.update_one(
+            {"raw_payload_ref": document["raw_payload_ref"]},
+            {"$setOnInsert": document},
+            upsert=True,
+        )
+        if result.upserted_id is not None:
+            staged.append(document)
+    return staged
+
+
+def commit_raw_payloads(raw_payloads: list[dict]) -> None:
+    """Make staged raw payloads durable after the PostgreSQL transaction commits."""
+    collection = get_db()["agent_evidence_payloads"]
+    for payload in raw_payloads:
+        collection.update_one(
+            {"raw_payload_ref": payload["raw_payload_ref"]},
+            {"$set": {"lifecycle_status": "committed"}},
+        )
+
+
+def compensate_raw_payloads(staged_payloads: list[dict]) -> None:
+    """Delete newly staged Mongo documents, retaining an orphan marker only if deletion fails."""
+    collection = get_db()["agent_evidence_payloads"]
+    for payload in staged_payloads:
+        selector = {
+            "raw_payload_ref": payload["raw_payload_ref"],
+            "lifecycle_status": "pending",
         }
-    )
-    return raw_payload_ref
+        try:
+            result = collection.delete_one(selector)
+        except Exception:
+            collection.update_one(
+                {"raw_payload_ref": payload["raw_payload_ref"]},
+                {"$set": {"lifecycle_status": "orphan"}},
+            )
+        else:
+            if result.deleted_count == 0:
+                collection.update_one(
+                    {"raw_payload_ref": payload["raw_payload_ref"]},
+                    {"$set": {"lifecycle_status": "orphan"}},
+                )
+
+
+def _raw_payload_ref(run_id: UUID, company_id: UUID, dimension: str, provider_result: dict) -> str:
+    claim_code = str(provider_result.get("claim_code") or "unknown")
+    source_type = str(provider_result.get("source_type") or provider_result.get("source") or "unknown")
+    source_identity = provider_result.get("source_reference") or provider_result.get("provider_key")
+    if not source_identity:
+        raw_payload = provider_result.get("raw_payload", provider_result)
+        source_identity = json.dumps(raw_payload, ensure_ascii=False, sort_keys=True, default=str)
+    return str(uuid5(run_id, f"raw-evidence:{company_id}:{dimension}:{claim_code}:{source_type}:{source_identity}"))
 
 
 def _require_uuid(value: str, field: str) -> UUID:
