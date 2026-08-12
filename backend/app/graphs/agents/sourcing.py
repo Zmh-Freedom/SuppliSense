@@ -1,11 +1,18 @@
 """Sourcing subgraph — 智能寻源流程编排。"""
 
-from typing import Annotated
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Annotated
 
 from langchain_core.messages import SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import TypedDict
+
+from app.graphs.sourcing_risk_v2.checkpointer import compile_sourcing_risk_graph
+
+if TYPE_CHECKING:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 
 class SourcingState(TypedDict):
@@ -49,7 +56,7 @@ def _get_sourcing_tools():
     return _SOURCING_TOOLS
 
 
-def build_sourcing_graph():
+def build_sourcing_graph(checkpointer: AsyncPostgresSaver | None = None):
     graph = StateGraph(SourcingState)
 
     graph.add_node("sourcing_agent", _sourcing_agent)
@@ -62,7 +69,7 @@ def build_sourcing_graph():
     })
     graph.add_edge("sourcing_tools", "sourcing_agent")
 
-    return graph.compile()
+    return compile_sourcing_risk_graph(graph, checkpointer=checkpointer)
 
 
 async def _sourcing_agent(state: SourcingState):

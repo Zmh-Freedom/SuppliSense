@@ -80,18 +80,20 @@ def is_sourcing_risk_checkpointer_ready() -> bool:
     return _checkpointer is not None
 
 
-def compile_graph(graph: Any) -> Any:
+def compile_graph(graph: Any, checkpointer: AsyncPostgresSaver | None = None) -> Any:
     """Compile a V2 graph with its persistent saver when the feature is enabled."""
     if not settings.AGENT_RUN_V2_ENABLED:
         return graph.compile(checkpointer=None)
+    if checkpointer is not None:
+        return graph.compile(checkpointer=checkpointer)
     if not is_sourcing_risk_checkpointer_ready():
         raise RuntimeError("Sourcing Risk Agent V2 checkpoint saver is not initialized")
     return graph.compile(checkpointer=_checkpointer)
 
 
-def compile_sourcing_risk_graph(graph: Any) -> Any:
+def compile_sourcing_risk_graph(graph: Any, checkpointer: AsyncPostgresSaver | None = None) -> Any:
     """Public V2-specific alias for the common checkpointer-aware compiler."""
-    return compile_graph(graph)
+    return compile_graph(graph, checkpointer=checkpointer)
 
 
 async def close_sourcing_risk_checkpointer() -> None:

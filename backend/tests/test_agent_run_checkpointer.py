@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.graphs.sourcing_risk_v2 import checkpointer
+from app.graphs.agents import sourcing
 
 
 @pytest.fixture(autouse=True)
@@ -79,3 +80,34 @@ def test_compile_graph_omits_checkpointer_when_v2_is_disabled(
 
     assert result is graph.compile.return_value
     graph.compile.assert_called_once_with(checkpointer=None)
+
+
+def test_build_sourcing_graph_binds_explicit_checkpoint_saver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real sourcing graph entry point must compile with its supplied saver."""
+    graph = Mock()
+    saver = object()
+    monkeypatch.setattr(sourcing, "StateGraph", Mock(return_value=graph))
+    monkeypatch.setattr(checkpointer.settings, "AGENT_RUN_V2_ENABLED", True)
+
+    result = sourcing.build_sourcing_graph(checkpointer=saver)
+
+    assert result is graph.compile.return_value
+    graph.compile.assert_called_once_with(checkpointer=saver)
+
+
+def test_build_sourcing_graph_binds_initialized_default_saver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real entry point must use the lifespan-initialized saver by default."""
+    graph = Mock()
+    saver = object()
+    monkeypatch.setattr(sourcing, "StateGraph", Mock(return_value=graph))
+    monkeypatch.setattr(checkpointer.settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(checkpointer, "_checkpointer", saver)
+
+    result = sourcing.build_sourcing_graph()
+
+    assert result is graph.compile.return_value
+    graph.compile.assert_called_once_with(checkpointer=saver)
