@@ -58,6 +58,27 @@ def test_update_run_status_accepts_callers_cursor_without_owning_it():
     assert updated == {"id": "run-id", "status": "CANCELLED", "version": 2}
 
 
+def test_insert_evidence_persists_company_id_as_a_first_class_column(monkeypatch):
+    """Routing company identity through candidate_id would break evidence ownership."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        repo,
+        "_insert_returning",
+        lambda table, values, json_columns: captured.update(
+            table=table, values=values, json_columns=json_columns
+        ) or values,
+    )
+
+    result = repo.insert_evidence(
+        "run-id", "company-id", "sanctions", "provider", {"claim_code": "clear"}
+    )
+
+    assert captured["table"] == "agent_evidence"
+    assert captured["values"]["company_id"] == "company-id"
+    assert "candidate_id" not in captured["values"]
+    assert result["company_id"] == "company-id"
+
+
 @contextmanager
 def _real_connection() -> Iterator[tuple[object, object]]:
     conn = get_conn()

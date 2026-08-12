@@ -26,7 +26,7 @@ class EvidenceRecord(BaseModel):
     collected_at: datetime
     confidence: float = Field(ge=0, le=1)
     freshness_status: Literal["fresh", "stale", "unknown"]
-    conflict_status: Literal["none", "conflicting", "resolved"]
+    conflict_status: Literal["none", "conflicting", "resolved", "unknown"]
     raw_payload_ref: str | None
     summary: str
 
@@ -86,6 +86,11 @@ def validate_evidence_set(evidence: list[dict], policy: dict) -> dict:
             status = "needs_review"
             claim_status = "conflicting"
             continue
+        if any(item.get("conflict_status") == "unknown" for item in dimension_evidence):
+            reason_codes.append("KEY_EVIDENCE_CONFLICT_UNKNOWN")
+            status = "needs_review"
+            claim_status = "unknown"
+            continue
         if claims & {"unavailable", "unknown", "error"}:
             reason_codes.append(_reason_code(dimension, "DATA_UNAVAILABLE"))
             status = "needs_review"
@@ -135,10 +140,10 @@ def _persist_raw_payload(
 
 
 def _persist_structured_evidence(record: EvidenceRecord) -> None:
-    """Adapt canonical company evidence to the legacy candidate-keyed repository."""
+    """Persist canonical company-owned evidence through the repository contract."""
     agent_run_repo.insert_evidence(
         run_id=str(record.run_id),
-        candidate_id=None,
+        company_id=str(record.company_id),
         evidence_type=record.dimension,
         source=record.source_type,
         source_reference=record.source_reference,
@@ -168,6 +173,8 @@ def _parse_timestamp(value: object) -> datetime | None:
 def _freshness_status(observed_at: datetime | None, collected_at: datetime, freshness_days: object) -> str:
     if observed_at is None or isinstance(freshness_days, bool) or not isinstance(freshness_days, int) or freshness_days < 1:
         return "unknown"
+    if observed_at > collected_at:
+        return "stale"
     return "fresh" if observed_at >= collected_at - timedelta(days=freshness_days) else "stale"
 
 
@@ -178,7 +185,9 @@ def _confidence(value: object) -> float:
 
 
 def _conflict_status(value: object) -> str:
-    return value if value in {"none", "conflicting", "resolved"} else "none"
+    if value is None:
+        return "none"
+    return value if value in {"none", "conflicting", "resolved"} else "unknown"
 
 
 def _reason_code(dimension: str, suffix: str) -> str:

@@ -103,7 +103,7 @@ def test_normalize_clear_claim_keeps_raw_payload_only_by_reference(monkeypatch):
     assert "raw_payload" not in record.model_dump()
     assert persisted["raw"]["raw_payload"] == {"unbounded": "provider response"}
     assert persisted["structured"]["evidence_snapshot"]["raw_payload_ref"] == record.raw_payload_ref
-    assert persisted["structured"]["candidate_id"] is None
+    assert persisted["structured"]["company_id"] == company_id
     assert persisted["structured"]["evidence_snapshot"]["company_id"] == company_id
 
 
@@ -179,3 +179,36 @@ def test_unknown_conflicting_and_resolved_evidence_have_distinct_safety_states()
         "claim_status": "no_risk",
         "score_eligible": True,
     }
+
+
+def test_normalize_unknown_conflict_status_is_explicitly_unknown(monkeypatch):
+    """Silently converting an unrecognized provider conflict state to none hides uncertainty."""
+    monkeypatch.setattr(
+        evidence_service, "get_db", lambda: {"agent_evidence_payloads": type("C", (), {"insert_one": lambda *_: None})()}
+    )
+    monkeypatch.setattr(evidence_service.agent_run_repo, "insert_evidence", lambda **_: None)
+
+    record = evidence_service.normalize_evidence(
+        str(uuid4()), str(uuid4()), "sanctions", {"conflict_status": "provider_pending"}, policy=_policy_requiring_sanctions()
+    )
+
+    assert record.conflict_status == "unknown"
+
+
+def test_future_observed_at_is_invalid_not_fresh(monkeypatch):
+    """A provider timestamp after collection cannot prove present evidence freshness."""
+    monkeypatch.setattr(
+        evidence_service, "get_db", lambda: {"agent_evidence_payloads": type("C", (), {"insert_one": lambda *_: None})()}
+    )
+    monkeypatch.setattr(evidence_service.agent_run_repo, "insert_evidence", lambda **_: None)
+    collected_at = datetime.now(timezone.utc)
+
+    record = evidence_service.normalize_evidence(
+        str(uuid4()),
+        str(uuid4()),
+        "sanctions",
+        {"observed_at": (collected_at + timedelta(minutes=1)).isoformat(), "collected_at": collected_at.isoformat()},
+        policy=_policy_requiring_sanctions(),
+    )
+
+    assert record.freshness_status == "stale"

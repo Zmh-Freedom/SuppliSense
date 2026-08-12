@@ -254,6 +254,7 @@ DDL_STATEMENTS = [
     CREATE TABLE IF NOT EXISTS agent_evidence (
         id UUID PRIMARY KEY,
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        company_id UUID NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,
         candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
         evidence_type VARCHAR(64) NOT NULL,
         source VARCHAR(64) NOT NULL,
@@ -261,6 +262,29 @@ DDL_STATEMENTS = [
         evidence_snapshot JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+    """,
+    """
+    ALTER TABLE agent_evidence ADD COLUMN IF NOT EXISTS company_id UUID
+    """,
+    """
+    UPDATE agent_evidence evidence
+    SET company_id = candidate.company_id
+    FROM agent_run_candidates candidate
+    WHERE evidence.company_id IS NULL
+      AND evidence.candidate_id = candidate.id
+      AND candidate.company_id IS NOT NULL
+    """,
+    """
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM agent_evidence WHERE company_id IS NULL) THEN
+            RAISE EXCEPTION 'agent_evidence.company_id cannot be backfilled safely';
+        END IF;
+        ALTER TABLE agent_evidence ALTER COLUMN company_id SET NOT NULL;
+        ALTER TABLE agent_evidence
+            ADD CONSTRAINT agent_evidence_company_id_fkey
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE RESTRICT;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
     """,
     """
     CREATE TABLE IF NOT EXISTS candidate_decisions (
@@ -411,6 +435,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_event ON agent_run_events (run_id, event_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_run_candidates_run_status ON agent_run_candidates (run_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_agent_evidence_run ON agent_evidence (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evidence_company ON agent_evidence (company_id)",
     "CREATE INDEX IF NOT EXISTS idx_candidate_decisions_run ON candidate_decisions (run_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_action_proposals_pending_execution "
     "ON agent_action_proposals (execution_state, created_at) WHERE execution_state = 'pending'",

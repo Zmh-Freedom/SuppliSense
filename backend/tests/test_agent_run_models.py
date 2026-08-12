@@ -18,6 +18,7 @@ from app.domains.agent_run.schemas import (
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
 )
+from app.db import init_pg
 
 
 def test_agent_run_status_allows_clarification_and_rejects_terminal_resume():
@@ -115,3 +116,14 @@ def test_public_contracts_expose_core_enum_values():
     assert CandidateSource.STAGED_EXTERNAL.value == "staged_external"
     assert CandidateStatus.STAGED_CANDIDATE.value == "staged_candidate"
     assert ActionProposalStatus.PENDING.value == "pending"
+
+
+def test_agent_evidence_schema_owns_a_required_company_id_with_compatible_upgrade():
+    """A nullable or candidate-only company reference would lose evidence ownership on upgrade."""
+    ddl = "\n".join(init_pg.DDL_STATEMENTS)
+    indexes = "\n".join(init_pg.INDEX_STATEMENTS)
+
+    assert "company_id UUID NOT NULL REFERENCES companies(id) ON DELETE RESTRICT" in ddl
+    assert "ALTER TABLE agent_evidence ADD COLUMN IF NOT EXISTS company_id UUID" in ddl
+    assert "ALTER COLUMN company_id SET NOT NULL" in ddl
+    assert "idx_agent_evidence_company" in indexes

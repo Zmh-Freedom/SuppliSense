@@ -186,11 +186,16 @@ def insert_candidate(
 
 
 def insert_evidence(
-    run_id: str, evidence_type: str, source: str, evidence_snapshot: dict[str, Any], candidate_id: str | None = None, source_reference: str | None = None
+    run_id: str,
+    company_id: str,
+    evidence_type: str,
+    source: str,
+    evidence_snapshot: dict[str, Any],
+    source_reference: str | None = None,
 ) -> dict[str, Any]:
     return _insert_returning(
         "agent_evidence",
-        {"id": str(uuid.uuid4()), "run_id": run_id, "candidate_id": candidate_id, "evidence_type": evidence_type, "source": source, "source_reference": source_reference, "evidence_snapshot": evidence_snapshot},
+        {"id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id, "evidence_type": evidence_type, "source": source, "source_reference": source_reference, "evidence_snapshot": evidence_snapshot},
         {"evidence_snapshot"},
     )
 
