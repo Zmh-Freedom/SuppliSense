@@ -79,6 +79,25 @@ def test_insert_evidence_persists_company_id_as_a_first_class_column(monkeypatch
     assert result["company_id"] == "company-id"
 
 
+def test_snapshot_writes_share_the_caller_transaction(monkeypatch):
+    """Opening separate transactions would expose a partial workbench snapshot after a failure."""
+    cursor = object()
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(repo, "upsert_candidate", lambda *args, **kwargs: calls.append(("candidate", kwargs.get("cur"))) or {"id": "candidate-1"})
+    monkeypatch.setattr(repo, "upsert_evidence_review", lambda *args, **kwargs: calls.append(("review", kwargs.get("cur"))) or {"company_id": "company-1"})
+    monkeypatch.setattr(repo, "upsert_decision", lambda *args, **kwargs: calls.append(("decision", kwargs.get("cur"))) or {"id": "decision-1"})
+
+    repo.persist_run_snapshot(
+        "run-id",
+        candidates=[{"candidate_key": "local:company-1", "company_id": "company-1"}],
+        evidence_reviews={"company-1": {"status": "clear"}},
+        decisions=[{"candidate_id": "candidate-1", "group": "recommended"}],
+        cur=cursor,
+    )
+
+    assert calls == [("candidate", cursor), ("review", cursor), ("decision", cursor)]
+
+
 @contextmanager
 def _real_connection() -> Iterator[tuple[object, object]]:
     conn = get_conn()

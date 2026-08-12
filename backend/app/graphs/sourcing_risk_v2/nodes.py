@@ -42,6 +42,19 @@ def record_orchestration_state(run_id: str, status: str, event_type: str, payloa
     return agent_run_service.record_orchestration_state(run_id, status, event_type, payload)
 
 
+def persist_orchestration_snapshot(
+    run_id: str,
+    status: str,
+    event_type: str,
+    payload: dict[str, Any],
+    **collections: Any,
+) -> dict[str, Any]:
+    """Delegate one graph checkpoint's recoverable workbench state to the run service."""
+    return agent_run_service.persist_orchestration_snapshot(
+        run_id, status, event_type, payload, **collections
+    )
+
+
 async def load_run(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Initialize graph fields without mutating a run record directly."""
     run_id = state["run_id"]
@@ -92,8 +105,13 @@ async def local_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
     candidates = state.get("candidates")
     if candidates is None:
         candidates = await asyncio.to_thread(discover_local_candidates, state["requirement"], state["policy_snapshot"])
+    candidates = _with_candidate_keys(candidates)
     sufficient = is_candidate_supply_sufficient(candidates, state["requirement"], state["policy_snapshot"])
-    await _event(state["run_id"], "discovery", {"source": "local", "count": len(candidates), "sufficient": sufficient}, "LOCAL_SEARCHING")
+    await _snapshot_event(
+        state["run_id"], "LOCAL_SEARCHING", "discovery",
+        {"source": "local", "count": len(candidates), "sufficient": sufficient},
+        candidates=candidates,
+    )
     return {
         "status": "LOCAL_SEARCHING",
         "candidates": candidates,
@@ -116,12 +134,16 @@ async def external_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
         )
         return {"status": "LOCAL_SEARCHING", "external_candidates": [], "provider_failures": ["external_discovery"]}
     staged = stage_external_candidates(state["run_id"], found)
-    await _event(state["run_id"], "discovery", {"source": "external_staged", "count": len(staged)}, "EXTERNAL_REVIEW")
+    candidates = _with_candidate_keys([*local_candidates, *staged])
+    await _snapshot_event(
+        state["run_id"], "EXTERNAL_REVIEW", "discovery",
+        {"source": "external_staged", "count": len(staged)}, candidates=candidates,
+    )
     return {
         "status": "EXTERNAL_REVIEW",
-        "candidates": [*local_candidates, *staged],
+        "candidates": candidates,
         "external_candidates": staged,
-        "candidate_ids": _candidate_ids([*local_candidates, *staged]),
+        "candidate_ids": _candidate_ids(candidates),
     }
 
 
@@ -137,10 +159,10 @@ async def identity_resolution(state: SourcingRiskGraphState) -> dict[str, Any]:
             pending.append(_review_id(candidate, identity))
         resolved.append(item)
     if pending:
-        await _event(state["run_id"], "identity_resolving", {"count": len(resolved)}, "IDENTITY_RESOLVING")
-        await _event(state["run_id"], "identity_review", {"pending_review_ids": pending}, "IDENTITY_REVIEW")
+        await _snapshot_event(state["run_id"], "IDENTITY_RESOLVING", "identity_resolving", {"count": len(resolved)}, candidates=resolved)
+        await _snapshot_event(state["run_id"], "IDENTITY_REVIEW", "identity_review", {"pending_review_ids": pending}, candidates=resolved)
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
-    await _event(state["run_id"], "identity_resolved", {"count": len(resolved)}, "IDENTITY_RESOLVING")
+    await _snapshot_event(state["run_id"], "IDENTITY_RESOLVING", "identity_resolved", {"count": len(resolved)}, candidates=resolved)
     return {"status": "IDENTITY_RESOLVING", "next_action": None, "pending_review_ids": [], "candidates": resolved, "candidate_ids": _candidate_ids(resolved)}
 
 
@@ -151,7 +173,10 @@ async def identity_review(state: SourcingRiskGraphState) -> dict[str, Any]:
     resolved, pending = _apply_identity_resolutions(state.get("candidates", []), resolutions)
     if pending:
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
-    await _event(state["run_id"], "identity_resolved", {"count": len(resolved)}, "IDENTITY_RESOLVING")
+    await _snapshot_event(
+        state["run_id"], "IDENTITY_RESOLVING", "identity_resolved", {"count": len(resolved)},
+        candidates=resolved,
+    )
     return {"status": "IDENTITY_RESOLVING", "next_action": None, "pending_review_ids": [], "candidates": resolved, "candidate_ids": _candidate_ids(resolved)}
 
 
@@ -168,7 +193,10 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
         )
     failures = sorted(set([*state.get("provider_failures", []), *failures]))
     candidates = _mark_sanctions_failures_for_review(state.get("candidates", []), normalized_evidence)
-    await _event(state["run_id"], "investigation", {"failed_dimensions": failures}, "INVESTIGATING")
+    await _snapshot_event(
+        state["run_id"], "INVESTIGATING", "investigation", {"failed_dimensions": failures},
+        candidates=candidates, evidence_by_company_id=normalized_evidence,
+    )
     return {
         "status": "INVESTIGATING",
         "candidates": candidates,
@@ -202,13 +230,14 @@ async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:
     }
     requires_review = any(result["status"] == "needs_review" for result in reviews.values())
     if requires_review:
-        await _event(state["run_id"], "evidence_validated", {"requires_review": True}, "EVIDENCE_REVIEW")
+        await _snapshot_event(
+            state["run_id"], "EVIDENCE_REVIEW", "evidence_validated", {"requires_review": True},
+            evidence_reviews=reviews,
+        )
     else:
-        await _event(
-            state["run_id"],
-            "evidence_validated",
-            {"requires_review": False},
-            state.get("status", "INVESTIGATING"),
+        await _snapshot_event(
+            state["run_id"], state.get("status", "INVESTIGATING"), "evidence_validated",
+            {"requires_review": False}, evidence_reviews=reviews,
         )
     return {
         "status": "EVIDENCE_REVIEW" if requires_review else state.get("status", "INVESTIGATING"),
@@ -220,7 +249,10 @@ async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:
 async def score_candidates(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Delegate deterministic scoring to the decision service."""
     decisions = decide_candidates(state["requirement"], state["policy_snapshot"], state.get("candidates", []), state.get("evidence_by_company_id", {}))
-    await _event(state["run_id"], "decision", {"count": len(decisions)}, "SCORING")
+    await _snapshot_event(
+        state["run_id"], "SCORING", "decision", {"count": len(decisions)},
+        candidates=state.get("candidates", []), decisions=decisions,
+    )
     return {"status": "SCORING", "decisions": decisions}
 
 
@@ -405,3 +437,26 @@ async def _event(run_id: str, event_type: str, payload: dict[str, Any], status: 
         await asyncio.to_thread(record_orchestration_state, run_id, status, event_type, payload)
         return
     await asyncio.to_thread(append_typed_event, run_id, event_type, payload)
+
+
+async def _snapshot_event(
+    run_id: str, status: str, event_type: str, payload: dict[str, Any], **collections: Any,
+) -> dict[str, Any]:
+    return await asyncio.to_thread(
+        persist_orchestration_snapshot, run_id, status, event_type, payload, **collections
+    )
+
+
+def _with_candidate_keys(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            **candidate,
+            "candidate_key": str(
+                candidate.get("candidate_key")
+                or candidate.get("supplier_id")
+                or candidate.get("company_id")
+                or candidate.get("supplier_name")
+            ),
+        }
+        for candidate in candidates
+    ]

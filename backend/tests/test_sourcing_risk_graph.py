@@ -73,6 +73,13 @@ def enable_v2_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
     monkeypatch.setattr(nodes, "append_typed_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(nodes, "record_orchestration_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        nodes,
+        "persist_orchestration_snapshot",
+        lambda run_id, status, event_type, payload, **_: nodes.record_orchestration_state(
+            run_id, status, event_type, payload
+        ) or {"candidates": []},
+    )
 
 
 def test_ambiguous_identity_interrupts_before_investigation(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -126,6 +133,25 @@ def test_resume_after_identity_review_continues_from_checkpoint(monkeypatch: pyt
     assert paused["status"] == "IDENTITY_REVIEW"
     assert resumed["status"] == "READY_FOR_REVIEW"
     assert resumed["decisions"] == [{"company_id": candidate["company_id"], "group": "recommended", "final_score": 88.0}]
+
+
+def test_identity_review_resolution_persists_confirmed_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keeping a resolved identity only in checkpoint state makes GET detail reopen a completed review."""
+    candidate = _candidate()
+    snapshots: list[dict] = []
+    monkeypatch.setattr(nodes, "interrupt", lambda *_: {"identity_resolutions": {candidate["company_id"]: candidate["company_id"]}})
+    monkeypatch.setattr(
+        nodes,
+        "persist_orchestration_snapshot",
+        lambda run_id, status, event_type, payload, **kwargs: snapshots.append(
+            {"run_id": run_id, "status": status, "event_type": event_type, "payload": payload, **kwargs}
+        ) or {"candidates": []},
+    )
+
+    update = asyncio.run(nodes.identity_review({"run_id": str(uuid4()), "candidates": [candidate]}))
+
+    assert update["status"] == "IDENTITY_RESOLVING"
+    assert snapshots[-1]["candidates"][0]["identity_status"] == "exact"
 
 
 @pytest.mark.parametrize("current_status", ["LOCAL_SEARCHING", "EXTERNAL_REVIEW"])
@@ -330,6 +356,43 @@ def test_complete_local_flow_reaches_review_without_external_provider(monkeypatc
     assert result["status"] == "READY_FOR_REVIEW"
     assert result["decisions"][0]["group"] == "recommended"
     assert external_called is False
+
+
+def test_real_graph_persists_candidates_reviews_and_decisions_for_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping a graph snapshot write leaves GET detail empty after checkpoint state is gone."""
+    candidate = _candidate()
+    snapshots: list[dict] = []
+    policy = _policy() | {"checksum": "policy-id"}
+    monkeypatch.setattr(nodes, "parse_requirement", lambda *_: {"status": "ready", "requirement": _requirement()})
+    monkeypatch.setattr(nodes, "freeze_policy_snapshot", lambda *_: policy)
+    monkeypatch.setattr(nodes, "discover_local_candidates", lambda *_: [candidate])
+    monkeypatch.setattr(nodes, "is_candidate_supply_sufficient", lambda *_: True)
+    monkeypatch.setattr(nodes, "resolve_candidate_identity", lambda _: {"identity_status": "exact", "company_id": candidate["company_id"], "score_eligible": True})
+
+    async def investigate(*_args):
+        return ({candidate["company_id"]: [{"dimension": "sanctions", "claim_code": "clear"}]}, [])
+
+    def persist_snapshot(run_id, status, event_type, payload, **kwargs):
+        snapshots.append({"run_id": run_id, "status": status, "event_type": event_type, "payload": payload, **kwargs})
+        persisted_candidates = [
+            {**item, "candidate_id": "candidate-1"}
+            for item in kwargs.get("candidates") or []
+        ]
+        return {"candidates": persisted_candidates}
+
+    monkeypatch.setattr(nodes, "investigate_candidates", investigate)
+    monkeypatch.setattr(nodes, "validate_evidence_set", lambda *_: {"status": "clear", "reason_codes": [], "score_eligible": True})
+    monkeypatch.setattr(nodes, "decide_candidates", lambda *_: [{"company_id": candidate["company_id"], "group": "recommended", "final_score": 88.0}])
+    monkeypatch.setattr(nodes, "persist_orchestration_snapshot", persist_snapshot)
+    graph = build_sourcing_risk_graph(InMemorySaver())
+
+    asyncio.run(graph.ainvoke({"run_id": str(uuid4()), "requirement_input": _requirement()}, {"configurable": {"thread_id": "durable-detail-run"}}))
+
+    assert any(snapshot.get("candidates") for snapshot in snapshots)
+    assert any(snapshot.get("evidence_reviews") for snapshot in snapshots)
+    assert any(snapshot.get("decisions") for snapshot in snapshots)
 
 
 def test_conflicting_sanctions_routes_to_needs_review(monkeypatch: pytest.MonkeyPatch) -> None:

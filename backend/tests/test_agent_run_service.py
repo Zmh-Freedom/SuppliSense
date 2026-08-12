@@ -290,6 +290,39 @@ def test_orchestration_state_rolls_back_when_event_write_fails(monkeypatch: pyte
     assert observed == [RuntimeError]
 
 
+def test_orchestration_snapshot_rolls_back_collections_when_event_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A failed event insert must not commit candidates, reviews, or decisions without replay state."""
+    observed: list[type[BaseException] | None] = []
+
+    class CursorContext:
+        def __enter__(self):
+            return None, object()
+
+        def __exit__(self, exc_type, *_):
+            observed.append(exc_type)
+            return False
+
+    monkeypatch.setattr(service, "get_cursor", CursorContext)
+    monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run("INVESTIGATING", 4))
+    monkeypatch.setattr(service, "persist_run_snapshot", lambda *_args, **_kwargs: {"candidates": [{"candidate_id": "candidate-1"}]})
+    monkeypatch.setattr(service, "update_run_status", lambda *_args, **_kwargs: _run("SCORING", 5))
+    monkeypatch.setattr(service, "append_event", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("event insert failed")))
+
+    with pytest.raises(RuntimeError, match="event insert failed"):
+        service.persist_orchestration_snapshot(
+            "run-id",
+            "SCORING",
+            "decision",
+            {"count": 1},
+            candidates=[{"candidate_key": "local:company-1"}],
+            decisions=[{"candidate_id": "candidate-1", "group": "recommended"}],
+        )
+
+    assert observed == [RuntimeError]
+
+
 def test_stream_events_stops_after_replaying_a_durable_terminal_stage(monkeypatch: pytest.MonkeyPatch):
     """Continuing after a final stage would keep completed SSE subscriptions open forever."""
     run = _run("PARTIAL", 8)

@@ -30,3 +30,34 @@ git diff --check
 ## Concern
 
 The repository/action integration tests that require PostgreSQL could not run in this sandbox because connections to `localhost:5432` are denied (`psycopg2.OperationalError: Operation not permitted`). Their non-database unit coverage passes; rerun those integration tests in an environment with PostgreSQL access.
+
+---
+
+## Final P1 durability repair
+
+### Delivered
+
+- Real `SourcingRiskGraph` nodes now persist discovery candidates, resolved identity state, normalized evidence snapshots, evidence-review conclusions, and decisions through the `agent_run` service boundary. The graph never writes company or supplier masters; approval-gated business-master writes remain unchanged.
+- The new `persist_orchestration_snapshot()` service command locks the Run and writes graph collections, Run status, and its SSE event in one PostgreSQL transaction. An event failure rolls the collection snapshot back with the status transition.
+- Repository upserts use deterministic UUIDs per `(run_id, candidate/decision/evidence key)` so LangGraph replay/retry updates the same Run collection records rather than duplicating them.
+- Added `agent_evidence_reviews` durable storage and included its per-company review snapshots in `get_run_detail_collections()`. GET detail and SSE detail snapshots now recover reviews from PostgreSQL, not LangGraph memory.
+
+### TDD evidence
+
+- RED: the new graph, repository, and service transaction tests initially failed because `persist_orchestration_snapshot`, snapshot upserts, and the locked Run seam did not exist.
+- GREEN: tests now cover a real graph flow invoking candidate/review/decision persistence; caller-cursor sharing in the repository; event-write failure rolling the whole snapshot transaction back; and post-interrupt identity resolution persisting its confirmed candidate.
+
+### Verification
+
+Passed:
+
+```text
+cd backend && pytest -q tests/test_agent_run_api.py tests/test_agent_run_service.py tests/test_sourcing_risk_graph.py::test_real_graph_persists_candidates_reviews_and_decisions_for_detail tests/test_agent_run_repo.py::test_snapshot_writes_share_the_caller_transaction  # 27 passed
+cd backend && pytest -q <all 18 focused graph tests, split because the environment intermittently truncated the combined command>  # 18 passed
+cd backend && python -m compileall -q app
+git diff --check
+```
+
+### Remaining environment constraint
+
+The existing PostgreSQL integration tests in `tests/test_agent_run_repo.py` cannot connect to `localhost:5432` in this sandbox (`Operation not permitted`). The new transaction rollback seam test passes without a database; rerun the database-backed repository integration cases in an environment with PostgreSQL access.

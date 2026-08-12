@@ -343,6 +343,7 @@ def test_clarification_api_service_runner_seam_consumes_durable_requirement_patc
         ),
     )
     monkeypatch.setattr(nodes, "record_orchestration_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(nodes, "persist_orchestration_snapshot", lambda *_args, **_kwargs: {"candidates": []})
     monkeypatch.setattr(nodes, "parse_requirement", lambda raw_text, data: {
         "status": "ready", "requirement": {"category": "摄像头", "specification": data["specification"]}
     } if data.get("specification") else {"status": "clarification_required", "missing": ["specification"]})

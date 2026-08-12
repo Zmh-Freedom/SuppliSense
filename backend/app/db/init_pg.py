@@ -264,6 +264,16 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS agent_evidence_reviews (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        company_id UUID NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,
+        review_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, company_id)
+    )
+    """,
+    """
     ALTER TABLE agent_evidence ADD COLUMN IF NOT EXISTS company_id UUID
     """,
     """
@@ -436,6 +446,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_run_candidates_run_status ON agent_run_candidates (run_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_agent_evidence_run ON agent_evidence (run_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_evidence_company ON agent_evidence (company_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evidence_reviews_run ON agent_evidence_reviews (run_id)",
     "CREATE INDEX IF NOT EXISTS idx_candidate_decisions_run ON candidate_decisions (run_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_action_proposals_pending_execution "
     "ON agent_action_proposals (execution_state, created_at) WHERE execution_state = 'pending'",

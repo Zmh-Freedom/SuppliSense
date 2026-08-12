@@ -67,6 +67,12 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def get_run_for_update(run_id: str, cur: PgCursor) -> dict[str, Any] | None:
+    """Lock one Run inside the caller-owned lifecycle transaction."""
+    cur.execute("SELECT * FROM agent_runs WHERE id = %s FOR UPDATE", (run_id,))
+    return _row_to_dict(cur, cur.fetchone())
+
+
 def get_run_detail_collections(run_id: str) -> dict[str, Any]:
     """Load persisted workbench data for an already-authorized Run."""
     with get_cursor() as (_, cur):
@@ -78,6 +84,11 @@ def get_run_detail_collections(run_id: str) -> dict[str, Any]:
         evidence = _list_rows(
             cur,
             "SELECT * FROM agent_evidence WHERE run_id = %s ORDER BY created_at ASC",
+            (run_id,),
+        )
+        evidence_reviews = _list_rows(
+            cur,
+            "SELECT * FROM agent_evidence_reviews WHERE run_id = %s ORDER BY company_id ASC",
             (run_id,),
         )
         decisions = _list_rows(
@@ -98,7 +109,7 @@ def get_run_detail_collections(run_id: str) -> dict[str, Any]:
     return {
         "candidates": [_candidate_detail(candidate) for candidate in candidates],
         "evidence_by_company_id": _evidence_by_company(evidence),
-        "evidence_reviews": {},
+        "evidence_reviews": _evidence_reviews_by_company(evidence_reviews),
         "decisions": [_decision_detail(decision) for decision in decisions],
         "action_proposals": [_proposal_detail(proposal) for proposal in proposals],
         "approvals": approvals,
@@ -250,13 +261,31 @@ def insert_policy_snapshot(
 
 
 def insert_candidate(
-    run_id: str, source: str, status: str, candidate_snapshot: dict[str, Any], company_id: str | None = None
+    run_id: str, source: str, status: str, candidate_snapshot: dict[str, Any], company_id: str | None = None,
+    cur: PgCursor | None = None,
 ) -> dict[str, Any]:
+    if cur is not None:
+        return _insert_candidate_with_cursor(cur, run_id, source, status, candidate_snapshot, company_id)
     return _insert_returning(
         "agent_run_candidates",
         {"id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id, "source": source, "status": status, "candidate_snapshot": candidate_snapshot},
         {"candidate_snapshot"},
     )
+
+
+def _insert_candidate_with_cursor(
+    cur: PgCursor, run_id: str, source: str, status: str, candidate_snapshot: dict[str, Any], company_id: str | None,
+) -> dict[str, Any]:
+    values = {
+        "id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id,
+        "source": source, "status": status, "candidate_snapshot": candidate_snapshot,
+    }
+    columns = list(values)
+    cur.execute(
+        f"INSERT INTO agent_run_candidates ({', '.join(columns)}) VALUES ({', '.join('%s' for _ in columns)}) RETURNING *",
+        [Json(values[column]) if column == "candidate_snapshot" else values[column] for column in columns],
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
 
 
 def insert_evidence(
@@ -266,7 +295,12 @@ def insert_evidence(
     source: str,
     evidence_snapshot: dict[str, Any],
     source_reference: str | None = None,
+    cur: PgCursor | None = None,
 ) -> dict[str, Any]:
+    if cur is not None:
+        return _insert_evidence_with_cursor(
+            cur, run_id, company_id, evidence_type, source, evidence_snapshot, source_reference
+        )
     return _insert_returning(
         "agent_evidence",
         {"id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id, "evidence_type": evidence_type, "source": source, "source_reference": source_reference, "evidence_snapshot": evidence_snapshot},
@@ -274,14 +308,153 @@ def insert_evidence(
     )
 
 
-def insert_decision(
-    run_id: str, decision: str, score_snapshot: dict[str, Any], reason_snapshot: dict[str, Any], candidate_id: str | None = None
+def _insert_evidence_with_cursor(
+    cur: PgCursor, run_id: str, company_id: str, evidence_type: str, source: str,
+    evidence_snapshot: dict[str, Any], source_reference: str | None,
 ) -> dict[str, Any]:
+    values = {
+        "id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id,
+        "evidence_type": evidence_type, "source": source, "source_reference": source_reference,
+        "evidence_snapshot": evidence_snapshot,
+    }
+    columns = list(values)
+    cur.execute(
+        f"INSERT INTO agent_evidence ({', '.join(columns)}) VALUES ({', '.join('%s' for _ in columns)}) RETURNING *",
+        [Json(values[column]) if column == "evidence_snapshot" else values[column] for column in columns],
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def insert_decision(
+    run_id: str, decision: str, score_snapshot: dict[str, Any], reason_snapshot: dict[str, Any], candidate_id: str | None = None,
+    cur: PgCursor | None = None,
+) -> dict[str, Any]:
+    if cur is not None:
+        return _insert_decision_with_cursor(cur, run_id, decision, score_snapshot, reason_snapshot, candidate_id)
     return _insert_returning(
         "candidate_decisions",
         {"id": str(uuid.uuid4()), "run_id": run_id, "candidate_id": candidate_id, "decision": decision, "score_snapshot": score_snapshot, "reason_snapshot": reason_snapshot},
         {"score_snapshot", "reason_snapshot"},
     )
+
+
+def _insert_decision_with_cursor(
+    cur: PgCursor, run_id: str, decision: str, score_snapshot: dict[str, Any],
+    reason_snapshot: dict[str, Any], candidate_id: str | None,
+) -> dict[str, Any]:
+    values = {
+        "id": str(uuid.uuid4()), "run_id": run_id, "candidate_id": candidate_id,
+        "decision": decision, "score_snapshot": score_snapshot, "reason_snapshot": reason_snapshot,
+    }
+    columns = list(values)
+    cur.execute(
+        f"INSERT INTO candidate_decisions ({', '.join(columns)}) VALUES ({', '.join('%s' for _ in columns)}) RETURNING *",
+        [Json(values[column]) if column in {"score_snapshot", "reason_snapshot"} else values[column] for column in columns],
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def upsert_candidate(
+    run_id: str, candidate_key: str, source: str, status: str, candidate_snapshot: dict[str, Any],
+    company_id: str | None, cur: PgCursor,
+) -> dict[str, Any]:
+    """Make graph retries update one immutable-in-scope candidate identity per Run."""
+    candidate_id = _stable_id(run_id, f"candidate:{candidate_key}")
+    cur.execute(
+        """
+        INSERT INTO agent_run_candidates (id, run_id, company_id, source, status, candidate_snapshot)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            company_id = EXCLUDED.company_id,
+            source = EXCLUDED.source,
+            status = EXCLUDED.status,
+            candidate_snapshot = EXCLUDED.candidate_snapshot,
+            updated_at = NOW()
+        RETURNING *
+        """,
+        (candidate_id, run_id, company_id, source, status, Json(candidate_snapshot)),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def upsert_evidence_review(
+    run_id: str, company_id: str, review_snapshot: dict[str, Any], cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO agent_evidence_reviews (run_id, company_id, review_snapshot)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (run_id, company_id) DO UPDATE SET
+            review_snapshot = EXCLUDED.review_snapshot,
+            updated_at = NOW()
+        RETURNING *
+        """,
+        (run_id, company_id, Json(review_snapshot)),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def upsert_decision(
+    run_id: str, decision_key: str, decision: str, score_snapshot: dict[str, Any],
+    reason_snapshot: dict[str, Any], candidate_id: str | None, cur: PgCursor,
+) -> dict[str, Any]:
+    decision_id = _stable_id(run_id, f"decision:{decision_key}")
+    cur.execute(
+        """
+        INSERT INTO candidate_decisions (id, run_id, candidate_id, decision, score_snapshot, reason_snapshot)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            candidate_id = EXCLUDED.candidate_id,
+            decision = EXCLUDED.decision,
+            score_snapshot = EXCLUDED.score_snapshot,
+            reason_snapshot = EXCLUDED.reason_snapshot
+        RETURNING *
+        """,
+        (decision_id, run_id, candidate_id, decision, Json(score_snapshot), Json(reason_snapshot)),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def persist_run_snapshot(
+    run_id: str,
+    *,
+    candidates: list[dict[str, Any]] | None = None,
+    evidence_by_company_id: dict[str, list[dict[str, Any]]] | None = None,
+    evidence_reviews: dict[str, dict[str, Any]] | None = None,
+    decisions: list[dict[str, Any]] | None = None,
+    cur: PgCursor,
+) -> dict[str, Any]:
+    """Write graph-owned workbench collections in the Run lifecycle transaction."""
+    candidate_ids: dict[str, str] = {}
+    persisted_candidates: list[dict[str, Any]] = []
+    for candidate in candidates or []:
+        company_id = candidate.get("company_id")
+        key = str(candidate.get("candidate_key") or company_id or candidate.get("supplier_id") or candidate.get("supplier_name"))
+        if not key:
+            raise ValueError("候选缺少稳定标识")
+        persisted = upsert_candidate(
+            run_id, key, _candidate_source(candidate), _candidate_status(candidate), dict(candidate),
+            str(company_id) if company_id else None, cur=cur,
+        )
+        persisted_candidates.append(persisted)
+        if company_id:
+            candidate_ids[str(company_id)] = persisted["id"]
+    for company_id, evidence_items in (evidence_by_company_id or {}).items():
+        for index, evidence in enumerate(evidence_items):
+            _upsert_evidence(run_id, str(company_id), evidence, index, candidate_ids.get(str(company_id)), cur)
+    for company_id, review in (evidence_reviews or {}).items():
+        upsert_evidence_review(run_id, str(company_id), dict(review), cur=cur)
+    for index, decision in enumerate(decisions or []):
+        company_id = str(decision.get("company_id") or "")
+        candidate_id = str(decision.get("candidate_id") or candidate_ids.get(company_id) or "") or None
+        key = candidate_id or company_id or str(index)
+        snapshot = dict(decision)
+        upsert_decision(
+            run_id, key, str(decision.get("group") or "needs_review"), snapshot,
+            {"reason_codes": list(decision.get("reason_codes") or []), "evidence_ids": list(decision.get("evidence_ids") or [])},
+            candidate_id, cur=cur,
+        )
+    return {"candidates": persisted_candidates}
 
 
 def insert_action_proposal(
@@ -393,6 +566,13 @@ def _evidence_by_company(evidence: list[dict[str, Any]]) -> dict[str, list[dict[
     return grouped
 
 
+def _evidence_reviews_by_company(reviews: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(review["company_id"]): dict(review.get("review_snapshot") or {})
+        for review in reviews
+    }
+
+
 def _decision_detail(decision: dict[str, Any]) -> dict[str, Any]:
     return {
         **dict(decision.get("score_snapshot") or {}),
@@ -412,3 +592,44 @@ def _proposal_detail(proposal: dict[str, Any]) -> dict[str, Any]:
         "execution_state": proposal["execution_state"],
         "payload": dict(proposal.get("payload") or {}),
     }
+
+
+def _stable_id(run_id: str, key: str) -> str:
+    return str(uuid.uuid5(uuid.UUID(run_id), key))
+
+
+def _candidate_source(candidate: dict[str, Any]) -> str:
+    return "staged_external" if candidate.get("status") == "staged_candidate" else "local"
+
+
+def _candidate_status(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("status") or "identity_pending")
+
+
+def _upsert_evidence(
+    run_id: str, company_id: str, evidence: dict[str, Any], index: int,
+    candidate_id: str | None, cur: PgCursor,
+) -> None:
+    evidence_id = _stable_id(
+        run_id,
+        f"evidence:{company_id}:{evidence.get('evidence_id') or evidence.get('dimension') or index}",
+    )
+    cur.execute(
+        """
+        INSERT INTO agent_evidence (
+            id, run_id, company_id, candidate_id, evidence_type, source, source_reference, evidence_snapshot
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            candidate_id = EXCLUDED.candidate_id,
+            evidence_type = EXCLUDED.evidence_type,
+            source = EXCLUDED.source,
+            source_reference = EXCLUDED.source_reference,
+            evidence_snapshot = EXCLUDED.evidence_snapshot
+        """,
+        (
+            evidence_id, run_id, company_id, candidate_id,
+            str(evidence.get("dimension") or "unknown"),
+            str(evidence.get("source_type") or evidence.get("source") or "unknown"),
+            evidence.get("source_reference"), Json(evidence),
+        ),
+    )

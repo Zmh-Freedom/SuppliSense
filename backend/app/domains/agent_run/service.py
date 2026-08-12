@@ -10,11 +10,13 @@ from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunSta
 from app.domains.agent_run.repo import (
     append_event,
     get_run,
+    get_run_for_update,
     get_run_detail_collections,
     get_run_for_user,
     insert_approval_decision,
     insert_run,
     list_events_after,
+    persist_run_snapshot,
     update_run_requirement,
     update_run_status,
 )
@@ -214,6 +216,57 @@ def record_orchestration_state(
             cur=cur,
         )
     return int(event["event_id"])
+
+
+def get_orchestration_run_for_update(run_id: str, cur: Any) -> dict[str, Any] | None:
+    """Expose the locked graph Run only to the orchestration persistence command."""
+    return get_run_for_update(run_id, cur)
+
+
+def persist_orchestration_snapshot(
+    run_id: str,
+    status: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    candidates: list[dict[str, Any]] | None = None,
+    evidence_by_company_id: dict[str, list[dict[str, Any]]] | None = None,
+    evidence_reviews: dict[str, dict[str, Any]] | None = None,
+    decisions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Atomically persist graph-owned collections, status, and replay event.
+
+    This writes only agent-run collections. It deliberately does not create or modify
+    company/supplier master records, so all business-master mutations remain approval-gated.
+    """
+    try:
+        target = AgentRunStatus(status)
+    except ValueError as exc:
+        raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
+    with get_cursor() as (_, cur):
+        run = get_orchestration_run_for_update(run_id, cur)
+        if run is None:
+            raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+        _require_transition(run, target)
+        snapshot = persist_run_snapshot(
+            run_id,
+            candidates=candidates,
+            evidence_by_company_id=evidence_by_company_id,
+            evidence_reviews=evidence_reviews,
+            decisions=decisions,
+            cur=cur,
+        )
+        updated = update_run_status(run_id, run["version"], target.value, cur=cur)
+        if updated is None:
+            _raise_version_conflict()
+        append_event(
+            run_id,
+            updated["version"],
+            event_type,
+            {**payload, "status": updated["status"]},
+            cur=cur,
+        )
+    return snapshot
 
 
 def get_orchestration_run(run_id: str) -> dict[str, Any] | None:
