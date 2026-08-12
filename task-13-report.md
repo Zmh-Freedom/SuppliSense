@@ -1,5 +1,27 @@
 # Task 13 P1 修复报告
 
+## Retry API cross-store P1 修复（2026-08-12）
+
+- retry service 不再以历史 PG `compensated` 覆盖本次 Mongo `pending_compensation` 或 `unknown`；这些不安全结果会原样返回并调用持久 recovery 更新。
+- 只有历史 PG 已 `compensated` 且本次 Mongo outcome 也明确为 `compensated` 时才走幂等短路；重复 retry 不会把 durable PG 状态降级。
+- 新增 service/API 回归测试，覆盖 PG `compensated` 与 Mongo 不安全 outcome 的组合及 API 原样返回契约。
+
+验证：
+
+```text
+cd backend && pytest -q tests/test_agent_run_service.py -k 'retry_after_compensation or repeated_retry_after_compensation or does_not_promote_unsafe_mongo_outcome_over_pg_compensated'
+# 4 passed
+
+cd backend && pytest -q tests/test_agent_run_api.py -k 'raw_payload_compensation_retry'
+# 3 passed
+
+cd backend && python -m compileall -q app
+git diff --check
+# 均 exit 0
+```
+
+未修改 `task-13-review.md`。
+
 ## 最后状态机修复（2026-08-12）
 
 - detail/API 对 evidence 缺失 `raw_payload_ref`、Mongo 文档缺失及未知 lifecycle 生成稳定 `unknown` recovery 状态；detail、决策和 SSE 使用的候选评分统一 fail closed。

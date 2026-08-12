@@ -343,7 +343,9 @@ def test_retry_missing_raw_payload_keeps_recovery_unknown(
     assert updated == [("raw-1", "unknown", "")]
 
 
-def test_retry_after_compensation_keeps_compensated_state(monkeypatch: pytest.MonkeyPatch):
+def test_retry_after_compensation_preserves_unsafe_mongo_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("SCORING", 4))
     monkeypatch.setattr(
         service,
@@ -376,8 +378,50 @@ def test_retry_after_compensation_keeps_compensated_state(monkeypatch: pytest.Mo
 
     result = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
 
-    assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
-    assert updated == []
+    assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}]
+    assert updated == [("raw-1", "unknown")]
+
+
+@pytest.mark.parametrize("mongo_outcome", ["pending_compensation", "unknown"])
+def test_retry_does_not_promote_unsafe_mongo_outcome_over_pg_compensated(
+    monkeypatch: pytest.MonkeyPatch, mongo_outcome: str
+):
+    """A current unsafe Mongo observation must remain visible despite stale PG completion."""
+    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("SCORING", 4))
+    monkeypatch.setattr(
+        service,
+        "get_run_detail_collections",
+        lambda *_: {
+            "candidates": [],
+            "evidence_by_company_id": {"company-1": [{"raw_payload_ref": "raw-1"}]},
+            "evidence_reviews": {},
+            "decisions": [],
+            "action_proposals": [],
+            "approvals": [],
+        },
+    )
+    compensation = [{"raw_payload_ref": "raw-1", "status": "compensated"}]
+    monkeypatch.setattr(service, "list_raw_payload_compensations", lambda *_: compensation)
+    monkeypatch.setattr(
+        service,
+        "retry_raw_payload_compensations",
+        lambda *_args, **_kwargs: [
+            {"raw_payload_ref": "raw-1", "lifecycle_status": mongo_outcome}
+        ],
+    )
+    updated: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        service,
+        "update_raw_payload_compensation",
+        lambda _run_id, ref, status, last_error=None: updated.append((ref, status)),
+    )
+
+    result = service.retry_sourcing_risk_raw_payload_compensations(
+        "run-id", "user-id", "analyst"
+    )
+
+    assert result == [{"raw_payload_ref": "raw-1", "lifecycle_status": mongo_outcome}]
+    assert updated == [("raw-1", mongo_outcome)]
 
 
 def test_repeated_retry_after_compensation_keeps_compensated_state(
@@ -408,7 +452,8 @@ def test_repeated_retry_after_compensation_keeps_compensated_state(
     monkeypatch.setattr(service, "retry_raw_payload_compensations", lambda *_args, **_kwargs: next(outcomes))
 
     def update(_run_id: str, _ref: str, status: str, last_error: str | None = None) -> None:
-        compensation[0]["status"] = status
+        if compensation[0]["status"] != "compensated":
+            compensation[0]["status"] = status
 
     monkeypatch.setattr(service, "update_raw_payload_compensation", update)
 
@@ -416,7 +461,8 @@ def test_repeated_retry_after_compensation_keeps_compensated_state(
     second = service.retry_sourcing_risk_raw_payload_compensations("run-id", "user-id", "analyst")
 
     assert first == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
-    assert second == [{"raw_payload_ref": "raw-1", "lifecycle_status": "compensated"}]
+    assert second == [{"raw_payload_ref": "raw-1", "lifecycle_status": "unknown"}]
+    assert compensation[0]["status"] == "compensated"
 
 
 def test_retry_run_raw_payload_compensations_uses_only_authorized_evidence_refs(

@@ -146,7 +146,10 @@ def retry_sourcing_risk_raw_payload_compensations(
         if not isinstance(outcome, dict):
             continue
         raw_payload_ref = outcome["raw_payload_ref"]
-        if raw_payload_ref in compensated_refs:
+        if (
+            raw_payload_ref in compensated_refs
+            and outcome.get("lifecycle_status") == "compensated"
+        ):
             stable_outcomes.append(
                 {"raw_payload_ref": raw_payload_ref, "lifecycle_status": "compensated"}
             )

@@ -180,6 +180,32 @@ def test_raw_payload_compensation_retry_uses_authorized_run_endpoint(
     assert observed[0][0] == RUN_ID
 
 
+@pytest.mark.parametrize("lifecycle_status", ["pending_compensation", "unknown"])
+def test_raw_payload_compensation_retry_preserves_unsafe_status(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch, lifecycle_status: str
+):
+    """The retry API must not turn an unsafe Mongo result into compensated."""
+    from app.domains.agent_run import api
+
+    monkeypatch.setattr(
+        api,
+        "retry_sourcing_risk_raw_payload_compensations",
+        lambda *_: [{"raw_payload_ref": "raw-1", "lifecycle_status": lifecycle_status}],
+    )
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/raw-payload-compensations/retry",
+        headers=agent_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "raw_payload_statuses": [
+            {"raw_payload_ref": "raw-1", "lifecycle_status": lifecycle_status}
+        ]
+    }
+
+
 def test_approval_decision_uses_canonical_nested_path(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
     """The documented nested decisions path keeps approval intent unambiguous while old clients retain their route."""
     from app.domains.agent_run import api
