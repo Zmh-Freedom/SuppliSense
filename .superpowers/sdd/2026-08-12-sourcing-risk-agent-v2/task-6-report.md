@@ -20,3 +20,10 @@
 ## Concerns
 
 - Snapshot persistence belongs to the later run repository task. This pure service creates an auditable detached record, and callers must persist that returned record once per run rather than re-resolving policy later.
+
+## Review Fixes
+
+- RED: `pytest tests/test_sourcing_risk_policy_service.py -v` — 3 failures confirmed the original implementation allowed nested snapshot mutation, lacked checksum verification, and accepted a tolerance-based weight total.
+- Weight validation now explicitly rejects `bool`, `NaN`, and positive/negative infinity. It converts finite numeric weights to `Decimal(str(value))` and requires the sum to equal exactly `Decimal("1")`.
+- Frozen snapshots now recursively convert mappings to read-only mappings and lists to tuples. `verify_policy_snapshot_checksum()` recomputes the deterministic SHA-256 payload checksum, while `validate_snapshot_checksum()` raises for tampering.
+- GREEN: `pytest tests/test_sourcing_risk_policy_service.py -v` — 15 passed.

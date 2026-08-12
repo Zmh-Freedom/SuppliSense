@@ -1,6 +1,7 @@
 """Behavior tests for deterministic sourcing-risk policy snapshots."""
 
 from copy import deepcopy
+import math
 
 import pytest
 
@@ -71,6 +72,30 @@ def test_snapshot_is_a_deep_copy_of_the_resolved_policy(monkeypatch):
     assert snapshot["weights"]["match"] == 0.30
 
 
+def test_snapshot_is_deeply_immutable_after_it_is_frozen():
+    """Allowing nested writes would let an audit record drift after policy lock."""
+    snapshot = policy_service.freeze_policy_snapshot("run-id", "摄像头")
+
+    with pytest.raises(TypeError):
+        snapshot["weights"]["match"] = 0.25
+    with pytest.raises(TypeError):
+        snapshot["hard_gates"]["sanctions_hit"] = "needs_review"
+    with pytest.raises(AttributeError):
+        snapshot["required_evidence"].append("identity")
+
+
+def test_snapshot_checksum_verification_detects_payload_tampering():
+    """Trusting a stored checksum without recomputing it would hide altered decisions."""
+    snapshot = policy_service.freeze_policy_snapshot("run-id", "摄像头")
+    tampered = dict(snapshot)
+    tampered["minimum_candidate_count"] = 99
+
+    assert policy_service.verify_policy_snapshot_checksum(snapshot) is True
+    assert policy_service.verify_policy_snapshot_checksum(tampered) is False
+    with pytest.raises(ValueError, match="checksum"):
+        policy_service.validate_snapshot_checksum(tampered)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -85,4 +110,23 @@ def test_validate_policy_rejects_unsafe_or_non_deterministic_contracts(mutation)
     mutation(policy)
 
     with pytest.raises(ValueError):
+        policy_service.validate_policy(policy)
+
+
+@pytest.mark.parametrize("invalid_weight", [True, math.nan, math.inf, -math.inf])
+def test_validate_policy_rejects_boolean_and_non_finite_weights(invalid_weight):
+    """Accepting non-real weights makes deterministic score normalization impossible."""
+    policy = deepcopy(policy_service.DEFAULT_POLICY)
+    policy["weights"]["match"] = invalid_weight
+
+    with pytest.raises(ValueError):
+        policy_service.validate_policy(policy)
+
+
+def test_validate_policy_requires_exact_decimal_weight_normalization():
+    """A tolerance-based total would allow policy scores to drift from a normalized total."""
+    policy = deepcopy(policy_service.DEFAULT_POLICY)
+    policy["weights"]["match"] = 0.2500000001
+
+    with pytest.raises(ValueError, match="sum to one"):
         policy_service.validate_policy(policy)

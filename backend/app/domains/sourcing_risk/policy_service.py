@@ -1,9 +1,12 @@
 """Deterministic, auditable policy templates for sourcing-risk runs."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
+from types import MappingProxyType
 from typing import Any
 
 
@@ -106,7 +109,20 @@ def freeze_policy_snapshot(run_id: str, category: str) -> dict:
     snapshot["run_id"] = run_id
     snapshot["frozen_at"] = datetime.now(timezone.utc).isoformat()
     snapshot["checksum"] = _snapshot_checksum(snapshot)
-    return snapshot
+    return _deep_freeze(snapshot)
+
+
+def verify_policy_snapshot_checksum(snapshot: Mapping[str, Any]) -> bool:
+    """Return whether an audit snapshot still matches its stored checksum."""
+    if not isinstance(snapshot, Mapping) or not isinstance(snapshot.get("checksum"), str):
+        return False
+    return snapshot["checksum"] == _snapshot_checksum(snapshot)
+
+
+def validate_snapshot_checksum(snapshot: Mapping[str, Any]) -> None:
+    """Raise when an audit snapshot's payload has been changed after freezing."""
+    if not verify_policy_snapshot_checksum(snapshot):
+        raise ValueError("policy snapshot checksum does not match its payload")
 
 
 def validate_policy(policy: dict) -> None:
@@ -118,7 +134,11 @@ def validate_policy(policy: dict) -> None:
         if not isinstance(policy.get(field), str) or not policy[field]:
             raise ValueError(f"policy {field} is required")
 
-    if not isinstance(policy.get("minimum_candidate_count"), int) or policy["minimum_candidate_count"] < 1:
+    if (
+        isinstance(policy.get("minimum_candidate_count"), bool)
+        or not isinstance(policy.get("minimum_candidate_count"), int)
+        or policy["minimum_candidate_count"] < 1
+    ):
         raise ValueError("minimum_candidate_count must be a positive integer")
 
     _validate_dimensions(policy, "weights", require_total=True)
@@ -155,13 +175,47 @@ def _validate_dimensions(
     if positive_integers:
         if not all(isinstance(value, int) and value > 0 for value in values.values()):
             raise ValueError(f"{field} values must be positive integers")
-    elif not all(isinstance(value, (int, float)) and 0 <= value <= 1 for value in values.values()):
-        raise ValueError(f"{field} values must be between zero and one")
-    if require_total and abs(sum(values.values()) - 1.0) > 1e-9:
-        raise ValueError("weights must sum to one")
+    else:
+        decimals = [_policy_decimal(value, field) for value in values.values()]
+        if not all(Decimal("0") <= value <= Decimal("1") for value in decimals):
+            raise ValueError(f"{field} values must be between zero and one")
+        if require_total and sum(decimals) != Decimal("1"):
+            raise ValueError("weights must sum to one exactly")
 
 
-def _snapshot_checksum(snapshot: dict[str, Any]) -> str:
-    payload = {key: value for key, value in snapshot.items() if key != "checksum"}
+def _snapshot_checksum(snapshot: Mapping[str, Any]) -> str:
+    payload = {
+        key: _deep_thaw(value)
+        for key, value in snapshot.items()
+        if key != "checksum"
+    }
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _policy_decimal(value: object, field: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} values must be finite real numbers")
+    try:
+        decimal = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ValueError(f"{field} values must be finite real numbers") from exc
+    if not decimal.is_finite():
+        raise ValueError(f"{field} values must be finite real numbers")
+    return decimal
+
+
+def _deep_freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
+def _deep_thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _deep_thaw(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_deep_thaw(item) for item in value]
+    return value
