@@ -51,24 +51,41 @@ def update_run_status(
     expected_version: int,
     status: str,
     error_code: str | None = None,
+    cur: PgCursor | None = None,
 ) -> dict[str, Any] | None:
-    with get_cursor() as (_, cur):
-        cur.execute(
-            """
-            UPDATE agent_runs
-            SET status = %s,
-                error_code = %s,
-                version = version + 1,
-                updated_at = NOW(),
-                completed_at = CASE
-                    WHEN %s IN ('COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED', 'ACTION_FAILED')
-                    THEN NOW() ELSE completed_at END
-            WHERE id = %s AND version = %s
-            RETURNING *
-            """,
-            (status, error_code, status, run_id, expected_version),
+    if cur is not None:
+        return update_run_status_with_cursor(
+            cur, run_id, expected_version, status, error_code
         )
-        return _row_to_dict(cur, cur.fetchone())
+    with get_cursor() as (_, cur):
+        return update_run_status_with_cursor(
+            cur, run_id, expected_version, status, error_code
+        )
+
+
+def update_run_status_with_cursor(
+    cur: PgCursor,
+    run_id: str,
+    expected_version: int,
+    status: str,
+    error_code: str | None = None,
+) -> dict[str, Any] | None:
+    cur.execute(
+        """
+        UPDATE agent_runs
+        SET status = %s,
+            error_code = %s,
+            version = version + 1,
+            updated_at = NOW(),
+            completed_at = CASE
+                WHEN %s IN ('COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED', 'ACTION_FAILED')
+                THEN NOW() ELSE completed_at END
+        WHERE id = %s AND version = %s
+        RETURNING *
+        """,
+        (status, error_code, status, run_id, expected_version),
+    )
+    return _row_to_dict(cur, cur.fetchone())
 
 
 def append_event(

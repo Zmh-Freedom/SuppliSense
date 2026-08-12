@@ -26,12 +26,36 @@ class _EventCursor:
         ]
 
 
+class _StatusCursor:
+    def __init__(self) -> None:
+        self.executed = False
+
+    def execute(self, query: str, params: tuple[object, ...]) -> None:
+        del query, params
+        self.executed = True
+
+    def fetchone(self) -> tuple[object, ...]:
+        return ("run-id", "CANCELLED", 2)
+
+    @property
+    def description(self) -> list[tuple[str]]:
+        return [("id",), ("status",), ("version",)]
+
+
 def test_append_event_accepts_callers_cursor_without_owning_it():
     """The wrapper must not require a new transaction when a cursor is supplied."""
     event = repo.append_event(
         "run-id", 1, "stage", {"status": "CREATED"}, cur=_EventCursor()
     )
     assert event["event_id"] == 1
+
+
+def test_update_run_status_accepts_callers_cursor_without_owning_it():
+    """The status write must share a supplied cursor instead of opening a transaction."""
+    cursor = _StatusCursor()
+    updated = repo.update_run_status("run-id", 1, "CANCELLED", cur=cursor)
+    assert cursor.executed is True
+    assert updated == {"id": "run-id", "status": "CANCELLED", "version": 2}
 
 
 @contextmanager
@@ -98,6 +122,30 @@ def test_append_event_uses_callers_transaction_when_cursor_is_supplied():
                     (run["id"],),
                 )
                 assert observer_cur.fetchone() == (0,)
+    finally:
+        _delete_run(run["id"])
+
+
+def test_status_update_and_event_roll_back_with_one_callers_transaction():
+    """A rollback must leave neither the status update nor its event visible."""
+    ensure_pg_schema()
+    run = _insert_run_for_test()
+    try:
+        with _real_connection() as (writer_conn, writer_cur):
+            repo.update_run_status(run["id"], 1, "CANCELLED", cur=writer_cur)
+            repo.append_event(
+                run["id"], 2, "stage", {"status": "CANCELLED"}, cur=writer_cur
+            )
+            writer_conn.rollback()
+        with _real_connection() as (_, observer_cur):
+            observer_cur.execute(
+                "SELECT status, version FROM agent_runs WHERE id = %s", (run["id"],)
+            )
+            assert observer_cur.fetchone() == ("CREATED", 1)
+            observer_cur.execute(
+                "SELECT COUNT(*) FROM agent_run_events WHERE run_id = %s", (run["id"],)
+            )
+            assert observer_cur.fetchone() == (0,)
     finally:
         _delete_run(run["id"])
 
