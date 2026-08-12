@@ -359,6 +359,71 @@ def get_supplier_by_name(name: str) -> dict | None:
     return db["suppliers"].find_one({"name": name})
 
 
+def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:
+    """Read matching active suppliers from the local library without side effects."""
+    db = get_db()
+    candidates: list[dict] = []
+    for supplier in db["suppliers"].find({"status": "active"}):
+        candidate = _normalise_sourcing_candidate(supplier)
+        reasons = _sourcing_match_reasons(candidate, requirement)
+        if reasons is not None:
+            candidate["match_reasons"] = reasons
+            candidates.append(candidate)
+    return candidates
+
+
+def _normalise_sourcing_candidate(supplier: dict) -> dict:
+    """Return the stable, read-only candidate payload used by sourcing risk."""
+    return {
+        "supplier_id": str(supplier.get("supplier_id") or supplier.get("_id")),
+        "supplier_name": supplier.get("name", ""),
+        "categories": _string_list(supplier.get("categories")),
+        "specifications": _string_list(supplier.get("specifications")),
+        "regions": _string_list(supplier.get("regions") or supplier.get("region")),
+        "status": supplier.get("status"),
+        "qualifications": _string_list(supplier.get("qualifications")),
+        "capacity": supplier.get("capacity"),
+        "updated_at": supplier.get("updated_at"),
+        "match_reasons": [],
+    }
+
+
+def _sourcing_match_reasons(candidate: dict, requirement: dict[str, Any]) -> list[str] | None:
+    """Return matching reasons, or ``None`` when an explicit constraint is absent."""
+    constraints = (
+        ("category", candidate["categories"]),
+        ("specification", candidate["specifications"]),
+        ("region", candidate["regions"]),
+        ("qualifications", candidate["qualifications"]),
+    )
+    reasons: list[str] = []
+    for field, values in constraints:
+        requested = _requirement_values(requirement.get(field))
+        if requested and not all(_contains_value(values, value) for value in requested):
+            return None
+        reasons.extend(f"{field}:{value}" for value in requested)
+    return reasons
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def _requirement_values(value: Any) -> list[str]:
+    if not isinstance(value, str):
+        return []
+    return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
+
+
+def _contains_value(values: list[str], requested: str) -> bool:
+    normalized = requested.casefold()
+    return any(normalized in value.casefold() for value in values)
+
+
 def list_suppliers(
     keyword: str | None = None,
     status: str | None = None,
