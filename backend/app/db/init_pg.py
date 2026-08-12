@@ -208,6 +208,15 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS agent_rollout_control (
+        control_key VARCHAR(64) PRIMARY KEY,
+        state VARCHAR(32) NOT NULL CHECK (state IN ('active', 'rollback_frozen')),
+        stage VARCHAR(16) NOT NULL CHECK (stage IN ('shadow', 'internal', 'canary', 'default')),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "INSERT INTO agent_rollout_control (control_key, state, stage) VALUES ('agent_run_v2', 'active', 'shadow') ON CONFLICT (control_key) DO NOTHING",
+    """
     CREATE TABLE IF NOT EXISTS agent_run_events (
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
         event_id BIGINT NOT NULL,

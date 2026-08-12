@@ -36,3 +36,9 @@ passed
 ```
 
 前端未受影响，未修改 service 层或既有 API 返回结构。既存的 `task-9-review.md` 至 `task-13-review.md` 为用户工作区文件，未纳入提交。
+# Task 14 P1 closure update
+
+- Eval no longer selects a production deterministic fallback. Without an injected `GraphTraceAdapter`, the report is `trace_source=unavailable`, `passed=false`, and returns an actionable adapter-injection error.
+- The graph adapter seam records trace-derived latency and evaluates per-case macro candidate precision/recall, evidence/citation completeness, unsafe action, clarification, recovery, and latency gates. Empty predicted candidates retain precision `0.0` semantics.
+- Rollout state is persisted in PostgreSQL through `agent_rollout_control` and the existing agent-run repository boundary. API, LangGraph runner, and Outbox worker read the durable state on every entry; control-plane read/write failures fail closed.
+- Tests cover injected trace execution, unavailable Eval default, promotion/rollback, independent state readers, and unavailable control plane. Review markdown files were not modified.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 
 STAGES = ("shadow", "internal", "canary", "default")
@@ -25,12 +25,73 @@ THRESHOLDS: dict[str, float] = {
     "local_candidate_p95_ms": 90000.0,
 }
 MIN_SAMPLE_COUNTS = {"shadow": 12, "internal": 50, "canary": 100}
-_ROLLBACK_FROZEN = False
+class RolloutStateStore(Protocol):
+    def get(self) -> dict[str, str]: ...
+    def set(self, state: str, stage: str | None = None) -> dict[str, str]: ...
 
 
-def is_rollout_frozen(config: Any) -> bool:
-    """Return the process-local fail-closed latch and configured state."""
-    return _ROLLBACK_FROZEN or getattr(config, "AGENT_RUN_V2_ROLLOUT_STATE", None) == "rollback_frozen"
+class InMemoryRolloutStateStore:
+    """Test-only shared store; production uses PostgreSQL below."""
+
+    def __init__(self, state: dict[str, str] | None = None) -> None:
+        from app.core.config import settings
+
+        self.state = state if state is not None else {
+            "state": settings.AGENT_RUN_V2_ROLLOUT_STATE,
+            "stage": settings.AGENT_RUN_V2_ROLLOUT,
+        }
+        self._explicit = state is not None
+
+    def get(self) -> dict[str, str]:
+        if not self._explicit:
+            from app.core.config import settings
+
+            return {"state": settings.AGENT_RUN_V2_ROLLOUT_STATE, "stage": settings.AGENT_RUN_V2_ROLLOUT}
+        return dict(self.state)
+
+    def set(self, state: str, stage: str | None = None) -> dict[str, str]:
+        self._explicit = True
+        self.state["state"] = state
+        if stage is not None:
+            self.state["stage"] = stage
+        return self.get()
+
+
+class PostgresRolloutStateStore:
+    """Durable control-plane adapter. Database errors are intentionally propagated."""
+
+    def get(self) -> dict[str, str]:
+        from app.domains.agent_run.repo import get_rollout_control_state
+
+        return get_rollout_control_state()
+
+    def set(self, state: str, stage: str | None = None) -> dict[str, str]:
+        from app.domains.agent_run.repo import set_rollout_control_state
+
+        return set_rollout_control_state(state, stage)
+
+
+_DEFAULT_STORE: RolloutStateStore = PostgresRolloutStateStore()
+
+
+def get_rollout_state_store() -> RolloutStateStore:
+    return _DEFAULT_STORE
+
+
+def get_rollout_state_snapshot(*, store: RolloutStateStore | None = None) -> dict[str, str] | None:
+    try:
+        snapshot = (store or get_rollout_state_store()).get()
+    except Exception:
+        return None
+    if snapshot.get("state") not in {"active", "rollback_frozen"} or snapshot.get("stage") not in STAGES:
+        return None
+    return snapshot
+
+
+def is_rollout_frozen(config: Any, *, store: RolloutStateStore | None = None) -> bool:
+    """Read durable state every time; unavailable control plane is frozen."""
+    snapshot = get_rollout_state_snapshot(store=store)
+    return snapshot is None or snapshot["state"] == "rollback_frozen"
 
 
 def check_promotion(
@@ -100,21 +161,25 @@ def check_rollback(stage: str, *, reason: str, in_flight: dict[str, int] | None 
     }
 
 
-def promote_rollout(config: Any, current_stage: str, evidence: dict[str, Any], *, approval: dict[str, Any] | None = None) -> dict[str, Any]:
+def promote_rollout(config: Any, current_stage: str, evidence: dict[str, Any], *, approval: dict[str, Any] | None = None, store: RolloutStateStore | None = None) -> dict[str, Any]:
     """Apply an approved promotion to the runtime config; fail closed otherwise."""
-    global _ROLLBACK_FROZEN
     result = check_promotion(current_stage, evidence, approval=approval)
     if result["allowed"]:
+        try:
+            (store or get_rollout_state_store()).set("active", result["target_stage"])
+        except Exception:
+            return {**result, "allowed": False, "rollout_state": "unavailable", "reasons": [*result["reasons"], "rollout_control_plane_unavailable"]}
         config.AGENT_RUN_V2_ROLLOUT = result["target_stage"]
         config.AGENT_RUN_V2_ROLLOUT_STATE = "active"
-        _ROLLBACK_FROZEN = False
     return result
 
 
-def rollback_rollout(config: Any, stage: str, *, reason: str, in_flight: dict[str, int] | None = None) -> dict[str, Any]:
+def rollback_rollout(config: Any, stage: str, *, reason: str, in_flight: dict[str, int] | None = None, store: RolloutStateStore | None = None) -> dict[str, Any]:
     """Freeze new V2 and Shadow work before operators drain durable in-flight work."""
-    global _ROLLBACK_FROZEN
     result = check_rollback(stage, reason=reason, in_flight=in_flight)
+    try:
+        (store or get_rollout_state_store()).set("rollback_frozen", stage)
+    except Exception:
+        return {**result, "allowed": False, "rollout_state": "unavailable", "reasons": ["rollout_control_plane_unavailable"]}
     config.AGENT_RUN_V2_ROLLOUT_STATE = "rollback_frozen"
-    _ROLLBACK_FROZEN = True
     return result

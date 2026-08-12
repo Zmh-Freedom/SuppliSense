@@ -10,6 +10,33 @@ from psycopg2.extras import Json
 from app.db.postgres import PgCursor, get_cursor
 
 
+def get_rollout_control_state() -> dict[str, str]:
+    with get_cursor() as (_, cur):
+        cur.execute("SELECT state, stage FROM agent_rollout_control WHERE control_key = 'agent_run_v2'")
+        row = cur.fetchone()
+    if row is None:
+        raise RuntimeError("agent rollout control state is unavailable")
+    return {"state": str(row[0]), "stage": str(row[1])}
+
+
+def set_rollout_control_state(state: str, stage: str | None = None) -> dict[str, str]:
+    if state not in {"active", "rollback_frozen"}:
+        raise ValueError("invalid rollout control state")
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            INSERT INTO agent_rollout_control (control_key, state, stage)
+            VALUES ('agent_run_v2', %s, COALESCE(%s, 'shadow'))
+            ON CONFLICT (control_key) DO UPDATE SET state = EXCLUDED.state,
+                stage = COALESCE(EXCLUDED.stage, agent_rollout_control.stage), updated_at = NOW()
+            RETURNING state, stage
+            """,
+            (state, stage),
+        )
+        row = cur.fetchone()
+    return {"state": str(row[0]), "stage": str(row[1])}
+
+
 def _row_to_dict(cur: PgCursor, row: tuple[Any, ...] | None) -> dict[str, Any] | None:
     if row is None:
         return None

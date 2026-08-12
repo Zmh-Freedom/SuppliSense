@@ -107,6 +107,9 @@ def agent_run_v2_route(
     user_id: str,
     user_role: str,
     config: Settings = settings,
+    *,
+    rollout: str | None = None,
+    rollout_state: str | None = None,
 ) -> AgentRunRoute:
     """Return the safe routing decision for a V2 request.
 
@@ -115,13 +118,15 @@ def agent_run_v2_route(
     Canary assignment is deterministic so retries and reconnects do not move a
     user between routes.
     """
-    if not config.AGENT_RUN_V2_ENABLED or config.AGENT_RUN_V2_ROLLOUT_STATE == "rollback_frozen":
+    active_rollout = rollout or config.AGENT_RUN_V2_ROLLOUT
+    active_state = rollout_state or config.AGENT_RUN_V2_ROLLOUT_STATE
+    if not config.AGENT_RUN_V2_ENABLED or active_state == "rollback_frozen":
         return "legacy"
-    if config.AGENT_RUN_V2_ROLLOUT == "shadow":
+    if active_rollout == "shadow":
         return "shadow"
-    if config.AGENT_RUN_V2_ROLLOUT == "internal":
+    if active_rollout == "internal":
         return "v2" if user_role in {"admin", "analyst"} else "legacy"
-    if config.AGENT_RUN_V2_ROLLOUT == "canary":
+    if active_rollout == "canary":
         bucket = int(hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8], 16) % 100
         return "v2" if bucket < config.AGENT_RUN_V2_CANARY_PERCENT else "legacy"
     return "v2"

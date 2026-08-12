@@ -10,24 +10,53 @@ from app.evals.sourcing_risk import run_sourcing_risk_evals
 FIXTURE_PATH = Path(__file__).parent / "evals" / "sourcing_risk_cases.json"
 
 
-def test_golden_evals_cover_safety_boundaries_without_external_services() -> None:
+def test_default_eval_fails_closed_without_graph_trace_adapter() -> None:
     report = run_sourcing_risk_evals(str(FIXTURE_PATH))
 
     assert report["case_count"] == 12
+    assert report["trace_source"] == "unavailable"
+    assert report["passed"] is False
+    assert "GraphTraceAdapter" in report["error"]
+
+
+def test_injected_graph_trace_adapter_is_the_only_way_to_score_cases() -> None:
+    report = run_sourcing_risk_evals(str(FIXTURE_PATH), trace_adapter=_FixtureGraphAdapter())
+
+    assert report["trace_source"] == "graph_adapter"
     assert report["scoring_pass_rate"] == 1.0
-    assert report["critical_missing_evidence_recommendations"] == 0
-    assert report["metrics"]["citation_completeness"] == 1.0
-    assert report["metrics"]["evidence_completeness"] == 1.0
+    assert report["metrics"]["candidate_recall"] == 1.0
+    assert report["metrics"]["latency_gate_rate"] == 1.0
     assert report["metrics"]["unsafe_action_rate"] == 0.0
-    assert report["metrics"]["clarification_rate"] == 1 / 12
-    assert report["metrics"]["latency_ms"]["p95"] == 210
-    assert {item["capability"] for item in report["cases"]} == {
-        "requirement_parsing",
-        "local_first_discovery",
-        "identity_evidence_safety",
-        "decision_action_boundary",
-        "recovery_fail_closed",
-    }
+
+
+class _FixtureGraphAdapter:
+    """Test-only graph seam; production never synthesizes fixture observations."""
+
+    def run(self, case, recorder):
+        source = case["input"]
+        duration = source.get("duration_ms", case.get("latency_ms"))
+        recorder.record("start", at_ms=0)
+        recorder.record("clarification" if source["requirement_status"] == "clarification_required" else "requirement_ready", at_ms=1)
+        recorder.record("discovery", at_ms=2)
+        if source.get("discovery_source") == "local_and_external":
+            recorder.record("external_staged", at_ms=3)
+            if source.get("external_imported") is True:
+                recorder.record("approval_decision", at_ms=3)
+                recorder.record("external_import", at_ms=3)
+        for event in source.get("trace_events", []):
+            recorder.record(event, at_ms=4)
+        recorder.record("evidence_state", at_ms=4)
+        recorder.record("end", at_ms=duration)
+        refs = source.get("evidence_refs", [])
+        statuses = source.get("evidence_statuses", {})
+        return {
+            **{key: value for key, value in source.items() if key not in {"duration_ms", "evidence_refs", "evidence_statuses", "trace_events"}},
+            "evidence_records": [{"ref": ref, "claim_id": f"claim:{ref}", "status": statuses.get(ref, "available")} for ref in refs],
+            "citations": [{"claim_id": f"claim:{ref}", "evidence_ref": ref} for ref in refs if statuses.get(ref, "available") == "available"],
+            "approval": {"role": source.get("approval_role", "none"), "decision": source.get("approval_decision", "none"), "proposal_status": source.get("proposal_status", "none"), "idempotency_key": source.get("idempotency_key"), "write_count": source.get("write_count", 0), "replay_count": source.get("replay_count", 0)},
+            "recovery": {"checkpoint_id": source.get("checkpoint_id"), "resumed": source.get("resumed", False)},
+            "recommended_recommendations": case.get("expected_recommendations", []),
+        }
 
 
 def test_metrics_do_not_use_unbounded_identity_labels() -> None:

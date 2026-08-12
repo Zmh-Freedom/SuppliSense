@@ -67,73 +67,6 @@ class GraphTraceAdapter(EvalRunner, Protocol):
     """Adapter contract for real graph executions and their recorded outputs."""
 
 
-class DeterministicFakeRunner:
-    """Execute fixture inputs through a trace seam; never returns fixture ``observed``."""
-
-    def run(self, case: dict[str, Any], recorder: TraceRecorder) -> dict[str, Any]:
-        source = case.get("input")
-        if not isinstance(source, dict) or not source:
-            raise ValueError(f"case {case.get('id')} must define non-empty executable input")
-        duration = source.get("duration_ms", case.get("latency_ms"))
-        if duration is None:
-            raise ValueError(f"case {case.get('id')} latency is missing")
-        recorder.record("start", at_ms=0)
-        if source.get("requirement_status") != "clarification_required":
-            recorder.record("requirement_ready", at_ms=0)
-        else:
-            recorder.record("clarification", at_ms=0)
-        recorder.record("discovery", at_ms=0)
-        if source.get("discovery_source") == "local_and_external":
-            recorder.record("external_staged", at_ms=0)
-            if source.get("external_imported") is True:
-                recorder.record("external_import", at_ms=0)
-        if source.get("approval_decision") is not None:
-            recorder.record("approval_decision", at_ms=0)
-        if source.get("approval_replay_effects", 1) != 1:
-            recorder.record("replay", at_ms=0)
-            recorder.record("action_effect", at_ms=0)
-        for event_type in source.get("trace_events", []):
-            if event_type not in {"start", "end", "requirement_ready", "discovery"}:
-                recorder.record(event_type, at_ms=0)
-        recorder.record("evidence_state", at_ms=0)
-        recorder.record("end", at_ms=duration)
-        result = dict(source)
-        result.pop("duration_ms", None)
-        result.pop("latency_ms", None)
-        statuses = source.get("evidence_statuses", {})
-        result["evidence_records"] = [
-            {
-                "ref": ref,
-                "claim_id": f"claim:{ref}",
-                "status": statuses.get(ref, "available"),
-            }
-            for ref in source.get("evidence_refs", [])
-        ]
-        result["citations"] = (
-            [
-                {"claim_id": f"claim:{ref}", "evidence_ref": ref}
-                for ref in source.get("evidence_refs", [])
-                if statuses.get(ref, "available") == "available"
-            ]
-            if source.get("citations_complete")
-            else []
-        )
-        result["approval"] = {
-            "role": source.get("approval_role", "none"),
-            "decision": source.get("approval_decision", "none"),
-            "proposal_status": source.get("proposal_status", "none"),
-            "idempotency_key": source.get("idempotency_key"),
-            "write_count": source.get("write_count", 0),
-            "replay_count": max(0, int(source.get("approval_replay_effects", 1)) - 1),
-        }
-        result["recovery"] = {
-            "checkpoint_id": source.get("checkpoint_id"),
-            "resumed": source.get("resumed", False),
-        }
-        result["recommended_recommendations"] = list(source.get("recommended_recommendations", []))
-        return result
-
-
 def run_sourcing_risk_evals(
     cases_path: str | list[dict[str, Any]],
     *,
@@ -142,8 +75,20 @@ def run_sourcing_risk_evals(
     trace_recorder_factory: type[EvalTraceRecorder] = EvalTraceRecorder,
 ) -> dict[str, Any]:
     cases = _load_cases(cases_path)
-    active_runner = trace_adapter or runner or DeterministicFakeRunner()
-    trace_source = "graph_adapter" if trace_adapter is not None else ("injected_runner" if runner is not None else "deterministic_fallback")
+    active_runner = trace_adapter or runner
+    if active_runner is None:
+        return {
+            "eval_version": "v2",
+            "trace_source": "unavailable",
+            "case_count": len(cases),
+            "scoring_pass_rate": 0.0,
+            "passed": False,
+            "error": "真实 GraphTraceAdapter 未注入；请提供 graph runner adapter 后重试，禁止使用 fixture fallback",
+            "critical_missing_evidence_recommendations": 0,
+            "metrics": {},
+            "cases": [],
+        }
+    trace_source = "graph_adapter" if trace_adapter is not None else "injected_runner"
     results = [_evaluate_case(case, active_runner, trace_recorder_factory) for case in cases]
     for result in results:
         metrics.record_agent_eval(result["capability"], "pass" if result["passed"] else "fail")

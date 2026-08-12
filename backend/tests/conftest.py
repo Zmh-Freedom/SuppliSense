@@ -9,6 +9,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def test_rollout_control_plane(monkeypatch):
+    from app.core import rollout_gate
+
+    monkeypatch.setattr(rollout_gate, "_DEFAULT_STORE", rollout_gate.InMemoryRolloutStateStore())
+
+
 @pytest.fixture(scope="session")
 def app():
     from app.main import app as fastapi_app

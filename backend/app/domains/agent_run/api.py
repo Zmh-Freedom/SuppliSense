@@ -50,11 +50,20 @@ async def _schedule_graph(coroutine: Coroutine[Any, Any, None]) -> None:
 
 
 def _require_v2_route(user: UserInDB, *, allow_shadow: bool = True) -> str:
-    from app.core.rollout_gate import is_rollout_frozen
+    from app.core.rollout_gate import get_rollout_state_snapshot
 
-    if is_rollout_frozen(settings):
+    snapshot = get_rollout_state_snapshot()
+    if snapshot is None:
+        raise DomainError("AGENT_RUN_V2_CONTROL_UNAVAILABLE", "Agent V2 控制面不可用，已拒绝请求", 503)
+    if snapshot["state"] == "rollback_frozen":
         raise DomainError("AGENT_RUN_V2_ROLLBACK_FROZEN", "Agent V2 已回滚冻结，禁止新建或恢复", 409)
-    route = agent_run_v2_route(user.id, user.role.value, settings)
+    route = agent_run_v2_route(
+        user.id,
+        user.role.value,
+        settings,
+        rollout=snapshot["stage"],
+        rollout_state=snapshot["state"],
+    )
     if route == "legacy":
         if settings.AGENT_RUN_V2_ROLLOUT_STATE == "rollback_frozen":
             code = "AGENT_RUN_V2_ROLLBACK_FROZEN"
