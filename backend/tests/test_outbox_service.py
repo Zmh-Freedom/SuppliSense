@@ -29,6 +29,10 @@ from app.domains.outbox.service import (
 )
 
 
+_TEST_EVENT_TYPE_PATTERN = "test.outbox.%"
+_TEST_EVENT_ID_PATTERN = "00000000-0000-4000-8000-000000000%"
+
+
 @contextmanager
 def _real_connection() -> Iterator[tuple[object, object]]:
     conn = get_conn()
@@ -52,6 +56,84 @@ def _delete_event(event_id: str) -> None:
             "DELETE FROM audit_logs WHERE action = %s AND resource_id = %s",
             ("outbox.replayed", event_id),
         )
+
+
+def _delete_test_residue() -> None:
+    """Remove only rows created by this integration test module.
+
+    Shared databases can retain rows after an interrupted run.  The event type
+    and UUID patterns are intentionally test-only; production event types and
+    unrelated UUIDs are never eligible for cleanup.
+    """
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            DELETE FROM outbox_consumptions
+            WHERE event_id IN (
+                SELECT event_id
+                FROM outbox_events
+                WHERE event_type LIKE %s
+                   OR event_id::text LIKE %s
+                   OR (
+                       event_type = 'agent.action.approved'
+                       AND (
+                           payload->>'source' = 'test_outbox_service'
+                           OR payload->>'idempotency_key' LIKE 'test-real-action%%'
+                           OR locked_by LIKE 'test-%%'
+                       )
+                   )
+            )
+            """,
+            (_TEST_EVENT_TYPE_PATTERN, _TEST_EVENT_ID_PATTERN),
+        )
+        cur.execute(
+            """
+            DELETE FROM audit_logs
+            WHERE action = 'outbox.replayed'
+              AND resource_id IN (
+                  SELECT event_id::text
+                  FROM outbox_events
+                  WHERE event_type LIKE %s
+                     OR event_id::text LIKE %s
+                     OR (
+                         event_type = 'agent.action.approved'
+                         AND (
+                             payload->>'source' = 'test_outbox_service'
+                             OR payload->>'idempotency_key' LIKE 'test-real-action%%'
+                             OR locked_by LIKE 'test-%%'
+                         )
+                     )
+              )
+            """,
+            (_TEST_EVENT_TYPE_PATTERN, _TEST_EVENT_ID_PATTERN),
+        )
+        cur.execute(
+            """
+            DELETE FROM outbox_events
+            WHERE event_type LIKE %s
+               OR event_id::text LIKE %s
+               OR (
+                   event_type = 'agent.action.approved'
+                   AND (
+                       payload->>'source' = 'test_outbox_service'
+                       OR payload->>'idempotency_key' LIKE 'test-real-action%%'
+                       OR locked_by LIKE 'test-%%'
+                   )
+               )
+            """,
+            (_TEST_EVENT_TYPE_PATTERN, _TEST_EVENT_ID_PATTERN),
+        )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_outbox_database() -> Iterator[None]:
+    """Clean stale module-owned rows before and after every integration test."""
+    ensure_pg_schema()
+    _delete_test_residue()
+    try:
+        yield
+    finally:
+        _delete_test_residue()
 
 
 def _enqueue_committed(
@@ -434,7 +516,11 @@ def test_v2_action_event_dead_letters_after_five_real_repository_attempts(monkey
             event_id,
             event_type,
             aggregate_id,
-            {"run_id": str(aggregate_id), "proposal_id": str(aggregate_id)},
+            {
+                "run_id": str(aggregate_id),
+                "proposal_id": str(aggregate_id),
+                "source": "test_outbox_service",
+            },
         )
 
         for attempt in range(1, 6):
