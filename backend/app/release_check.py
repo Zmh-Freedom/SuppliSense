@@ -43,15 +43,6 @@ def _run(command: list[str], cwd: Path) -> tuple[int, str]:
     return completed.returncode, output[-2000:]
 
 
-def _contract_check(root: Path, name: str, paths: list[str], needles: list[str]) -> dict[str, str]:
-    missing = [path for path in paths if not (root / path).is_file()]
-    contents = "\n".join((root / path).read_text(encoding="utf-8") for path in paths if (root / path).is_file())
-    missing.extend(needle for needle in needles if needle not in contents)
-    if missing:
-        return {"name": name, "status": FAIL, "detail": "missing release contract: " + ", ".join(missing)}
-    return {"name": name, "status": PASS, "detail": "focused safety contract is present"}
-
-
 def _command_check(
     root: Path,
     name: str,
@@ -74,6 +65,33 @@ def _command_check(
     return {"name": name, "status": FAIL, "detail": output or f"command exited {return_code}"}
 
 
+def _pytest_check(
+    root: Path,
+    backend: Path,
+    name: str,
+    test_targets: list[str],
+    *,
+    run_external_commands: bool,
+    command_runner: CommandRunner,
+    database_blocked: bool,
+) -> dict[str, str]:
+    if database_blocked:
+        return {
+            "name": name,
+            "status": BLOCKED,
+            "detail": "PG/Mongo 集成依赖不可用，已停止后续后端 pytest 集成门禁",
+        }
+    return _command_check(
+        root,
+        name,
+        ["python", "-m", "pytest", "-q", *test_targets],
+        run_external_commands=run_external_commands,
+        command_runner=command_runner,
+        cwd=backend,
+        blocked_detail="后端 pytest 未执行；需要 Python/测试依赖与可访问的外部依赖",
+    )
+
+
 def run_release_checklist(
     root: str | Path,
     *,
@@ -84,48 +102,84 @@ def run_release_checklist(
     project_root = Path(root).resolve()
     backend = project_root / "backend"
     frontend = project_root / "frontend"
-    checks = [
-        _command_check(
+    checks = []
+    migration = _command_check(
             project_root,
             "migration_schema",
-            ["python", "-m", "pytest", "-q", "tests/test_company_schema.py"],
+            [
+                "python",
+                "-m",
+                "pytest",
+                "-q",
+                "tests/test_agent_run_models.py",
+                "tests/test_agent_run_repo.py",
+                "tests/test_agent_run_checkpointer.py",
+                "tests/test_sourcing_risk_policy_service.py",
+                "tests/test_sourcing_risk_discovery_service.py",
+                "tests/test_sourcing_risk_evidence_service.py",
+                "tests/test_sourcing_risk_actions.py",
+            ],
             run_external_commands=run_external_commands,
             command_runner=command_runner,
             cwd=backend,
-            blocked_detail="PG/Mongo 集成未执行或当前环境不可达；不得宣称 migration/schema 已通过",
-        ),
-        _contract_check(
+            blocked_detail="PG/Mongo 集成未执行或当前环境不可达；不得宣称 V2 schema/migration 已通过",
+        )
+    checks.append(migration)
+    database_blocked = migration["status"] == BLOCKED
+    checks.extend([
+        _pytest_check(
             project_root,
+            backend,
             "api_auth",
-            ["backend/tests/test_auth.py"],
-            ["test_protected_endpoints_require_auth"],
+            ["tests/test_auth.py::test_protected_endpoints_require_auth", "tests/test_agent_run_api.py::test_agent_run_endpoints_require_authentication"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            database_blocked=database_blocked,
         ),
-        _contract_check(
+        _pytest_check(
             project_root,
+            backend,
             "approval_approved_only_outbox",
-            ["backend/tests/test_sourcing_risk_actions.py"],
-            [
-                "test_unapproved_import_only_persists_proposal_without_outbox_or_master_write",
-                "test_approval_enqueues_one_transactional_event_and_duplicate_replay_is_rejected",
-            ],
+            ["tests/test_sourcing_risk_actions.py::test_unapproved_import_only_persists_proposal_without_outbox_or_master_write", "tests/test_sourcing_risk_actions.py::test_approval_enqueues_one_transactional_event_and_duplicate_replay_is_rejected"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            database_blocked=database_blocked,
         ),
-        _contract_check(
+        _pytest_check(
             project_root,
+            backend,
             "recovery_fail_closed",
-            ["backend/tests/test_sourcing_risk_evidence_service.py", "backend/tests/test_agent_run_service.py"],
-            ["fail_closed", "unknown"],
+            ["tests/test_sourcing_risk_evidence_service.py", "tests/test_agent_run_service.py::test_get_sourcing_risk_run_fails_closed_when_raw_payload_record_is_missing", "tests/test_agent_run_service.py::test_get_sourcing_risk_run_fails_closed_for_unknown_recovery_lifecycle"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            database_blocked=database_blocked,
         ),
-        _contract_check(
+        _pytest_check(
             project_root,
+            backend,
             "rollout_shadow_no_write",
-            ["backend/tests/test_sourcing_risk_actions.py", "backend/tests/test_sourcing_risk_evals.py"],
-            ["test_shadow_action_boundary_rejects_proposal_before_database_write", "AGENT_RUN_V2_SHADOW_READ_ONLY"],
+            ["tests/test_sourcing_risk_actions.py::test_shadow_action_boundary_rejects_proposal_before_database_write", "tests/test_sourcing_risk_evals.py::test_shadow_persists_v2_but_keeps_legacy_response_route"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            database_blocked=database_blocked,
         ),
-        _contract_check(
+        _pytest_check(
             project_root,
+            backend,
             "sse_replay",
-            ["backend/tests/test_agent_run_models.py", "backend/tests/test_agent_run_checkpointer.py"],
-            ["replay", "stream"],
+            ["tests/test_agent_run_api.py::test_event_endpoint_replays_events_after_last_event_id", "tests/test_agent_run_service.py::test_stream_events_stops_after_replaying_a_durable_terminal_stage"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            database_blocked=database_blocked,
+        ),
+        _command_check(
+            project_root,
+            "frontend_lint",
+            ["npm", "run", "lint"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            cwd=frontend,
+            blocked_detail="frontend lint 未执行；需要 Node/npm 环境",
         ),
         _command_check(
             project_root,
@@ -138,16 +192,25 @@ def run_release_checklist(
         ),
         _command_check(
             project_root,
+            "frontend_test",
+            ["npm", "test", "--", "--run"],
+            run_external_commands=run_external_commands,
+            command_runner=command_runner,
+            cwd=frontend,
+            blocked_detail="frontend test 未执行；需要 Node/npm 环境",
+        ),
+        _command_check(
+            project_root,
             "compose_config",
             ["docker", "compose", "--env-file", ".env.docker", "config", "--quiet"],
             run_external_commands=run_external_commands,
             command_runner=command_runner,
             blocked_detail="Compose config 未执行；需要 Docker 与 .env.docker（不要把占位符当作上线配置）",
         ),
-    ]
+    ])
     counts = {status.lower(): sum(check["status"] == status for check in checks) for status in (PASS, FAIL, BLOCKED)}
     return {
-        "checklist_version": "task-15-v1",
+        "checklist_version": "task-15-v2",
         "ready_for_release": counts["fail"] == 0 and counts["blocked"] == 0,
         "summary": counts,
         "checks": checks,

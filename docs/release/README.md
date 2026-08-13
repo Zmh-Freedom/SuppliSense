@@ -11,7 +11,7 @@ cd backend && python scripts/release_verify.py --skip-commands
 
 ```bash
 cd backend && python scripts/release_verify.py
-cd ../frontend && npm run build
+cd ../frontend && npm run lint && npm run build && npm test -- --run
 cd .. && docker compose --env-file .env.docker config --quiet
 ```
 
@@ -20,13 +20,15 @@ CLI 输出 JSON。`PASS` 表示门禁已验证，`FAIL` 表示代码/配置门�
 ## 上线前门槛
 
 - migration/schema：在可访问的 PostgreSQL（含 pgvector）和 MongoDB 环境执行真实 schema/index/migration 测试，并保存输出。
-- API auth：匿名请求必须被保护端点拒绝；管理员操作必须验证角色。
-- 人工审批与 Outbox：未审批只能持久化 proposal，不得写主数据或 Outbox；只有 `approved` proposal 才允许一次性事务 Outbox，重复 replay 必须幂等拒绝。
-- recovery：Mongo evidence 缺失、非法 lifecycle、跨存储状态冲突均为 `unknown`，详情、决策和 SSE 必须 fail closed。
-- rollout：`AGENT_RUN_V2_ENABLED=false` 默认关闭；Shadow 只读，不允许领域写入；控制面不可用或 rollback frozen 时拒绝 V2 执行。
-- SSE replay：断线重连按 durable run/checkpoint 和 replay identity 恢复，不能重复 action effect。
-- frontend build：`npm run build` 成功。
+- API auth：执行 `test_auth.py::test_protected_endpoints_require_auth` 与 `test_agent_run_api.py::test_agent_run_endpoints_require_authentication`。
+- 人工审批与 Outbox：执行未审批 proposal 与 approved-only transactional Outbox 的对应 pytest；失败不得被源码契约检查掩盖。
+- recovery：执行 evidence service 与 agent run service 的 unknown/fail-closed pytest；PG/Mongo 不可用时立即停止后续后端 pytest 集成门禁。
+- rollout：执行 Shadow action boundary 与 rollout eval pytest；`AGENT_RUN_V2_ENABLED=false` 默认关闭，Shadow 只读，不允许领域写入。
+- SSE replay：执行 durable event replay 与 terminal replay pytest，不能重复 action effect。
+- frontend：分别执行 `npm run lint`、`npm run build`、`npm test -- --run`，每项独立报告。
 - Compose：`docker compose --env-file .env.docker config --quiet` 成功；`.env.docker` 必须替换所有 `CHANGE_ME` 占位符。
+
+`migration_schema` 的 V2 测试集合覆盖 agent run models/repository/checkpointer、policy、candidate discovery、evidence 与 approval action；它不是单一 company schema 测试。每个后端安全门禁都执行真实 pytest 命令，pytest 非零退出为 `FAIL`，命令或依赖不可用为 `BLOCKED`。
 
 ## Shadow rollout
 
