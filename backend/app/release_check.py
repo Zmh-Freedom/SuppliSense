@@ -54,6 +54,8 @@ def _run(command: list[str], cwd: Path) -> tuple[int, str]:
         )
     except (FileNotFoundError, OSError) as exc:
         return 127, f"environment unavailable: {exc}"
+    except subprocess.TimeoutExpired as exc:
+        return 124, f"command timed out after {exc.timeout}s"
     output = (completed.stdout + completed.stderr).strip()
     return completed.returncode, output[-2000:]
 
@@ -70,7 +72,10 @@ def _command_check(
 ) -> dict[str, str]:
     if not run_external_commands:
         return {"name": name, "status": BLOCKED, "detail": blocked_detail}
-    return_code, output = command_runner(command, cwd or root)
+    try:
+        return_code, output = command_runner(command, cwd or root)
+    except subprocess.TimeoutExpired as exc:
+        return_code, output = 124, f"command timed out after {exc.timeout}s"
     if return_code == 0:
         return {"name": name, "status": PASS, "detail": output or "command completed"}
     if return_code == 127 or output.startswith("environment unavailable:") or any(

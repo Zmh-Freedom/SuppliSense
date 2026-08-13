@@ -15,13 +15,13 @@
 
 ```text
 cd backend && pytest -q tests/test_release_checklist.py
-7 passed
+11 passed
 
 cd backend && python scripts/release_verify.py --skip-commands
-# 输出 migration_schema/frontend_build/compose_config 为 BLOCKED；退出码 2（环境未执行，不代表业务测试失败）
+# 输出所有命令门禁为 BLOCKED；退出码 2（环境未执行，不代表业务测试失败）
 
 cd backend && python -m compileall -q app
 git diff --check
 ```
 
-真实 PostgreSQL/pgvector、MongoDB、Outbox 和 checkpoint 集成测试、前端 lint/build/test 与 Compose 仍需在依赖可访问环境执行；本任务不将当前环境阻塞写成通过。
+当前完整后端 schema 验收仍未通过：`agent_action_proposals_run_id_id_key` 存在重复约束错误。这是独立阻塞，不修改业务 schema；真实 PostgreSQL/pgvector、MongoDB、Outbox 和 checkpoint 集成测试、前端 lint/build/test 与 Compose 仍需在依赖可访问环境执行，本任务不将当前环境阻塞写成通过。

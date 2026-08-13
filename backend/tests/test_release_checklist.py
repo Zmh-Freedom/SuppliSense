@@ -1,8 +1,9 @@
 """Acceptance contracts for the executable release checklist."""
 
+import subprocess
 from pathlib import Path
 
-from app.release_check import BLOCKED, FAIL, PASS, run_release_checklist
+from app.release_check import BLOCKED, FAIL, PASS, _run, run_release_checklist
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -162,3 +163,30 @@ def test_release_checklist_runs_complete_backend_suite_before_backend_safety_gat
     run_release_checklist(ROOT, command_runner=runner)
 
     assert ["python", "-m", "pytest", "-q"] in commands
+
+
+def test_release_checklist_classifies_pytest_timeout_as_fail_and_not_ready() -> None:
+    def runner(command: list[str], cwd: Path) -> tuple[int, str]:
+        del cwd
+        if any("test_auth.py::test_protected_endpoints_require_auth" in target for target in command):
+            raise subprocess.TimeoutExpired(command, timeout=180)
+        return 0, "ok"
+
+    report = run_release_checklist(ROOT, command_runner=runner)
+
+    auth = report["checks_by_name"]["api_auth"]
+    assert auth["status"] == FAIL
+    assert "timed out" in auth["detail"]
+    assert report["ready_for_release"] is False
+
+
+def test_run_converts_subprocess_timeout_to_structured_result(monkeypatch) -> None:
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(kwargs.get("args", args[0]), timeout=180)
+
+    monkeypatch.setattr("app.release_check.subprocess.run", timeout)
+
+    return_code, output = _run(["python", "-m", "pytest"], ROOT)
+
+    assert return_code == 124
+    assert "timed out" in output
