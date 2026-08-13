@@ -180,6 +180,46 @@ def test_release_checklist_classifies_pytest_timeout_as_fail_and_not_ready() -> 
     assert report["ready_for_release"] is False
 
 
+def test_release_checklist_blocks_missing_compose_environment_file(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "backend").mkdir()
+    (project_root / "frontend").mkdir()
+
+    def runner(command: list[str], cwd: Path) -> tuple[int, str]:
+        del cwd
+        if command[:3] == ["docker", "compose", "--env-file"]:
+            return 1, "env file .env.docker not found"
+        return 0, "ok"
+
+    report = run_release_checklist(project_root, command_runner=runner)
+
+    compose = report["checks_by_name"]["compose_config"]
+    assert compose["status"] == BLOCKED
+    assert "env" in compose["detail"].lower()
+
+
+def test_release_checklist_keeps_real_compose_configuration_errors_as_fail(tmp_path: Path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "backend").mkdir()
+    (project_root / "frontend").mkdir()
+    (project_root / ".env.docker").write_text(
+        "PG_PASSWORD=pg\nMONGO_PASSWORD=mongo\nREDIS_PASSWORD=redis\n",
+        encoding="utf-8",
+    )
+
+    def runner(command: list[str], cwd: Path) -> tuple[int, str]:
+        del cwd
+        if command[:3] == ["docker", "compose", "--env-file"]:
+            return 1, "services.api.environment: invalid interpolation"
+        return 0, "ok"
+
+    report = run_release_checklist(project_root, command_runner=runner)
+
+    assert report["checks_by_name"]["compose_config"]["status"] == FAIL
+
+
 def test_run_converts_subprocess_timeout_to_structured_result(monkeypatch) -> None:
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(kwargs.get("args", args[0]), timeout=180)

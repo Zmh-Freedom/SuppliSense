@@ -408,6 +408,10 @@ def test_outbox_consumption_unique_key_rejects_duplicate_delivery_record(monkeyp
 
 def test_v2_action_event_dead_letters_after_five_real_repository_attempts(monkeypatch):
     """Using the global retry maximum would leave V2 actions retriable after their fifth failed delivery."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "default")
     ensure_pg_schema()
     event_id = UUID("00000000-0000-4000-8000-000000000381")
     aggregate_id = UUID("00000000-0000-4000-8000-000000000382")

@@ -39,6 +39,7 @@ _ENVIRONMENT_MARKERS = (
     "database url is not configured",
     "database url missing",
     "configuration missing",
+    "env file",
 )
 
 
@@ -109,6 +110,44 @@ def _pytest_check(
         command_runner=command_runner,
         cwd=backend,
         blocked_detail="后端 pytest 未执行；需要 Python/测试依赖与可访问的外部依赖",
+    )
+
+
+def _compose_check(
+    root: Path,
+    *,
+    run_external_commands: bool,
+    command_runner: CommandRunner,
+) -> dict[str, str]:
+    """Validate operator configuration before asking Compose to parse YAML."""
+    name = "compose_config"
+    blocked_detail = "Compose config 未执行；需要 Docker 与 .env.docker（不要把占位符当作上线配置）"
+    if not run_external_commands:
+        return {"name": name, "status": BLOCKED, "detail": blocked_detail}
+    env_file = root / ".env.docker"
+    if command_runner is _run:
+        if not env_file.is_file():
+            return {"name": name, "status": BLOCKED, "detail": f"缺少 Compose 环境文件: {env_file}"}
+        values: dict[str, str] = {}
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+        missing = [key for key in ("PG_PASSWORD", "MONGO_PASSWORD", "REDIS_PASSWORD") if not values.get(key)]
+        if missing:
+            return {
+                "name": name,
+                "status": BLOCKED,
+                "detail": f"Compose 环境文件缺少必填配置: {', '.join(missing)}",
+            }
+    return _command_check(
+        root,
+        name,
+        ["docker", "compose", "--env-file", ".env.docker", "config", "--quiet"],
+        run_external_commands=run_external_commands,
+        command_runner=command_runner,
+        blocked_detail=blocked_detail,
     )
 
 
@@ -207,13 +246,10 @@ def run_release_checklist(
             cwd=frontend,
             blocked_detail="frontend test 未执行；需要 Node/npm 环境",
         ),
-        _command_check(
+        _compose_check(
             project_root,
-            "compose_config",
-            ["docker", "compose", "--env-file", ".env.docker", "config", "--quiet"],
             run_external_commands=run_external_commands,
             command_runner=command_runner,
-            blocked_detail="Compose config 未执行；需要 Docker 与 .env.docker（不要把占位符当作上线配置）",
         ),
     ])
     counts = {status.lower(): sum(check["status"] == status for check in checks) for status in (PASS, FAIL, BLOCKED)}

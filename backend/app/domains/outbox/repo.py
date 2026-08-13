@@ -170,14 +170,14 @@ def mark_failed(
         cur.execute(
             """
             UPDATE outbox_events
-            SET attempt_count = attempt_count + 1,
+            SET attempt_count = COALESCE(attempt_count, 0) + 1,
                 last_error = %s,
                 next_attempt_at = CASE
-                    WHEN attempt_count + 1 >= %s THEN NOW()
+                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN NOW()
                     ELSE NOW() + (%s * INTERVAL '1 second')
                 END,
                 dead_lettered_at = CASE
-                    WHEN attempt_count + 1 >= %s THEN NOW()
+                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN NOW()
                     ELSE NULL
                 END,
                 locked_by = NULL,

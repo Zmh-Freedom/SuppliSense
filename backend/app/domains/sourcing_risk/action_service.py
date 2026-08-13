@@ -98,8 +98,6 @@ def decide_action_proposal(
     _require_approval_role(user_role)
     run = _get_authorized_run(run_id, user_id, user_role)
     _require_expected_version(run, request.expected_version)
-    if run["status"] != "ACTION_PENDING":
-        raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许审批操作", 409)
 
     with get_cursor() as (_, cur):
         proposal = get_action_proposal_for_update(cur, run_id, proposal_id)
@@ -109,6 +107,8 @@ def decide_action_proposal(
             raise DomainError("AGENT_ACTION_PROPOSAL_NOT_FOUND", "操作提案不存在", 404)
         if proposal["status"] != "pending":
             raise DomainError("AGENT_ACTION_ALREADY_DECIDED", "操作提案已处理", 409)
+        if run["status"] != "ACTION_PENDING":
+            raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许审批操作", 409)
         if request.decision == "approved":
             _require_non_self_approval_for_high_risk_import(proposal, user_id, run)
 
