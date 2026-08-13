@@ -38,7 +38,7 @@ FastAPI ──→ LangGraph Agent 编排层
 ### 生产模式（Docker Compose）
 
 ```bash
-./start.sh    # docker compose up -d --build
+./start.sh    # 使用 .env.docker，启动完整生产栈
 ```
 
 打开 `http://localhost`，默认账号 `admin / 见启动日志中的随机密码`。
@@ -46,13 +46,15 @@ FastAPI ──→ LangGraph Agent 编排层
 ### 开发模式
 
 ```bash
-docker compose --env-file backend/.env \
-  -f docker-compose.dev.yml up -d mongo postgres redis  # 仅启动开发基础设施
+./start.sh --dev                         # 使用 backend/.env，启动开发基础设施
 cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000  # 本地后端热更新
 cd frontend && npm run dev                                      # 前端热更新
+./stop.sh --dev                            # 停止开发基础设施
 ```
 
-后端访问 `http://localhost:8000`，前端访问 `http://localhost:5173`。开发环境后端使用 `backend/.env` 中的 `localhost` 数据库地址；完整后端容器仅用于生产模式。
+首次开发启动前，复制 `backend/.env.example` 为 `backend/.env` 并至少填写 `PG_PASSWORD`、`MONGO_PASSWORD`。`./start.sh --dev` 会在启动前检查文件和必填项，缺失时明确报错且不会输出密钥；Compose 通过显式 `--env-file backend/.env` 读取配置，不依赖根目录 `.env`。开发环境后端使用 `backend/.env` 中的 `localhost` 数据库地址；完整后端容器仅用于生产模式。
+
+生产模式使用根目录 `.env.docker`，由 `./start.sh` / `./stop.sh` 显式传给 `docker-compose.yml`，与开发配置分离。两个环境文件都被 Git 忽略，禁止提交真实密钥。
 
 ### P1 企业身份与 Transactional Outbox
 
