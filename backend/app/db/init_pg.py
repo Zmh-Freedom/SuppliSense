@@ -427,26 +427,66 @@ def _ensure_agent_run_constraints(cur: object) -> None:
     """Add V2 constraints when upgrading a database initialized before them."""
     cur.execute(
         """
-        DO $$ BEGIN
-            ALTER TABLE agent_action_proposals
-            ADD CONSTRAINT agent_action_proposals_run_id_id_key UNIQUE (run_id, id);
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_constraint constraint_record
+            WHERE constraint_record.conrelid = 'agent_action_proposals'::regclass
+              AND constraint_record.contype IN ('u', 'p')
+              AND constraint_record.conkey = ARRAY[
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'run_id'),
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'id')
+              ]::smallint[]
+        )
         """
     )
+    if not cur.fetchone()[0]:
+        cur.execute(
+            """
+            ALTER TABLE agent_action_proposals
+            ADD CONSTRAINT agent_action_proposals_run_id_id_compat_key UNIQUE (run_id, id)
+            """
+        )
+
     cur.execute(
         """
-        DO $$ BEGIN
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_constraint constraint_record
+            WHERE constraint_record.conrelid = 'agent_approval_decisions'::regclass
+              AND constraint_record.confrelid = 'agent_action_proposals'::regclass
+              AND constraint_record.contype = 'f'
+              AND constraint_record.conkey = ARRAY[
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_approval_decisions'::regclass AND attname = 'run_id'),
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_approval_decisions'::regclass AND attname = 'proposal_id')
+              ]::smallint[]
+              AND constraint_record.confkey = ARRAY[
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'run_id'),
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'id')
+              ]::smallint[]
+        )
+        """
+    )
+    if not cur.fetchone()[0]:
+        cur.execute(
+            """
             ALTER TABLE agent_approval_decisions
-            DROP CONSTRAINT IF EXISTS agent_approval_decisions_proposal_id_fkey;
+            DROP CONSTRAINT IF EXISTS agent_approval_decisions_proposal_id_fkey
+            """
+        )
+        cur.execute(
+            """
             ALTER TABLE agent_approval_decisions
             ADD CONSTRAINT agent_approval_decisions_run_id_proposal_id_fkey
             FOREIGN KEY (run_id, proposal_id)
-            REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE;
-        EXCEPTION WHEN duplicate_object THEN NULL;
-        END $$
-        """
-    )
+            REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE
+            """
+        )
 
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",

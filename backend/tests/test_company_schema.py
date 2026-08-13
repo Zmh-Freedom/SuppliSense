@@ -390,3 +390,57 @@ def test_ensure_pg_schema_creates_complete_p1_contract_in_isolated_schema(monkey
             assert outbox_indexes["idx_outbox_pending"]["predicate"] == (
                 "((published_at IS NULL) AND (dead_lettered_at IS NULL))"
             )
+
+
+def test_agent_run_schema_upgrade_is_idempotent_and_repairs_legacy_constraints(monkeypatch):
+    """The V2 agent-run constraints must survive repeated startup and legacy upgrades."""
+    with _isolated_schema(monkeypatch) as (schema_name, conn):
+        init_pg.ensure_pg_schema()
+        init_pg.ensure_pg_schema()
+
+        with _schema_cursor(conn, schema_name) as cur:
+            cur.execute(
+                """
+                ALTER TABLE agent_approval_decisions
+                DROP CONSTRAINT IF EXISTS agent_approval_decisions_run_id_proposal_id_fkey
+                """
+            )
+            cur.execute(
+                """
+                ALTER TABLE agent_action_proposals
+                DROP CONSTRAINT agent_action_proposals_run_id_id_key CASCADE
+                """
+            )
+
+        init_pg.ensure_pg_schema()
+
+        with _schema_cursor(conn, schema_name) as cur:
+            cur.execute(
+                """
+                SELECT array_agg(att.attname::text ORDER BY key_columns.ordinality)
+                FROM pg_constraint constraint_record
+                JOIN LATERAL unnest(constraint_record.conkey) WITH ORDINALITY AS key_columns(attnum, ordinality)
+                    ON TRUE
+                JOIN pg_attribute att
+                    ON att.attrelid = constraint_record.conrelid
+                   AND att.attnum = key_columns.attnum
+                WHERE constraint_record.conrelid = (%s || '.agent_action_proposals')::regclass
+                  AND constraint_record.contype = 'u'
+                GROUP BY constraint_record.oid
+                HAVING array_agg(att.attname::text ORDER BY key_columns.ordinality) = ARRAY['run_id', 'id']
+                """,
+                (schema_name,),
+            )
+            assert cur.fetchone() == (["run_id", "id"],)
+
+            cur.execute(
+                """
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = (%s || '.agent_approval_decisions')::regclass
+                  AND conname = 'agent_approval_decisions_run_id_proposal_id_fkey'
+                  AND contype = 'f'
+                """,
+                (schema_name,),
+            )
+            assert cur.fetchone() == (1,)
