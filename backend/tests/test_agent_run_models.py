@@ -97,6 +97,7 @@ def test_nested_event_and_candidate_payloads_reject_in_place_mutation():
         data={"items": [{"name": "供应商 A"}]},
     )
     response = AgentRunResponse(
+        id=run_id,
         run_id=run_id,
         status=AgentRunStatus.CREATED,
         version=1,
