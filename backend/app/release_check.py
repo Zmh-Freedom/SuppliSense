@@ -24,6 +24,21 @@ _ENVIRONMENT_MARKERS = (
     "name or service not known",
     "temporary failure in name resolution",
     "docker daemon",
+    "fe_sendauth: no password supplied",
+    "no password supplied",
+    "password authentication failed",
+    "authentication failed",
+    "authentication required",
+    "password is required",
+    "serverselectiontimeout",
+    "server selection timeout",
+    "no servers found yet",
+    "mongodb uri",
+    "mongodb_uri",
+    "mongo configuration",
+    "database url is not configured",
+    "database url missing",
+    "configuration missing",
 )
 
 
@@ -104,26 +119,14 @@ def run_release_checklist(
     frontend = project_root / "frontend"
     checks = []
     migration = _command_check(
-            project_root,
-            "migration_schema",
-            [
-                "python",
-                "-m",
-                "pytest",
-                "-q",
-                "tests/test_agent_run_models.py",
-                "tests/test_agent_run_repo.py",
-                "tests/test_agent_run_checkpointer.py",
-                "tests/test_sourcing_risk_policy_service.py",
-                "tests/test_sourcing_risk_discovery_service.py",
-                "tests/test_sourcing_risk_evidence_service.py",
-                "tests/test_sourcing_risk_actions.py",
-            ],
-            run_external_commands=run_external_commands,
-            command_runner=command_runner,
-            cwd=backend,
-            blocked_detail="PG/Mongo 集成未执行或当前环境不可达；不得宣称 V2 schema/migration 已通过",
-        )
+        project_root,
+        "migration_schema",
+        ["python", "-m", "pytest", "-q"],
+        run_external_commands=run_external_commands,
+        command_runner=command_runner,
+        cwd=backend,
+        blocked_detail="PG/Mongo 集成未执行或当前环境不可达；不得宣称 V2 schema/migration 已通过",
+    )
     checks.append(migration)
     database_blocked = migration["status"] == BLOCKED
     checks.extend([

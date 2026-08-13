@@ -94,8 +94,7 @@ def test_release_checklist_executes_real_pytest_commands_for_safety_gates() -> N
     ):
         assert report["checks_by_name"][name]["status"] == PASS
     assert sum(command[:3] == ["python", "-m", "pytest"] for command in commands) >= 6
-    assert any("test_agent_run_models.py" in target for command in commands for target in command)
-    assert any("test_agent_run_checkpointer.py" in target for command in commands for target in command)
+    assert ["python", "-m", "pytest", "-q"] in commands
 
 
 def test_release_checklist_marks_pytest_failure_as_fail_not_contract_pass() -> None:
@@ -127,3 +126,39 @@ def test_release_checklist_stops_backend_pytest_after_database_block() -> None:
     assert report["checks_by_name"]["migration_schema"]["status"] == BLOCKED
     assert not any("test_auth.py" in target for command in commands for target in command)
     assert ["npm", "run", "lint"] in commands
+
+
+def test_release_checklist_classifies_auth_and_mongo_configuration_errors_as_blocked() -> None:
+    errors = (
+        "fe_sendauth: no password supplied",
+        "password authentication failed for user postgres",
+        "pymongo.errors.ServerSelectionTimeoutError: No servers found yet",
+        "Mongo configuration missing: MONGODB_URI is not configured",
+    )
+
+    for error in errors:
+        def runner(command: list[str], cwd: Path, error: str = error) -> tuple[int, str]:
+            del command, cwd
+            return 1, error
+
+        report = run_release_checklist(ROOT, command_runner=runner)
+
+        assert report["checks_by_name"]["migration_schema"]["status"] == BLOCKED, error
+        assert not any(
+            item["name"] in {"api_auth", "approval_approved_only_outbox", "recovery_fail_closed", "rollout_shadow_no_write", "sse_replay"}
+            and item["status"] != BLOCKED
+            for item in report["checks"]
+        )
+
+
+def test_release_checklist_runs_complete_backend_suite_before_backend_safety_gates() -> None:
+    commands: list[list[str]] = []
+
+    def runner(command: list[str], cwd: Path) -> tuple[int, str]:
+        del cwd
+        commands.append(command)
+        return 0, "ok"
+
+    run_release_checklist(ROOT, command_runner=runner)
+
+    assert ["python", "-m", "pytest", "-q"] in commands
