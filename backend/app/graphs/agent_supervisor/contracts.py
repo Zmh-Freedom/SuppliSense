@@ -73,6 +73,7 @@ class RecommendedAction(BaseModel):
 class AgentMetrics(BaseModel):
     duration_ms: int = Field(default=0, ge=0)
     evidence_count: int = Field(default=0, ge=0)
+    attempts: int = Field(default=0, ge=0)
 
 
 class AgentError(BaseModel):

@@ -26,6 +26,7 @@ class AgentTaskState(TypedDict, total=False):
     user_query: str
     intent: dict[str, Any]
     plan: dict[str, Any]
+    agent_results: dict[str, dict[str, Any]]
     task_status: TaskStatus
     sourcing_result: dict[str, Any]
     risk_result: dict[str, Any]
