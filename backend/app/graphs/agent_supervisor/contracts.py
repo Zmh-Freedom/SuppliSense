@@ -110,6 +110,14 @@ class AgentResult(BaseModel):
         return self
 
 
+class EvidenceMergeResult(BaseModel):
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    conflicts: list[list[EvidenceItem]] = Field(default_factory=list)
+    missing_dimensions: list[str] = Field(default_factory=list)
+    overall_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    requires_review: bool = False
+
+
 class PendingApproval(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
