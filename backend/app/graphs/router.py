@@ -5,6 +5,7 @@
 
 from enum import Enum
 
+from app.graphs.agent_supervisor.planner import is_composite_request
 from app.graphs import build_shared_llm
 
 from app.core.config import settings
@@ -19,6 +20,7 @@ class Intent(str, Enum):
     MULTI_AGENT = "langgraph-multi-agent"
     PARALLEL = "langgraph-parallel"
     SOURCING = "langgraph-sourcing"
+    SUPERVISOR = "langgraph-agent-supervisor"
 
 
 # 关键词 → 意图映射（优先级：先匹配先胜）
@@ -99,13 +101,18 @@ class IntentRouter:
 
         优先关键词匹配（零延迟），无命中时用 LLM 分类。
         """
-        # 1. 关键词匹配
+        # 1. 组合寻源 + 分析任务（必须优先于通用寻源关键词）
+        if is_composite_request(message):
+            logger.info("intent_routed_by_composite_keyword", intent=Intent.SUPERVISOR.value, message=message[:50])
+            return Intent.SUPERVISOR
+
+        # 2. 关键词匹配
         for keywords, intent in _KEYWORD_RULES:
             if any(kw in message for kw in keywords):
                 logger.info("intent_routed_by_keyword", intent=intent.value, message=message[:50])
                 return self._resolve_sourcing(intent)
 
-        # 2. LLM 分类兜底
+        # 3. LLM 分类兜底
         intent = self._classify_by_llm(message)
         logger.info("intent_routed_by_llm", intent=intent.value, message=message[:50])
         return self._resolve_sourcing(intent)

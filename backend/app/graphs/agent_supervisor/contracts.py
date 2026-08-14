@@ -25,6 +25,13 @@ class PlannerTask(BaseModel):
 class TaskPlan(BaseModel):
     tasks: list[PlannerTask] = Field(default_factory=list)
 
+    def task(self, task_id: str) -> PlannerTask:
+        """Return the task identified by ``task_id``."""
+        for task in self.tasks:
+            if task.task_id == task_id:
+                return task
+        raise KeyError(task_id)
+
 
 class EvidenceItem(BaseModel):
     evidence_id: str = Field(min_length=1)
