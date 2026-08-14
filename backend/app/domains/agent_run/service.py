@@ -400,6 +400,42 @@ def append_orchestration_event(run_id: str, event_type: str, payload: dict[str, 
     return int(event["event_id"])
 
 
+def persist_supervisor_snapshot(
+    run_id: str,
+    task_status: str,
+    event_type: str,
+    snapshot: dict[str, Any],
+) -> int | None:
+    """Persist a checkpoint-adjacent Supervisor snapshot as a replayable event.
+
+    Supervisor planning and analysis results do not map to supplier-master
+    tables. Keeping them in the existing agent-run event stream preserves the
+    durable/SSE boundary without introducing a second store or a business write.
+    """
+    return append_orchestration_event(
+        run_id,
+        event_type,
+        {"task_status": task_status, **dict(snapshot)},
+    )
+
+
+def execute_supervisor_approved_action(run_id: str, approval_id: str) -> None:
+    """Enter the existing approved-only, idempotent V2 action boundary.
+
+    The action service reloads the durable proposal and refuses execution unless
+    its persisted status is approved. Supervisor code never calls repositories
+    or mutation adapters directly.
+    """
+    if not run_id or not approval_id:
+        raise ValueError("run_id 和 approval_id 不能为空")
+
+    from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
+
+    execute_sourcing_risk_action(
+        {"payload": {"run_id": run_id, "proposal_id": approval_id}}
+    )
+
+
 def record_orchestration_state(
     run_id: str, status: str, event_type: str, payload: dict[str, Any]
 ) -> int | None:

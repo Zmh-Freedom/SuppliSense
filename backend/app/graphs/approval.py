@@ -103,3 +103,40 @@ def request_approval(tool_name: str, tool_args: dict[str, Any]) -> bool:
     if isinstance(decision, dict):
         return bool(decision.get("approved", False))
     return bool(decision)
+
+
+def request_supervisor_approval(
+    pending_approvals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Pause a Supervisor run and normalize its aggregate human decision.
+
+    The existing tool approval payload shape is retained so current SSE clients
+    can render the interrupt.  An expired decision always fails closed even if
+    a stale client also sends ``approved=true``.
+    """
+    from langgraph.types import interrupt as lg_interrupt
+
+    decision = lg_interrupt(
+        {
+            "type": "approval",
+            "tool": "agent_supervisor",
+            "args": {"pending_approvals": pending_approvals},
+            "message": "确认执行待审批的供应商操作？",
+            "pending_approvals": pending_approvals,
+        }
+    )
+    if not isinstance(decision, dict):
+        approved = decision is True
+        return {
+            "approved": approved,
+            "status": "approved" if approved else "rejected",
+        }
+
+    status = str(decision.get("status") or "").lower()
+    if status in {"expired", "rejected"}:
+        approved = False
+        normalized_status = status
+    else:
+        approved = decision.get("approved") is True
+        normalized_status = "approved" if approved else "rejected"
+    return {**decision, "approved": approved, "status": normalized_status}
