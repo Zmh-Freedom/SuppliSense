@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
@@ -10,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.domains.agent_run import service as agent_run_service
+from app.graphs import approval
 from app.graphs.agent_supervisor import graph as supervisor_graph
 from app.graphs.agent_supervisor.contracts import AgentResult, PlannerTask, TaskPlan
 
@@ -58,6 +60,17 @@ def _install_graph_doubles(
 
     monkeypatch.setattr(supervisor_graph, "plan_agent_task", lambda *_: _plan())
     monkeypatch.setattr(supervisor_graph, "run_ready_tasks", run_ready_tasks)
+    monkeypatch.setattr(
+        agent_run_service,
+        "create_supervisor_action_proposals",
+        lambda _run_id, approvals: [
+            {**approval, "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+            for approval in approvals
+        ],
+    )
+    monkeypatch.setattr(
+        agent_run_service, "approve_supervisor_action_proposal", lambda *_: None
+    )
     monkeypatch.setattr(
         agent_run_service,
         "persist_supervisor_snapshot",
@@ -148,6 +161,57 @@ def test_supervisor_explicit_approval_uses_existing_approved_action_boundary(
     write_boundary.assert_called_once_with(
         "approve-run", paused["pending_approvals"][0]["approval_id"]
     )
+
+
+def test_supervisor_approval_uses_persisted_action_proposal_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The graph must execute the proposal ID returned by the durable action boundary."""
+    _install_graph_doubles(monkeypatch)
+    monkeypatch.setattr(
+        agent_run_service,
+        "create_supervisor_action_proposals",
+        lambda *_: [{
+            "approval_id": "proposal-1",
+            "action_type": "import_external_supplier",
+            "target": {"company_name": "外部供应商 A"},
+            "reason": "候选供应商满足采购条件",
+            "impact": "写入供应商主库",
+            "status": "pending",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            "requires_approval": True,
+        }],
+    )
+    write_boundary = Mock(return_value=None)
+    monkeypatch.setattr(
+        agent_run_service, "execute_supervisor_approved_action", write_boundary
+    )
+    graph = supervisor_graph.build_agent_supervisor_graph(InMemorySaver())
+    config = {"configurable": {"thread_id": "proposal-run"}}
+
+    paused = asyncio.run(graph.ainvoke(_state("proposal-run"), config))
+    asyncio.run(graph.ainvoke(Command(resume={"approved": True}), config))
+
+    assert paused["pending_approvals"][0]["approval_id"] == "proposal-1"
+    write_boundary.assert_called_once_with("proposal-run", "proposal-1")
+
+
+def test_supervisor_rejects_past_persisted_expiration_even_if_client_approves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale persisted expiry must override an approval flag from the resume client."""
+    monkeypatch.setattr(
+        "langgraph.types.interrupt",
+        lambda *_: {"approved": True, "status": "approved"},
+    )
+    expired = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+
+    result = approval.request_supervisor_approval(
+        [{"approval_id": "proposal-1", "expires_at": expired}]
+    )
+
+    assert result["approved"] is False
+    assert result["status"] == "expired"
 
 
 def test_start_and_resume_reuse_durable_run_and_checkpointer(

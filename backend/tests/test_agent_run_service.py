@@ -56,6 +56,89 @@ def test_cancel_run_persists_terminal_stage_event(monkeypatch: pytest.MonkeyPatc
     assert events == [{"run_id": "run-id", "version": 3, "event_type": "done", "payload": {"status": "CANCELLED"}}]
 
 
+def test_persist_supervisor_snapshot_advances_terminal_run_status_atomically(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A Supervisor done event must not leave the durable run active for SSE consumers."""
+    run = _run("ACTION_PENDING", 4)
+    updated = _run("COMPLETED", 5)
+    events: list[dict] = []
+    monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: dict(run))
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "update_run_status", lambda *_args, **_kwargs: dict(updated))
+    monkeypatch.setattr(
+        service,
+        "append_event",
+        lambda run_id, version, event_type, payload, **_: events.append(
+            {"run_id": run_id, "version": version, "event_type": event_type, "payload": payload}
+        ) or {"event_id": 7},
+    )
+
+    event_id = service.persist_supervisor_snapshot(
+        "run-id", "COMPLETED", "done", {"final_answer": "完成"}
+    )
+
+    assert event_id == 7
+    assert events == [{
+        "run_id": "run-id",
+        "version": 5,
+        "event_type": "done",
+        "payload": {"task_status": "COMPLETED", "final_answer": "完成", "status": "COMPLETED"},
+    }]
+
+
+def test_create_supervisor_action_proposals_returns_existing_proposal_ids(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Supervisor approval IDs must be the IDs accepted by the existing action executor."""
+    from app.domains.sourcing_risk import action_service
+
+    run = _run("CREATED", 3)
+    created: list[dict] = []
+    monkeypatch.setattr(service, "get_orchestration_run", lambda *_: run)
+    monkeypatch.setattr(
+        action_service,
+        "create_action_proposal",
+        lambda *args, **kwargs: created.append({"args": args, "kwargs": kwargs})
+        or {"id": "proposal-1"},
+    )
+
+    result = service.create_supervisor_action_proposals("run-id", [{
+        "approval_id": "decision-id",
+        "action_type": "add_to_watchlist",
+        "target": {"company_name": "供应商 A"},
+        "reason": "风险上升",
+        "impact": "进入监控",
+        "status": "pending",
+    }])
+
+    assert result[0]["approval_id"] == "proposal-1"
+    assert created[0]["args"][1] == "add_watchlist"
+    assert created[0]["args"][3] == "supervisor:run-id:decision-id"
+
+
+def test_approve_supervisor_action_proposal_uses_existing_approval_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Supervisor approval must persist approved status through the existing action service."""
+    from app.domains.sourcing_risk import action_service
+
+    run = _run("ACTION_PENDING", 5)
+    calls: list[dict] = []
+    monkeypatch.setattr(service, "get_orchestration_run", lambda *_: run)
+    monkeypatch.setattr(
+        action_service,
+        "decide_action_proposal",
+        lambda *args: calls.append({"args": args}),
+    )
+
+    service.approve_supervisor_action_proposal("run-id", "proposal-1")
+
+    assert calls[0]["args"][0:2] == ("run-id", "proposal-1")
+    assert calls[0]["args"][2].decision == "approved"
+    assert calls[0]["args"][2].expected_version == 5
+
+
 def test_get_sourcing_risk_run_hides_foreign_run_from_non_admin(monkeypatch: pytest.MonkeyPatch):
     """Replacing owner filtering with a global lookup would disclose another user's requirement."""
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: None)

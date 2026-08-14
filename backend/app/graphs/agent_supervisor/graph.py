@@ -180,6 +180,12 @@ async def build_task_decision(state: AgentTaskState) -> dict[str, Any]:
         {"decision": serialized},
     )
     pending_approvals = serialized["pending_approvals"]
+    if pending_approvals:
+        pending_approvals = await _call_sync(
+            agent_run_service.create_supervisor_action_proposals,
+            state["run_id"],
+            pending_approvals,
+        )
     task_status = (
         "WAITING_HUMAN_APPROVAL" if pending_approvals else "DECISION_READY"
     )
@@ -208,6 +214,11 @@ async def approval_gate(state: AgentTaskState) -> dict[str, Any]:
     approval_status = str(decision["status"])
     if decision.get("approved") is True:
         for approval in approvals:
+            await _call_sync(
+                agent_run_service.approve_supervisor_action_proposal,
+                state["run_id"],
+                approval["approval_id"],
+            )
             await _call_sync(
                 agent_run_service.execute_supervisor_approved_action,
                 state["run_id"],

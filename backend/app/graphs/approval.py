@@ -12,6 +12,7 @@
   5. 前端调用 POST /api/v1/chat/resume → 图恢复执行
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
 # 需要审批的高风险工具及审批消息模板
@@ -125,6 +126,20 @@ def request_supervisor_approval(
             "pending_approvals": pending_approvals,
         }
     )
+    now = datetime.now(timezone.utc)
+    for approval in pending_approvals:
+        expires_at = approval.get("expires_at")
+        if not expires_at:
+            continue
+        try:
+            expiry = datetime.fromisoformat(str(expires_at).replace("Z", "+00:00"))
+        except ValueError:
+            return {"approved": False, "status": "expired"}
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=timezone.utc)
+        if now >= expiry:
+            return {"approved": False, "status": "expired"}
+
     if not isinstance(decision, dict):
         approved = decision is True
         return {

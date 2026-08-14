@@ -1,6 +1,7 @@
 """Framework-independent lifecycle commands for sourcing-risk agent runs."""
 
 import time
+from datetime import datetime, timedelta, timezone
 from collections.abc import Iterator
 from typing import Any
 from uuid import uuid4
@@ -51,6 +52,17 @@ TERMINAL_STATUSES = frozenset(
         AgentRunStatus.ROLLBACK_FROZEN.value,
     }
 )
+
+SUPERVISOR_APPROVAL_TTL = timedelta(hours=24)
+_SUPERVISOR_ACTION_TYPES = {
+    "add_to_watchlist": "add_watchlist",
+}
+_SUPERVISOR_DURABLE_STATUSES = {
+    "WAITING_HUMAN_APPROVAL": AgentRunStatus.ACTION_PENDING.value,
+    "COMPLETED": AgentRunStatus.COMPLETED.value,
+    "PARTIAL_COMPLETED": AgentRunStatus.PARTIAL.value,
+    "FAILED": AgentRunStatus.FAILED.value,
+}
 
 
 def can_read_all_agent_runs(user_role: str) -> bool:
@@ -412,11 +424,64 @@ def persist_supervisor_snapshot(
     tables. Keeping them in the existing agent-run event stream preserves the
     durable/SSE boundary without introducing a second store or a business write.
     """
-    return append_orchestration_event(
-        run_id,
-        event_type,
-        {"task_status": task_status, **dict(snapshot)},
-    )
+    durable_status = _SUPERVISOR_DURABLE_STATUSES.get(task_status)
+    with get_cursor() as (_, cur):
+        run = get_orchestration_run_for_update(run_id, cur)
+        if run is None:
+            return None
+        updated = run
+        if durable_status and run["status"] != durable_status:
+            updated = update_run_status(
+                run_id, run["version"], durable_status, cur=cur
+            )
+            if updated is None:
+                _raise_version_conflict()
+        event = append_event(
+            run_id,
+            updated["version"],
+            event_type,
+            {"task_status": task_status, **dict(snapshot), "status": updated["status"]},
+            cur=cur,
+        )
+    return int(event["event_id"])
+
+
+def create_supervisor_action_proposals(
+    run_id: str, approvals: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Persist Supervisor approvals as the existing action proposal records."""
+    run = get_orchestration_run(run_id)
+    if run is None:
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+    user_id = str(run.get("user_id") or "")
+    if not user_id:
+        raise DomainError("AGENT_ACTION_PROPOSAL_FORBIDDEN", "任务缺少发起人", 403)
+
+    from app.domains.sourcing_risk.action_service import create_action_proposal
+
+    persisted: list[dict[str, Any]] = []
+    for approval in approvals:
+        original_id = str(approval["approval_id"])
+        action_type = _SUPERVISOR_ACTION_TYPES.get(
+            str(approval["action_type"]), str(approval["action_type"])
+        )
+        expires_at = str(
+            approval.get("expires_at")
+            or (datetime.now(timezone.utc) + SUPERVISOR_APPROVAL_TTL).isoformat()
+        )
+        target = dict(approval.get("target") or {})
+        proposal = create_action_proposal(
+            run_id,
+            action_type,
+            {**target, "expires_at": expires_at},
+            f"supervisor:{run_id}:{original_id}",
+            candidate_id=target.get("candidate_id"),
+            user_id=user_id,
+            user_role="analyst",
+            expected_version=int(run["version"]),
+        )
+        persisted.append({**approval, "approval_id": str(proposal["id"]), "expires_at": expires_at})
+    return persisted
 
 
 def execute_supervisor_approved_action(run_id: str, approval_id: str) -> None:
@@ -433,6 +498,23 @@ def execute_supervisor_approved_action(run_id: str, approval_id: str) -> None:
 
     execute_sourcing_risk_action(
         {"payload": {"run_id": run_id, "proposal_id": approval_id}}
+    )
+
+
+def approve_supervisor_action_proposal(run_id: str, approval_id: str) -> None:
+    """Record the explicit Supervisor approval before invoking action delivery."""
+    run = get_orchestration_run(run_id)
+    if run is None:
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+
+    from app.domains.sourcing_risk.action_service import decide_action_proposal
+
+    decide_action_proposal(
+        run_id,
+        approval_id,
+        ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
+        str(run["user_id"]),
+        "analyst",
     )
 
 
