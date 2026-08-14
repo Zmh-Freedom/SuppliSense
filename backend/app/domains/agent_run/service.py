@@ -518,6 +518,23 @@ def approve_supervisor_action_proposal(run_id: str, approval_id: str) -> None:
     )
 
 
+def approve_supervisor_action_proposals(run_id: str, approval_ids: list[str]) -> None:
+    """Record an aggregate Supervisor approval through one run-state transition."""
+    run = get_orchestration_run(run_id)
+    if run is None:
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+
+    from app.domains.sourcing_risk.action_service import decide_action_proposals
+
+    decide_action_proposals(
+        run_id,
+        approval_ids,
+        ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
+        str(run["user_id"]),
+        "analyst",
+    )
+
+
 def record_orchestration_state(
     run_id: str, status: str, event_type: str, payload: dict[str, Any]
 ) -> int | None:

@@ -213,12 +213,12 @@ async def approval_gate(state: AgentTaskState) -> dict[str, Any]:
     decision = request_supervisor_approval(approvals)
     approval_status = str(decision["status"])
     if decision.get("approved") is True:
+        await _call_sync(
+            agent_run_service.approve_supervisor_action_proposals,
+            state["run_id"],
+            [approval["approval_id"] for approval in approvals],
+        )
         for approval in approvals:
-            await _call_sync(
-                agent_run_service.approve_supervisor_action_proposal,
-                state["run_id"],
-                approval["approval_id"],
-            )
             await _call_sync(
                 agent_run_service.execute_supervisor_approved_action,
                 state["run_id"],

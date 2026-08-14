@@ -139,6 +139,30 @@ def test_approve_supervisor_action_proposal_uses_existing_approval_boundary(
     assert calls[0]["args"][2].expected_version == 5
 
 
+def test_approve_supervisor_action_proposals_batches_state_transition(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Multiple Supervisor approvals must advance the durable run only once."""
+    from app.domains.sourcing_risk import action_service
+
+    run = _run("ACTION_PENDING", 5)
+    calls: list[dict] = []
+    monkeypatch.setattr(service, "get_orchestration_run", lambda *_: run)
+    monkeypatch.setattr(
+        action_service,
+        "decide_action_proposals",
+        lambda *args: calls.append({"args": args}),
+    )
+
+    service.approve_supervisor_action_proposals(
+        "run-id", ["proposal-1", "proposal-2"]
+    )
+
+    assert calls[0]["args"][0:2] == ("run-id", ["proposal-1", "proposal-2"])
+    assert calls[0]["args"][2].decision == "approved"
+    assert calls[0]["args"][2].expected_version == 5
+
+
 def test_get_sourcing_risk_run_hides_foreign_run_from_non_admin(monkeypatch: pytest.MonkeyPatch):
     """Replacing owner filtering with a global lookup would disclose another user's requirement."""
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: None)

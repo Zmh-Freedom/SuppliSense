@@ -158,6 +158,82 @@ def decide_action_proposal(
     return {"run": updated_run, "proposal": updated_proposal, "approval": decision}
 
 
+def decide_action_proposals(
+    run_id: str,
+    proposal_ids: list[str],
+    request: ApprovalDecisionRequest,
+    user_id: str,
+    user_role: str,
+) -> list[dict[str, Any]]:
+    """Approve an aggregate of proposals while advancing the run once."""
+    require_v2_execution(settings)
+    _require_approval_role(user_role)
+    if not proposal_ids:
+        return []
+    run = _get_authorized_run(run_id, user_id, user_role)
+    _require_expected_version(run, request.expected_version)
+
+    with get_cursor() as (_, cur):
+        locked_run = get_run_for_update(cur, run_id)
+        if locked_run is None:
+            raise DomainError("AGENT_ACTION_APPROVAL_FORBIDDEN", "没有审批该操作的权限", 403)
+        _require_expected_version(locked_run, request.expected_version)
+        proposals = []
+        for proposal_id in proposal_ids:
+            proposal = get_action_proposal_for_update(cur, run_id, proposal_id)
+            if proposal is None or proposal["run_id"] != run_id:
+                raise DomainError("AGENT_ACTION_PROPOSAL_NOT_FOUND", "操作提案不存在", 404)
+            if proposal["status"] != "pending":
+                raise DomainError("AGENT_ACTION_ALREADY_DECIDED", "操作提案已处理", 409)
+            if request.decision == "approved":
+                _require_non_self_approval_for_high_risk_import(proposal, user_id, locked_run)
+            proposals.append(proposal)
+        if locked_run["status"] != "ACTION_PENDING":
+            raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许审批操作", 409)
+
+        target_status = "ACTION_EXECUTING" if request.decision == "approved" else "READY_FOR_REVIEW"
+        updated_run = update_run_status(
+            run_id, request.expected_version, target_status, cur=cur
+        )
+        if updated_run is None:
+            raise DomainError("AGENT_RUN_VERSION_CONFLICT", "任务版本已变更", 409)
+
+        decisions: list[dict[str, Any]] = []
+        for proposal in proposals:
+            proposal_id = str(proposal["id"])
+            updated_proposal = update_action_proposal(
+                cur,
+                run_id,
+                proposal_id,
+                status=request.decision,
+                execution_state="pending" if request.decision == "approved" else "rejected",
+            )
+            decision = insert_approval_decision(
+                run_id, proposal_id, request.decision, user_id, request.comment, cur=cur
+            )
+            append_event(
+                run_id,
+                updated_run["version"],
+                "approval",
+                {"approval_id": proposal_id, "decision": request.decision, "status": updated_run["status"]},
+                cur=cur,
+            )
+            if request.decision == "approved":
+                enqueue_event(
+                    cur,
+                    ACTION_EVENT_TYPE,
+                    "agent_action_proposal",
+                    proposal_id,
+                    {
+                        "run_id": run_id,
+                        "proposal_id": proposal_id,
+                        "idempotency_key": proposal["idempotency_key"],
+                    },
+                )
+            decisions.append({"run": updated_run, "proposal": updated_proposal, "approval": decision})
+    return decisions
+
+
 def execute_sourcing_risk_action(event: dict) -> None:
     """Run an approved action once; every adapter owns its durable idempotency key."""
     require_v2_execution(settings)

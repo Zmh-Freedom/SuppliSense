@@ -72,6 +72,9 @@ def _install_graph_doubles(
         agent_run_service, "approve_supervisor_action_proposal", lambda *_: None
     )
     monkeypatch.setattr(
+        agent_run_service, "approve_supervisor_action_proposals", lambda *_: None
+    )
+    monkeypatch.setattr(
         agent_run_service,
         "persist_supervisor_snapshot",
         lambda run_id, task_status, event_type, snapshot: events.append(
@@ -194,6 +197,44 @@ def test_supervisor_approval_uses_persisted_action_proposal_id(
 
     assert paused["pending_approvals"][0]["approval_id"] == "proposal-1"
     write_boundary.assert_called_once_with("proposal-run", "proposal-1")
+
+
+def test_supervisor_approves_multiple_proposals_before_ordered_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An aggregate approval must keep every proposal executable in order."""
+    approvals = [
+        {"approval_id": "proposal-1", "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()},
+        {"approval_id": "proposal-2", "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()},
+    ]
+    approved_batches: list[tuple[str, list[str]]] = []
+    writes: list[str] = []
+    monkeypatch.setattr(
+        supervisor_graph,
+        "request_supervisor_approval",
+        lambda _approvals: {"approved": True, "status": "approved"},
+    )
+    monkeypatch.setattr(
+        agent_run_service,
+        "approve_supervisor_action_proposals",
+        lambda run_id, proposal_ids: approved_batches.append((run_id, proposal_ids)),
+    )
+    monkeypatch.setattr(
+        agent_run_service,
+        "execute_supervisor_approved_action",
+        lambda _run_id, proposal_id: writes.append(proposal_id),
+    )
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+
+    result = asyncio.run(
+        supervisor_graph.approval_gate(
+            {"run_id": "multi-proposal-run", "pending_approvals": approvals}
+        )
+    )
+
+    assert approved_batches == [("multi-proposal-run", ["proposal-1", "proposal-2"])]
+    assert writes == ["proposal-1", "proposal-2"]
+    assert result["task_status"] == "DECISION_READY"
 
 
 def test_supervisor_rejects_past_persisted_expiration_even_if_client_approves(
