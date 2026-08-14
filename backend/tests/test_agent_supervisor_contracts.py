@@ -5,6 +5,7 @@ from app.graphs.agent_supervisor.contracts import (
     AgentFinding,
     AgentResult,
     PendingApproval,
+    RecommendedAction,
 )
 
 
@@ -71,6 +72,33 @@ def test_pending_approval_cannot_be_overridden_by_caller():
     )
 
     assert approval.requires_approval is True
+
+
+def test_pending_approval_stays_required_after_post_construction_assignment():
+    approval = PendingApproval(
+        approval_id="a-1",
+        action_type="add_to_watchlist",
+        target={"company_id": "c-1"},
+        reason="风险上升",
+        impact="进入监控",
+        status="pending",
+    )
+
+    approval.requires_approval = False
+
+    assert approval.requires_approval is True
+
+
+def test_recommended_action_stays_required_after_post_construction_assignment():
+    action = RecommendedAction(
+        action_type="add_to_watchlist",
+        target={"company_id": "c-1"},
+        reason="风险上升",
+    )
+
+    action.requires_approval = False
+
+    assert action.requires_approval is True
 
 
 def test_agent_result_rejects_unknown_status():

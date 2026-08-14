@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 AgentName = Literal["sourcing", "risk", "compliance", "sentiment"]
@@ -49,6 +49,8 @@ class AgentFinding(BaseModel):
 
 
 class RecommendedAction(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     action_type: str = Field(min_length=1)
     target: dict[str, Any] = Field(default_factory=dict)
     reason: str = Field(min_length=1)
@@ -57,7 +59,7 @@ class RecommendedAction(BaseModel):
 
     @model_validator(mode="after")
     def require_approval(self) -> "RecommendedAction":
-        self.requires_approval = True
+        object.__setattr__(self, "requires_approval", True)
         return self
 
 
@@ -101,6 +103,8 @@ class AgentResult(BaseModel):
 
 
 class PendingApproval(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
     approval_id: str = Field(min_length=1)
     action_type: str = Field(min_length=1)
     target: dict[str, Any] = Field(default_factory=dict)
@@ -112,7 +116,7 @@ class PendingApproval(BaseModel):
 
     @model_validator(mode="after")
     def require_approval(self) -> "PendingApproval":
-        self.requires_approval = True
+        object.__setattr__(self, "requires_approval", True)
         return self
 
 
