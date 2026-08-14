@@ -7,6 +7,8 @@ from app.graphs.agent_supervisor.contracts import (
     AgentResult,
     EvidenceItem,
     EvidenceMergeResult,
+    PlannerTask,
+    TaskPlan,
 )
 
 
@@ -38,17 +40,52 @@ def _conflict_key(item: EvidenceItem) -> tuple[str | None, str | None]:
     return item.company_id, item.dimension
 
 
-def merge_evidence(results: Mapping[str, AgentResult]) -> EvidenceMergeResult:
-    """Rank duplicate evidence while retaining all conflicting claims for review."""
+def _task_map(
+    task_plan: TaskPlan | Mapping[str, PlannerTask] | None,
+) -> dict[str, PlannerTask] | None:
+    if task_plan is None:
+        return None
+    if isinstance(task_plan, TaskPlan):
+        return {task.task_id: task for task in task_plan.tasks}
+    return dict(task_plan)
+
+
+def merge_evidence(
+    results: Mapping[str, AgentResult],
+    task_plan: TaskPlan | Mapping[str, PlannerTask] | None = None,
+) -> EvidenceMergeResult:
+    """Rank evidence and gate only on missing required tasks.
+
+    ``task_plan`` carries the existing ``PlannerTask.required`` contract into
+    the merger. When omitted, non-completed results remain blocking for
+    backwards compatibility with the original one-argument API.
+    """
     evidence_by_key: dict[tuple[str | None, str | None, str], list[EvidenceItem]] = defaultdict(list)
     missing_dimensions: list[str] = []
+    tasks = _task_map(task_plan)
+    seen_task_ids: set[str] = set()
 
-    for result in results.values():
+    for task_id, result in results.items():
+        seen_task_ids.add(task_id)
         if result.status != "completed":
-            missing_dimensions.append(result.agent)
+            task = (
+                (tasks.get(task_id) or tasks.get(result.agent))
+                if tasks is not None
+                else None
+            )
+            is_required = task.required if task is not None else True
+            if is_required:
+                missing_dimensions.append(result.agent)
             continue
         for item in result.evidence:
             evidence_by_key[_evidence_key(item)].append(item)
+
+    if tasks is not None:
+        missing_dimensions.extend(
+            task.agent
+            for task_id, task in tasks.items()
+            if task.required and task_id not in seen_task_ids
+        )
 
     merged_evidence: list[EvidenceItem] = []
     for items in evidence_by_key.values():

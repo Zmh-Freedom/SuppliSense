@@ -1,6 +1,8 @@
 """Behavior tests for Supervisor evidence merging and decision safety."""
 
-from app.graphs.agent_supervisor.contracts import AgentFinding, AgentResult
+import pytest
+
+from app.graphs.agent_supervisor.contracts import AgentFinding, AgentResult, PlannerTask, TaskPlan
 from app.graphs.agent_supervisor.decision import build_decision
 from app.graphs.agent_supervisor.evidence import merge_evidence
 
@@ -81,11 +83,15 @@ def test_conflicting_evidence_still_deduplicates_repeated_claims():
     assert {item.evidence_id for item in result.evidence} == {"clear-high", "hit"}
 
 
-def test_failed_agent_is_reported_as_missing_dimension():
-    """Ignoring a failed required agent would let decisions treat absent evidence as complete."""
-    failed = AgentResult(agent="compliance", status="failed", summary="合规数据不可用")
+@pytest.mark.parametrize("status", ["failed", "skipped"])
+def test_failed_or_skipped_required_agent_is_reported_as_missing_dimension(status):
+    """Ignoring a required task failure would let decisions treat absent evidence as complete."""
+    failed = AgentResult(agent="compliance", status=status, summary="合规数据不可用")
 
-    result = merge_evidence({"compliance": failed})
+    result = merge_evidence(
+        {"compliance": failed},
+        TaskPlan(tasks=[PlannerTask(task_id="compliance", agent="compliance", required=True)]),
+    )
 
     assert result.missing_dimensions == ["compliance"]
     assert result.requires_review is True
@@ -130,3 +136,33 @@ def test_review_required_evidence_prevents_deterministic_recommendation():
     assert decision.requires_review is True
     assert decision.recommendations == []
     assert decision.pending_approvals == []
+
+
+@pytest.mark.parametrize("status", ["failed", "skipped"])
+def test_failed_or_skipped_optional_agent_does_not_block_decision(status):
+    """Optional task degradation must not suppress a clear recommendation."""
+    state = {
+        "recommendations": [{
+            "action_type": "add_to_watchlist",
+            "target": {"company_id": "company-1"},
+            "reason": "风险等级上升",
+            "impact": "进入持续监控",
+        }],
+    }
+    results = {
+        "risk": _completed_result(),
+        "sentiment": AgentResult(agent="sentiment", status=status, summary="舆情数据不可用"),
+    }
+
+    merged = merge_evidence(
+        results,
+        TaskPlan(tasks=[
+            PlannerTask(task_id="risk", agent="risk", required=True),
+            PlannerTask(task_id="sentiment", agent="sentiment", required=False),
+        ]),
+    )
+    decision = build_decision(state, merged)
+
+    assert merged.missing_dimensions == []
+    assert merged.requires_review is False
+    assert decision.pending_approvals[0].action_type == "add_to_watchlist"
