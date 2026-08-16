@@ -1,12 +1,137 @@
 """LangGraph 流式输出适配为 SSE 事件格式，保持与前端兼容。"""
 
 import json
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
+
+
+_SUPERVISOR_STAGE_MESSAGES = {
+    "load_task": "正在初始化组合任务...",
+    "plan_task": "正在规划寻源与风险分析任务...",
+    "execute_ready_tasks": "正在执行供应商专业分析...",
+    "merge_evidence": "正在合并供应商证据...",
+    "build_decision": "正在生成综合决策...",
+    "approval_gate": "正在检查待审批操作...",
+    "finalize": "正在整理最终回答...",
+}
 
 
 def _sse_event(event_type: str, data: dict) -> str:
     """Format data as SSE event string."""
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _supervisor_tool_name(agent: object) -> str:
+    return f"{agent}_agent"
+
+
+def _supervisor_interrupt_data(update: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(update, dict):
+        return None
+    interrupts = update.get("__interrupt__")
+    if not interrupts:
+        return None
+    interrupt_value = interrupts[0] if isinstance(interrupts, (list, tuple)) else interrupts
+    data = getattr(interrupt_value, "value", interrupt_value)
+    return dict(data) if isinstance(data, dict) else {"message": str(data)}
+
+
+async def stream_agent_supervisor_graph(
+    graph: Any,
+    user_message: str,
+    session_id: str,
+    run_config: dict[str, Any] | None = None,
+    graph_input: Any = None,
+) -> AsyncGenerator[str, None]:
+    """Map Agent Supervisor updates onto the existing public SSE schema."""
+    config = run_config or {"configurable": {"thread_id": session_id}}
+    input_data = graph_input if graph_input is not None else {
+        "run_id": session_id,
+        "user_query": user_message,
+        "intent": {},
+    }
+    full_answer = ""
+
+    yield _sse_event("thinking", {"message": "正在分析组合寻源与风险任务..."})
+
+    try:
+        async for update in graph.astream(
+            input_data, config, stream_mode="updates"
+        ):
+            interrupt_data = _supervisor_interrupt_data(update)
+            if interrupt_data is not None:
+                from app.graphs.interrupt_store import store as store_interrupt
+
+                store_interrupt(
+                    session_id=session_id,
+                    graph=graph,
+                    config=config,
+                    mode="agent-supervisor",
+                    user_message=user_message,
+                )
+                payload = {
+                    "message": interrupt_data.get("message", "确认此操作？"),
+                    "tool": interrupt_data.get("tool", "agent_supervisor"),
+                    "args": interrupt_data.get("args", {}),
+                    "session_id": session_id,
+                    "requires_human_approval": True,
+                }
+                if "pending_approvals" in interrupt_data:
+                    payload["pending_approvals"] = interrupt_data[
+                        "pending_approvals"
+                    ]
+                yield _sse_event("approval_required", payload)
+                return
+
+            for stage, output in update.items():
+                if not isinstance(output, dict):
+                    continue
+                stage_message = _SUPERVISOR_STAGE_MESSAGES.get(stage)
+                if stage_message:
+                    yield _sse_event("thinking", {"message": stage_message})
+
+                if stage == "plan_task":
+                    plan = output.get("plan", {})
+                    tasks = plan.get("tasks", []) if isinstance(plan, dict) else []
+                    for task in tasks:
+                        if not isinstance(task, dict):
+                            continue
+                        yield _sse_event(
+                            "tool_call",
+                            {
+                                "tool": _supervisor_tool_name(task.get("agent", "unknown")),
+                                "args": {
+                                    "task_id": task.get("task_id", ""),
+                                    "depends_on": task.get("depends_on", []),
+                                },
+                            },
+                        )
+
+                if stage == "execute_ready_tasks":
+                    results = output.get("agent_results", {})
+                    if isinstance(results, dict):
+                        for task_id, result in results.items():
+                            if not isinstance(result, dict):
+                                continue
+                            agent = result.get("agent") or task_id
+                            yield _sse_event(
+                                "tool_result",
+                                {
+                                    "tool": _supervisor_tool_name(agent),
+                                    "result": result,
+                                },
+                            )
+
+                if stage == "finalize":
+                    answer = output.get("final_answer")
+                    if isinstance(answer, str) and answer and answer != full_answer:
+                        full_answer = answer
+                        yield _sse_event("answer_chunk", {"text": answer})
+
+        yield _sse_event("done", {"answer": full_answer})
+    except Exception as exc:
+        from app.graphs import format_llm_error
+
+        yield _sse_event("error", {"message": format_llm_error(exc)})
 
 
 async def stream_react_graph(

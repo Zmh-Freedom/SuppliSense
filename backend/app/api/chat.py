@@ -53,6 +53,23 @@ async def _langgraph_sourcing_stream(session_id: str, message: str, preference_c
         yield event
 
 
+async def _langgraph_agent_supervisor_stream(
+    session_id: str, message: str, preference_context: str = ""
+):
+    """Agent Supervisor 组合寻源与风险任务流式输出。"""
+    del preference_context
+
+    from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
+    from app.graphs.streaming import stream_agent_supervisor_graph
+
+    graph = build_agent_supervisor_graph()
+    run_config = {"configurable": {"thread_id": session_id}}
+    async for event in stream_agent_supervisor_graph(
+        graph, message, session_id, run_config
+    ):
+        yield event
+
+
 async def _langgraph_parallel_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Parallel 并行多 Agent Map-Reduce 流式输出。"""
     from app.graphs.parallel_graph import stream_parallel_graph
@@ -79,7 +96,7 @@ async def _langgraph_react_reflection_stream(session_id: str, message: str, pref
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "parallel" | "react-reflection" | "sourcing"
+    mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "parallel" | "react-reflection" | "sourcing" | "agent-supervisor"
 
 
 class ResumeRequest(BaseModel):
@@ -111,6 +128,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         "sourcing": "langgraph-sourcing",
         "parallel": "langgraph-parallel",
         "react-reflection": "langgraph-react-reflection",
+        "agent-supervisor": "langgraph-agent-supervisor",
     }
 
     async def event_generator():
@@ -133,6 +151,8 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             stream_fn = _langgraph_supervisor_stream
         elif mode == "langgraph-sourcing":
             stream_fn = _langgraph_sourcing_stream
+        elif mode == "langgraph-agent-supervisor":
+            stream_fn = _langgraph_agent_supervisor_stream
         elif mode == "langgraph-parallel":
             stream_fn = _langgraph_parallel_stream
         elif mode == "langgraph-react-reflection":
@@ -190,6 +210,19 @@ async def resume_endpoint(req: ResumeRequest):
         cmd = Command(resume=resume_value)
 
         try:
+            if mode == "agent-supervisor":
+                from app.graphs.streaming import stream_agent_supervisor_graph
+
+                async for event in stream_agent_supervisor_graph(
+                    graph,
+                    user_message,
+                    req.session_id,
+                    config,
+                    graph_input=cmd,
+                ):
+                    yield event
+                return
+
             async for event in graph.astream_events(cmd, config, version="v2"):
                 kind = event.get("event", "")
 

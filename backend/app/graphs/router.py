@@ -65,8 +65,9 @@ _CLASSIFY_PROMPT = """你是用户意图分类器。根据用户消息，判断�
 - multi-agent：需要多个专业 Agent 顺序协作的任务（如"从风险、舆情、合规多角度分析..."）
 - parallel：需要多个 Agent 并行分析的任务（如"同时评估风险、舆情和合规"、"一起分析"）
 - sourcing：采购寻源相关（如"找供应商"、"推荐替代"、"寻源"）
+- supervisor：同时包含供应商寻源与风险/合规/舆情分析，需要组合 Agent 协作
 
-只输出模式名称（react / plan-execute / multi-agent / parallel / sourcing），不要输出其他内容。"""
+只输出模式名称（react / plan-execute / multi-agent / parallel / sourcing / supervisor），不要输出其他内容。"""
 
 
 # 意图 → 模式映射
@@ -76,6 +77,7 @@ _CLASSIFY_TO_INTENT = {
     "multi-agent": Intent.MULTI_AGENT,
     "parallel": Intent.PARALLEL,
     "sourcing": Intent.SOURCING,
+    "supervisor": Intent.SUPERVISOR,
 }
 
 # 寻源子图已就绪，不再降级
@@ -136,7 +138,7 @@ class IntentRouter:
             return Intent.RISK
 
     def _resolve_sourcing(self, intent: Intent) -> Intent:
-        """寻源子图尚未实现时降级到 react。"""
+        """保留寻源子图路由，其他意图原样返回。"""
         if intent == Intent.SOURCING:
             logger.info("sourcing_intent_downgraded", fallback=_FALLBACK_FROM_SOURCING.value)
             return _FALLBACK_FROM_SOURCING

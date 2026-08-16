@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
@@ -11,7 +13,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from app.domains.agent_run import service as agent_run_service
+from app.api import chat as chat_api
 from app.graphs import approval
+from app.graphs import streaming
 from app.graphs.agent_supervisor import graph as supervisor_graph
 from app.graphs.agent_supervisor.contracts import AgentResult, PlannerTask, TaskPlan
 
@@ -304,3 +308,237 @@ def test_start_and_resume_reuse_durable_run_and_checkpointer(
     assert resume_input == Command(
         resume={"approved": False, "reason": "拒绝"}
     )
+
+
+def _parse_sse_event(event: str) -> tuple[str, dict]:
+    lines = event.strip().splitlines()
+    return lines[0].removeprefix("event: "), json.loads(
+        lines[1].removeprefix("data: ")
+    )
+
+
+def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Removing the Supervisor mode branch would send composite chat back to ReAct."""
+    compiled_graph = object()
+
+    async def supervisor_stream(graph, message, session_id, run_config):
+        assert graph is compiled_graph
+        assert message == "帮我找华东电机供应商并评估风险"
+        assert session_id == "chat-run"
+        assert run_config == {"configurable": {"thread_id": "chat-run"}}
+        yield 'event: done\ndata: {"answer": "supervisor"}\n\n'
+
+    async def unexpected_stream(*_args):
+        raise AssertionError("composite request used a legacy stream")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(
+        supervisor_graph, "build_agent_supervisor_graph", lambda: compiled_graph
+    )
+    monkeypatch.setattr(streaming, "stream_agent_supervisor_graph", supervisor_stream)
+    monkeypatch.setattr(chat_api, "_langgraph_react_stream", unexpected_stream)
+    monkeypatch.setattr(
+        "app.services.clarification.detect_clarification_needed", lambda _message: None
+    )
+    async def collect_events() -> list[str]:
+        response = await chat_api.chat_stream_endpoint(
+            chat_api.ChatRequest(
+                message="帮我找华东电机供应商并评估风险", session_id="chat-run"
+            ),
+            SimpleNamespace(state=SimpleNamespace(user_id="")),
+        )
+        return [event async for event in response.body_iterator]
+
+    events = asyncio.run(collect_events())
+
+    assert events[-1] == 'event: done\ndata: {"answer": "supervisor"}\n\n'
+
+
+def test_supervisor_stream_maps_agent_results_to_public_sse_events() -> None:
+    """Dropping update mapping would hide Supervisor stages and AgentResult data from chat clients."""
+
+    agent_result = {
+        "agent": "sourcing",
+        "status": "completed",
+        "summary": "找到 2 家候选供应商。",
+        "findings": [],
+        "evidence": [],
+        "recommended_actions": [],
+        "metrics": {"duration_ms": 12, "evidence_count": 0, "attempts": 1},
+        "error": None,
+    }
+
+    class FakeGraph:
+        async def astream(self, graph_input, config, *, stream_mode):
+            assert graph_input == {
+                "run_id": "stream-run",
+                "user_query": "找供应商并评估风险",
+                "intent": {},
+            }
+            assert config == {"configurable": {"thread_id": "stream-run"}}
+            assert stream_mode == "updates"
+            yield {
+                "plan_task": {
+                    "plan": {
+                        "tasks": [
+                            {
+                                "task_id": "sourcing",
+                                "agent": "sourcing",
+                                "depends_on": [],
+                                "required": True,
+                            }
+                        ]
+                    },
+                    "task_status": "PLANNING",
+                }
+            }
+            yield {
+                "execute_ready_tasks": {
+                    "agent_results": {"sourcing": agent_result},
+                    "task_status": "EXECUTING",
+                }
+            }
+            yield {
+                "finalize": {
+                    "final_answer": "已完成供应商风险分析。",
+                    "task_status": "COMPLETED",
+                }
+            }
+
+    stream_fn = getattr(streaming, "stream_agent_supervisor_graph")
+    async def collect_events() -> list[str]:
+        return [
+            event
+            async for event in stream_fn(
+                FakeGraph(), "找供应商并评估风险", "stream-run"
+            )
+        ]
+
+    raw_events = asyncio.run(collect_events())
+    events = [_parse_sse_event(event) for event in raw_events]
+    event_types = [event_type for event_type, _ in events]
+
+    assert event_types == [
+        "thinking",
+        "thinking",
+        "tool_call",
+        "thinking",
+        "tool_result",
+        "thinking",
+        "answer_chunk",
+        "done",
+    ]
+    assert events[2][1] == {
+        "tool": "sourcing_agent",
+        "args": {"task_id": "sourcing", "depends_on": []},
+    }
+    assert events[4][1] == {"tool": "sourcing_agent", "result": agent_result}
+    assert events[-1][1] == {"answer": "已完成供应商风险分析。"}
+
+
+def test_supervisor_pause_uses_existing_approval_event_with_pause_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losing the pause flag would make an approval interrupt look terminal to clients."""
+    pending_approvals = [
+        {
+            "approval_id": "proposal-1",
+            "action_type": "import_external_supplier",
+            "target": {"company_name": "外部供应商 A"},
+            "reason": "满足采购条件",
+            "impact": "写入供应商主库",
+            "status": "pending",
+            "requires_approval": True,
+        }
+    ]
+
+    class InterruptValue:
+        value = {
+            "type": "approval",
+            "tool": "agent_supervisor",
+            "args": {"pending_approvals": pending_approvals},
+            "message": "确认执行待审批的供应商操作？",
+            "pending_approvals": pending_approvals,
+        }
+
+    class FakeGraph:
+        async def astream(self, *_args, **_kwargs):
+            yield {"__interrupt__": (InterruptValue(),)}
+
+    stored: list[dict] = []
+    monkeypatch.setattr(
+        "app.graphs.interrupt_store.store", lambda **payload: stored.append(payload)
+    )
+    stream_fn = getattr(streaming, "stream_agent_supervisor_graph")
+    async def collect_events() -> list[tuple[str, dict]]:
+        return [
+            _parse_sse_event(event)
+            async for event in stream_fn(
+                FakeGraph(), "找供应商并评估风险", "pause-run"
+            )
+        ]
+
+    events = asyncio.run(collect_events())
+
+    assert [event_type for event_type, _ in events] == [
+        "thinking",
+        "approval_required",
+    ]
+    assert events[-1][1] == {
+        "message": "确认执行待审批的供应商操作？",
+        "tool": "agent_supervisor",
+        "args": {"pending_approvals": pending_approvals},
+        "session_id": "pause-run",
+        "requires_human_approval": True,
+        "pending_approvals": pending_approvals,
+    }
+    assert stored[0]["mode"] == "agent-supervisor"
+
+
+def test_supervisor_resume_maps_final_answer_through_public_sse_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Using the generic resume mapper would discard a Supervisor finalize update."""
+
+    class FakeGraph:
+        async def astream(self, graph_input, config, *, stream_mode):
+            assert graph_input == Command(resume={"approved": True})
+            assert config == {"configurable": {"thread_id": "resume-run"}}
+            assert stream_mode == "updates"
+            yield {
+                "finalize": {
+                    "final_answer": "审批完成，已生成最终分析。",
+                    "task_status": "COMPLETED",
+                }
+            }
+
+    monkeypatch.setattr(
+        "app.graphs.interrupt_store.pop",
+        lambda _session_id: {
+            "graph": FakeGraph(),
+            "config": {"configurable": {"thread_id": "resume-run"}},
+            "mode": "agent-supervisor",
+            "user_message": "找供应商并评估风险",
+        },
+    )
+
+    async def collect_events() -> list[tuple[str, dict]]:
+        response = await chat_api.resume_endpoint(
+            chat_api.ResumeRequest(session_id="resume-run", approved=True)
+        )
+        return [
+            _parse_sse_event(event) async for event in response.body_iterator
+        ]
+
+    events = asyncio.run(collect_events())
+
+    assert [event_type for event_type, _ in events] == [
+        "thinking",
+        "thinking",
+        "answer_chunk",
+        "done",
+    ]
+    assert events[-2][1] == {"text": "审批完成，已生成最终分析。"}
+    assert events[-1][1] == {"answer": "审批完成，已生成最终分析。"}
