@@ -1,5 +1,7 @@
 """Deterministic planning for composite sourcing and analysis requests."""
 
+import re
+
 from app.graphs.agent_supervisor.contracts import PlannerTask, TaskPlan
 
 
@@ -17,6 +19,30 @@ def _has_sourcing_request(message: str) -> bool:
         any(keyword in message for keyword in _SOURCING_KEYWORDS)
         or ("找" in message and "供应商" in message)
     )
+
+
+def fallback_requirement_from_query(message: str) -> dict[str, str] | None:
+    """Build a conservative local-search requirement for conversational requests.
+
+    The dedicated requirement parser intentionally requires a specification. The
+    chat Supervisor can still perform a read-only broad search when the user only
+    names a product/category, while leaving all write decisions behind review.
+    """
+    match = re.search(r"(?:找|推荐|寻找)(.+?)(?:供应商|厂家|厂商)", message)
+    if not match:
+        return None
+    target = match.group(1).strip(" ，,、")
+    if not target:
+        return None
+    regions = ("华东", "华南", "华北", "西南", "西北", "东北")
+    region = next((value for value in regions if target.startswith(value)), None)
+    category = target[len(region):] if region else target
+    category = category.strip() or target
+    return {
+        "category": category,
+        "specification": category,
+        **({"region": region} if region else {}),
+    }
 
 
 def is_composite_request(message: str) -> bool:

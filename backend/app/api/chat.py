@@ -15,13 +15,20 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
     """LangGraph ReAct 模式流式输出。"""
     from app.graphs.react_graph import build_react_graph
     from app.graphs.streaming import stream_react_graph
-    from app.services.agent import _load_history
+    from app.services.agent import _load_conversation_context
 
     graph = build_react_graph(preference_context)
-    history = _load_history(session_id)
+    context = _load_conversation_context(session_id)
     # 传入 config 用于 Human-in-the-Loop 恢复
     run_config = {"configurable": {"thread_id": session_id}}
-    async for event in stream_react_graph(graph, message, session_id, history, run_config):
+    async for event in stream_react_graph(
+        graph,
+        message,
+        session_id,
+        context["history"],
+        run_config,
+        context["references"],
+    ):
         yield event
 
 
@@ -61,12 +68,32 @@ async def _langgraph_agent_supervisor_stream(
 
     from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
     from app.graphs.streaming import stream_agent_supervisor_graph
+    from app.services.agent import _load_conversation_context
 
     graph = build_agent_supervisor_graph()
     run_config = {"configurable": {"thread_id": session_id}}
-    async for event in stream_agent_supervisor_graph(
-        graph, message, session_id, run_config
-    ):
+    try:
+        context = _load_conversation_context(session_id)
+    except Exception:
+        # Conversation references are an enhancement; an unavailable MongoDB
+        # must not alter the Supervisor's existing read-only execution path.
+        context = {"history": [], "references": []}
+    if not context["references"]:
+        stream = stream_agent_supervisor_graph(graph, message, session_id, run_config)
+    else:
+        stream = stream_agent_supervisor_graph(
+            graph,
+            message,
+            session_id,
+            run_config,
+            graph_input={
+                "run_id": session_id,
+                "user_query": message,
+                "supplier_references": context["references"],
+                "intent": {},
+            },
+        )
+    async for event in stream:
         yield event
 
 
@@ -223,7 +250,7 @@ async def resume_endpoint(req: ResumeRequest):
                     yield event
                 return
 
-            async for event in graph.astream_events(cmd, config, version="v2"):
+            async for event in graph.astream_events(cmd, config=config, version="v2"):
                 kind = event.get("event", "")
 
                 if kind == "on_chat_model_stream":

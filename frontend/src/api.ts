@@ -123,6 +123,7 @@ export interface StreamCallbacks {
   onClarification?: (data: { message: string; missing: string[] }) => void;
   onApprovalRequired?: (data: ApprovalData) => void;
   onChartData?: (data: import('./types').ChartData) => void;
+  onReferences?: (data: { items: import('./types').SupplierReference[] }) => void;
 }
 
 async function _parseSSEStream(
@@ -196,6 +197,9 @@ async function _parseSSEStream(
               break;
             case 'chart_data':
               callbacks.onChartData?.(data);
+              break;
+            case 'references':
+              callbacks.onReferences?.(data);
               break;
           }
           currentEvent = '';

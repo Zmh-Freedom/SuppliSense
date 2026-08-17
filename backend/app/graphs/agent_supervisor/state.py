@@ -24,6 +24,7 @@ class AgentTaskState(TypedDict, total=False):
 
     run_id: str
     user_query: str
+    supplier_references: list[dict[str, Any]]
     intent: dict[str, Any]
     plan: dict[str, Any]
     agent_results: dict[str, dict[str, Any]]

@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { chatStream, resumeChat } from '../api';
 import type { ApprovalData } from '../api';
-import type { ChatMessage, ChartData } from '../types';
+import type { ChatMessage, ChartData, SupplierReference } from '../types';
 import ChartRenderer from './ChartRenderer';
 import AgentWorkflowPanel from './AgentWorkflowPanel';
 import type { AgentStatus } from './AgentWorkflowPanel';
@@ -78,6 +78,7 @@ interface StreamState {
   error?: string;
   done?: boolean;
   charts: ChartData[];
+  references: SupplierReference[];
 }
 
 export default function ChatView() {
@@ -105,6 +106,7 @@ export default function ChatView() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
+  const referencesAccRef = useRef<SupplierReference[]>([]);
 
   // Debounced localStorage save for chat input
   useEffect(() => {
@@ -151,8 +153,9 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs, isNewSession);
     setLoading(true);
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [] });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [] });
     answerAccRef.current = '';
+    referencesAccRef.current = [];
 
     try {
       await chatStream(text, sid, {
@@ -242,7 +245,7 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer }];
+          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current }];
           answerAccRef.current = '';
           persist(sid, completedMsgs);
           setStreamState(null);
@@ -278,6 +281,10 @@ export default function ChatView() {
             charts: [...prev.charts, data]
           } : null);
         },
+        onReferences: (data) => {
+          referencesAccRef.current = data.items;
+          setStreamState(prev => prev ? { ...prev, references: data.items } : null);
+        },
       }, 'auto');
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
@@ -310,6 +317,7 @@ export default function ChatView() {
       toolCalls: [],
       answerChunks: [],
       charts: [],
+      references: [],
     } : null);
     answerAccRef.current = '';
 
@@ -353,7 +361,7 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer }];
+          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current }];
           answerAccRef.current = '';
           persist(approvalSid, completedMsgs);
           setStreamState(null);
@@ -522,6 +530,22 @@ export default function ChatView() {
               <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</ReactMarkdown>
               </div>
+              {m.role === 'assistant' && m.references && m.references.length > 0 && (
+                <div className="mt-3 border-t border-[var(--color-border)] pt-2">
+                  <p className="text-[11px] text-gray-400 mb-1.5">本轮识别供应商</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {m.references.map(reference => (
+                      <button
+                        key={`${reference.name}-${reference.source ?? ''}`}
+                        onClick={() => setInput(`继续分析 ${reference.name} 的风险`)}
+                        className="rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100 transition-colors"
+                      >
+                        {reference.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -541,6 +565,11 @@ export default function ChatView() {
                     <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{streamState.answerChunks.join('')}</ReactMarkdown>
                   </div>
                   <span className="inline-block w-2 h-4 bg-[var(--color-primary-bg)] animate-pulse ml-1" />
+                  {streamState.references.length > 0 && (
+                    <div className="mt-3 border-t border-[var(--color-border)] pt-2 text-xs text-gray-500">
+                      识别到：{streamState.references.map(reference => reference.name).join('、')}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

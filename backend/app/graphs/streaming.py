@@ -50,6 +50,7 @@ async def stream_agent_supervisor_graph(
         "intent": {},
     }
     full_answer = ""
+    discovered_references: list[dict] = []
 
     yield _sse_event("thinking", {"message": "正在分析组合寻源与风险任务..."})
 
@@ -120,6 +121,11 @@ async def stream_agent_supervisor_graph(
                                     "result": result,
                                 },
                             )
+                            from app.services.agent import extract_supplier_references
+
+                            for reference in extract_supplier_references(result, agent):
+                                if reference not in discovered_references:
+                                    discovered_references.append(reference)
 
                 if stage == "finalize":
                     answer = output.get("final_answer")
@@ -127,6 +133,12 @@ async def stream_agent_supervisor_graph(
                         full_answer = answer
                         yield _sse_event("answer_chunk", {"text": answer})
 
+        if full_answer:
+            from app.services.agent import _save_turn
+
+            _save_turn(session_id, user_message, full_answer, discovered_references)
+        if discovered_references:
+            yield _sse_event("references", {"items": discovered_references})
         yield _sse_event("done", {"answer": full_answer})
     except Exception as exc:
         from app.graphs import format_llm_error
@@ -140,6 +152,7 @@ async def stream_react_graph(
     session_id: str,
     history: list[dict] | None = None,
     run_config: dict | None = None,
+    references: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
     """运行 ReAct 图并 yield SSE 事件。
 
@@ -151,9 +164,10 @@ async def stream_react_graph(
     """
     from app.graphs.context import build_input_messages
 
-    input_messages = await build_input_messages(history or [], user_message)
+    input_messages = await build_input_messages(history or [], user_message, references)
 
     full_answer = ""
+    discovered_references: list[dict] = list(references or [])
     tool_call_count = 0
     config = run_config or {}
 
@@ -162,7 +176,7 @@ async def stream_react_graph(
     try:
         async for event in graph.astream_events(
             {"messages": input_messages},
-            config,
+            config=config,
             version="v2",
         ):
             kind = event.get("event", "")
@@ -185,6 +199,11 @@ async def stream_react_graph(
             elif kind == "on_tool_end":
                 tool_name = event.get("name", "")
                 output = event.get("data", {}).get("output", "")
+                from app.services.agent import extract_supplier_references
+
+                for reference in extract_supplier_references(output, tool_name):
+                    if reference not in discovered_references:
+                        discovered_references.append(reference)
                 if isinstance(output, str):
                     result = output
                 else:
@@ -219,7 +238,10 @@ async def stream_react_graph(
         if full_answer:
             from app.services.agent import _save_turn
 
-            _save_turn(session_id, user_message, full_answer)
+            _save_turn(session_id, user_message, full_answer, discovered_references)
+
+        if discovered_references:
+            yield _sse_event("references", {"items": discovered_references})
 
         yield _sse_event("done", {"answer": full_answer})
 

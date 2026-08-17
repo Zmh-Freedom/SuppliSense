@@ -56,7 +56,11 @@ async def build_context_messages(history: list[dict]) -> list[dict]:
     ]
 
 
-async def build_input_messages(history: list[dict], user_message: str) -> list:
+async def build_input_messages(
+    history: list[dict],
+    user_message: str,
+    references: list[dict] | None = None,
+) -> list:
     """构建 LangChain 输入消息列表，长对话自动摘要。
 
     所有图的 stream 函数统一使用此 helper，确保上下文窗口管理一致。
@@ -64,6 +68,22 @@ async def build_input_messages(history: list[dict], user_message: str) -> list:
     from langchain_core.messages import HumanMessage, SystemMessage
 
     input_messages: list = []
+    if references:
+        names = [
+            str(reference.get("name"))
+            for reference in references
+            if isinstance(reference, dict) and reference.get("name")
+        ]
+        if names:
+            input_messages.append(
+                SystemMessage(
+                    content=(
+                        "当前会话已识别的供应商实体（后续‘它/这家供应商’默认优先指向这些实体）："
+                        + "、".join(dict.fromkeys(names))
+                        + "。若用户明确提到其他企业，以用户当前表述为准。"
+                    )
+                )
+            )
     if history:
         context = await build_context_messages(history)
         for m in context:

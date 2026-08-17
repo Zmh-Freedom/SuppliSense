@@ -18,7 +18,7 @@ from app.graphs.agent_supervisor.agents import run_ready_tasks
 from app.graphs.agent_supervisor.contracts import AgentResult, TaskPlan
 from app.graphs.agent_supervisor.decision import build_decision
 from app.graphs.agent_supervisor.evidence import merge_evidence
-from app.graphs.agent_supervisor.planner import plan_agent_task
+from app.graphs.agent_supervisor.planner import fallback_requirement_from_query, plan_agent_task
 from app.graphs.agent_supervisor.state import AgentTaskState
 from app.graphs.approval import request_supervisor_approval
 from app.graphs.sourcing_risk_v2.checkpointer import (
@@ -91,10 +91,33 @@ async def load_task(state: AgentTaskState) -> dict[str, Any]:
 
 async def plan_task(state: AgentTaskState) -> dict[str, Any]:
     """Build and durably expose the deterministic task plan."""
-    plan = plan_agent_task(state.get("user_query", ""), dict(state.get("intent", {})))
+    intent = dict(state.get("intent", {}))
+    references = state.get("supplier_references", [])
+    if (
+        "company_name" not in intent
+        and references
+        and any(
+            token in state.get("user_query", "")
+            for token in ("它", "这家", "该供应商", "该企业")
+        )
+    ):
+        first_reference = references[0]
+        if isinstance(first_reference, dict) and first_reference.get("name"):
+            intent["company_name"] = first_reference["name"]
+    if "requirement" not in intent:
+        from app.domains.sourcing_risk.requirement_service import parse_requirement
+
+        parsed = await _call_sync(parse_requirement, state.get("user_query", ""))
+        if parsed.get("status") == "ready":
+            intent["requirement"] = parsed["requirement"]
+        else:
+            fallback = fallback_requirement_from_query(state.get("user_query", ""))
+            if fallback:
+                intent["requirement"] = fallback
+    plan = plan_agent_task(state.get("user_query", ""), intent)
     serialized = plan.model_dump(mode="json")
     await _persist(state, "PLANNING", "planning", {"plan": serialized})
-    return {"plan": serialized, "task_status": "PLANNING"}
+    return {"plan": serialized, "intent": intent, "task_status": "PLANNING"}
 
 
 async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:

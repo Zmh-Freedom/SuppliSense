@@ -67,6 +67,13 @@ export interface WatchlistData {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  references?: SupplierReference[];
+}
+
+export interface SupplierReference {
+  name: string;
+  kind?: 'supplier' | string;
+  source?: string;
 }
 
 // ---- Chat Charts ----

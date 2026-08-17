@@ -41,6 +41,40 @@ def _company_name(context: AgentTaskContext) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
+def _sourcing_evidence(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "evidence_id": f"supplier:{candidate.get('supplier_id') or index}",
+            "source": "本地供应商主数据",
+            "source_type": "internal",
+            "freshness": "fresh",
+            "confidence": 0.9,
+            "company_id": str(candidate.get("supplier_id") or "") or None,
+            "dimension": "sourcing",
+            "claim": f"匹配供应商：{candidate.get('supplier_name') or '未命名供应商'}",
+            "metadata": {"supplier": candidate},
+        }
+        for index, candidate in enumerate(candidates)
+    ]
+
+
+def _risk_evidence(company_name: str, risk_info: Any) -> list[dict[str, Any]]:
+    if risk_info is None:
+        return []
+    payload = risk_info.model_dump() if hasattr(risk_info, "model_dump") else dict(risk_info)
+    return [{
+        "evidence_id": f"risk:{company_name}",
+        "source": "本地企业风险记录",
+        "source_type": "internal",
+        "freshness": "fresh",
+        "confidence": 0.85,
+        "company_id": company_name,
+        "dimension": "risk",
+        "claim": f"已读取 {company_name} 的本地风险记录",
+        "metadata": {"risk": payload},
+    }]
+
+
 async def _run_sourcing(context: AgentTaskContext) -> AgentResult:
     """Search the local supplier library through its read-only V2 boundary."""
     requirement = context.intent.get("requirement")
@@ -54,25 +88,54 @@ async def _run_sourcing(context: AgentTaskContext) -> AgentResult:
     from app.domains.sourcing_risk.discovery_service import discover_local_candidates
 
     candidates = await asyncio.to_thread(discover_local_candidates, requirement, {})
+    evidence = _sourcing_evidence(candidates)
     return AgentResult(
         agent="sourcing",
-        status="completed",
+        status="completed" if evidence else "needs_review",
         summary=f"已从本地供应商库检索到 {len(candidates)} 个候选供应商。",
-        metrics=AgentMetrics(evidence_count=len(candidates)),
+        evidence=evidence,
+        metrics=AgentMetrics(evidence_count=len(evidence)),
     )
 
 
 async def _run_risk(context: AgentTaskContext) -> AgentResult:
     """Read existing risk records without invoking snapshot-producing assessment."""
-    company_name = _company_name(context)
-    if company_name is None:
-        return AgentResult(agent="risk", status="needs_review", summary="缺少待评估供应商名称。")
-
     from app.domains.risk.repo_company import get_risk_info
+
+    company_name = _company_name(context)
+    sourcing = context.dependency_results.get("sourcing")
+    candidates = [
+        item.metadata.get("supplier", {})
+        for item in (sourcing.evidence if sourcing else [])
+        if item.metadata.get("supplier")
+    ]
+    if company_name is None and len(candidates) == 1:
+        company_name = str(candidates[0].get("supplier_name") or "") or None
+    if company_name is None:
+        if not candidates:
+            return AgentResult(agent="risk", status="needs_review", summary="缺少待评估供应商名称。")
+        risk_records = []
+        for candidate in candidates:
+            name = str(candidate.get("supplier_name") or "").strip()
+            if name:
+                risk_records.append((name, await asyncio.to_thread(get_risk_info, name)))
+        evidence = [item for name, info in risk_records for item in _risk_evidence(name, info)]
+        return AgentResult(
+            agent="risk",
+            status="completed" if evidence else "needs_review",
+            summary=f"已读取 {len(evidence)} 个候选供应商的本地风险记录。" if evidence else "候选供应商暂无本地风险记录。",
+            evidence=evidence,
+            metrics=AgentMetrics(evidence_count=len(evidence)),
+        )
 
     risk_info = await asyncio.to_thread(get_risk_info, company_name)
     summary = "未找到本地风险记录。" if risk_info is None else "已读取本地风险记录。"
-    return AgentResult(agent="risk", status="completed", summary=summary)
+    return AgentResult(
+        agent="risk",
+        status="completed" if risk_info is not None else "needs_review",
+        summary=summary,
+        evidence=_risk_evidence(company_name, risk_info),
+    )
 
 
 async def _run_compliance(context: AgentTaskContext) -> AgentResult:

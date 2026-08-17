@@ -43,6 +43,7 @@ class EvidenceItem(BaseModel):
     company_id: str | None = None
     dimension: str | None = None
     claim: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentFinding(BaseModel):
