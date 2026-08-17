@@ -97,7 +97,7 @@ def _search_web_candidates(category: str, specification: str, region: str) -> li
         snippet = snippet_node.get_text(" ", strip=True) if snippet_node else ""
         if not _search_result_is_relevant(" ".join((title, snippet)), category, specification):
             continue
-        company_name = _extract_company_name(" ".join((title, snippet)))
+        company_name = _extract_company_name(title) or _extract_company_name(snippet)
         if not company_name:
             continue
         contact = _extract_contact_fields(url, snippet)
@@ -145,7 +145,7 @@ def _search_duckduckgo_candidates(category: str, specification: str, region: str
         snippet = snippet_node.get_text(" ", strip=True) if snippet_node else ""
         if not _search_result_is_relevant(" ".join((title, snippet)), category, specification):
             continue
-        company_name = _extract_company_name(" ".join((title, snippet)))
+        company_name = _extract_company_name(title) or _extract_company_name(snippet)
         if not company_name:
             continue
         url = _normalise_result_url(str(title_node.get("href") or ""))
@@ -253,14 +253,23 @@ def _industry_codes_for_category(category: str) -> tuple[str, ...]:
 
 _COMPANY_NAME_PATTERN = re.compile(
     r"([\u4e00-\u9fa5A-Za-z0-9（）()·&\-]{2,40}"
-    r"(?:有限公司|股份有限公司|有限责任公司|股份公司))"
+    r"(?:股份有限公司|有限责任公司|有限公司|股份公司))"
 )
+
+_COMPANY_NAME_NOISE = re.compile(r"(?:推荐|包括|例如|名单|网站首页|首页|关于我们|产品中心)")
 
 
 def _extract_company_name(text: str) -> str | None:
-    """Extract only names with a legal-company suffix; never treat a page title as a company."""
-    match = _COMPANY_NAME_PATTERN.search(text)
-    return match.group(1).strip() if match else None
+    """Extract a legal company name after removing common search-title prefixes."""
+    if not text:
+        return None
+    segments = re.split(r"[|｜—–:：,，。；;!?！？/／<>《》【】\[\]]|(?<![A-Za-z0-9])[-_]", text)
+    for segment in reversed(segments):
+        cleaned = _COMPANY_NAME_NOISE.split(segment)[-1].strip()
+        matches = list(_COMPANY_NAME_PATTERN.finditer(cleaned))
+        if matches:
+            return matches[-1].group(1).strip(" -_")
+    return None
 
 
 def _normalise_result_url(url: str) -> str:

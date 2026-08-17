@@ -182,6 +182,18 @@ def test_tianyancha_provider_maps_steel_to_industry_codes(monkeypatch):
     assert all(item["verification_status"] == "unverified" for item in result)
 
 
+def test_company_name_extraction_removes_search_title_prefixes():
+    assert discovery_service._extract_company_name(
+        "第六届上海大宗商品周优质供应商TOP20推荐天津市瑞达钢材销售有限公司"
+    ) == "天津市瑞达钢材销售有限公司"
+    assert discovery_service._extract_company_name(
+        "网站首页-上海铸然供应链（集团）有限公司"
+    ) == "上海铸然供应链（集团）有限公司"
+    assert discovery_service._extract_company_name(
+        "振石集团东方特钢有限公司"
+    ) == "振石集团东方特钢有限公司"
+
+
 def test_sufficiency_requires_every_explicit_constraint_to_be_covered():
     """Counting candidates alone would allow a required qualification to be missed."""
     candidates = [
