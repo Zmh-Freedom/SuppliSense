@@ -27,6 +27,7 @@ _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "search_company", "assess_risk", "esg_assessment", "predict_risk", "macro_risk",
     "create_sourcing_request", "search_suppliers", "select_sourcing_result",
     "find_alternatives", "expand_supplier_library",
+    "discover_web_suppliers",
     "analyze_trend", "analyze_watchlist_trend", "compare_companies",
     "get_watchlist", "check_alert",
 )]

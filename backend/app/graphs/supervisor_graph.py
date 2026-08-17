@@ -30,6 +30,7 @@ _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "search_company", "assess_risk", "esg_assessment", "predict_risk", "macro_risk",
     "create_sourcing_request", "search_suppliers", "select_sourcing_result",
     "find_alternatives", "expand_supplier_library",
+    "discover_web_suppliers",
     "analyze_trend", "analyze_watchlist_trend", "compare_companies",
     "get_watchlist", "check_alert",
 )]
@@ -49,7 +50,7 @@ RISK_PROMPT = """你是风险评估与寻源专家。
 2. 使用 search_company 确认企业全称后调用 assess_risk
 3. 上市公司要分析财报，debt_ratio=0 表示数据缺失不要解读为低负债
 4. 用户需要找供应商时，用 create_sourcing_request 创建需求，再调用 search_suppliers 搜索
-5. 本地库找不到或结果太少时，可先用 expand_supplier_library 从天眼查扩充供应商库
+5. 本地库找不到或结果太少时，优先用 discover_web_suppliers 联网发现待核验候选；不得自动写入供应商主库
 6. 监控清单相关：趋势分析调用 analyze_watchlist_trend，查看清单调用 get_watchlist
 7. 回答简洁，300 字以内，中文
 

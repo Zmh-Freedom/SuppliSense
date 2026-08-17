@@ -32,7 +32,7 @@ SOURCING_SYSTEM = """你是一个采购寻源助手。用户想通过自然语�
 3. 调用 search_suppliers 执行搜索并获取排序结果
 4. 以清晰的格式呈现候选供应商，包括匹配分、风险分和推荐理由
 
-如果有供应商结果，请以表格形式展示关键信息，然后是风险要点。
+如果有供应商结果，请以表格形式展示关键信息；外部候选优先展示官网/来源链接、电话、邮箱（没有则明确写“待核验/未找到”），然后是风险要点。
 如果无匹配结果，告知用户并建议扩充供应商库。"""
 
 
@@ -47,11 +47,13 @@ def _get_sourcing_tools():
             create_sourcing_request,
             search_suppliers,
             select_sourcing_result,
+            discover_web_suppliers,
         )
         _SOURCING_TOOLS = [
             create_sourcing_request,
             search_suppliers,
             select_sourcing_result,
+            discover_web_suppliers,
         ]
     return _SOURCING_TOOLS
 

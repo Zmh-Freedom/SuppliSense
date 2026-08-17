@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     TIANYANCHA_TOKEN: str = os.getenv("TIANYANCHA_TOKEN", "")
     TIANYANCHA_BASE_URL: str = os.getenv("TIANYANCHA_BASE_URL", "https://open.api.tianyancha.com")
 
+    # 联网供应商发现（只读候选发现，不自动入库）
+    SUPPLIER_DISCOVERY_WEB_ENABLED: bool = os.getenv(
+        "SUPPLIER_DISCOVERY_WEB_ENABLED", "true"
+    ).lower() == "true"
+    SUPPLIER_DISCOVERY_WEB_MAX_RESULTS: int = int(
+        os.getenv("SUPPLIER_DISCOVERY_WEB_MAX_RESULTS", "10")
+    )
+
     # LLM
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")

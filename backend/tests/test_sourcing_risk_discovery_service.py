@@ -89,6 +89,99 @@ def test_external_candidates_are_staged_without_supplier_or_company_id():
     assert staged[0]["run_id"] == "run-id"
 
 
+def test_web_provider_returns_unverified_company_leads_without_writing(monkeypatch):
+    class Response:
+        text = """
+        <li class="b_algo">
+          <h2><a href="https://steel.example.com">华东钢材供应有限公司 - 产品中心</a></h2>
+          <div class="b_caption"><p>主营钢板、型钢和不锈钢材料。</p></div>
+        </li>
+        <li class="b_algo">
+          <h2><a href="https://noise.example.com">钢材行业资讯</a></h2>
+          <div class="b_caption"><p>行业新闻，不是供应商。</p></div>
+        </li>
+        """
+
+        def raise_for_status(self):
+            return None
+
+    request = Mock(return_value=Response())
+    monkeypatch.setattr(discovery_service.httpx, "get", request)
+    monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", lambda *_: [])
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_MAX_RESULTS", 5)
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_ENABLED", True)
+
+    result = discovery_service.search_external_provider({"category": "钢材", "region": "华东"})
+
+    assert len(result) == 1
+    assert result[0]["supplier_name"] == "华东钢材供应有限公司"
+    assert result[0]["verification_status"] == "unverified"
+    assert result[0]["source_reference"] == "https://steel.example.com"
+    assert request.call_count == 1
+
+
+def test_web_provider_can_be_disabled(monkeypatch):
+    request = Mock()
+    monkeypatch.setattr(discovery_service.httpx, "get", request)
+    monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", lambda *_: [])
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_ENABLED", False)
+
+    assert discovery_service.search_external_provider({"category": "钢材"}) == []
+    request.assert_not_called()
+
+
+def test_external_provider_combines_tianyancha_and_web_candidates(monkeypatch):
+    tianyancha = [{
+        "supplier_name": "华东钢材供应有限公司",
+        "source": "tianyancha_search",
+    }, {
+        "supplier_name": "河北钢铁供应有限公司",
+        "source": "tianyancha_search",
+    }]
+    web = [{
+        "supplier_name": "华东钢材供应有限公司",
+        "source": "web_search",
+    }, {
+        "supplier_name": "山东钢材供应有限公司",
+        "source": "web_search",
+    }]
+    monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", lambda *_: tianyancha)
+    monkeypatch.setattr(discovery_service, "_search_web_candidates", lambda *_: web)
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_ENABLED", True)
+
+    result = discovery_service.search_external_provider({"category": "钢材"})
+
+    assert [item["supplier_name"] for item in result] == [
+        "华东钢材供应有限公司",
+        "河北钢铁供应有限公司",
+        "山东钢材供应有限公司",
+    ]
+
+
+def test_tianyancha_provider_maps_steel_to_industry_codes(monkeypatch):
+    requested_codes: list[str] = []
+
+    def search_companies(**kwargs):
+        code = kwargs.get("industry", "")
+        requested_codes.append(code)
+        return {
+            "items": [{
+                "name": f"钢材企业{code}有限公司",
+                "regNumber": f"code-{code}",
+            }],
+            "total": 1,
+        }
+
+    monkeypatch.setattr("app.services.tianyancha_client.search_companies", search_companies)
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_MAX_RESULTS", 10)
+
+    result = discovery_service._search_tianyancha_candidates("钢材/金属材料", "", "")
+
+    assert set(requested_codes) == {"311", "312", "313", "331"}
+    assert len(result) == 4
+    assert all(item["verification_status"] == "unverified" for item in result)
+
+
 def test_sufficiency_requires_every_explicit_constraint_to_be_covered():
     """Counting candidates alone would allow a required qualification to be missed."""
     candidates = [

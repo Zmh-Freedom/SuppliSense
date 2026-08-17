@@ -20,6 +20,7 @@ from app.domains.sourcing.tools import (
     search_suppliers,
     select_sourcing_result,
     expand_supplier_library,
+    discover_web_suppliers,
 )
 
 TOOLS_LIST = [
@@ -48,4 +49,5 @@ TOOLS_LIST = [
     search_suppliers,
     select_sourcing_result,
     expand_supplier_library,
+    discover_web_suppliers,
 ]

@@ -20,7 +20,9 @@ def create_sourcing_request(title: str, category: str, spec: str) -> dict:
 
 @tool
 def search_suppliers(request_id: str) -> dict:
-    """执行供应商搜索和风险评估排序，返回 Top-10 候选供应商结果。
+    """先检索本地历史供应商，再在候选不足时并行发现天眼查和联网候选。
+
+    外部候选只会以 staged_external 返回，不会自动写入供应商主库。
 
     Args:
         request_id: 寻源请求 ID（由 create_sourcing_request 返回）
@@ -62,3 +64,25 @@ def expand_supplier_library(keyword: str = "", industry: str = "", region: str =
     """
     from app.domains.sourcing.import_service import import_from_tianyancha_search
     return import_from_tianyancha_search(keyword=keyword, industry=industry, region=region, max_results=50)
+
+
+@tool
+def discover_web_suppliers(category: str, specification: str = "", region: str = "") -> dict:
+    """联网发现供应商候选，只返回待核验结果，不写入供应商主库。
+
+    Args:
+        category: 采购品类，如“钢材”或“不锈钢板”。
+        specification: 规格或产品关键词。
+        region: 期望供应商地区。
+    """
+    from app.domains.sourcing_risk.discovery_service import search_external_provider, stage_external_candidates
+
+    requirement = {"category": category, "specification": specification, "region": region}
+    candidates = search_external_provider(requirement)
+    staged = stage_external_candidates("", candidates)
+    return {
+        "source": "public_web_search",
+        "status": "staged_external",
+        "candidates": staged,
+        "message": "联网结果仅为待核验候选，确认前不会写入供应商主库。",
+    }

@@ -29,6 +29,13 @@ from app.domains.knowledge.embedding import encode_single
 
 logger = get_logger(__name__)
 
+# 向量相似度只能负责召回，不能替代采购品类约束。
+_CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
+    "钢材": (
+        "钢材", "钢板", "钢卷", "型钢", "不锈钢", "合金钢", "碳钢", "钢管",
+        "钢筋", "线材", "棒材",
+    ),
+}
 
 
 def create_sourcing_request(req: SourcingRequestInput, user_id: str) -> str:
@@ -67,12 +74,31 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
 
     # 2. 向量检索 (limit to top_k=10 for speed)
     candidates = _vector_search(query_text, top_k=10)
-    if not candidates:
+    candidates = _filter_category_candidates(candidates, req_doc.get("category", ""))
+    external_candidates: list[dict] = []
+    if len(candidates) < 3:
+        from app.domains.sourcing_risk.discovery_service import search_external_provider, stage_external_candidates
+
+        external_candidates = stage_external_candidates(
+            request_id,
+            search_external_provider({
+                "category": req_doc.get("category", ""),
+                "specification": req_doc.get("spec", ""),
+                "region": req_doc.get("region_required", ""),
+            }),
+        )
+    if not candidates and not external_candidates:
         update_request_status(request_id, "done", 0)
-        return {"request_id": request_id, "status": "done", "results": [], "message": "本地供应商库未找到匹配结果"}
+        return {
+            "request_id": request_id,
+            "status": "done",
+            "results": [],
+            "external_candidates": [],
+            "message": f"本地供应商库未找到品类“{req_doc.get('category', '')}”的匹配结果",
+        }
 
     # 3. 快速风险查分（MongoDB 快照，不调外部 API）
-    risk_map = _batch_assess_risk(candidates)
+    risk_map = _batch_assess_risk(candidates) if candidates else {}
 
     # 4. 排序
     results = []
@@ -126,6 +152,15 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
     return {
         "request_id": request_id,
         "status": "done",
+        "external_candidates": external_candidates,
+        "external_status": "staged" if external_candidates else "not_required",
+        "message": (
+            f"本地暂无“{req_doc.get('category', '')}”匹配，以下为天眼查和联网搜索的待核验候选。"
+            if external_candidates and not candidates
+            else "已综合本地历史候选，外部补充结果待人工核验。"
+            if external_candidates
+            else "已返回本地供应商候选。"
+        ),
         "results": [{
             "result_id": r["result_id"],
             "supplier_name": r["supplier_name"],
@@ -299,6 +334,39 @@ def _vector_search(query_text: str, top_k: int = 20) -> list[dict[str, Any]]:
             {"supplier_name": row[0], "content": row[1], "metadata": row[2], "match_score": float(row[3])}
             for row in rows
         ]
+
+
+def _filter_category_candidates(
+    candidates: list[dict[str, Any]], category: Any,
+) -> list[dict[str, Any]]:
+    """Apply a hard category gate after vector recall."""
+    if not isinstance(category, str) or not category.strip():
+        return candidates
+
+    requested = _normalise_category_text(category)
+    accepted_terms = _CATEGORY_ALIASES.get(requested, (requested,))
+    return [
+        candidate
+        for candidate in candidates
+        if any(
+            _normalise_category_text(term) in _candidate_category_text(candidate)
+            for term in accepted_terms
+        )
+    ]
+
+
+def _candidate_category_text(candidate: dict[str, Any]) -> str:
+    """Build searchable category text from current and legacy PG records."""
+    metadata = candidate.get("metadata")
+    metadata_categories = metadata.get("categories", []) if isinstance(metadata, dict) else []
+    if isinstance(metadata_categories, str):
+        metadata_categories = [metadata_categories]
+    values = [candidate.get("content", ""), *metadata_categories]
+    return _normalise_category_text(" ".join(str(value) for value in values if value))
+
+
+def _normalise_category_text(value: str) -> str:
+    return "".join(value.casefold().split())
 
 
 def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
