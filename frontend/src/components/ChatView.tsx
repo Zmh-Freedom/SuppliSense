@@ -6,6 +6,8 @@ import { chatStream, resumeChat } from '../api';
 import type { ApprovalData } from '../api';
 import type { ChatMessage, ChartData } from '../types';
 import ChartRenderer from './ChartRenderer';
+import AgentWorkflowPanel from './AgentWorkflowPanel';
+import type { AgentStatus } from './AgentWorkflowPanel';
 
 // react-markdown 自定义渲染：支持 ```chart 代码块
 const markdownComponents = {
@@ -46,6 +48,11 @@ interface Session {
 
 const STORAGE_KEY = 'chat_sessions';
 
+function agentFromTool(tool: string): string | null {
+  const match = tool.match(/^(sourcing|risk|compliance|sentiment)_agent$/);
+  return match ? match[1] : null;
+}
+
 function loadSessions(): Session[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -62,10 +69,14 @@ function saveSessions(sessions: Session[]) {
 interface StreamState {
   thinking: string;
   plan: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> | null;
-  agents: { selected: string[]; reasoning: string; status: Record<string, 'running' | 'complete' | 'error'> } | null;
+  agents: { selected: string[]; reasoning: string; status: Record<string, AgentStatus>; descriptions?: Record<string, string> } | null;
   toolCalls: Array<{ tool: string; args: Record<string, unknown>; result?: unknown }>;
   answerChunks: string[];
+  answerStarted: boolean;
   approval: ApprovalData | null;
+  approvalSubmitting: boolean;
+  error?: string;
+  done?: boolean;
   charts: ChartData[];
 }
 
@@ -140,7 +151,7 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs, isNewSession);
     setLoading(true);
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], approval: null, charts: [] });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [] });
     answerAccRef.current = '';
 
     try {
@@ -157,39 +168,53 @@ export default function ChatView() {
             agents: {
               selected: data.agents,
               reasoning: data.reasoning,
-              status: Object.fromEntries(data.agents.map(a => [a, 'running']))
+              status: Object.fromEntries(data.agents.map(a => [a, 'running' as AgentStatus]))
             }
           } : null);
         },
         onAgentStart: (data) => {
           setStreamState(prev => {
-            if (!prev || !prev.agents) return null;
+            if (!prev) return null;
+            const agents = prev.agents || { selected: [], reasoning: '', status: {} };
             return {
               ...prev,
               agents: {
-                ...prev.agents,
-                status: { ...prev.agents.status, [data.agent]: 'running' }
+                ...agents,
+                selected: agents.selected.includes(data.agent) ? agents.selected : [...agents.selected, data.agent],
+                status: { ...agents.status, [data.agent]: 'running' }
               }
             };
           });
         },
         onAgentComplete: (data) => {
           setStreamState(prev => {
-            if (!prev || !prev.agents) return null;
+            if (!prev) return null;
+            const agents = prev.agents || { selected: [], reasoning: '', status: {} };
             return {
               ...prev,
               agents: {
-                ...prev.agents,
-                status: { ...prev.agents.status, [data.agent]: 'complete' }
+                ...agents,
+                selected: agents.selected.includes(data.agent) ? agents.selected : [...agents.selected, data.agent],
+                status: { ...agents.status, [data.agent]: 'complete' }
               }
             };
           });
         },
         onToolCall: (data) => {
-          setStreamState(prev => prev ? {
-            ...prev,
-            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }]
-          } : null);
+          setStreamState(prev => {
+            if (!prev) return null;
+            const agent = agentFromTool(data.tool);
+            const agents = agent ? (prev.agents || { selected: [], reasoning: '', status: {} }) : prev.agents;
+            return {
+              ...prev,
+              agents: agent && agents ? {
+                ...agents,
+                selected: agents.selected.includes(agent) ? agents.selected : [...agents.selected, agent],
+                status: { ...agents.status, [agent]: 'running' },
+              } : agents,
+              toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }]
+            };
+          });
         },
         onToolResult: (data) => {
           setStreamState(prev => {
@@ -199,14 +224,20 @@ export default function ChatView() {
             if (lastTool && lastTool.tool === data.tool) {
               lastTool.result = data.result;
             }
-            return { ...prev, toolCalls };
+            const agent = agentFromTool(data.tool);
+            const agents = agent && prev.agents ? {
+              ...prev.agents,
+              status: { ...prev.agents.status, [agent]: 'complete' as AgentStatus },
+            } : prev.agents;
+            return { ...prev, agents, toolCalls };
           });
         },
         onAnswerChunk: (data) => {
           answerAccRef.current += data.text;
           setStreamState(prev => prev ? {
             ...prev,
-            answerChunks: [...prev.answerChunks, data.text]
+            answerChunks: [...prev.answerChunks, data.text],
+            answerStarted: true,
           } : null);
         },
         onDone: (data) => {
@@ -221,7 +252,15 @@ export default function ChatView() {
           console.error('Stream error:', data.message);
           const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: `错误：${data.message}` }];
           persist(sid, failedMsgs);
-          setStreamState(null);
+          setStreamState(prev => prev ? {
+            ...prev,
+            error: data.message,
+            approvalSubmitting: false,
+            agents: prev.agents ? {
+              ...prev.agents,
+              status: Object.fromEntries(Object.entries(prev.agents.status).map(([agent, status]) => [agent, status === 'running' ? 'error' : status])) as Record<string, AgentStatus>,
+            } : null,
+          } : null);
           setLoading(false);
         },
         onClarification: (data) => {
@@ -262,10 +301,11 @@ export default function ChatView() {
     const updatedMsgs = [...msgs, approvalMsg];
     persist(approvalSid, updatedMsgs);
 
-    // 清除审批 UI，恢复 loading 状态继续流式输出
+    // 保留审批内容并标记提交中，恢复 loading 状态继续流式输出
     setStreamState(prev => prev ? {
       ...prev,
-      approval: null,
+      approval: prev.approval,
+      approvalSubmitting: true,
       thinking: '正在执行操作...',
       toolCalls: [],
       answerChunks: [],
@@ -278,7 +318,7 @@ export default function ChatView() {
     try {
       await resumeChat(approvalSid, approved, {
         onThinking: (data) => {
-          setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
+          setStreamState(prev => prev ? { ...prev, thinking: data.message, approvalSubmitting: true } : null);
         },
         onToolCall: (data) => {
           setStreamState(prev => prev ? {
@@ -301,7 +341,8 @@ export default function ChatView() {
           answerAccRef.current += data.text;
           setStreamState(prev => prev ? {
             ...prev,
-            answerChunks: [...prev.answerChunks, data.text]
+            answerChunks: [...prev.answerChunks, data.text],
+            answerStarted: true,
           } : null);
         },
         onChartData: (data) => {
@@ -321,7 +362,7 @@ export default function ChatView() {
         onError: (data) => {
           const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: `错误：${data.message}` }];
           persist(approvalSid, failedMsgs);
-          setStreamState(null);
+          setStreamState(prev => prev ? { ...prev, error: data.message, approvalSubmitting: false } : null);
           setLoading(false);
         },
       });
@@ -329,7 +370,7 @@ export default function ChatView() {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: isTimeout ? '请求超时，请重试' : '操作失败，请重试' }];
       persist(approvalSid, failedMsgs);
-      setStreamState(null);
+      setStreamState(prev => prev ? { ...prev, error: isTimeout ? '请求超时，请重试' : '操作失败，请重试', approvalSubmitting: false } : null);
       setLoading(false);
     }
   }, [streamState, msgs, persist]);
@@ -484,100 +525,15 @@ export default function ChatView() {
             </div>
           </div>
         ))}
-        {loading && streamState && (
+        {streamState && (loading || streamState.error) && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-[var(--color-surface-selected)] flex items-center justify-center text-xs font-semibold text-[var(--color-text-secondary)] shrink-0">AI</div>
             <div className="max-w-[80%] space-y-2">
-              {/* Thinking indicator */}
-              {streamState.thinking && streamState.answerChunks.length === 0 && (
-                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-gray-500 shadow-sm">
-                  <span className="inline-block animate-pulse">{streamState.thinking}</span>
-                </div>
-              )}
-              {/* Execution plan (Plan-and-Execute mode) */}
-              {streamState.plan && streamState.plan.length > 0 && streamState.toolCalls.length === 0 && (
-                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-xs shadow-sm">
-                  <div className="text-gray-500 mb-2">📋 执行计划：</div>
-                  <div className="space-y-1">
-                    {streamState.plan.map((step, i) => (
-                      <div key={i} className="flex items-center gap-2 text-gray-600">
-                        <span className="text-gray-400">{i + 1}.</span>
-                        <span className="font-mono">{step.tool}</span>
-                        {step.parallel && <span className="text-blue-400 text-[10px]">并行</span>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {/* Agent selection (Multi-Agent mode) */}
-              {streamState.agents && streamState.agents.selected.length > 0 && streamState.toolCalls.length === 0 && (
-                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-xs shadow-sm">
-                  <div className="text-gray-500 mb-2">🤖 Agent 分配：</div>
-                  <div className="space-y-2">
-                    <div className="text-gray-400 text-[11px] italic">{streamState.agents.reasoning}</div>
-                    <div className="space-y-1">
-                      {streamState.agents.selected.map((agent, i) => {
-                        const status = streamState.agents?.status[agent] || 'running';
-                        const statusIcon = status === 'complete' ? '✓' : status === 'error' ? '✗' : '⏳';
-                        const statusColor = status === 'complete' ? 'text-green-500' : status === 'error' ? 'text-red-500' : 'text-blue-400';
-                        return (
-                          <div key={i} className="flex items-center gap-2 text-gray-600">
-                            <span className={statusColor}>{statusIcon}</span>
-                            <span className="font-mono">{agent}</span>
-                            {status === 'running' && <span className="text-blue-400 text-[10px] animate-pulse">分析中...</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {/* Tool calls */}
-              {streamState.toolCalls.length > 0 && (
-                <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-xs space-y-2 shadow-sm">
-                  {streamState.toolCalls.map((tc, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className="text-[var(--color-text)] font-mono">🔧 {tc.tool}</span>
-                      <span className="text-gray-400 truncate flex-1">
-                        {JSON.stringify(tc.args)}
-                      </span>
-                      {tc.result !== undefined && (
-                        <span className="text-green-500">✓</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
+              <AgentWorkflowPanel state={streamState} onApproval={handleApproval} />
               {/* Auto-injected charts from tool results */}
               {streamState.charts.map((chart, i) => (
                 <ChartRenderer key={`chart-${i}`} data={chart} />
               ))}
-              {/* Approval card (Human-in-the-Loop) */}
-              {streamState.approval && (
-                <div className="bg-[var(--color-surface)] glass-surface border border-amber-200 rounded-2xl px-4 py-3 text-sm shadow-sm space-y-3">
-                  <div className="flex items-start gap-2">
-                    <span className="text-amber-500 shrink-0">⚠️</span>
-                    <span className="text-[var(--color-text)]">{streamState.approval.message}</span>
-                  </div>
-                  <div className="text-xs text-gray-400 font-mono pl-6">
-                    {streamState.approval.tool}({JSON.stringify(streamState.approval.args)})
-                  </div>
-                  <div className="flex gap-2 pl-6">
-                    <button
-                      onClick={() => handleApproval(true)}
-                      className="bg-green-500 text-white rounded-lg px-4 py-1.5 text-xs hover:bg-green-600 transition-colors"
-                    >
-                      ✓ 批准
-                    </button>
-                    <button
-                      onClick={() => handleApproval(false)}
-                      className="bg-gray-200 text-gray-600 rounded-lg px-4 py-1.5 text-xs hover:bg-gray-300 transition-colors"
-                    >
-                      ✗ 拒绝
-                    </button>
-                  </div>
-                </div>
-              )}
               {/* Streaming answer */}
               {streamState.answerChunks.length > 0 && (
                 <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
