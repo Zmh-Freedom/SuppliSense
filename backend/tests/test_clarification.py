@@ -27,6 +27,26 @@ class TestClarification:
         result = detect_clarification_needed("评估大华股份")
         assert result is None
 
+    def test_multiple_companies_joined_by和_are_not_blocked(self):
+        result = detect_clarification_needed(
+            "那先看一下深圳市立创电子和八方电气的风险情况"
+        )
+        assert result is None
+
+    def test_known_session_company_satisfies_clarification_guard(self):
+        result = detect_clarification_needed(
+            "那先看一下它的风险情况",
+            known_company_names=["深圳市立创电子"],
+        )
+        assert result is None
+
+    def test_known_session_companies_satisfy_plural_reference(self):
+        result = detect_clarification_needed(
+            "那对这两家做一下ESG评估、舆情分析",
+            known_company_names=["深圳市立创电子有限公司", "八方电气（苏州）股份有限公司"],
+        )
+        assert result is None
+
     def test_empty_string_returns_none(self):
         result = detect_clarification_needed("   ")
         assert result is None

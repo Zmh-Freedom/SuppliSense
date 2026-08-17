@@ -22,8 +22,8 @@ REFLECTOR_SYSTEM_PROMPT = """你是一个严谨的分析审核专家。请审查
 3. **完整性检查**：用户要求的所有分析维度（风险、舆情、合规、ESG 等）是否都已覆盖？
 
 输出 JSON（只输出 JSON，不要其他内容）：
-- 通过审查：{"pass": true, "feedback": ""}
-- 发现问题：{"pass": false, "feedback": "具体问题描述和修改建议（中文，100字以内）"}
+- 通过审查：{{"pass": true, "feedback": ""}}
+- 发现问题：{{"pass": false, "feedback": "具体问题描述和修改建议（中文，100字以内）"}}
 
 工具调用记录：
 {tool_results}

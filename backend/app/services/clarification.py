@@ -28,12 +28,12 @@ _NO_COMPANY_NEEDED_KEYWORDS = [
 _PRONOUN_PREFIXES = ("该", "本", "贵", "此", "那", "这")
 
 # 分词用的标点和空白
-_TOKEN_SEPARATORS = r"[，,。、；;:：\s（）()【】\[\]+]+"
+_TOKEN_SEPARATORS = r"[，,。、；;:：\s（）()【】\[\]+和及与/]+"
 
 # 分析动词前后缀，用于从 token 中剥离出可能的企业简称
-_PREFIXES = ["帮我分析", "帮我评估", "帮我查", "帮我看看",
+_PREFIXES = ["那先看一下", "先看一下", "那先看", "先看", "帮我分析", "帮我评估", "帮我查", "帮我看看",
              "分析", "评估", "查询", "查看", "看看", "帮我"]
-_TRAILINGS = ["的风险", "的财务", "的舆情", "的ESG", "的情况", "的数据",
+_TRAILINGS = ["的风险情况", "的风险", "的财务", "的舆情", "的ESG", "的情况", "的数据",
               "怎么样", "如何"]
 _FILLERS = ["一下", "下", "的"]
 
@@ -78,7 +78,10 @@ def _extract_company_candidate(msg: str) -> str | None:
     return None
 
 
-def detect_clarification_needed(message: str) -> ClarificationNeeded | None:
+def detect_clarification_needed(
+    message: str,
+    known_company_names: list[str] | None = None,
+) -> ClarificationNeeded | None:
     """检测用户输入是否缺少必要信息。
 
     规则：
@@ -90,6 +93,27 @@ def detect_clarification_needed(message: str) -> ClarificationNeeded | None:
 
     # Skip short messages (greetings, simple queries)
     if len(msg) < 5:
+        return None
+
+    # Explicitly referenced entities from the current session satisfy the guard.
+    if any(name and name in msg for name in (known_company_names or [])) or (
+        known_company_names
+        and any(
+            token in msg
+            for token in (
+                "它",
+                "这家",
+                "两家",
+                "这两家",
+                "两家公司",
+                "这两家公司",
+                "两家供应商",
+                "这两家供应商",
+                "该供应商",
+                "该企业",
+            )
+        )
+    ):
         return None
 
     # 白名单：监控清单整体分析、寻源推荐等场景不需要公司名

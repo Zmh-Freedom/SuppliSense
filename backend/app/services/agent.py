@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -7,6 +8,24 @@ from app.core.logging import get_logger
 
 logger = get_logger()
 
+_COMPANY_NAME_PATTERN = re.compile(
+    r"[\u4e00-\u9fffA-Za-z0-9（）()·\-]{2,40}(?:有限公司|股份有限公司|股份公司|集团有限公司)"
+)
+_GENERIC_COMPANY_NAMES = {"公司", "非上市公司", "两家公司", "缺少目标公司", "确认两家目标公司"}
+
+
+def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize references by supplier name, keeping the first source."""
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for reference in references:
+        name = str(reference.get("name", "")).strip()
+        if not name or name in _GENERIC_COMPANY_NAMES or name in seen:
+            continue
+        result.append({**reference, "name": name})
+        seen.add(name)
+    return result
+
 
 def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[str, Any]]:
     """Extract stable supplier entities from read-only tool output."""
@@ -14,7 +33,12 @@ def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[st
         try:
             value = json.loads(value)
         except (TypeError, ValueError):
-            return []
+            names = _COMPANY_NAME_PATTERN.findall(value)
+            return _dedupe_references([
+                {"name": name, "kind": "supplier", "source": tool_name or "Agent 回答"}
+                for name in dict.fromkeys(names)
+                if name not in _GENERIC_COMPANY_NAMES
+            ])
 
     names: list[str] = []
 
@@ -32,10 +56,10 @@ def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[st
 
     visit(value)
     source = tool_name or "Agent 工具结果"
-    return [
+    return _dedupe_references([
         {"name": name, "kind": "supplier", "source": source}
         for name in dict.fromkeys(names)
-    ]
+    ])
 
 
 def _load_history(session_id: str) -> list[dict]:
@@ -54,11 +78,24 @@ def _load_conversation_context(session_id: str) -> dict[str, list[dict[str, Any]
         for m in doc.get("messages", [])
         if m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str)
     ]
-    references = [
+    references = _dedupe_references([
         reference
         for reference in doc.get("references", [])
         if isinstance(reference, dict) and isinstance(reference.get("name"), str)
-    ]
+    ])
+    # Prefer the most recent assistant answer so expressions such as “这两家”
+    # refer to the latest selected suppliers instead of every historical result.
+    recent_references: list[dict[str, Any]] = []
+    for message in reversed(history):
+        if message["role"] != "assistant":
+            continue
+        recent_references = extract_supplier_references(
+            message["content"], "conversation_history"
+        )
+        if recent_references:
+            break
+    if recent_references:
+        references = _dedupe_references(recent_references)
     return {"history": history, "references": references}
 
 

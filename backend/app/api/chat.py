@@ -35,20 +35,24 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
 async def _langgraph_plan_execute_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Plan-Execute 模式流式输出。"""
     from app.graphs.plan_execute_graph import stream_plan_execute_graph
-    from app.services.agent import _load_history
+    from app.services.agent import _load_conversation_context
 
-    history = _load_history(session_id)
-    async for event in stream_plan_execute_graph(message, session_id, history, preference_context):
+    context = _load_conversation_context(session_id)
+    async for event in stream_plan_execute_graph(
+        message, session_id, context["history"], preference_context, context["references"]
+    ):
         yield event
 
 
 async def _langgraph_supervisor_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Supervisor 多智能体模式流式输出。"""
     from app.graphs.supervisor_graph import stream_supervisor_graph
-    from app.services.agent import _load_history
+    from app.services.agent import _load_conversation_context
 
-    history = _load_history(session_id)
-    async for event in stream_supervisor_graph(message, session_id, history, preference_context):
+    context = _load_conversation_context(session_id)
+    async for event in stream_supervisor_graph(
+        message, session_id, context["history"], preference_context, context["references"]
+    ):
         yield event
 
 
@@ -100,10 +104,16 @@ async def _langgraph_agent_supervisor_stream(
 async def _langgraph_parallel_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Parallel 并行多 Agent Map-Reduce 流式输出。"""
     from app.graphs.parallel_graph import stream_parallel_graph
-    from app.services.agent import _load_history
+    from app.services.agent import _load_conversation_context
 
-    history = _load_history(session_id)
-    async for event in stream_parallel_graph(message, session_id, history, preference_context):
+    context = _load_conversation_context(session_id)
+    async for event in stream_parallel_graph(
+        message,
+        session_id,
+        context["history"],
+        preference_context,
+        context["references"],
+    ):
         yield event
 
 
@@ -189,7 +199,25 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
         # Programmatic clarification check
         from app.services.clarification import detect_clarification_needed
-        clar = detect_clarification_needed(req.message)
+        known_company_names: list[str] = []
+        try:
+            from app.services.agent import _load_conversation_context
+
+            context = _load_conversation_context(sid)
+            known_company_names = [
+                str(reference["name"])
+                for reference in context["references"]
+                if reference.get("name")
+            ]
+        except Exception:
+            # The execution stream owns the normal database error handling.
+            # Clarification should remain usable when optional context is unavailable.
+            pass
+        clar = (
+            detect_clarification_needed(req.message, known_company_names)
+            if known_company_names
+            else detect_clarification_needed(req.message)
+        )
         if clar:
             yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing}, ensure_ascii=False)}\n\n"
             return

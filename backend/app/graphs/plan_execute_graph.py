@@ -294,6 +294,7 @@ async def stream_plan_execute_graph(
     session_id: str,
     history: list[dict] | None = None,
     preference_context: str = "",
+    references: list[dict] | None = None,
 ):
     """运行 Plan-Execute 图并 yield SSE 事件。
 
@@ -312,6 +313,9 @@ async def stream_plan_execute_graph(
         if any(m.get("role") == "system" for m in context):
             summary = next(m["content"] for m in context if m["role"] == "system")
             input_text = f"{summary}\n\n当前问题：{input_text}"
+    if references:
+        names = "、".join(reference["name"] for reference in references)
+        input_text = f"当前会话供应商引用：{names}\n\n当前问题：{input_text}"
 
     try:
         yield _sse_event("thinking", {"message": "正在分析问题并制定执行计划..."})

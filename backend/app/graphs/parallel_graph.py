@@ -311,7 +311,7 @@ async def synthesizer_node(state: ParallelState) -> dict[str, Any]:
 
     # 提取用户原始问题
     user_query = ""
-    for m in state.get("messages", []):
+    for m in reversed(state.get("messages", [])):
         if isinstance(m, HumanMessage):
             user_query = str(m.content)
             break
@@ -450,6 +450,7 @@ async def stream_parallel_graph(
     session_id: str,
     history: list[dict] | None = None,
     preference_context: str = "",
+    references: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
     """运行并行 Map-Reduce 图并 yield SSE 事件。
 
@@ -460,7 +461,7 @@ async def stream_parallel_graph(
     from app.services.agent import _save_turn
     from app.graphs.context import build_input_messages
 
-    input_messages = await build_input_messages(history or [], user_message)
+    input_messages = await build_input_messages(history or [], user_message, references)
 
     if preference_context:
         input_messages.insert(0, SystemMessage(content=preference_context))
@@ -593,8 +594,17 @@ async def stream_parallel_graph(
                     })
 
         # 保存对话历史
+        discovered_references = list(references or [])
         if all_text:
-            _save_turn(session_id, user_message, all_text)
+            from app.services.agent import extract_supplier_references
+
+            for reference in extract_supplier_references(all_text, "Agent 回答"):
+                if reference not in discovered_references:
+                    discovered_references.append(reference)
+            _save_turn(session_id, user_message, all_text, discovered_references)
+
+        if discovered_references:
+            yield _sse_event("references", {"items": discovered_references})
 
         yield _sse_event("done", {"answer": all_text})
 

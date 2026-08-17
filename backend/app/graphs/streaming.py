@@ -135,6 +135,11 @@ async def stream_agent_supervisor_graph(
 
         if full_answer:
             from app.services.agent import _save_turn
+            from app.services.agent import extract_supplier_references
+
+            for reference in extract_supplier_references(full_answer, "Agent 回答"):
+                if reference not in discovered_references:
+                    discovered_references.append(reference)
 
             _save_turn(session_id, user_message, full_answer, discovered_references)
         if discovered_references:
@@ -237,6 +242,11 @@ async def stream_react_graph(
         # 保存对话历史
         if full_answer:
             from app.services.agent import _save_turn
+            from app.services.agent import extract_supplier_references
+
+            for reference in extract_supplier_references(full_answer, "Agent 回答"):
+                if reference not in discovered_references:
+                    discovered_references.append(reference)
 
             _save_turn(session_id, user_message, full_answer, discovered_references)
 
