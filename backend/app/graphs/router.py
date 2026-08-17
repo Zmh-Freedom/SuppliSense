@@ -5,6 +5,7 @@
 
 from enum import Enum
 
+from app.graphs.agent_supervisor.planner import is_composite_request
 from app.graphs import build_shared_llm
 
 from app.core.config import settings
@@ -19,6 +20,7 @@ class Intent(str, Enum):
     MULTI_AGENT = "langgraph-multi-agent"
     PARALLEL = "langgraph-parallel"
     SOURCING = "langgraph-sourcing"
+    SUPERVISOR = "langgraph-agent-supervisor"
 
 
 # 关键词 → 意图映射（优先级：先匹配先胜）
@@ -63,8 +65,9 @@ _CLASSIFY_PROMPT = """你是用户意图分类器。根据用户消息，判断�
 - multi-agent：需要多个专业 Agent 顺序协作的任务（如"从风险、舆情、合规多角度分析..."）
 - parallel：需要多个 Agent 并行分析的任务（如"同时评估风险、舆情和合规"、"一起分析"）
 - sourcing：采购寻源相关（如"找供应商"、"推荐替代"、"寻源"）
+- supervisor：同时包含供应商寻源与风险/合规/舆情分析，需要组合 Agent 协作
 
-只输出模式名称（react / plan-execute / multi-agent / parallel / sourcing），不要输出其他内容。"""
+只输出模式名称（react / plan-execute / multi-agent / parallel / sourcing / supervisor），不要输出其他内容。"""
 
 
 # 意图 → 模式映射
@@ -74,6 +77,7 @@ _CLASSIFY_TO_INTENT = {
     "multi-agent": Intent.MULTI_AGENT,
     "parallel": Intent.PARALLEL,
     "sourcing": Intent.SOURCING,
+    "supervisor": Intent.SUPERVISOR,
 }
 
 # 寻源子图已就绪，不再降级
@@ -99,13 +103,18 @@ class IntentRouter:
 
         优先关键词匹配（零延迟），无命中时用 LLM 分类。
         """
-        # 1. 关键词匹配
+        # 1. 组合寻源 + 分析任务（必须优先于通用寻源关键词）
+        if is_composite_request(message):
+            logger.info("intent_routed_by_composite_keyword", intent=Intent.SUPERVISOR.value, message=message[:50])
+            return Intent.SUPERVISOR
+
+        # 2. 关键词匹配
         for keywords, intent in _KEYWORD_RULES:
             if any(kw in message for kw in keywords):
                 logger.info("intent_routed_by_keyword", intent=intent.value, message=message[:50])
                 return self._resolve_sourcing(intent)
 
-        # 2. LLM 分类兜底
+        # 3. LLM 分类兜底
         intent = self._classify_by_llm(message)
         logger.info("intent_routed_by_llm", intent=intent.value, message=message[:50])
         return self._resolve_sourcing(intent)
@@ -129,7 +138,7 @@ class IntentRouter:
             return Intent.RISK
 
     def _resolve_sourcing(self, intent: Intent) -> Intent:
-        """寻源子图尚未实现时降级到 react。"""
+        """保留寻源子图路由，其他意图原样返回。"""
         if intent == Intent.SOURCING:
             logger.info("sourcing_intent_downgraded", fallback=_FALLBACK_FROM_SOURCING.value)
             return _FALLBACK_FROM_SOURCING

@@ -40,6 +40,8 @@ from app.domains.risk.api_trend import router as trend_router
 from app.domains.sourcing.api import router as sourcing_router
 from app.domains.supplier.api import router as supplier_router
 from app.domains.sourcing.api_access import router as access_router
+from app.domains.agent_run.api import router as agent_run_router
+from app.domains.agent_run.rollout_api import router as agent_rollout_router
 from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.errors import (
@@ -60,6 +62,10 @@ from app.core.sentry import init_sentry
 from app.db.mongo import close_db, ensure_indexes
 from app.db.postgres import close_pool
 from app.db.init_pg import ensure_pg_schema
+from app.graphs.sourcing_risk_v2.checkpointer import (
+    close_sourcing_risk_checkpointer,
+    get_sourcing_risk_checkpointer,
+)
 from app.services.scheduler import start_scheduler, stop_scheduler
 
 # Setup logging
@@ -141,6 +147,8 @@ async def lifespan(app: FastAPI):
     ensure_indexes()
     ensure_pg_schema()
     create_default_admin()
+    if settings.AGENT_RUN_V2_ENABLED:
+        await get_sourcing_risk_checkpointer()
     # 预热 embedding 模型，避免首次调用阻塞 30s+
     from app.domains.knowledge.embedding import warmup as warmup_embedding
     warmup_embedding()
@@ -149,6 +157,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("application_shutting_down")
     stop_scheduler()
+    await close_sourcing_risk_checkpointer()
     close_db()
     close_pool()
     logger.info("application_stopped")
@@ -179,6 +188,7 @@ app = FastAPI(
         {"name": "compare", "description": "多企业横向对比"},
         {"name": "notifications", "description": "用户通知中心"},
         {"name": "async", "description": "异步任务管理"},
+        {"name": "agent-runs", "description": "智能寻源与风险 Agent V2 任务"},
     ],
 )
 
@@ -186,7 +196,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Last-Event-ID"],
     allow_credentials=True,
 )
 
@@ -275,6 +285,8 @@ api_v1.include_router(access_router)
 api_v1.include_router(trend_router)
 api_v1.include_router(compare_router)
 api_v1.include_router(notifications_router)
+api_v1.include_router(agent_run_router)
+api_v1.include_router(agent_rollout_router)
 
 app.include_router(api_v1)
 app.include_router(health_router)

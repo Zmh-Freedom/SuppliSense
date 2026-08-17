@@ -13,7 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _copy_scripts(project_dir: Path) -> None:
     for name in ("backup.sh", "start.sh", "stop.sh", "docker-compose.yml"):
         shutil.copy2(REPO_ROOT / name, project_dir / name)
-    (project_dir / ".env.docker").write_text("MONGO_DB=from_env_file\n", encoding="utf-8")
+    (project_dir / ".env.docker").write_text(
+        "MONGO_DB=from_env_file\n"
+        "PG_PASSWORD=fixture-pg-password\n"
+        "MONGO_PASSWORD=fixture-mongo-password\n"
+        "REDIS_PASSWORD=fixture-redis-password\n",
+        encoding="utf-8",
+    )
 
 
 def _fake_docker(bin_dir: Path) -> None:

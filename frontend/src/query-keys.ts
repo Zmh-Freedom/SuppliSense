@@ -25,6 +25,7 @@ export const queryKeys = {
   unreadCount: ['notifications', 'unread'] as const,
   sourcingRequests: ['sourcing', 'requests'] as const,
   sourcingDetail: (id: string) => ['sourcing', 'requests', id] as const,
+  agentRunDetail: (id: string) => ['agent-runs', id] as const,
   suppliers: ['sourcing', 'suppliers'] as const,
   accessApplications: (status?: string) => ['sourcing', 'access-applications', status] as const,
   supplierProfile: (id: string) => ['supplier', 'profile', id] as const,

@@ -12,11 +12,13 @@ from app.core.errors import DomainError
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, get_cursor, put_conn
 from app.domains.outbox import repo as outbox_repo
+from app.domains.outbox import service as outbox_service
 from app.domains.outbox.repo import (
     claim_events,
     enqueue_event,
     mark_failed,
     mark_published,
+    record_consumption,
 )
 from app.domains.outbox.service import (
     list_events,
@@ -25,6 +27,10 @@ from app.domains.outbox.service import (
     replay_event,
     retry_delay_seconds,
 )
+
+
+_TEST_EVENT_TYPE_PATTERN = "test.outbox.%"
+_TEST_EVENT_ID_PATTERN = "00000000-0000-4000-8000-000000000%"
 
 
 @contextmanager
@@ -50,6 +56,84 @@ def _delete_event(event_id: str) -> None:
             "DELETE FROM audit_logs WHERE action = %s AND resource_id = %s",
             ("outbox.replayed", event_id),
         )
+
+
+def _delete_test_residue() -> None:
+    """Remove only rows created by this integration test module.
+
+    Shared databases can retain rows after an interrupted run.  The event type
+    and UUID patterns are intentionally test-only; production event types and
+    unrelated UUIDs are never eligible for cleanup.
+    """
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            DELETE FROM outbox_consumptions
+            WHERE event_id IN (
+                SELECT event_id
+                FROM outbox_events
+                WHERE event_type LIKE %s
+                   OR event_id::text LIKE %s
+                   OR (
+                       event_type = 'agent.action.approved'
+                       AND (
+                           payload->>'source' = 'test_outbox_service'
+                           OR payload->>'idempotency_key' LIKE 'test-real-action%%'
+                           OR locked_by LIKE 'test-%%'
+                       )
+                   )
+            )
+            """,
+            (_TEST_EVENT_TYPE_PATTERN, _TEST_EVENT_ID_PATTERN),
+        )
+        cur.execute(
+            """
+            DELETE FROM audit_logs
+            WHERE action = 'outbox.replayed'
+              AND resource_id IN (
+                  SELECT event_id::text
+                  FROM outbox_events
+                  WHERE event_type LIKE %s
+                     OR event_id::text LIKE %s
+                     OR (
+                         event_type = 'agent.action.approved'
+                         AND (
+                             payload->>'source' = 'test_outbox_service'
+                             OR payload->>'idempotency_key' LIKE 'test-real-action%%'
+                             OR locked_by LIKE 'test-%%'
+                         )
+                     )
+              )
+            """,
+            (_TEST_EVENT_TYPE_PATTERN, _TEST_EVENT_ID_PATTERN),
+        )
+        cur.execute(
+            """
+            DELETE FROM outbox_events
+            WHERE event_type LIKE %s
+               OR event_id::text LIKE %s
+               OR (
+                   event_type = 'agent.action.approved'
+                   AND (
+                       payload->>'source' = 'test_outbox_service'
+                       OR payload->>'idempotency_key' LIKE 'test-real-action%%'
+                       OR locked_by LIKE 'test-%%'
+                   )
+               )
+            """,
+            (_TEST_EVENT_TYPE_PATTERN, _TEST_EVENT_ID_PATTERN),
+        )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_shared_outbox_database() -> Iterator[None]:
+    """Clean stale module-owned rows before and after every integration test."""
+    ensure_pg_schema()
+    _delete_test_residue()
+    try:
+        yield
+    finally:
+        _delete_test_residue()
 
 
 def _enqueue_committed(
@@ -354,6 +438,110 @@ def test_process_outbox_batch_records_success_and_skips_repeated_delivery(monkey
                 (str(event_id),),
             )
             assert cur.fetchone() == (True, 1)
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_process_outbox_batch_does_not_claim_new_work_when_rollout_is_frozen(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT_STATE", "rollback_frozen")
+    monkeypatch.setattr(
+        outbox_service.repo,
+        "claim_events",
+        lambda *_: pytest.fail("rollback must stop new leases before claim"),
+    )
+
+    assert process_outbox_batch("frozen-worker", 1, 3, 60) == {
+        "claimed": 0,
+        "published": 0,
+        "failed": 0,
+        "status": "rollback_frozen",
+    }
+
+
+def test_outbox_consumption_unique_key_rejects_duplicate_delivery_record(monkeypatch):
+    """Dropping the schema's consumer key would let one event be recorded as consumed twice."""
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000371")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000372")
+    consumer_name = "test_outbox_unique_consumer_20260812"
+
+    try:
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            "test.outbox.consumption-unique.20260812",
+            aggregate_id,
+            {"company_id": str(aggregate_id)},
+        )
+
+        assert record_consumption(str(event_id), consumer_name) is True
+        assert record_consumption(str(event_id), consumer_name) is False
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "SELECT COUNT(*) FROM outbox_consumptions WHERE event_id = %s AND consumer_name = %s",
+                (str(event_id), consumer_name),
+            )
+            assert cur.fetchone() == (1,)
+    finally:
+        _delete_event(str(event_id))
+
+
+def test_v2_action_event_dead_letters_after_five_real_repository_attempts(monkeypatch):
+    """Using the global retry maximum would leave V2 actions retriable after their fifth failed delivery."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
+    monkeypatch.setattr(settings, "AGENT_RUN_V2_ROLLOUT", "default")
+    ensure_pg_schema()
+    event_id = UUID("00000000-0000-4000-8000-000000000381")
+    aggregate_id = UUID("00000000-0000-4000-8000-000000000382")
+    event_type = "agent.action.approved"
+    consumer_name = "sourcing_risk_action"
+    attempts: list[str] = []
+
+    def fail_handler(event: dict) -> None:
+        attempts.append(event["event_id"])
+        raise RuntimeError("planned V2 failure")
+
+    try:
+        monkeypatch.setitem(
+            outbox_service._CONSUMERS,
+            (event_type, consumer_name),
+            fail_handler,
+        )
+        _enqueue_committed(
+            monkeypatch,
+            event_id,
+            event_type,
+            aggregate_id,
+            {
+                "run_id": str(aggregate_id),
+                "proposal_id": str(aggregate_id),
+                "source": "test_outbox_service",
+            },
+        )
+
+        for attempt in range(1, 6):
+            assert process_outbox_batch("test-v2-worker", 1, 99, 60) == {
+                "claimed": 1,
+                "published": 0,
+                "failed": 1,
+            }
+            with get_cursor() as (_, cur):
+                cur.execute(
+                    "SELECT attempt_count, dead_lettered_at IS NOT NULL FROM outbox_events WHERE event_id = %s",
+                    (str(event_id),),
+                )
+                assert cur.fetchone() == (attempt, attempt == 5)
+                if attempt < 5:
+                    cur.execute(
+                        "UPDATE outbox_events SET next_attempt_at = NOW() WHERE event_id = %s",
+                        (str(event_id),),
+                    )
+
+        assert attempts == [str(event_id)] * 5
     finally:
         _delete_event(str(event_id))
 
@@ -871,3 +1059,43 @@ def test_register_consumer_rejects_a_different_handler_for_the_same_key():
     register_consumer(event_type, consumer_name, first_handler)
     with pytest.raises(ValueError, match="消费者已注册"):
         register_consumer(event_type, consumer_name, second_handler)
+
+
+def test_v2_action_dispatch_does_not_run_an_additional_consumer(monkeypatch):
+    """V2 approved actions have one business consumer, not legacy-style fan-out."""
+    event = {
+        "event_id": "event-v2-routing",
+        "event_type": "agent.action.approved",
+        "attempt_count": 0,
+        "payload": {},
+    }
+    calls: list[str] = []
+
+    def action_handler(_: dict) -> None:
+        calls.append("action")
+
+    def unrelated_handler(_: dict) -> None:
+        calls.append("unrelated")
+        raise RuntimeError("must not intercept V2 action")
+
+    monkeypatch.setattr(outbox_service.repo, "claim_events", lambda *_: [event])
+    monkeypatch.setattr(outbox_service.repo, "is_consumed", lambda *_: False)
+    monkeypatch.setattr(outbox_service.repo, "record_consumption", lambda *_: True)
+    monkeypatch.setattr(outbox_service.repo, "mark_published", lambda *_: True)
+    monkeypatch.setattr(outbox_service.repo, "mark_failed", lambda *args: False)
+    monkeypatch.setattr(outbox_service, "require_v2_execution", lambda *_: {"state": "active", "stage": "default"})
+    monkeypatch.setattr(
+        outbox_service,
+        "_CONSUMERS",
+        {
+            ("agent.action.approved", "sourcing_risk_action"): action_handler,
+            ("agent.action.approved", "unrelated_consumer"): unrelated_handler,
+        },
+    )
+
+    assert outbox_service.process_outbox_batch("worker", 1, 99, 60) == {
+        "claimed": 1,
+        "published": 1,
+        "failed": 0,
+    }
+    assert calls == ["action"]

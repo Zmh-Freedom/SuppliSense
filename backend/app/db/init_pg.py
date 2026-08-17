@@ -189,6 +189,178 @@ DDL_STATEMENTS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+
+    # Agent run V2
+    """
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id UUID PRIMARY KEY,
+        run_type VARCHAR(32) NOT NULL CHECK (run_type = 'sourcing_risk_v2'),
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        status VARCHAR(32) NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        requirement JSONB NOT NULL DEFAULT '{}',
+        policy_snapshot_id UUID,
+        decision_id UUID,
+        error_code VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_rollout_control (
+        control_key VARCHAR(64) PRIMARY KEY,
+        state VARCHAR(32) NOT NULL CHECK (state IN ('active', 'rollback_frozen')),
+        stage VARCHAR(16) NOT NULL CHECK (stage IN ('shadow', 'internal', 'canary', 'default')),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "INSERT INTO agent_rollout_control (control_key, state, stage) VALUES ('agent_run_v2', 'active', 'shadow') ON CONFLICT (control_key) DO NOTHING",
+    """
+    CREATE TABLE IF NOT EXISTS agent_run_events (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        event_id BIGINT NOT NULL,
+        version INTEGER NOT NULL,
+        event_type VARCHAR(48) NOT NULL,
+        payload JSONB NOT NULL,
+        occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, event_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_raw_payload_compensations (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        raw_payload_ref VARCHAR(255) NOT NULL,
+        company_id UUID,
+        staging_owner VARCHAR(255) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'pending_compensation',
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, raw_payload_ref)
+    )
+    """,
+    "ALTER TABLE agent_raw_payload_compensations ADD COLUMN IF NOT EXISTS staging_owner VARCHAR(255)",
+    "UPDATE agent_raw_payload_compensations SET staging_owner = 'legacy-recovery' WHERE staging_owner IS NULL",
+    "ALTER TABLE agent_raw_payload_compensations ALTER COLUMN staging_owner SET NOT NULL",
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_policy_templates (
+        id UUID PRIMARY KEY,
+        name VARCHAR(128) NOT NULL,
+        version INTEGER NOT NULL CHECK (version > 0),
+        policy JSONB NOT NULL,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (name, version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_policy_snapshots (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL UNIQUE REFERENCES agent_runs(id) ON DELETE CASCADE,
+        template_id UUID REFERENCES sourcing_policy_templates(id) ON DELETE SET NULL,
+        policy JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_run_candidates (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        source VARCHAR(32) NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        candidate_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_evidence (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        company_id UUID NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,
+        candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
+        evidence_type VARCHAR(64) NOT NULL,
+        source VARCHAR(64) NOT NULL,
+        source_reference VARCHAR(512),
+        evidence_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_evidence_reviews (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        company_id UUID NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,
+        review_snapshot JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, company_id)
+    )
+    """,
+    """
+    ALTER TABLE agent_evidence ADD COLUMN IF NOT EXISTS company_id UUID
+    """,
+    """
+    UPDATE agent_evidence evidence
+    SET company_id = candidate.company_id
+    FROM agent_run_candidates candidate
+    WHERE evidence.company_id IS NULL
+      AND evidence.candidate_id = candidate.id
+      AND candidate.company_id IS NOT NULL
+    """,
+    """
+    DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM agent_evidence WHERE company_id IS NULL) THEN
+            RAISE EXCEPTION 'agent_evidence.company_id cannot be backfilled safely';
+        END IF;
+        ALTER TABLE agent_evidence ALTER COLUMN company_id SET NOT NULL;
+        ALTER TABLE agent_evidence
+            ADD CONSTRAINT agent_evidence_company_id_fkey
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE RESTRICT;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS candidate_decisions (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
+        decision VARCHAR(32) NOT NULL,
+        score_snapshot JSONB NOT NULL DEFAULT '{}',
+        reason_snapshot JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_action_proposals (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID REFERENCES agent_run_candidates(id) ON DELETE SET NULL,
+        action_type VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        execution_state VARCHAR(32) NOT NULL DEFAULT 'pending',
+        payload JSONB NOT NULL,
+        idempotency_key VARCHAR(255) NOT NULL UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (run_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_approval_decisions (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        proposal_id UUID NOT NULL,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        decision VARCHAR(32) NOT NULL,
+        comment TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        FOREIGN KEY (run_id, proposal_id)
+            REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE
+    )
+    """,
 ]
 
 VERIFIED_EVIDENCE_CONDITION = """
@@ -250,6 +422,72 @@ def _ensure_verified_evidence_constraint(cur: object) -> None:
             "ALTER TABLE companies VALIDATE CONSTRAINT companies_verified_evidence_check"
         )
 
+
+def _ensure_agent_run_constraints(cur: object) -> None:
+    """Add V2 constraints when upgrading a database initialized before them."""
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_constraint constraint_record
+            WHERE constraint_record.conrelid = 'agent_action_proposals'::regclass
+              AND constraint_record.contype IN ('u', 'p')
+              AND constraint_record.conkey = ARRAY[
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'run_id'),
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'id')
+              ]::smallint[]
+        )
+        """
+    )
+    if not cur.fetchone()[0]:
+        cur.execute(
+            """
+            ALTER TABLE agent_action_proposals
+            ADD CONSTRAINT agent_action_proposals_run_id_id_compat_key UNIQUE (run_id, id)
+            """
+        )
+
+    cur.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM pg_constraint constraint_record
+            WHERE constraint_record.conrelid = 'agent_approval_decisions'::regclass
+              AND constraint_record.confrelid = 'agent_action_proposals'::regclass
+              AND constraint_record.contype = 'f'
+              AND constraint_record.conkey = ARRAY[
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_approval_decisions'::regclass AND attname = 'run_id'),
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_approval_decisions'::regclass AND attname = 'proposal_id')
+              ]::smallint[]
+              AND constraint_record.confkey = ARRAY[
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'run_id'),
+                  (SELECT attnum FROM pg_attribute
+                   WHERE attrelid = 'agent_action_proposals'::regclass AND attname = 'id')
+              ]::smallint[]
+        )
+        """
+    )
+    if not cur.fetchone()[0]:
+        cur.execute(
+            """
+            ALTER TABLE agent_approval_decisions
+            DROP CONSTRAINT IF EXISTS agent_approval_decisions_proposal_id_fkey
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE agent_approval_decisions
+            ADD CONSTRAINT agent_approval_decisions_run_id_proposal_id_fkey
+            FOREIGN KEY (run_id, proposal_id)
+            REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE
+            """
+        )
+
 INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
     "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
@@ -269,6 +507,16 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_user ON assessment_history (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_supplier_embedding ON supplier_profiles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)",
     "CREATE INDEX IF NOT EXISTS idx_supplier_name ON supplier_profiles (supplier_name)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_event ON agent_run_events (run_id, event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_run_candidates_run_status ON agent_run_candidates (run_id, status)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evidence_run ON agent_evidence (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evidence_company ON agent_evidence (company_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_evidence_reviews_run ON agent_evidence_reviews (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_candidate_decisions_run ON candidate_decisions (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_action_proposals_pending_execution "
+    "ON agent_action_proposals (execution_state, created_at) WHERE execution_state = 'pending'",
+    "CREATE INDEX IF NOT EXISTS idx_agent_approval_decisions_run ON agent_approval_decisions (run_id)",
 ]
 
 
@@ -278,6 +526,7 @@ def ensure_pg_schema() -> None:
             for stmt in DDL_STATEMENTS:
                 cur.execute(stmt)
             _ensure_verified_evidence_constraint(cur)
+            _ensure_agent_run_constraints(cur)
             for stmt in INDEX_STATEMENTS:
                 cur.execute(stmt)
             # Create ivfflat index for vector search (after data exists)

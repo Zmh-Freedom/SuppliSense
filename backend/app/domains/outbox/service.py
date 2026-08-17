@@ -3,6 +3,8 @@
 from collections.abc import Callable
 
 from app.core.errors import DomainError
+from app.core.config import settings
+from app.core.rollout_gate import is_rollout_frozen, require_v2_execution
 from app.core.logging import get_logger
 from app.db.postgres import get_cursor
 from app.domains.auth.audit_repo import create_log_with_cursor
@@ -12,6 +14,9 @@ from app.domains.outbox.sanitization import sanitize_delivery_error
 logger = get_logger(__name__)
 
 _CONSUMERS: dict[tuple[str, str], Callable[[dict], None]] = {}
+V2_ACTION_EVENT_TYPE = "agent.action.approved"
+V2_ACTION_CONSUMER_NAME = "sourcing_risk_action"
+V2_ACTION_MAX_ATTEMPTS = 5
 
 
 class _OutboxDeliveryError(Exception):
@@ -52,16 +57,31 @@ def process_outbox_batch(
     if lease_seconds < 1:
         raise ValueError("lease_seconds 必须大于 0")
 
+    if is_rollout_frozen(settings):
+        return {"claimed": 0, "published": 0, "failed": 0, "status": "rollback_frozen"}
+
     events = repo.claim_events(worker_id, batch_size, lease_seconds)
     result = {"claimed": len(events), "published": 0, "failed": 0}
     for event in events:
         event_id = event["event_id"]
+        event_max_attempts = V2_ACTION_MAX_ATTEMPTS if event["event_type"] == V2_ACTION_EVENT_TYPE else max_attempts
         try:
-            consumers = [
-                (consumer_name, handler)
-                for (event_type, consumer_name), handler in _CONSUMERS.items()
-                if event_type == event["event_type"]
-            ]
+            if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                require_v2_execution(settings)
+                action_handler = _CONSUMERS.get(
+                    (V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME)
+                )
+                consumers = (
+                    [(V2_ACTION_CONSUMER_NAME, action_handler)]
+                    if action_handler is not None
+                    else []
+                )
+            else:
+                consumers = [
+                    (consumer_name, handler)
+                    for (event_type, consumer_name), handler in _CONSUMERS.items()
+                    if event_type == event["event_type"]
+                ]
             if not consumers:
                 raise _OutboxDeliveryError("consumer_not_registered")
             for consumer_name, handler in consumers:
@@ -72,6 +92,8 @@ def process_outbox_batch(
             if repo.mark_published(event_id, worker_id):
                 result["published"] += 1
                 _notify_outcome(outcome_observer, event["event_type"], "published")
+                if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                    notify_sourcing_risk_action_outcome(event, "published")
             else:
                 logger.info(
                     "outbox_event_lease_lost",
@@ -89,7 +111,7 @@ def process_outbox_batch(
             if repo.mark_failed(
                 event_id,
                 safe_error,
-                max_attempts,
+                event_max_attempts,
                 retry_delay_seconds(attempt),
                 worker_id,
             ):
@@ -101,8 +123,10 @@ def process_outbox_batch(
                     error=safe_error,
                 )
                 result["failed"] += 1
-                outcome = "dead_lettered" if attempt >= max_attempts else "retry"
+                outcome = "dead_lettered" if attempt >= event_max_attempts else "retry"
                 _notify_outcome(outcome_observer, event["event_type"], outcome)
+                if event["event_type"] == V2_ACTION_EVENT_TYPE:
+                    notify_sourcing_risk_action_outcome(event, outcome)
             else:
                 logger.info(
                     "outbox_event_lease_lost",
@@ -127,6 +151,20 @@ def _notify_outcome(
         logger.exception(
             "outbox_outcome_observer_failed",
             event_type=event_type,
+            outcome=outcome,
+        )
+
+
+def notify_sourcing_risk_action_outcome(event: dict, outcome: str) -> None:
+    """Record V2 action retries/dead letters without changing legacy event semantics."""
+    from app.domains.sourcing_risk.action_service import record_action_delivery_outcome
+
+    try:
+        record_action_delivery_outcome(event, outcome)
+    except Exception:
+        logger.exception(
+            "sourcing_risk_action_outcome_record_failed",
+            event_id=event.get("event_id"),
             outcome=outcome,
         )
 
@@ -222,3 +260,8 @@ for _event_type in (
     "company.merged",
 ):
     register_consumer(_event_type, "company_event_audit", _company_event_audit)
+
+
+from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
+
+register_consumer(V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME, execute_sourcing_risk_action)

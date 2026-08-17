@@ -275,3 +275,81 @@ export async function resumeChat(
     clearTimeout(timeout);
   }
 }
+
+export interface AgentRunEventStreamCallbacks {
+  onEvent?: (event: import('./types').AgentRunEvent) => void;
+  onDone?: (event: import('./types').AgentRunEvent) => void;
+  onError?: (error: Error) => void;
+}
+
+/** Read one durable agent-run event replay, resuming after the supplied event cursor. */
+export async function agentRunEventStream(
+  runId: string,
+  lastEventId: number | null,
+  callbacks: AgentRunEventStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: HeadersInit = {};
+  if (lastEventId !== null) headers['Last-Event-ID'] = String(lastEventId);
+
+  try {
+    const res = await fetch(`${API_BASE}/agent-runs/${encodeURIComponent(runId)}/events`, {
+      headers,
+      credentials: 'same-origin',
+      signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.body) return;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let eventId: number | null = null;
+    let eventType = 'message';
+    let dataLines: string[] = [];
+    let receivedTerminalEvent = false;
+
+    const dispatch = () => {
+      if (eventId === null || dataLines.length === 0) return;
+      try {
+        const event = { eventId, eventType, data: JSON.parse(dataLines.join('\n')) };
+        callbacks.onEvent?.(event);
+        if (eventType === 'done') {
+          receivedTerminalEvent = true;
+          callbacks.onDone?.(event);
+        }
+      } catch {
+        // A malformed event must not break later durable event replays.
+      } finally {
+        eventId = null;
+        eventType = 'message';
+        dataLines = [];
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line) {
+          dispatch();
+        } else if (line.startsWith('id:')) {
+          eventId = Number(line.slice(3).trim());
+        } else if (line.startsWith('event:')) {
+          eventType = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+    }
+    dispatch();
+    if (!signal?.aborted && !receivedTerminalEvent) {
+      callbacks.onError?.(new Error('事件流连接已断开'));
+    }
+  } catch (error) {
+    if (!signal?.aborted) callbacks.onError?.(error instanceof Error ? error : new Error('事件流连接失败'));
+  }
+}

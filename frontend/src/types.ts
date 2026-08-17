@@ -185,6 +185,122 @@ export interface SourcingRequestDetail {
   results: SourcingResultItem[];
 }
 
+// ---- Sourcing Risk V2 agent runs ----
+export type AgentRunStatus =
+  | 'CREATED'
+  | 'CLARIFYING'
+  | 'POLICY_LOCKED'
+  | 'LOCAL_SEARCHING'
+  | 'EXTERNAL_REVIEW'
+  | 'IDENTITY_RESOLVING'
+  | 'IDENTITY_REVIEW'
+  | 'INVESTIGATING'
+  | 'EVIDENCE_REVIEW'
+  | 'SCORING'
+  | 'READY_FOR_REVIEW'
+  | 'ACTION_PENDING'
+  | 'ACTION_EXECUTING'
+  | 'COMPLETED'
+  | 'PARTIAL'
+  | 'NEEDS_REVIEW'
+  | 'ACTION_FAILED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface SourcingRiskRequirement {
+  requirement_text: string;
+  category?: string | null;
+  specification?: string | null;
+  expected_candidate_count?: number;
+  [key: string]: unknown;
+}
+
+export interface SourcingRiskIdentityCandidate {
+  company_id: string;
+  legal_name?: string;
+  name?: string;
+}
+
+export interface SourcingRiskEvidence {
+  evidence_id?: string;
+  dimension?: string;
+  freshness_status?: 'fresh' | 'stale' | 'unknown' | string;
+  conflict_status?: 'clear' | 'conflicting' | 'unknown' | string;
+  claim_code?: string;
+  source?: string;
+}
+
+export interface SourcingRiskCandidate {
+  id?: string;
+  candidate_id?: string;
+  company_id?: string | null;
+  supplier_id?: string | null;
+  supplier_name?: string;
+  name?: string;
+  source?: 'local' | 'staged_external' | string;
+  status?: string;
+  identity_status?: string;
+  identity_review?: boolean;
+  identity_candidates?: SourcingRiskIdentityCandidate[];
+  evidence?: SourcingRiskEvidence[];
+  evidence_by_dimension?: SourcingRiskEvidence[];
+  [key: string]: unknown;
+}
+
+export interface SourcingRiskDecision {
+  company_id?: string;
+  candidate_id?: string;
+  group: 'recommended' | 'alternative' | 'needs_review' | 'rejected' | string;
+  final_score?: number | null;
+  confidence?: number;
+  reason_codes?: string[];
+  evidence_ids?: string[];
+}
+
+export interface SourcingRiskApprovalProposal {
+  id: string;
+  action_type: string;
+  status: string;
+  payload: Record<string, unknown>;
+  execution_state?: string;
+}
+
+export interface SourcingRiskApproval {
+  id?: string;
+  proposal_id: string;
+  decision: 'approved' | 'rejected' | string;
+  comment?: string | null;
+}
+
+export interface SourcingRiskRawPayloadStatus {
+  raw_payload_ref: string;
+  lifecycle_status: 'committed' | 'pending' | 'pending_compensation' | string;
+}
+
+export interface SourcingRiskAgentRun {
+  id?: string;
+  run_id?: string;
+  status: AgentRunStatus | string;
+  version: number;
+  requirement: SourcingRiskRequirement;
+  candidates?: SourcingRiskCandidate[];
+  evidence_by_company_id?: Record<string, SourcingRiskEvidence[]>;
+  evidence_reviews?: Record<string, { status?: string; reason_codes?: string[] }>;
+  decisions?: SourcingRiskDecision[];
+  proposals?: SourcingRiskApprovalProposal[];
+  action_proposals?: SourcingRiskApprovalProposal[];
+  approvals?: SourcingRiskApproval[];
+  raw_payload_statuses?: SourcingRiskRawPayloadStatus[];
+  next_action?: string | null;
+  error_code?: string | null;
+}
+
+export interface AgentRunEvent {
+  eventId: number;
+  eventType: string;
+  data: Record<string, unknown>;
+}
+
 export interface SupplierEntry {
   _id: string;
   name: string;

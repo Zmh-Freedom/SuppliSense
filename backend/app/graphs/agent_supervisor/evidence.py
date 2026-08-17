@@ -1,0 +1,122 @@
+"""Evidence aggregation for the Agent Supervisor graph."""
+
+from collections import defaultdict
+from collections.abc import Mapping
+
+from app.graphs.agent_supervisor.contracts import (
+    AgentResult,
+    EvidenceItem,
+    EvidenceMergeResult,
+    PlannerTask,
+    TaskPlan,
+)
+
+
+_SOURCE_RANK = {
+    "official": 0,
+    "registry": 1,
+    "internal": 2,
+    "third_party": 3,
+    "news": 4,
+    "unknown": 5,
+}
+_FRESHNESS_RANK = {"fresh": 0, "unknown": 1, "stale": 2}
+
+
+def _evidence_key(item: EvidenceItem) -> tuple[str | None, str | None, str]:
+    return item.company_id, item.dimension, item.source
+
+
+def _rank(item: EvidenceItem) -> tuple[int, int, float, str]:
+    return (
+        _SOURCE_RANK[item.source_type],
+        _FRESHNESS_RANK[item.freshness],
+        -item.confidence,
+        item.evidence_id,
+    )
+
+
+def _conflict_key(item: EvidenceItem) -> tuple[str | None, str | None]:
+    return item.company_id, item.dimension
+
+
+def _task_map(
+    task_plan: TaskPlan | Mapping[str, PlannerTask] | None,
+) -> dict[str, PlannerTask] | None:
+    if task_plan is None:
+        return None
+    if isinstance(task_plan, TaskPlan):
+        return {task.task_id: task for task in task_plan.tasks}
+    return dict(task_plan)
+
+
+def merge_evidence(
+    results: Mapping[str, AgentResult],
+    task_plan: TaskPlan | Mapping[str, PlannerTask] | None = None,
+) -> EvidenceMergeResult:
+    """Rank evidence and gate only on missing required tasks.
+
+    ``task_plan`` carries the existing ``PlannerTask.required`` contract into
+    the merger. When omitted, non-completed results remain blocking for
+    backwards compatibility with the original one-argument API.
+    """
+    evidence_by_key: dict[tuple[str | None, str | None, str], list[EvidenceItem]] = defaultdict(list)
+    missing_dimensions: list[str] = []
+    tasks = _task_map(task_plan)
+    seen_task_ids: set[str] = set()
+
+    for task_id, result in results.items():
+        seen_task_ids.add(task_id)
+        if result.status != "completed":
+            task = (
+                (tasks.get(task_id) or tasks.get(result.agent))
+                if tasks is not None
+                else None
+            )
+            is_required = task.required if task is not None else True
+            if is_required:
+                missing_dimensions.append(result.agent)
+            continue
+        for item in result.evidence:
+            evidence_by_key[_evidence_key(item)].append(item)
+
+    if tasks is not None:
+        missing_dimensions.extend(
+            task.agent
+            for task_id, task in tasks.items()
+            if task.required and task_id not in seen_task_ids
+        )
+
+    merged_evidence: list[EvidenceItem] = []
+    for items in evidence_by_key.values():
+        claims = {item.claim for item in items if item.claim is not None}
+        if len(claims) > 1:
+            evidence_by_claim: dict[str | None, list[EvidenceItem]] = defaultdict(list)
+            for item in items:
+                evidence_by_claim[item.claim].append(item)
+            merged_evidence.extend(min(claim_items, key=_rank) for claim_items in evidence_by_claim.values())
+        else:
+            merged_evidence.append(min(items, key=_rank))
+
+    merged_evidence.sort(key=_rank)
+    merged_conflict_groups: dict[tuple[str | None, str | None], list[EvidenceItem]] = defaultdict(list)
+    for item in merged_evidence:
+        merged_conflict_groups[_conflict_key(item)].append(item)
+    conflicts = [
+        sorted(items, key=_rank)
+        for items in merged_conflict_groups.values()
+        if len({item.claim for item in items if item.claim is not None}) > 1
+    ]
+    unique_missing = sorted(set(missing_dimensions))
+    overall_confidence = (
+        sum(item.confidence for item in merged_evidence) / len(merged_evidence)
+        if merged_evidence
+        else 0.0
+    )
+    return EvidenceMergeResult(
+        evidence=merged_evidence,
+        conflicts=conflicts,
+        missing_dimensions=unique_missing,
+        overall_confidence=overall_confidence,
+        requires_review=bool(conflicts or unique_missing),
+    )

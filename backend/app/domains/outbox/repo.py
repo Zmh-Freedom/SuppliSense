@@ -72,6 +72,26 @@ def claim_events(worker_id: str, batch_size: int, lease_seconds: int) -> list[di
         return events
 
 
+def cancel_leased_v2_action_events() -> int:
+    """Release and cancel leased V2 action events during rollback; retain rows for audit."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE outbox_events
+            SET locked_by = NULL, locked_until = NULL,
+                last_error = 'agent_v2_rollback_frozen', dead_lettered_at = NOW()
+            FROM agent_runs
+            WHERE event_type = 'agent.action.approved'
+              AND outbox_events.payload->>'run_id' = agent_runs.id::text
+              AND agent_runs.run_type = 'sourcing_risk_v2'
+              AND published_at IS NULL AND dead_lettered_at IS NULL
+              AND locked_by IS NOT NULL
+            RETURNING event_id
+            """
+        )
+        return len(cur.fetchall())
+
+
 def get_pending_stats() -> dict:
     """Return the current unpublished backlog size and its oldest event age."""
     with get_cursor() as (_, cur):
@@ -150,14 +170,14 @@ def mark_failed(
         cur.execute(
             """
             UPDATE outbox_events
-            SET attempt_count = attempt_count + 1,
+            SET attempt_count = COALESCE(attempt_count, 0) + 1,
                 last_error = %s,
                 next_attempt_at = CASE
-                    WHEN attempt_count + 1 >= %s THEN NOW()
+                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN NOW()
                     ELSE NOW() + (%s * INTERVAL '1 second')
                 END,
                 dead_lettered_at = CASE
-                    WHEN attempt_count + 1 >= %s THEN NOW()
+                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN NOW()
                     ELSE NULL
                 END,
                 locked_by = NULL,

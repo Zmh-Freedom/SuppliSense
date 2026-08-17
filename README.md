@@ -38,7 +38,7 @@ FastAPI ──→ LangGraph Agent 编排层
 ### 生产模式（Docker Compose）
 
 ```bash
-./start.sh    # docker compose up -d --build
+./start.sh    # 使用 .env.docker，启动完整生产栈
 ```
 
 打开 `http://localhost`，默认账号 `admin / 见启动日志中的随机密码`。
@@ -46,13 +46,15 @@ FastAPI ──→ LangGraph Agent 编排层
 ### 开发模式
 
 ```bash
-docker compose --env-file backend/.env \
-  -f docker-compose.dev.yml up -d mongo postgres redis  # 仅启动开发基础设施
+./start.sh --dev                         # 使用 backend/.env，启动开发基础设施
 cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000  # 本地后端热更新
 cd frontend && npm run dev                                      # 前端热更新
+./stop.sh --dev                            # 停止开发基础设施
 ```
 
-后端访问 `http://localhost:8000`，前端访问 `http://localhost:5173`。开发环境后端使用 `backend/.env` 中的 `localhost` 数据库地址；完整后端容器仅用于生产模式。
+首次开发启动前，复制 `backend/.env.example` 为 `backend/.env` 并至少填写 `PG_PASSWORD`、`MONGO_PASSWORD`。`./start.sh --dev` 会在启动前检查文件和必填项，缺失时明确报错且不会输出密钥；Compose 通过显式 `--env-file backend/.env` 读取配置，不依赖根目录 `.env`。开发环境后端使用 `backend/.env` 中的 `localhost` 数据库地址；完整后端容器仅用于生产模式。
+
+生产模式使用根目录 `.env.docker`，由 `./start.sh` / `./stop.sh` 显式传给 `docker-compose.yml`，与开发配置分离。两个环境文件都被 Git 忽略，禁止提交真实密钥。
 
 ### P1 企业身份与 Transactional Outbox
 
@@ -459,6 +461,45 @@ SuppliSense/
 ---
 
 ## 文档索引
+
+## Agent V2 离线评估与灰度发布
+
+Task 14 提供固定评估契约；发布证据必须来自生产 GraphTraceAdapter，控制面和 graph 依赖不可用时评估 fail-closed：
+
+```bash
+cd backend
+pytest -q tests/test_sourcing_risk_evals.py
+python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import json; print(json.dumps(run_sourcing_risk_evals("tests/evals/sourcing_risk_cases.json"), ensure_ascii=False, indent=2))'  # 未接入 adapter 时明确返回 unavailable/failed
+```
+
+评估报告包含需求解析质量、本地优先发现、身份/证据安全、决策/审批边界、恢复 fail-closed、候选 precision/recall、citation/evidence completeness、unsafe action rate、clarification rate 和 p50/p95/max latency。固定 12 个场景覆盖完整本地流、澄清、外部候选暂存/审批导入、身份歧义、制裁不可用、财务缺失、证据冲突、审批重放、重启恢复、未知 recovery 和越权授权。
+
+### V2 feature flags
+
+安全默认值为 `AGENT_RUN_V2_ENABLED=false`、`AGENT_RUN_V2_ROLLOUT=shadow`、`AGENT_RUN_V2_CANARY_PERCENT=0`。环境变量含义：
+
+| Flag | 值 | 行为 |
+|---|---|---|
+| `AGENT_RUN_V2_ENABLED` | `true/false` | 总开关，关闭时 V2 API 维持 409 fail-closed，不创建/调度 V2 Run |
+| `AGENT_RUN_V2_ROLLOUT` | `shadow/internal/canary/default` | 灰度阶段 |
+| `AGENT_RUN_V2_CANARY_PERCENT` | `0..100` | Canary 按 user ID 的稳定 SHA-256 bucket 放量 |
+| `AGENT_RUN_V2_ROLLOUT_STATE` | `active/rollback_frozen` | 回滚冻结时拒绝新 V2/Shadow 创建、恢复和审批；保留已有 Run/checkpoint/audit |
+
+| 阶段 | 创建/恢复 API | 用户响应 | 领域动作 | 放行条件 |
+|---|---|---|---|---|
+| disabled | legacy/拒绝 V2 | legacy | legacy API 语义 | `AGENT_RUN_V2_ENABLED=false`，不创建/调度 V2 Run |
+| shadow | 拒绝创建/恢复可执行 V2 | 409 read-only | graph/service/action/outbox 全边界禁止领域写入 | 真实生产 trace adapter；无 adapter 时报告 `trace_source=unavailable, passed=false` |
+| internal | `admin`/`analyst` 进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | 角色 gate |
+| canary | 稳定 hash 命中者进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | `AGENT_RUN_V2_CANARY_PERCENT` |
+| default | 全部用户进入 V2 | V2 | 仍需人工审批 + approved-only Outbox | promotion guard + 审批记录 |
+
+Shadow 不创建或恢复可执行 V2 graph；create、澄清恢复、身份恢复、审批、取消、补偿重试和领域 action 均 fail-closed，避免领域写入。Internal/Canary/Default 的 route decision 控制进入 V2 graph，任何业务写入仍必须经过人工审批和 approved-only Outbox。`rollback_frozen` 对所有新建、恢复、审批、graph step 和 V2 Outbox lease fail-closed；在途 Run 保留 checkpoint 并暂停新步骤，pending proposal 冻结并人工复核，已 lease 事件只能完成或过期。promotion/rollback 通过 `/api/v1/admin/agent-run-rollout/{promote,rollback}` 写入 PostgreSQL 控制面，跨 worker/重启生效。
+
+### 灰度门槛、观测和回滚
+
+Shadow → Internal → Canary → Default 逐阶段推进。Promotion 必须同时具备完整观测窗口、当前阶段最小样本（Shadow 12、Internal 50、Canary 100）、人工审批记录（approver/decision/record_id）、在途 Run/proposal/outbox 清零，以及离线 Eval 评分 100%、macro precision/recall ≥95%、citation/evidence completeness 100%、clarification accuracy 100%、关键缺证据误推荐 0%、身份唯一命中精确率 ≥99%、需求字段准确率 ≥95%、关键证据支持率 ≥98%、未审批写入 0%、重复动作 0%、恢复成功率 ≥99%、实际 P95 首事件 ≤2 秒、本地候选 P95 完成 ≤90 秒。latency 是 trace 的 `end - start`，实际值越低越好；缺失或负值直接拒绝。Prometheus 低基数承诺仅适用于 Task 14 新增 V2 metrics；历史 metrics（包括既有 company label）不在本任务修改范围。
+
+发现主体错绑、制裁不可用仍推荐、未经审批写入、恢复重复执行、评分不可复现或证据不一致时立即停止推进。回滚入口必须先调用 `rollback_rollout(settings, stage, reason, in_flight)`，将 `AGENT_RUN_V2_ROLLOUT_STATE=rollback_frozen`，再由人工处理在途状态；不得删除已有 Run、checkpoint、审批或审计记录。恢复前需有新的人工审批记录、proposal/outbox 处置结果、V2 Eval/metrics 窗口验证和 `agent_run_v2_route()` 矩阵验证，之后才可调用 `promote_rollout(...)` 或重新设置 active。
 
 | 文档 | 说明 |
 |------|------|

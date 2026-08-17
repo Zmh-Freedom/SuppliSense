@@ -1,0 +1,114 @@
+{
+  "eval_version": "v1",
+  "description": "Deterministic, service-free acceptance cases for Sourcing Risk Agent V2.",
+  "cases": [
+    {
+      "id": "req-complete-local",
+      "capability": "requirement_parsing",
+      "latency_ms": 90,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-1"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": true, "recommended_recommendations": ["company-1"]},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-1"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": ["company-1"],
+      "recommended_recommendations": ["company-1"]
+    },
+    {
+      "id": "req-clarification",
+      "capability": "requirement_parsing",
+      "latency_ms": 100,
+      "input": {"requirement_status": "clarification_required", "discovery_source": "local", "external_imported": false, "identity_status": "pending_verification", "score_eligible": false, "evidence_refs": ["ev-2"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "clarification_required", "discovery_source": "local", "external_imported": false, "identity_status": "pending_verification", "score_eligible": false, "evidence_refs": ["ev-2"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "discovery-external-staged",
+      "capability": "local_first_discovery",
+      "latency_ms": 120,
+      "input": {"requirement_status": "ready", "discovery_source": "local_and_external", "external_imported": false, "identity_status": "pending_verification", "score_eligible": false, "evidence_refs": ["ev-4"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local_and_external", "external_imported": false, "identity_status": "pending_verification", "score_eligible": false, "evidence_refs": ["ev-4"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "discovery-approved-import",
+      "capability": "local_first_discovery",
+      "latency_ms": 130,
+      "input": {"requirement_status": "ready", "discovery_source": "local_and_external", "external_imported": true, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-5"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": true, "approval_role": "analyst", "approval_decision": "approved", "proposal_status": "approved", "idempotency_key": "key-5", "recommended_recommendations": ["company-3"]},
+      "expected": {"requirement_status": "ready", "discovery_source": "local_and_external", "external_imported": true, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-5"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": ["company-3"],
+      "recommended_recommendations": ["company-3"]
+    },
+    {
+      "id": "identity-ambiguous",
+      "capability": "identity_evidence_safety",
+      "latency_ms": 140,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "candidates", "score_eligible": false, "evidence_refs": ["ev-6"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "candidates", "score_eligible": false, "evidence_refs": ["ev-6"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "evidence-sanctions-unavailable",
+      "capability": "identity_evidence_safety",
+      "latency_ms": 150,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-7"], "evidence_statuses": {"ev-7": "unavailable"}, "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-7"], "expected_evidence_statuses": {"ev-7": "unavailable"}, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "evidence-financial-missing",
+      "capability": "identity_evidence_safety",
+      "latency_ms": 160,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-8"], "evidence_statuses": {"ev-8": "missing"}, "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "critical_missing_evidence": true, "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-8"], "expected_evidence_statuses": {"ev-8": "missing"}, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "evidence-conflict-review",
+      "capability": "identity_evidence_safety",
+      "latency_ms": 170,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-9", "ev-10"], "evidence_statuses": {"ev-9": "conflicting", "ev-10": "available"}, "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-9", "ev-10"], "expected_evidence_statuses": {"ev-9": "conflicting", "ev-10": "available"}, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "action-approval-replay",
+      "capability": "decision_action_boundary",
+      "latency_ms": 180,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-11"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": true, "approval_role": "analyst", "approval_decision": "approved", "proposal_status": "approved", "idempotency_key": "key-11", "recommended_recommendations": ["company-4"]},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-11"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": ["company-4"],
+      "recommended_recommendations": ["company-4"]
+    },
+    {
+      "id": "recovery-restart-resume",
+      "capability": "recovery_fail_closed",
+      "latency_ms": 190,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-12"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": true, "recommended_recommendations": ["company-5"]},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-12"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": ["company-5"],
+      "recommended_recommendations": ["company-5"]
+    },
+    {
+      "id": "recovery-unknown-fail-closed",
+      "capability": "recovery_fail_closed",
+      "latency_ms": 200,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-13"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "unknown", "recommended": false},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": false, "evidence_refs": ["ev-13"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "unknown"},
+      "expected_recommendations": [],
+      "recommended_recommendations": []
+    },
+    {
+      "id": "decision-foreign-authorization",
+      "capability": "decision_action_boundary",
+      "latency_ms": 210,
+      "input": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-14"], "citations_complete": true, "evidence_state_explicit": true, "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed", "recommended": true, "recommended_recommendations": ["company-6"]},
+      "expected": {"requirement_status": "ready", "discovery_source": "local", "external_imported": false, "identity_status": "exact", "score_eligible": true, "evidence_refs": ["ev-14"], "action_executed_without_approval": false, "approval_replay_effects": 1, "recovery_status": "committed"},
+      "expected_recommendations": ["company-6"],
+      "recommended_recommendations": ["company-6"]
+    }
+  ]
+}

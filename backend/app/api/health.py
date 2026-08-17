@@ -8,6 +8,7 @@ from fastapi import APIRouter, Response, status
 from pymongo import MongoClient
 
 from app.core.config import settings
+from app.graphs.sourcing_risk_v2.checkpointer import is_sourcing_risk_checkpointer_ready
 
 router = APIRouter(tags=["health"])
 
@@ -102,6 +103,10 @@ async def readiness(response: Response) -> dict:
         asyncio.to_thread(_check_postgres),
     )
     checks = {"mongo": mongo, "redis": redis_check, "postgres": postgres}
+    if settings.AGENT_RUN_V2_ENABLED:
+        checks["sourcing_risk_checkpointer"] = (
+            "ok" if is_sourcing_risk_checkpointer_ready() else "unavailable"
+        )
     healthy = all(check == "ok" for check in checks.values())
 
     if not healthy:

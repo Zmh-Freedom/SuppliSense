@@ -2,7 +2,9 @@
 Application configuration.
 """
 
+import hashlib
 import os
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -54,6 +56,19 @@ class Settings(BaseSettings):
     PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "4"))
     PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "20"))
 
+    # Agent Run V2 LangGraph checkpoints (managed with a dedicated psycopg3 connection)
+    AGENT_RUN_V2_ENABLED: bool = os.getenv("AGENT_RUN_V2_ENABLED", "false").lower() == "true"
+    AGENT_RUN_V2_ROLLOUT: Literal["shadow", "internal", "canary", "default"] = os.getenv(
+        "AGENT_RUN_V2_ROLLOUT", "shadow"
+    )
+    AGENT_RUN_V2_ROLLOUT_STATE: Literal["active", "rollback_frozen"] = os.getenv(
+        "AGENT_RUN_V2_ROLLOUT_STATE", "active"
+    )
+    AGENT_RUN_V2_CANARY_PERCENT: int = Field(
+        default=int(os.getenv("AGENT_RUN_V2_CANARY_PERCENT", "0")), ge=0, le=100
+    )
+    AGENT_RUN_CHECKPOINT_SCHEMA: str = os.getenv("AGENT_RUN_CHECKPOINT_SCHEMA", "agent_checkpoint")
+
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)
@@ -84,3 +99,34 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+AgentRunRoute = Literal["legacy", "shadow", "v2"]
+
+
+def agent_run_v2_route(
+    user_id: str,
+    user_role: str,
+    config: Settings = settings,
+    *,
+    rollout: str | None = None,
+    rollout_state: str | None = None,
+) -> AgentRunRoute:
+    """Return the safe routing decision for a V2 request.
+
+    The feature must be explicitly enabled. Shadow still allows execution and
+    persistence by the caller, but its response remains on the legacy route.
+    Canary assignment is deterministic so retries and reconnects do not move a
+    user between routes.
+    """
+    active_rollout = rollout or config.AGENT_RUN_V2_ROLLOUT
+    active_state = rollout_state or config.AGENT_RUN_V2_ROLLOUT_STATE
+    if not config.AGENT_RUN_V2_ENABLED or active_state == "rollback_frozen":
+        return "legacy"
+    if active_rollout == "shadow":
+        return "shadow"
+    if active_rollout == "internal":
+        return "v2" if user_role in {"admin", "analyst"} else "legacy"
+    if active_rollout == "canary":
+        bucket = int(hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8], 16) % 100
+        return "v2" if bucket < config.AGENT_RUN_V2_CANARY_PERCENT else "legacy"
+    return "v2"
