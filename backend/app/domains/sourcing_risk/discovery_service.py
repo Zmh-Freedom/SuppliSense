@@ -3,7 +3,7 @@
 import re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -19,6 +19,12 @@ _TIANYANCHA_CATEGORY_CODES: dict[str, tuple[str, ...]] = {
     "motor": ("381",),  # 电机制造
     "display": ("395", "397", "398", "399"),  # 视听设备、电子器件/元件及其他电子设备
 }
+_SEARCH_PROVIDER_HOSTS = {"bing.com", "www.bing.com", "duckduckgo.com", "html.duckduckgo.com"}
+_DIRECTORY_HOSTS = {
+    "tianyancha.com", "www.tianyancha.com", "qcc.com", "www.qcc.com", "aiqicha.baidu.com",
+    "baike.baidu.com", "1688.com", "www.1688.com", "alibaba.com", "www.alibaba.com",
+}
+_CONTACT_PAGE_TERMS = ("contact", "contact-us", "联系我们", "联系方式", "关于我们", "about")
 
 
 def search_local_suppliers(requirement: dict, policy: dict) -> list[dict]:
@@ -62,14 +68,9 @@ def search_external_provider(requirement: dict) -> list[dict]:
         web_count=len(web_candidates),
     )
 
-    merged: list[dict] = []
-    seen_names: set[str] = set()
-    for candidate in [*tyc_candidates, *web_candidates]:
-        name = candidate.get("supplier_name", "")
-        if name and name not in seen_names:
-            seen_names.add(name)
-            merged.append(candidate)
-    return merged[: settings.SUPPLIER_DISCOVERY_WEB_MAX_RESULTS]
+    merged = _merge_external_candidates([*tyc_candidates, *web_candidates])
+    limited = merged[: settings.SUPPLIER_DISCOVERY_WEB_MAX_RESULTS]
+    return _enrich_external_contacts(limited)
 
 
 def _search_web_candidates(category: str, specification: str, region: str) -> list[dict]:
@@ -280,6 +281,176 @@ def _normalise_result_url(url: str) -> str:
     return unquote(parse_qs(parsed.query).get("uddg", [url])[0])
 
 
+def _merge_external_candidates(candidates: list[dict]) -> list[dict]:
+    """Merge duplicate leads without losing richer web contact data."""
+    merged: list[dict] = []
+    by_name: dict[str, dict] = {}
+    for candidate in candidates:
+        name = str(candidate.get("supplier_name") or "").strip()
+        if not name:
+            continue
+        existing = by_name.get(name)
+        if not existing:
+            item = dict(candidate)
+            by_name[name] = item
+            merged.append(item)
+            continue
+        for field in ("website_url", "contact_phone", "contact_email"):
+            if not existing.get(field) and candidate.get(field):
+                existing[field] = candidate[field]
+        references = [value for value in (existing.get("source_reference"), candidate.get("source_reference")) if value]
+        if references:
+            existing["source_references"] = list(dict.fromkeys(references))
+    return merged
+
+
+def _enrich_external_contacts(candidates: list[dict]) -> list[dict]:
+    """Enrich a bounded number of staged leads with read-only provider and web details."""
+    limit = min(len(candidates), settings.SUPPLIER_DISCOVERY_CONTACT_ENRICHMENT_MAX_CANDIDATES)
+    if limit <= 0:
+        return candidates
+
+    def enrich(index: int, candidate: dict) -> tuple[int, dict]:
+        return index, _enrich_external_candidate(candidate)
+
+    enriched = list(candidates)
+    with ThreadPoolExecutor(max_workers=min(4, limit)) as executor:
+        futures = [executor.submit(enrich, index, candidate) for index, candidate in enumerate(candidates[:limit])]
+        for future in futures:
+            try:
+                index, candidate = future.result()
+            except Exception as exc:
+                logger.warning("supplier_contact_enrichment_failed", error=type(exc).__name__)
+                continue
+            enriched[index] = candidate
+    logger.info(
+        "supplier_contact_enrichment_completed",
+        candidate_count=limit,
+        website_count=sum(bool(candidate.get("website_url")) for candidate in enriched[:limit]),
+        phone_count=sum(bool(candidate.get("contact_phone")) for candidate in enriched[:limit]),
+        email_count=sum(bool(candidate.get("contact_email")) for candidate in enriched[:limit]),
+    )
+    return enriched
+
+
+def _enrich_external_candidate(candidate: dict) -> dict:
+    """Add public contact evidence without changing staged supplier identity or status."""
+    result = dict(candidate)
+    name = str(result.get("supplier_name") or "")
+    source = str(result.get("source") or "")
+
+    if source == "tianyancha_search" and name:
+        from app.services.tianyancha_client import get_company_contact
+
+        result = _apply_contact_fields(result, get_company_contact(name), "tianyancha_baseinfo")
+
+    website_url = str(result.get("website_url") or "")
+    if not _is_direct_web_url(website_url):
+        website_url = _find_company_website(name)
+    if website_url:
+        result = _apply_contact_fields(result, {"website_url": website_url}, "company_website_search")
+        result = _apply_contact_fields(result, _fetch_website_contact_details(website_url), "company_website")
+
+    has_contact = bool(result.get("contact_phone") or result.get("contact_email"))
+    result["contact_status"] = "unverified" if has_contact else "not_found"
+    result["website_status"] = "unverified" if result.get("website_url") else "not_found"
+    result["contact_enrichment_status"] = "partial" if result.get("website_url") or has_contact else "not_found"
+    return result
+
+
+def _apply_contact_fields(candidate: dict, fields: dict[str, str], source: str) -> dict:
+    """Keep the first available field and attach a traceable source label."""
+    result = dict(candidate)
+    for field in ("website_url", "contact_phone", "contact_email"):
+        value = str(fields.get(field) or "").strip()
+        if value and not result.get(field):
+            result[field] = value
+            result[f"{field}_source"] = source
+    return result
+
+
+def _find_company_website(company_name: str) -> str:
+    """Find a likely public company website; it remains unverified until human review."""
+    if not company_name:
+        return ""
+    try:
+        response = httpx.get(
+            "https://www.bing.com/search",
+            params={"q": f"{company_name} 官网", "setlang": "zh-Hans", "count": 5},
+            headers={"User-Agent": "SuppliSense supplier contact enrichment/1.0"},
+            timeout=settings.SUPPLIER_DISCOVERY_CONTACT_FETCH_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except (httpx.HTTPError, httpx.TimeoutException):
+        return ""
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    for link in soup.select("li.b_algo h2 a"):
+        title = link.get_text(" ", strip=True)
+        url = _normalise_result_url(str(link.get("href") or ""))
+        if company_name in title and _is_likely_company_website(url):
+            return url
+    return ""
+
+
+def _fetch_website_contact_details(website_url: str) -> dict[str, str]:
+    """Read homepage and at most two same-site contact pages for public contact details."""
+    page = _fetch_public_html(website_url)
+    if not page:
+        return {}
+    final_url, html = page
+    soup = BeautifulSoup(html, "html.parser")
+    text_parts = [soup.get_text(" ", strip=True)]
+    base_host = (urlparse(final_url).hostname or "").casefold()
+    contact_urls: list[str] = []
+    for link in soup.select("a[href]"):
+        label = f"{link.get_text(' ', strip=True)} {link.get('href', '')}".casefold()
+        if not any(term in label for term in _CONTACT_PAGE_TERMS):
+            continue
+        target = urljoin(final_url, str(link.get("href") or ""))
+        if _is_same_site_url(target, base_host) and target not in contact_urls:
+            contact_urls.append(target)
+        if len(contact_urls) == 2:
+            break
+    for contact_url in contact_urls:
+        contact_page = _fetch_public_html(contact_url)
+        if contact_page:
+            text_parts.append(BeautifulSoup(contact_page[1], "html.parser").get_text(" ", strip=True))
+    return _extract_contact_fields(final_url, " ".join(text_parts))
+
+
+def _fetch_public_html(url: str) -> tuple[str, str] | None:
+    if not _is_likely_company_website(url):
+        return None
+    try:
+        response = httpx.get(
+            url,
+            headers={"User-Agent": "SuppliSense supplier contact enrichment/1.0"},
+            timeout=settings.SUPPLIER_DISCOVERY_CONTACT_FETCH_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+    except (httpx.HTTPError, httpx.TimeoutException):
+        return None
+    final_url = str(response.url)
+    content_type = response.headers.get("content-type", "").casefold()
+    if not _is_likely_company_website(final_url) or "html" not in content_type:
+        return None
+    return final_url, response.text[:200_000]
+
+
+def _is_likely_company_website(url: str) -> bool:
+    if not _is_direct_web_url(url):
+        return False
+    host = (urlparse(url).hostname or "").casefold()
+    return host not in _DIRECTORY_HOSTS and host not in _SEARCH_PROVIDER_HOSTS and host not in {"localhost", "127.0.0.1", "::1"}
+
+
+def _is_same_site_url(url: str, base_host: str) -> bool:
+    parsed = urlparse(url)
+    return _is_likely_company_website(url) and (parsed.hostname or "").casefold() == base_host
+
+
 def _extract_contact_fields(
     url: str,
     text: str,
@@ -304,7 +475,7 @@ def _is_direct_web_url(url: str) -> bool:
     if not url.startswith(("http://", "https://")):
         return False
     host = (urlparse(url).hostname or "").casefold()
-    return host not in {"bing.com", "www.bing.com", "duckduckgo.com", "html.duckduckgo.com"}
+    return host not in _SEARCH_PROVIDER_HOSTS
 
 
 def _first_requirement_value(value: Any) -> str:

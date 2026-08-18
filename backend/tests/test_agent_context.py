@@ -24,6 +24,35 @@ def test_extract_supplier_references_reads_nested_tool_results_and_deduplicates(
     ]
 
 
+def test_extract_supplier_references_preserves_external_contact_fields():
+    result = extract_supplier_references(
+        {
+            "candidates": [{
+                "supplier_name": "华东钢材供应有限公司",
+                "source": "tianyancha_search",
+                "website_url": "https://steel.example.com",
+                "website_status": "unverified",
+                "contact_phone": "021-12345678",
+                "contact_email": "sales@steel.example.com",
+                "contact_status": "unverified",
+            }]
+        },
+        "discover_web_suppliers",
+    )
+
+    assert result == [{
+        "name": "华东钢材供应有限公司",
+        "kind": "supplier",
+        "source": "discover_web_suppliers",
+        "discovery_source": "tianyancha_search",
+        "website_url": "https://steel.example.com",
+        "website_status": "unverified",
+        "contact_phone": "021-12345678",
+        "contact_email": "sales@steel.example.com",
+        "contact_status": "unverified",
+    }]
+
+
 def test_extract_supplier_references_reads_company_names_from_markdown_answer():
     result = extract_supplier_references(
         "1. 深圳市立创电子有限公司\n2. 八方电气（苏州）股份有限公司",

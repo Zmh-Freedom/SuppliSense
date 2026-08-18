@@ -67,9 +67,12 @@ describe('SourcingRiskWorkbench', () => {
   });
 
   it('labels a staged external candidate as an external review item', () => {
-    render(<SourcingRiskCandidateCard candidate={{ supplier_name: '外部候选', status: 'staged_candidate' }} />);
+    render(<SourcingRiskCandidateCard candidate={{ supplier_name: '外部候选', status: 'staged_candidate', website_url: 'https://supplier.example.com', contact_phone: '021-12345678', contact_email: 'sales@supplier.example.com' }} />);
 
     expect(screen.getByText('外部暂存')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '官网（待核验）' })).toHaveAttribute('href', 'https://supplier.example.com');
+    expect(screen.getByText('电话（待核验）：021-12345678')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '邮箱（待核验）：sales@supplier.example.com' })).toHaveAttribute('href', 'mailto:sales@supplier.example.com');
   });
 
   it.each([

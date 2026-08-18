@@ -144,6 +144,21 @@ def query(endpoint: str, keyword: str) -> dict | None:
     return _call(endpoint, keyword)
 
 
+def get_company_contact(company_name: str) -> dict[str, str]:
+    """Read public contact fields from Tianyancha base information without importing a supplier."""
+    response = query("/services/open/ic/baseinfo/normal", company_name)
+    if not response:
+        return {}
+    result = response.get("result")
+    if not isinstance(result, dict):
+        return {}
+    return {
+        "website_url": _first_string_value(result, "website", "webSite", "websiteUrl", "webUrl"),
+        "contact_phone": _first_string_value(result, "phone", "phoneNumber", "tel", "telephone"),
+        "contact_email": _first_string_value(result, "email", "emailAddress", "mail"),
+    }
+
+
 def fetch_company(company_name: str) -> bool:
     """拉取企业全部数据并写入 MongoDB。返回 True 表示成功写入至少一条。"""
     if not TOKEN:
@@ -200,6 +215,34 @@ def _fetch_lawsuit_paginated(company_name: str) -> None:
 
 def _call(path: str, company_name: str) -> dict | None:
     return _call_with_retry(path, company_name)
+
+
+def _first_string_value(data: dict, *keys: str) -> str:
+    """Read the first non-empty string from known fields in a provider payload."""
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    return item.strip()
+                if isinstance(item, dict):
+                    nested = _first_string_value(item, *keys)
+                    if nested:
+                        return nested
+    for value in data.values():
+        if isinstance(value, dict):
+            nested = _first_string_value(value, *keys)
+            if nested:
+                return nested
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    nested = _first_string_value(item, *keys)
+                    if nested:
+                        return nested
+    return ""
 
 
 def _call_with_page(path: str, company_name: str, page_num: int, page_size: int) -> dict | None:

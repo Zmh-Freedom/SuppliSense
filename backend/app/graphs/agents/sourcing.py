@@ -120,6 +120,7 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
 
     graph = build_sourcing_graph()
     full_answer = ""
+    discovered_references: list[dict] = []
 
     try:
         async for event in graph.astream_events(
@@ -151,16 +152,29 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
                     yield _sse_event("assessing", {"message": "正在并行评估风险..."})
 
             elif kind == "on_tool_end":
-                yield _sse_event("tool_result", {"tool": event["name"], "result": str(event["data"].get("output", ""))[:500]})
+                output = event["data"].get("output", "")
+                result = getattr(output, "content", output)
+                yield _sse_event("tool_result", {"tool": event["name"], "result": str(result)[:500]})
+                from app.services.agent import extract_supplier_references
+
+                for reference in extract_supplier_references(result, event["name"]):
+                    if reference not in discovered_references:
+                        discovered_references.append(reference)
 
     except Exception as e:
         from app.graphs import format_llm_error
         yield _sse_event("error", {"message": format_llm_error(e)})
         return
 
-    yield _sse_event("done", {"answer": full_answer})
-
     try:
-        _save_turn(session_id, message, full_answer)
+        from app.services.agent import extract_supplier_references
+
+        for reference in extract_supplier_references(full_answer, "Agent 回答"):
+            if reference not in discovered_references:
+                discovered_references.append(reference)
+        _save_turn(session_id, message, full_answer, discovered_references)
     except Exception:
         pass
+    if discovered_references:
+        yield _sse_event("references", {"items": discovered_references})
+    yield _sse_event("done", {"answer": full_answer})

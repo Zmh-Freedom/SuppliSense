@@ -15,15 +15,26 @@ _GENERIC_COMPANY_NAMES = {"公司", "非上市公司", "两家公司", "缺少�
 
 
 def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Normalize references by supplier name, keeping the first source."""
+    """Normalize references by supplier name without dropping contact evidence."""
     result: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    by_name: dict[str, dict[str, Any]] = {}
     for reference in references:
         name = str(reference.get("name", "")).strip()
-        if not name or name in _GENERIC_COMPANY_NAMES or name in seen:
+        if not name or name in _GENERIC_COMPANY_NAMES:
             continue
-        result.append({**reference, "name": name})
-        seen.add(name)
+        existing = by_name.get(name)
+        if not existing:
+            item = {**reference, "name": name}
+            result.append(item)
+            by_name[name] = item
+            continue
+        for field in (
+            "website_url", "contact_phone", "contact_email", "website_status",
+            "contact_status", "website_url_source", "contact_phone_source",
+            "contact_email_source", "discovery_source",
+        ):
+            if not existing.get(field) and reference.get(field):
+                existing[field] = reference[field]
     return result
 
 
@@ -40,14 +51,27 @@ def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[st
                 if name not in _GENERIC_COMPANY_NAMES
             ])
 
-    names: list[str] = []
+    references: list[dict[str, Any]] = []
+    source = tool_name or "Agent 工具结果"
 
     def visit(item: Any) -> None:
         if isinstance(item, dict):
             for key in ("supplier_name", "company_name"):
                 candidate = item.get(key)
                 if isinstance(candidate, str) and candidate.strip():
-                    names.append(candidate.strip())
+                    reference = {
+                        "name": candidate.strip(),
+                        "kind": "supplier",
+                        "source": source,
+                    }
+                    for field in (
+                        "source", "website_url", "website_status", "website_url_source",
+                        "contact_phone", "contact_phone_source", "contact_email",
+                        "contact_email_source", "contact_status",
+                    ):
+                        if item.get(field):
+                            reference["discovery_source" if field == "source" else field] = item[field]
+                    references.append(reference)
             for child in item.values():
                 visit(child)
         elif isinstance(item, list):

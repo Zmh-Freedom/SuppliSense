@@ -81,6 +81,17 @@ interface StreamState {
   references: SupplierReference[];
 }
 
+function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierReference; onAnalyze: (name: string) => void }) {
+  return <article className="rounded-xl border border-amber-100 bg-amber-50/60 p-2.5 text-xs text-amber-950 space-y-1.5">
+    <button onClick={() => onAnalyze(reference.name)} className="font-medium text-left hover:underline">{reference.name}</button>
+    <div className="grid gap-1 text-amber-800">
+      {reference.website_url ? <a href={reference.website_url} target="_blank" rel="noreferrer" className="w-fit hover:underline">官网（待核验）</a> : <span>官网：未找到</span>}
+      {reference.contact_phone ? <span>电话（待核验）：{reference.contact_phone}</span> : <span>电话：未找到</span>}
+      {reference.contact_email ? <a href={`mailto:${reference.contact_email}`} className="w-fit hover:underline">邮箱（待核验）：{reference.contact_email}</a> : <span>邮箱：未找到</span>}
+    </div>
+  </article>;
+}
+
 export default function ChatView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
@@ -533,15 +544,13 @@ export default function ChatView() {
               {m.role === 'assistant' && m.references && m.references.length > 0 && (
                 <div className="mt-3 border-t border-[var(--color-border)] pt-2">
                   <p className="text-[11px] text-gray-400 mb-1.5">本轮识别供应商</p>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="grid gap-2 sm:grid-cols-2">
                     {m.references.map(reference => (
-                      <button
+                      <SupplierReferenceCard
                         key={`${reference.name}-${reference.source ?? ''}`}
-                        onClick={() => setInput(`继续分析 ${reference.name} 的风险`)}
-                        className="rounded-lg bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100 transition-colors"
-                      >
-                        {reference.name}
-                      </button>
+                        reference={reference}
+                        onAnalyze={name => setInput(`继续分析 ${name} 的风险`)}
+                      />
                     ))}
                   </div>
                 </div>

@@ -108,6 +108,7 @@ def test_web_provider_returns_unverified_company_leads_without_writing(monkeypat
     request = Mock(return_value=Response())
     monkeypatch.setattr(discovery_service.httpx, "get", request)
     monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", lambda *_: [])
+    monkeypatch.setattr(discovery_service, "_enrich_external_contacts", lambda candidates: candidates)
     monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_MAX_RESULTS", 5)
     monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_ENABLED", True)
 
@@ -118,6 +119,60 @@ def test_web_provider_returns_unverified_company_leads_without_writing(monkeypat
     assert result[0]["verification_status"] == "unverified"
     assert result[0]["source_reference"] == "https://steel.example.com"
     assert request.call_count == 1
+
+
+def test_tianyancha_candidates_enrich_contact_details_without_importing(monkeypatch):
+    def search_companies(**_kwargs):
+        return {"items": [{"name": "华东钢材供应有限公司", "regNumber": "91310000TEST"}], "total": 1}
+
+    monkeypatch.setattr("app.services.tianyancha_client.search_companies", search_companies)
+    monkeypatch.setattr(
+        "app.services.tianyancha_client.get_company_contact",
+        lambda _name: {
+            "website_url": "https://www.huadong-steel.example.com",
+            "contact_phone": "021-12345678",
+            "contact_email": "sales@huadong-steel.example.com",
+        },
+    )
+    monkeypatch.setattr(discovery_service, "_fetch_website_contact_details", lambda _url: {})
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_CONTACT_ENRICHMENT_MAX_CANDIDATES", 1)
+    monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_MAX_RESULTS", 1)
+
+    result = discovery_service._search_tianyancha_candidates("钢材", "", "")
+    enriched = discovery_service._enrich_external_contacts(result)
+
+    assert enriched[0]["website_url"] == "https://www.huadong-steel.example.com"
+    assert enriched[0]["contact_phone"] == "021-12345678"
+    assert enriched[0]["contact_email"] == "sales@huadong-steel.example.com"
+    assert enriched[0]["website_status"] == "unverified"
+    assert enriched[0]["contact_status"] == "unverified"
+
+
+def test_website_contact_enrichment_reads_same_site_contact_page(monkeypatch):
+    class Response:
+        def __init__(self, url: str, text: str):
+            self.url = url
+            self.text = text
+            self.headers = {"content-type": "text/html; charset=utf-8"}
+
+        def raise_for_status(self):
+            return None
+
+    pages = {
+        "https://steel.example.com": "<a href='/contact'>联系我们</a>",
+        "https://steel.example.com/contact": "联系电话：021-12345678 邮箱：sales@steel.example.com",
+    }
+    monkeypatch.setattr(
+        discovery_service.httpx,
+        "get",
+        lambda url, **_kwargs: Response(url, pages[url]),
+    )
+
+    result = discovery_service._fetch_website_contact_details("https://steel.example.com")
+
+    assert result["website_url"] == "https://steel.example.com"
+    assert result["contact_phone"] == "021-12345678"
+    assert result["contact_email"] == "sales@steel.example.com"
 
 
 def test_web_provider_can_be_disabled(monkeypatch):

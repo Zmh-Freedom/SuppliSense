@@ -74,6 +74,15 @@ export interface SupplierReference {
   name: string;
   kind?: 'supplier' | string;
   source?: string;
+  discovery_source?: string;
+  website_url?: string;
+  website_status?: 'unverified' | 'not_found' | string;
+  website_url_source?: string;
+  contact_phone?: string;
+  contact_phone_source?: string;
+  contact_email?: string;
+  contact_email_source?: string;
+  contact_status?: 'unverified' | 'not_found' | string;
 }
 
 // ---- Chat Charts ----
@@ -246,6 +255,15 @@ export interface SourcingRiskCandidate {
   name?: string;
   source?: 'local' | 'staged_external' | string;
   status?: string;
+  website_url?: string;
+  website_status?: 'unverified' | 'not_found' | string;
+  website_url_source?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  contact_status?: 'unverified' | 'not_found' | string;
+  contact_phone_source?: string;
+  contact_email_source?: string;
+  contact_enrichment_status?: 'partial' | 'not_found' | string;
   identity_status?: string;
   identity_review?: boolean;
   identity_candidates?: SourcingRiskIdentityCandidate[];
