@@ -389,6 +389,21 @@ def list_events_after(run_id: str, event_id: int = 0) -> list[dict[str, Any]]:
         ]
 
 
+def list_execution_snapshot_events(run_id: str) -> list[dict[str, Any]]:
+    """Return only durable events that carry an execution recovery snapshot."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT * FROM agent_run_events
+            WHERE run_id = %s AND payload ? 'execution_snapshot'
+            ORDER BY event_id ASC
+            """,
+            (run_id,),
+        )
+        columns = [column[0] for column in cur.description]
+        return [_row_to_dict_from_columns(columns, row) for row in cur.fetchall()]
+
+
 def insert_policy_snapshot(
     run_id: str, policy: dict[str, Any], template_id: str | None = None
 ) -> dict[str, Any]:

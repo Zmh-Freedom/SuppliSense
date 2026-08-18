@@ -115,3 +115,13 @@ class AgentRunEventResponse(_ImmutableModel):
     @classmethod
     def freeze_data(cls, value: dict[str, Any]) -> dict[str, Any]:
         return _deep_freeze(value)
+
+
+class AgentExecutionSnapshot(_ImmutableModel):
+    """Internal recovery payload stored inside the existing run event stream."""
+
+    task_matrix: list[dict[str, Any]] = Field(default_factory=list)
+    subtask_results: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    loops: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    validators: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    pending_approvals: list[dict[str, Any]] = Field(default_factory=list)

@@ -442,11 +442,11 @@ feat(agent): add structured conversation state
 
 #### Task 10：持久化任务、Loop 和恢复快照
 
-- [ ] `agent_run` 保存 Task Matrix 和每个子任务结果；
-- [ ] 保存 Loop iteration、预算和退出原因；
-- [ ] SSE 断线后从已持久化阶段恢复；
-- [ ] 恢复时不重复已成功工具调用；
-- [ ] 审批后仅恢复被暂停的动作分支。
+- [x] `agent_run` 保存 Task Matrix 和每个子任务结果；
+- [x] 保存 Loop iteration、预算和退出原因；
+- [x] SSE 断线后从已持久化阶段恢复；
+- [x] 恢复时不重复已成功工具调用；
+- [x] 审批后仅恢复被暂停的动作分支。
 
 验收：中途重启后能恢复任务；已完成子任务不会再次执行。
 

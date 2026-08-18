@@ -94,6 +94,10 @@ async def load_task(state: AgentTaskState) -> dict[str, Any]:
 
 async def plan_task(state: AgentTaskState) -> dict[str, Any]:
     """Build and durably expose the deterministic task plan."""
+    persisted_plan = state.get("plan")
+    if isinstance(persisted_plan, dict) and persisted_plan.get("tasks"):
+        return {"plan": persisted_plan, "task_status": "PLANNING"}
+
     intent = dict(state.get("intent", {}))
     references = state.get("supplier_references", [])
     current_task = intent.get("current_task")
@@ -434,7 +438,7 @@ def _config(run_id: str) -> dict[str, dict[str, str]]:
 
 
 async def start_agent_supervisor(run_id: str) -> None:
-    """Start a Supervisor from its durable agent-run requirement."""
+    """Start or safely resume a Supervisor from durable execution state."""
     require_v2_execution(settings)
     run = await _call_sync(get_orchestration_run, run_id)
     if run is None:
@@ -446,10 +450,33 @@ async def start_agent_supervisor(run_id: str) -> None:
     user_query = str(
         requirement.get("user_query") or requirement.get("requirement_text") or ""
     )
+    snapshot = await _call_sync(agent_run_service.load_execution_snapshot, run_id, run)
+    graph_input: AgentTaskState = {
+        "run_id": run_id,
+        "user_query": user_query,
+        "intent": dict(intent),
+    }
+    if snapshot:
+        task_matrix = snapshot.get("task_matrix")
+        if isinstance(task_matrix, list) and task_matrix:
+            graph_input["plan"] = {"tasks": task_matrix}
+        result_ledger = snapshot.get("subtask_results")
+        if isinstance(result_ledger, dict):
+            graph_input["agent_results"] = {
+                task_id: result
+                for task_id, result in result_ledger.items()
+                if isinstance(result, dict) and result.get("status") == "completed"
+            }
+        loops = snapshot.get("loops")
+        if isinstance(loops, dict) and isinstance(loops.get("evidence"), dict):
+            graph_input["evidence_loop"] = dict(loops["evidence"])
+        pending_approvals = snapshot.get("pending_approvals")
+        if isinstance(pending_approvals, list) and pending_approvals:
+            graph_input["pending_approvals"] = pending_approvals
     checkpointer = await get_sourcing_risk_checkpointer()
     graph = build_agent_supervisor_graph(checkpointer)
     await graph.ainvoke(
-        {"run_id": run_id, "user_query": user_query, "intent": dict(intent)},
+        graph_input,
         _config(run_id),
     )
 

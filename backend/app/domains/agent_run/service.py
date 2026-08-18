@@ -26,6 +26,7 @@ from app.domains.agent_run.repo import (
     insert_approval_decision,
     insert_run,
     list_events_after,
+    list_execution_snapshot_events,
     persist_run_snapshot,
     update_run_requirement,
     update_run_status,
@@ -39,6 +40,7 @@ from app.domains.agent_run.schemas import (
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
     IdentityResolutionRequest,
+    AgentExecutionSnapshot,
 )
 
 TERMINAL_STATUSES = frozenset(
@@ -436,14 +438,141 @@ def persist_supervisor_snapshot(
             )
             if updated is None:
                 _raise_version_conflict()
+        execution_snapshot = _execution_snapshot_from_event(snapshot)
+        event_payload = {
+            "task_status": task_status,
+            **dict(snapshot),
+            "status": updated["status"],
+        }
+        if _has_execution_snapshot_data(execution_snapshot):
+            event_payload["execution_snapshot"] = execution_snapshot.model_dump(mode="json")
         event = append_event(
             run_id,
             updated["version"],
             event_type,
-            {"task_status": task_status, **dict(snapshot), "status": updated["status"]},
+            event_payload,
             cur=cur,
         )
     return int(event["event_id"])
+
+
+def load_execution_snapshot(
+    run_id: str,
+    run: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Rebuild a safe graph resume input from durable execution snapshots.
+
+    Completed subtasks remain in the result ledger but are deliberately excluded
+    from ``resumable_subtasks``. Only pending approval actions are returned, so a
+    resume cannot expose an approved/rejected action branch as if it were paused.
+    """
+    run = run or get_orchestration_run(run_id)
+    if run is None:
+        return None
+
+    snapshot = AgentExecutionSnapshot()
+    for event in list_execution_snapshot_events(run_id):
+        payload = event.get("payload") if isinstance(event, dict) else None
+        raw_snapshot = payload.get("execution_snapshot") if isinstance(payload, dict) else None
+        if not isinstance(raw_snapshot, dict):
+            continue
+        snapshot = _merge_execution_snapshot(snapshot, raw_snapshot)
+
+    completed_subtask_ids = [
+        task_id
+        for task_id, result in snapshot.subtask_results.items()
+        if result.get("status") == "completed"
+    ]
+    completed_ids = set(completed_subtask_ids)
+    resumable_subtasks = [
+        task for task in snapshot.task_matrix
+        if str(task.get("subtask_id") or task.get("task_id") or "") not in completed_ids
+    ]
+    pending_approvals = (
+        [
+            approval for approval in snapshot.pending_approvals
+            if approval.get("status") == "pending"
+        ]
+        if run.get("status") == AgentRunStatus.ACTION_PENDING.value
+        else []
+    )
+    return {
+        **snapshot.model_dump(mode="json"),
+        "completed_subtask_ids": completed_subtask_ids,
+        "resumable_subtasks": resumable_subtasks,
+        "pending_approvals": pending_approvals,
+    }
+
+
+def _execution_snapshot_from_event(snapshot: dict[str, Any]) -> AgentExecutionSnapshot:
+    """Normalize one Supervisor event into a mergeable execution checkpoint."""
+    task_matrix = snapshot.get("task_matrix")
+    if not isinstance(task_matrix, list):
+        plan = snapshot.get("plan")
+        task_matrix = plan.get("tasks", []) if isinstance(plan, dict) else []
+
+    subtask_results: dict[str, dict[str, Any]] = {}
+    task_id = snapshot.get("task_id")
+    result = snapshot.get("result")
+    if isinstance(task_id, str) and isinstance(result, dict):
+        subtask_results[task_id] = dict(result)
+    raw_results = snapshot.get("agent_results")
+    if isinstance(raw_results, dict):
+        subtask_results.update({
+            str(result_id): dict(item)
+            for result_id, item in raw_results.items()
+            if isinstance(item, dict)
+        })
+
+    loops = {
+        key.removesuffix("_loop"): dict(value)
+        for key, value in snapshot.items()
+        if key.endswith("_loop") and isinstance(value, dict)
+    }
+    validators = {
+        key.removesuffix("_validation"): dict(value)
+        for key, value in snapshot.items()
+        if key.endswith("_validation") and isinstance(value, dict)
+    }
+    pending_approvals = snapshot.get("pending_approvals")
+    return AgentExecutionSnapshot(
+        task_matrix=[item for item in task_matrix if isinstance(item, dict)],
+        subtask_results=subtask_results,
+        loops=loops,
+        validators=validators,
+        pending_approvals=[
+            dict(item) for item in pending_approvals
+            if isinstance(item, dict)
+        ] if isinstance(pending_approvals, list) else [],
+    )
+
+
+def _has_execution_snapshot_data(snapshot: AgentExecutionSnapshot) -> bool:
+    return any((
+        snapshot.task_matrix,
+        snapshot.subtask_results,
+        snapshot.loops,
+        snapshot.validators,
+        snapshot.pending_approvals,
+    ))
+
+
+def _merge_execution_snapshot(
+    current: AgentExecutionSnapshot,
+    incoming: dict[str, Any],
+) -> AgentExecutionSnapshot:
+    """Overlay one event checkpoint without discarding prior successful results."""
+    checkpoint = AgentExecutionSnapshot.model_validate(incoming)
+    return AgentExecutionSnapshot(
+        task_matrix=checkpoint.task_matrix or current.task_matrix,
+        subtask_results={**current.subtask_results, **checkpoint.subtask_results},
+        loops={**current.loops, **checkpoint.loops},
+        validators={**current.validators, **checkpoint.validators},
+        pending_approvals=(
+            checkpoint.pending_approvals
+            if checkpoint.pending_approvals else current.pending_approvals
+        ),
+    )
 
 
 def create_supervisor_action_proposals(

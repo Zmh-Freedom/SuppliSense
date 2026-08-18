@@ -280,6 +280,9 @@ def test_start_and_resume_reuse_durable_run_and_checkpointer(
         },
     )
     monkeypatch.setattr(
+        agent_run_service, "load_execution_snapshot", lambda *_: None
+    )
+    monkeypatch.setattr(
         supervisor_graph, "get_sourcing_risk_checkpointer", get_checkpointer
     )
     monkeypatch.setattr(
