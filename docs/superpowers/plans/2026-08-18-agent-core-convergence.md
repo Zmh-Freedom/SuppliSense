@@ -309,11 +309,11 @@ feat(agent): add structured conversation state
 
 #### Task 2：扩展 ConversationState 和核心协议
 
-- [ ] 先写 `test_agent_core_contracts.py` 失败测试；
-- [ ] 增加版本化 ConversationState、AgentTask、AgentSubtask、LoopState；
-- [ ] 增加旧会话兼容迁移；
-- [ ] 验证联系方式和外部来源字段迁移不丢失；
-- [ ] 运行聚焦测试并复核一次。
+- [x] 先写 `test_agent_core_contracts.py` 失败测试；
+- [x] 增加版本化 ConversationState、AgentTask、AgentSubtask、LoopState；
+- [x] 增加旧会话兼容迁移；
+- [x] 验证联系方式和外部来源字段迁移不丢失；
+- [x] 运行聚焦测试并复核一次。
 
 验收：新状态可 JSON 序列化、持久化、恢复；旧会话首次读取后得到结构化状态。
 

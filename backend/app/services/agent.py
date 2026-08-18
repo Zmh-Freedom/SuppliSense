@@ -157,7 +157,7 @@ def _save_turn(
         from app.services.conversation_state import build_conversation_state
 
         conversation_state = build_conversation_state(
-            user_msg, normalized_references, previous_state
+            user_msg, normalized_references, previous_state, session_id=session_id
         )
         assistant_message: dict[str, Any] = {
             "role": "assistant", "content": assistant_msg,

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.graphs.agent_core.contracts import AgentTask, ConversationState, migrate_conversation_state
+
 
 _ANALYSIS_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("risk", ("风险", "风险评估", "风险分析")),
@@ -59,28 +61,37 @@ def build_conversation_state(
     message: str,
     supplier_references: list[dict[str, Any]],
     previous_state: dict[str, Any] | None = None,
+    *,
+    session_id: str = "",
 ) -> dict[str, Any]:
     """Build the durable, serializable state for the current conversation turn."""
+    previous = migrate_conversation_state(previous_state, session_id=session_id)
     active_suppliers = [
         reference
         for reference in supplier_references
         if isinstance(reference, dict) and reference.get("name")
     ]
-    if not active_suppliers and previous_state:
-        active_suppliers = [
-            reference
-            for reference in previous_state.get("active_suppliers", [])
-            if isinstance(reference, dict) and reference.get("name")
-        ]
+    if not active_suppliers:
+        active_suppliers = [reference.model_dump(mode="json") for reference in previous.active_suppliers]
     target_names = resolve_supplier_targets(message, active_suppliers)
     dimensions = analysis_dimensions_from_message(message)
-    return {
-        "active_suppliers": active_suppliers,
-        "selected_suppliers": target_names,
-        "current_task": {
-            "user_message": message,
-            "target_supplier_names": target_names,
-            "analysis_dimensions": dimensions,
-            "status": "pending",
-        },
-    }
+    task_type = "analysis" if dimensions or target_names else "sourcing"
+    state = ConversationState(
+        session_id=session_id or previous.session_id,
+        active_suppliers=active_suppliers,
+        selected_supplier_names=target_names,
+        current_requirement=previous.current_requirement,
+        current_task=AgentTask(
+            task_id="current-task",
+            task_type=task_type,
+            target_supplier_names=target_names,
+            analysis_dimensions=dimensions,
+            user_message=message,
+        ),
+        recent_tasks=previous.recent_tasks,
+        pending_clarification=previous.pending_clarification,
+        pending_approvals=previous.pending_approvals,
+    )
+    payload = state.model_dump(mode="json")
+    payload["selected_suppliers"] = target_names
+    return payload
