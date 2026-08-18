@@ -326,6 +326,16 @@ export interface AgentRunEvent {
   data: Record<string, unknown>;
 }
 
+export interface AgentTraceEvent {
+  eventId: number;
+  kind: string;
+  status: string;
+  message: string;
+  data: Record<string, unknown>;
+  source: 'agent_trace' | 'graph_trace';
+  atMs?: number;
+}
+
 export interface SupplierEntry {
   _id: string;
   name: string;

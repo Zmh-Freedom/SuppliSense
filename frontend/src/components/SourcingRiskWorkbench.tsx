@@ -6,6 +6,7 @@ import { queryKeys } from '../query-keys';
 import type { SourcingRiskCandidate, SourcingRiskDecision } from '../types';
 import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
+import AgentExecutionTrace from './AgentExecutionTrace';
 
 const STAGES = [
   ['CREATED', '创建任务'], ['CLARIFYING', '等待需求澄清'], ['POLICY_LOCKED', '锁定规则'],
@@ -72,7 +73,7 @@ function DecisionGroup({ title, decisions, candidates }: { title: string; decisi
 export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?: string }) {
   const [requirementText, setRequirementText] = useState('');
   const [activeRunId, setActiveRunId] = useState(initialRunId);
-  const { data: run, isLoading, error, createRun } = useSourcingRiskRun(activeRunId);
+  const { data: run, isLoading, error, createRun, traceEvents } = useSourcingRiskRun(activeRunId);
   const isIdentityReview = run?.status === 'IDENTITY_REVIEW' || run?.next_action === 'identity_review_required';
   const decisionsByGroup = useMemo(() => {
     const groups = new Map<string, SourcingRiskDecision[]>();
@@ -98,6 +99,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     {error && <p className="text-sm text-red-500">任务加载失败，请稍后重试。</p>}
     {run && runId && <>
       <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}</div><span className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{run.status}</span></div><StageTimeline status={run.status} /></section>
+      <AgentExecutionTrace events={traceEvents} />
       {isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
         {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} />)}</section>}
         {[...decisionsByGroup.entries()].map(([group, decisions]) => <DecisionGroup key={group} title={GROUP_TITLES[group] ?? group} decisions={decisions} candidates={run.candidates ?? []} />)}

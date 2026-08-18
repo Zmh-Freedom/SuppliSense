@@ -1,8 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { agentRunEventStream, api } from '../api';
 import { queryKeys } from '../query-keys';
-import type { AgentRunEvent, SourcingRiskAgentRun, SourcingRiskRequirement } from '../types';
+import type { AgentRunEvent, AgentTraceEvent, SourcingRiskAgentRun, SourcingRiskRequirement } from '../types';
 
 const EVENT_CURSOR_PREFIX = 'agent_run_event_cursor:';
 const RECONNECT_DELAY_MS = 1_000;
@@ -34,9 +34,46 @@ function applyEvent(run: SourcingRiskAgentRun, event: AgentRunEvent): SourcingRi
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function traceEventFrom(event: AgentRunEvent): AgentTraceEvent | null {
+  if (event.eventType === 'agent_trace') {
+    const kind = typeof event.data.kind === 'string' ? event.data.kind : null;
+    const status = typeof event.data.status === 'string' ? event.data.status : null;
+    const message = typeof event.data.message === 'string' ? event.data.message : null;
+    if (!kind || !status || !message) return null;
+    return {
+      eventId: event.eventId,
+      kind,
+      status,
+      message,
+      data: asRecord(event.data.data) ?? {},
+      source: 'agent_trace',
+    };
+  }
+  if (event.eventType !== 'graph_trace') return null;
+  const kind = typeof event.data.type === 'string' ? event.data.type : null;
+  if (!kind) return null;
+  const payload = asRecord(event.data.payload) ?? {};
+  return {
+    eventId: event.eventId,
+    kind,
+    status: typeof payload.status === 'string' ? payload.status : '执行中',
+    message: `工作流节点：${kind}`,
+    data: payload,
+    source: 'graph_trace',
+    atMs: typeof event.data.at_ms === 'number' ? event.data.at_ms : undefined,
+  };
+}
+
 export function useSourcingRiskRun(initialRunId?: string) {
   const queryClient = useQueryClient();
   const retryTimer = useRef<number | null>(null);
+  const [traceState, setTraceState] = useState<{ runId?: string; events: AgentTraceEvent[] }>({ events: [] });
   const query = useQuery({
     queryKey: queryKeys.agentRunDetail(initialRunId ?? ''),
     queryFn: () => api.get<SourcingRiskAgentRun>(`/agent-runs/${encodeURIComponent(initialRunId!)}`),
@@ -64,6 +101,15 @@ export function useSourcingRiskRun(initialRunId?: string) {
           queryClient.setQueryData<SourcingRiskAgentRun>(queryKeys.agentRunDetail(initialRunId), current =>
             current ? applyEvent(current, event) : current,
           );
+          const traceEvent = traceEventFrom(event);
+          if (traceEvent) {
+            setTraceState(current => {
+              if (current.runId !== initialRunId) return { runId: initialRunId, events: [traceEvent] };
+              return current.events.some(item => item.eventId === traceEvent.eventId)
+                ? current
+                : { ...current, events: [...current.events, traceEvent] };
+            });
+          }
         },
         onDone: () => queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(initialRunId) }),
         onError: () => {
@@ -84,5 +130,5 @@ export function useSourcingRiskRun(initialRunId?: string) {
     ? queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(initialRunId) })
     : Promise.resolve();
 
-  return { ...query, createRun, refresh, runIdOf };
+  return { ...query, createRun, refresh, runIdOf, traceEvents: traceState.runId === initialRunId ? traceState.events : [] };
 }

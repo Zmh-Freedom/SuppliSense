@@ -41,12 +41,19 @@ def build_agent_trace_events(
     if event_type == "planning":
         tasks = _tasks(snapshot)
         agents = sorted({str(task.get("agent")) for task in tasks if task.get("agent")})
+        analysis_scope = _mapping(snapshot.get("analysis_scope"))
         return [
             _trace("route_selected", task_status, "已选择 Supervisor 编排路径", {
                 "route": "supervisor", "agent_count": len(agents), "agents": agents,
             }),
             _trace("plan_created", task_status, "已生成可执行任务计划", {
                 "task_count": len(tasks), "task_ids": _task_ids(tasks),
+                "target_supplier_names": _text_list(
+                    analysis_scope.get("target_supplier_names")
+                ),
+                "analysis_dimensions": _text_list(
+                    analysis_scope.get("analysis_dimensions")
+                ),
             }),
         ]
     if event_type == "agent_start":
@@ -150,6 +157,10 @@ def _tasks(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _task_ids(tasks: list[dict[str, Any]]) -> list[str]:
     return [str(task.get("task_id") or task.get("subtask_id")) for task in tasks if task.get("task_id") or task.get("subtask_id")]
+
+
+def _text_list(value: Any) -> list[str]:
+    return [str(item) for item in value if isinstance(item, (str, int, float, bool))] if isinstance(value, list) else []
 
 
 def _approvals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:

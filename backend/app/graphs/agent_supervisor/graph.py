@@ -131,7 +131,26 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
                 intent["requirement"] = fallback
     plan = plan_agent_task(state.get("user_query", ""), intent)
     serialized = plan.model_dump(mode="json")
-    await _persist(state, "PLANNING", "planning", {"plan": serialized})
+    current_task = intent.get("current_task")
+    current_task = current_task if isinstance(current_task, dict) else {}
+    target_supplier_names = current_task.get("target_supplier_names")
+    analysis_dimensions = current_task.get("analysis_dimensions")
+    analysis_scope = {
+        "target_supplier_names": (
+            list(target_supplier_names)
+            if isinstance(target_supplier_names, list)
+            else [intent["company_name"]] if isinstance(intent.get("company_name"), str) else []
+        ),
+        "analysis_dimensions": (
+            list(analysis_dimensions) if isinstance(analysis_dimensions, list) else []
+        ),
+    }
+    await _persist(
+        state,
+        "PLANNING",
+        "planning",
+        {"plan": serialized, "analysis_scope": analysis_scope},
+    )
     return {"plan": serialized, "intent": intent, "task_status": "PLANNING"}
 
 

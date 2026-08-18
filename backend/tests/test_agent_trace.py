@@ -9,6 +9,10 @@ from app.graphs.agent_core.trace import build_agent_trace_events, sanitize_graph
 def test_trace_events_cover_supervisor_lifecycle_without_private_reasoning() -> None:
     plan_events = build_agent_trace_events("planning", "PLANNING", {
         "plan": {"tasks": [{"task_id": "supplier-a:risk", "agent": "risk"}]},
+        "analysis_scope": {
+            "target_supplier_names": ["供应商 A"],
+            "analysis_dimensions": ["risk"],
+        },
         "reasoning": "private model chain",
     })
     result_events = build_agent_trace_events("agent_result", "EXECUTING", {
@@ -38,6 +42,8 @@ def test_trace_events_cover_supervisor_lifecycle_without_private_reasoning() -> 
         "duration_ms": 42, "attempts": 1, "evidence_count": 2,
     }
     assert "reasoning" not in str([*plan_events, *result_events])
+    assert plan_events[1]["data"]["target_supplier_names"] == ["供应商 A"]
+    assert plan_events[1]["data"]["analysis_dimensions"] == ["risk"]
     assert "final_answer" not in final_events[0]["data"]
 
 
