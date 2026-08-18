@@ -15,10 +15,10 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
     """LangGraph ReAct 模式流式输出。"""
     from app.graphs.react_graph import build_react_graph
     from app.graphs.streaming import stream_react_graph
-    from app.services.agent import _load_conversation_context
+    from app.graphs.agent_core.adapter import load_execution_context
 
     graph = build_react_graph(preference_context)
-    context = _load_conversation_context(session_id)
+    context = load_execution_context(session_id, message)
     # 传入 config 用于 Human-in-the-Loop 恢复
     run_config = {"configurable": {"thread_id": session_id}}
     async for event in stream_react_graph(
@@ -28,6 +28,7 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
         context["history"],
         run_config,
         context["references"],
+        context,
     ):
         yield event
 
@@ -35,11 +36,16 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
 async def _langgraph_plan_execute_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Plan-Execute 模式流式输出。"""
     from app.graphs.plan_execute_graph import stream_plan_execute_graph
-    from app.services.agent import _load_conversation_context
+    from app.graphs.agent_core.adapter import load_execution_context
 
-    context = _load_conversation_context(session_id)
+    context = load_execution_context(session_id, message)
     async for event in stream_plan_execute_graph(
-        message, session_id, context["history"], preference_context, context["references"]
+        message,
+        session_id,
+        context["history"],
+        preference_context,
+        context["references"],
+        context,
     ):
         yield event
 
@@ -47,11 +53,16 @@ async def _langgraph_plan_execute_stream(session_id: str, message: str, preferen
 async def _langgraph_supervisor_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Supervisor 多智能体模式流式输出。"""
     from app.graphs.supervisor_graph import stream_supervisor_graph
-    from app.services.agent import _load_conversation_context
+    from app.graphs.agent_core.adapter import load_execution_context
 
-    context = _load_conversation_context(session_id)
+    context = load_execution_context(session_id, message)
     async for event in stream_supervisor_graph(
-        message, session_id, context["history"], preference_context, context["references"]
+        message,
+        session_id,
+        context["history"],
+        preference_context,
+        context["references"],
+        context,
     ):
         yield event
 
@@ -72,17 +83,22 @@ async def _langgraph_agent_supervisor_stream(
 
     from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
     from app.graphs.streaming import stream_agent_supervisor_graph
-    from app.services.agent import _load_conversation_context
+    from app.graphs.agent_core.adapter import load_execution_context
 
     graph = build_agent_supervisor_graph()
     run_config = {"configurable": {"thread_id": session_id}}
     try:
-        context = _load_conversation_context(session_id)
+        context = load_execution_context(session_id, message)
     except Exception:
         # Conversation references are an enhancement; an unavailable MongoDB
         # must not alter the Supervisor's existing read-only execution path.
-        context = {"history": [], "references": []}
-    if not context["references"]:
+        context = {
+            "history": [],
+            "references": [],
+            "conversation_state": {},
+            "current_task": {},
+        }
+    if not context["conversation_state"]:
         stream = stream_agent_supervisor_graph(graph, message, session_id, run_config)
     else:
         stream = stream_agent_supervisor_graph(
@@ -94,8 +110,10 @@ async def _langgraph_agent_supervisor_stream(
                 "run_id": session_id,
                 "user_query": message,
                 "supplier_references": context["references"],
-                "intent": {},
+                "intent": {"current_task": context["current_task"]},
+                "conversation_state": context["conversation_state"],
             },
+            execution_context=context,
         )
     async for event in stream:
         yield event
@@ -104,15 +122,16 @@ async def _langgraph_agent_supervisor_stream(
 async def _langgraph_parallel_stream(session_id: str, message: str, preference_context: str = ""):
     """LangGraph Parallel 并行多 Agent Map-Reduce 流式输出。"""
     from app.graphs.parallel_graph import stream_parallel_graph
-    from app.services.agent import _load_conversation_context
+    from app.graphs.agent_core.adapter import load_execution_context
 
-    context = _load_conversation_context(session_id)
+    context = load_execution_context(session_id, message)
     async for event in stream_parallel_graph(
         message,
         session_id,
         context["history"],
         preference_context,
         context["references"],
+        context,
     ):
         yield event
 
@@ -121,12 +140,20 @@ async def _langgraph_react_reflection_stream(session_id: str, message: str, pref
     """LangGraph ReAct + Self-Reflection 流式输出。"""
     from app.graphs.react_graph import build_react_graph_with_reflection
     from app.graphs.streaming import stream_react_graph
-    from app.services.agent import _load_history
+    from app.graphs.agent_core.adapter import load_execution_context
 
     graph = build_react_graph_with_reflection(preference_context)
-    history = _load_history(session_id)
+    context = load_execution_context(session_id, message)
     run_config = {"configurable": {"thread_id": session_id}}
-    async for event in stream_react_graph(graph, message, session_id, history, run_config):
+    async for event in stream_react_graph(
+        graph,
+        message,
+        session_id,
+        context["history"],
+        run_config,
+        context["references"],
+        context,
+    ):
         yield event
 
 

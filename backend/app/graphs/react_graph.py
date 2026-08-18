@@ -67,6 +67,8 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    conversation_state: dict
+    current_task: dict
 
 
 # 模块级 LLM 单例，避免每次请求创建新连接
@@ -151,6 +153,8 @@ def build_react_graph_with_reflection(preference_context: str = ""):
         messages: Annotated[list, add_messages]
         reflection_feedback: str
         reflection_count: int
+        conversation_state: dict
+        current_task: dict
 
     llm = _get_llm()
     tool_node = ToolNode(TOOLS_LIST)

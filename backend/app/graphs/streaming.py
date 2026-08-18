@@ -41,6 +41,7 @@ async def stream_agent_supervisor_graph(
     session_id: str,
     run_config: dict[str, Any] | None = None,
     graph_input: Any = None,
+    execution_context: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Map Agent Supervisor updates onto the existing public SSE schema."""
     config = run_config or {"configurable": {"thread_id": session_id}}
@@ -141,7 +142,11 @@ async def stream_agent_supervisor_graph(
                 if reference not in discovered_references:
                     discovered_references.append(reference)
 
-            _save_turn(session_id, user_message, full_answer, discovered_references)
+            from app.graphs.agent_core.adapter import save_execution_turn
+
+            save_execution_turn(
+                session_id, user_message, full_answer, discovered_references
+            )
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})
         yield _sse_event("done", {"answer": full_answer})
@@ -158,6 +163,7 @@ async def stream_react_graph(
     history: list[dict] | None = None,
     run_config: dict | None = None,
     references: list[dict] | None = None,
+    execution_context: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """运行 ReAct 图并 yield SSE 事件。
 
@@ -169,7 +175,20 @@ async def stream_react_graph(
     """
     from app.graphs.context import build_input_messages
 
-    input_messages = await build_input_messages(history or [], user_message, references)
+    from app.graphs.agent_core.adapter import build_execution_context
+
+    resolved_context = execution_context or build_execution_context(
+        session_id=session_id,
+        user_message=user_message,
+        history=history or [],
+        references=references or [],
+    )
+    input_messages = await build_input_messages(
+        history or [],
+        user_message,
+        references,
+        resolved_context,
+    )
 
     full_answer = ""
     discovered_references: list[dict] = list(references or [])
@@ -180,7 +199,11 @@ async def stream_react_graph(
 
     try:
         async for event in graph.astream_events(
-            {"messages": input_messages},
+            {
+                "messages": input_messages,
+                "conversation_state": resolved_context["conversation_state"],
+                "current_task": resolved_context["current_task"],
+            },
             config=config,
             version="v2",
         ):
@@ -248,7 +271,11 @@ async def stream_react_graph(
                 if reference not in discovered_references:
                     discovered_references.append(reference)
 
-            _save_turn(session_id, user_message, full_answer, discovered_references)
+            from app.graphs.agent_core.adapter import save_execution_turn
+
+            save_execution_turn(
+                session_id, user_message, full_answer, discovered_references
+            )
 
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})

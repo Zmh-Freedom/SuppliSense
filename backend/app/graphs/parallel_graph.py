@@ -122,6 +122,8 @@ class ParallelState(TypedDict):
     current_agent: str
     reflection_feedback: str
     reflection_count: int
+    conversation_state: dict
+    current_task: dict
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +287,8 @@ def fan_out_to_agents(state: ParallelState) -> "list[Send] | str":
                 "current_agent": task,
                 "reflection_feedback": "",
                 "reflection_count": 0,
+                "conversation_state": state.get("conversation_state", {}),
+                "current_task": state.get("current_task", {}),
             },
         ))
     return sends
@@ -452,6 +456,7 @@ async def stream_parallel_graph(
     history: list[dict] | None = None,
     preference_context: str = "",
     references: list[dict] | None = None,
+    execution_context: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """运行并行 Map-Reduce 图并 yield SSE 事件。
 
@@ -459,10 +464,18 @@ async def stream_parallel_graph(
             answer_chunk (with optional agent tag), tool_call, tool_result,
             done, error
     """
-    from app.services.agent import _save_turn
+    from app.graphs.agent_core.adapter import build_execution_context, save_execution_turn
     from app.graphs.context import build_input_messages
 
-    input_messages = await build_input_messages(history or [], user_message, references)
+    resolved_context = execution_context or build_execution_context(
+        session_id=session_id,
+        user_message=user_message,
+        history=history or [],
+        references=references or [],
+    )
+    input_messages = await build_input_messages(
+        history or [], user_message, references, resolved_context
+    )
 
     if preference_context:
         input_messages.insert(0, SystemMessage(content=preference_context))
@@ -602,7 +615,9 @@ async def stream_parallel_graph(
             for reference in extract_supplier_references(all_text, "Agent 回答"):
                 if reference not in discovered_references:
                     discovered_references.append(reference)
-            _save_turn(session_id, user_message, all_text, discovered_references)
+            save_execution_turn(
+                session_id, user_message, all_text, discovered_references
+            )
 
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})

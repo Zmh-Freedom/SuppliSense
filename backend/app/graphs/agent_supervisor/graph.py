@@ -93,6 +93,14 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
     """Build and durably expose the deterministic task plan."""
     intent = dict(state.get("intent", {}))
     references = state.get("supplier_references", [])
+    current_task = intent.get("current_task")
+    if isinstance(current_task, dict):
+        target_names = current_task.get("target_supplier_names", [])
+        dimensions = current_task.get("analysis_dimensions", [])
+        if target_names:
+            intent["company_name"] = target_names[0]
+        if dimensions:
+            intent["analysis_dimensions"] = list(dimensions)
     if (
         "company_name" not in intent
         and references

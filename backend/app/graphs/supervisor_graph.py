@@ -91,6 +91,8 @@ class SupervisorState(TypedDict):
     messages: Annotated[list, add_messages]
     next: str
     current_agent: str
+    conversation_state: dict
+    current_task: dict
 
 
 # ---------------------------------------------------------------------------
@@ -312,16 +314,25 @@ async def stream_supervisor_graph(
     history: list[dict] | None = None,
     preference_context: str = "",
     references: list[dict] | None = None,
+    execution_context: dict | None = None,
 ) -> AsyncGenerator[str, None]:
     """运行 supervisor 图并 yield SSE 事件。
 
     Events: thinking, agent_selection, agent_start, agent_complete,
             answer_chunk, done, error
     """
-    from app.services.agent import _save_turn
+    from app.graphs.agent_core.adapter import build_execution_context, save_execution_turn
     from app.graphs.context import build_input_messages
 
-    input_messages = await build_input_messages(history or [], user_message, references)
+    resolved_context = execution_context or build_execution_context(
+        session_id=session_id,
+        user_message=user_message,
+        history=history or [],
+        references=references or [],
+    )
+    input_messages = await build_input_messages(
+        history or [], user_message, references, resolved_context
+    )
 
     if preference_context:
         input_messages.insert(0, SystemMessage(content=preference_context))
@@ -333,7 +344,13 @@ async def stream_supervisor_graph(
 
     try:
         async for event in graph.astream_events(
-            {"messages": input_messages, "next": "", "current_agent": ""},
+            {
+                "messages": input_messages,
+                "next": "",
+                "current_agent": "",
+                "conversation_state": resolved_context["conversation_state"],
+                "current_task": resolved_context["current_task"],
+            },
             version="v2",
         ):
             kind = event.get("event", "")
@@ -417,7 +434,7 @@ async def stream_supervisor_graph(
 
         # 保存对话历史（只保存 agent 回答，不保存 supervisor 路由决策）
         if all_text:
-            _save_turn(session_id, user_message, all_text)
+            save_execution_turn(session_id, user_message, all_text, references)
 
         yield _sse_event("done", {"answer": all_text})
 

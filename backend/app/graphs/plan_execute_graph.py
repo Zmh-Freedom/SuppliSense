@@ -21,6 +21,8 @@ class PlanExecuteState(TypedDict):
     plan: list[str]  # 剩余计划步骤（每个是工具调用描述）
     past_steps: list[tuple[str, str]]  # (步骤描述, 执行结果) 已完成步骤
     response: str | None  # 最终答案（完成时设置）
+    conversation_state: dict
+    current_task: dict
 
 
 _llm_cache = None
@@ -295,15 +297,27 @@ async def stream_plan_execute_graph(
     history: list[dict] | None = None,
     preference_context: str = "",
     references: list[dict] | None = None,
+    execution_context: dict | None = None,
 ):
     """运行 Plan-Execute 图并 yield SSE 事件。
 
     Events: thinking, plan, tool_call, tool_result, answer_chunk, done, error
     """
+    from app.graphs.agent_core.adapter import (
+        build_execution_context,
+        build_execution_prompt,
+        save_execution_turn,
+    )
     from app.graphs.context import build_context_messages
 
     graph = build_plan_execute_graph()
     full_answer = ""
+    resolved_context = execution_context or build_execution_context(
+        session_id=session_id,
+        user_message=user_message,
+        history=history or [],
+        references=references or [],
+    )
 
     input_text = user_message
     if preference_context:
@@ -313,15 +327,20 @@ async def stream_plan_execute_graph(
         if any(m.get("role") == "system" for m in context):
             summary = next(m["content"] for m in context if m["role"] == "system")
             input_text = f"{summary}\n\n当前问题：{input_text}"
-    if references:
-        names = "、".join(reference["name"] for reference in references)
-        input_text = f"当前会话供应商引用：{names}\n\n当前问题：{input_text}"
+    input_text = f"{build_execution_prompt(resolved_context)}\n\n当前问题：{input_text}"
 
     try:
         yield _sse_event("thinking", {"message": "正在分析问题并制定执行计划..."})
 
         async for event in graph.astream_events(
-            {"input": input_text, "plan": [], "past_steps": [], "response": None},
+            {
+                "input": input_text,
+                "plan": [],
+                "past_steps": [],
+                "response": None,
+                "conversation_state": resolved_context["conversation_state"],
+                "current_task": resolved_context["current_task"],
+            },
             version="v2",
             config={"recursion_limit": 50},
         ):
@@ -363,8 +382,7 @@ async def stream_plan_execute_graph(
             # 因此这里不监听 on_chat_model_stream，最终答案从 on_chain_end 取。
 
         if full_answer:
-            from app.services.agent import _save_turn
-            _save_turn(session_id, user_message, full_answer)
+            save_execution_turn(session_id, user_message, full_answer, references)
 
         yield _sse_event("done", {"answer": full_answer})
 

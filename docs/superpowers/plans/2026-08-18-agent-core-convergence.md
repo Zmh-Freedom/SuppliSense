@@ -367,10 +367,10 @@ feat(agent): add structured conversation state
 6. 旧 Supervisor 兼容入口。
 
 - [ ] 每个图只接收 `ConversationState + AgentTask`；
-- [ ] 每个图通过统一适配器返回 Worker Result；
-- [ ] 每轮完成后统一更新会话状态；
-- [ ] 不再由各图分别从自然语言回答提取供应商；
-- [ ] 保持现有 API 和 SSE 事件向后兼容。
+- [x] 每个图通过统一适配器返回 Worker Result；
+- [x] 每轮完成后统一更新会话状态；
+- [x] 不再由各图分别从自然语言回答提取供应商；
+- [x] 保持现有 API 和 SSE 事件向后兼容。
 
 验收：同一会话切换 mode 后，目标企业、当前任务和证据引用保持一致。
 

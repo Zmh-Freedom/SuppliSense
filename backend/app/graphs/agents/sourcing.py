@@ -22,6 +22,8 @@ class SourcingState(TypedDict):
     risk_results: dict[str, dict]
     final_results: list[dict]
     error: str | None
+    conversation_state: dict
+    current_task: dict
 
 
 SOURCING_SYSTEM = """你是一个采购寻源助手。用户想通过自然语言描述采购需求来寻找供应商。
@@ -106,13 +108,16 @@ def _route_after_agent(state: SourcingState):
 async def stream_sourcing_graph(session_id: str, message: str, preference_context: str = ""):
     """SSE stream wrapper for the sourcing subgraph."""
 
-    from app.services.agent import _load_conversation_context, _save_turn
+    from app.graphs.agent_core.adapter import (
+        load_execution_context,
+        save_execution_turn,
+    )
     from app.graphs.streaming import _sse_event
     from app.graphs.context import build_input_messages
 
-    context = _load_conversation_context(session_id)
+    context = load_execution_context(session_id, message)
     msgs = await build_input_messages(
-        context["history"], message, context["references"]
+        context["history"], message, context["references"], context
     )
     if preference_context:
         msgs.insert(0, SystemMessage(content=preference_context))
@@ -124,7 +129,15 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
 
     try:
         async for event in graph.astream_events(
-            {"messages": msgs, "request_input": None, "candidates": [], "final_results": [], "error": None},
+            {
+                "messages": msgs,
+                "request_input": None,
+                "candidates": [],
+                "final_results": [],
+                "error": None,
+                "conversation_state": context["conversation_state"],
+                "current_task": context["current_task"],
+            },
             version="v2",
         ):
             kind = event["event"]
@@ -172,7 +185,7 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
         for reference in extract_supplier_references(full_answer, "Agent 回答"):
             if reference not in discovered_references:
                 discovered_references.append(reference)
-        _save_turn(session_id, message, full_answer, discovered_references)
+        save_execution_turn(session_id, message, full_answer, discovered_references)
     except Exception:
         pass
     if discovered_references:

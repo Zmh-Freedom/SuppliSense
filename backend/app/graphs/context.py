@@ -60,6 +60,7 @@ async def build_input_messages(
     history: list[dict],
     user_message: str,
     references: list[dict] | None = None,
+    execution_context: dict | None = None,
 ) -> list:
     """构建 LangChain 输入消息列表，长对话自动摘要。
 
@@ -68,38 +69,35 @@ async def build_input_messages(
     from langchain_core.messages import HumanMessage, SystemMessage
 
     input_messages: list = []
-    if references:
-        from app.services.conversation_state import build_conversation_state
+    if references or execution_context:
+        from app.graphs.agent_core.adapter import (
+            build_execution_context,
+            build_execution_prompt,
+        )
 
         names = [
             str(reference.get("name"))
             for reference in references
             if isinstance(reference, dict) and reference.get("name")
         ]
-        if names:
-            conversation_state = build_conversation_state(user_message, references)
-            selected = conversation_state["selected_suppliers"]
-            dimensions = conversation_state["current_task"]["analysis_dimensions"]
-            target_hint = (
-                "本轮已解析的目标供应商：" + "、".join(selected) + "。"
-                if selected else "本轮未出现可确定的供应商指代。"
-            )
-            dimension_hint = (
-                "本轮分析维度：" + "、".join(dimensions) + "。"
-                if dimensions else "本轮未指定分析维度。"
-            )
-            input_messages.append(
-                SystemMessage(
-                    content=(
-                        "当前会话已识别的供应商实体（后续‘它/这家供应商’默认优先指向这些实体）："
-                        + "、".join(dict.fromkeys(names))
-                        + "。用户说‘这些企业/上述企业/它们/推荐的供应商’时，"
-                        "应将全部上述实体作为分析对象并逐家调用所需工具；"
-                        "若用户明确提到其他企业，以用户当前表述为准。"
-                        + target_hint + dimension_hint
-                    )
+        resolved_context = execution_context or build_execution_context(
+            session_id="",
+            user_message=user_message,
+            history=history,
+            references=references,
+        )
+        input_messages.append(
+            SystemMessage(
+                content=(
+                    "当前会话已识别的供应商实体（后续‘它/这家供应商’默认优先指向这些实体）："
+                    + "、".join(dict.fromkeys(names))
+                    + "。用户说‘这些企业/上述企业/它们/推荐的供应商’时，"
+                    "应将全部上述实体作为分析对象并逐家调用所需工具；"
+                    "若用户明确提到其他企业，以用户当前表述为准。"
+                    + build_execution_prompt(resolved_context)
                 )
             )
+        )
     if history:
         context = await build_context_messages(history)
         for m in context:
