@@ -1,0 +1,18 @@
+{
+  "eval_version": "agent-conversation-v1",
+  "description": "Deterministic, service-free multi-turn Agent acceptance cases.",
+  "cases": [
+    {"id": "turn-plural-risk", "scenario": "plural_risk", "input": {"message": "这些企业风险如何"}, "expected": {"target_supplier_names": ["甲电机有限公司", "乙电机有限公司"], "analysis_dimensions": ["risk"]}},
+    {"id": "turn-ordinal-esg-sentiment", "scenario": "ordinal_esg_sentiment", "input": {"message": "前两家做 ESG 和舆情分析"}, "expected": {"target_supplier_names": ["甲电机有限公司", "乙电机有限公司"], "analysis_dimensions": ["esg", "sentiment"], "task_matrix_coverage": 4}},
+    {"id": "turn-exclusion-risk", "scenario": "exclusion_risk", "input": {"message": "除了甲电机，其余企业做风险评估"}, "expected": {"target_supplier_names": ["乙电机有限公司", "丙电机有限公司"], "analysis_dimensions": ["risk"]}},
+    {"id": "turn-low-risk", "scenario": "low_risk_filter", "input": {"message": "只看低风险的企业"}, "expected": {"target_supplier_names": ["甲电机有限公司", "丙电机有限公司"]}},
+    {"id": "discovery-external", "scenario": "external_discovery", "input": {"category": "钢材"}, "expected": {"external_status": "staged", "external_stop_reason": "candidate_supply_sufficient"}},
+    {"id": "discovery-tyc-fallback", "scenario": "tianyancha_web_fallback", "input": {"category": "钢材"}, "expected": {"external_status": "staged", "external_stop_reason": "candidate_supply_sufficient", "fallback_source": "web_search"}},
+    {"id": "discovery-contact-failure", "scenario": "contact_enrichment_failure", "input": {"category": "钢材"}, "expected": {"external_status": "staged", "contact_status": "not_found"}},
+    {"id": "discovery-no-auto-import", "scenario": "external_candidate_not_imported", "input": {"category": "钢材"}, "expected": {"external_candidate_status": "staged_candidate", "auto_imported": false}},
+    {"id": "analysis-partial", "scenario": "partial_completion", "input": {"message": "两家企业做风险评估"}, "expected": {"result_status": "partial", "failed_subtask_count": 1}},
+    {"id": "turn-compressed-context", "scenario": "compressed_context", "input": {"message": "对这些企业做 ESG 分析"}, "expected": {"target_supplier_names": ["甲电机有限公司", "乙电机有限公司"]}},
+    {"id": "restart-resume", "scenario": "restart_recovery", "input": {"run_id": "eval-run"}, "expected": {"resumable_subtask_ids": ["supplier-b:risk"], "reused_completed_subtask_ids": ["supplier-a:risk"]}},
+    {"id": "write-approval", "scenario": "approval_required", "input": {"action_type": "add_to_watchlist"}, "expected": {"business_write_count": 0, "approval_status": "pending"}}
+  ]
+}

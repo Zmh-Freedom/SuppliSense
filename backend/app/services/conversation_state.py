@@ -83,7 +83,7 @@ def resolve_supplier_target_selection(
             for reference in references
             if _is_low_risk(reference)
         ]
-        if low_risk and any(token in message for token in _PLURAL_REFERENCE_TOKENS):
+        if low_risk:
             return TargetResolution(low_risk, 0.9, False, "low_risk_filter")
     if any(token in message for token in _PLURAL_REFERENCE_TOKENS):
         return TargetResolution(names, 0.95, False, "plural_reference")

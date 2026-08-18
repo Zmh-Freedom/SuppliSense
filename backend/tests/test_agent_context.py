@@ -154,13 +154,15 @@ def test_target_resolver_supports_aliases_exclusion_and_rank_filtering():
     aliases = resolve_supplier_target_selection("对甲电机和丙电机做风险分析", references)
     excluded = resolve_supplier_target_selection("除了乙电机，其余企业做 ESG 分析", references)
     low_risk = resolve_supplier_target_selection("低风险的这些企业做舆情分析", references)
+    low_risk_without_plural = resolve_supplier_target_selection("只看低风险的企业", references)
     first = resolve_supplier_target_selection("排名第一的企业做合规分析", references)
 
     assert aliases.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
     assert excluded.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
     assert low_risk.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
+    assert low_risk_without_plural.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
     assert first.target_supplier_names == ["甲电机有限公司"]
-    assert all(item.confidence >= 0.9 for item in [aliases, excluded, low_risk, first])
+    assert all(item.confidence >= 0.9 for item in [aliases, excluded, low_risk, low_risk_without_plural, first])
 
 
 def test_target_resolver_requires_clarification_for_contextual_reference_without_suppliers():
