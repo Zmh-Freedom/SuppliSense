@@ -1,5 +1,7 @@
 # Sourcing Risk Supervisor Agent Implementation Plan
 
+> **归档说明（2026-08-18）：** 本任务计划已由 `docs/superpowers/plans/2026-08-18-agent-core-convergence.md` 取代；仅保留用于追溯既有 Supervisor 任务。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在现有 LangGraph 架构上建设统一的寻源与风险 Supervisor，使组合任务能够规划、并行协调专业 Agent、合并证据并在所有写操作前等待人工确认。

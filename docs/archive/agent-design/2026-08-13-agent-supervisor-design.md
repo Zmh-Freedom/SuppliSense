@@ -1,5 +1,7 @@
 # 寻源与风险 Supervisor Agent 设计
 
+> **归档说明（2026-08-18）：** 本文档已由 `docs/superpowers/specs/2026-08-18-agent-unified-architecture.md` 取代；仅保留用于追溯 Supervisor 协议与实现背景。
+
 日期：2026-08-13
 状态：已确认，待实施计划
 范围：Agent 核心能力重构；不包含生产上线环境改造

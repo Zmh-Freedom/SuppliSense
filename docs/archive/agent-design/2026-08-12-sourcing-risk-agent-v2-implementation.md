@@ -1,5 +1,7 @@
 # 智能寻源与风险 Agent V2 Implementation Plan
 
+> **归档说明（2026-08-18）：** 本任务计划已由 `docs/superpowers/plans/2026-08-18-agent-core-convergence.md` 取代；仅保留用于追溯既有 V2 任务。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 交付可恢复、可审计、以本地供应商库优先且所有业务写操作均需人工审批的智能寻源与风险 Agent V2。
