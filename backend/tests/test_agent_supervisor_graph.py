@@ -340,7 +340,7 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
     monkeypatch.setattr(streaming, "stream_agent_supervisor_graph", supervisor_stream)
     monkeypatch.setattr(chat_api, "_langgraph_react_stream", unexpected_stream)
     monkeypatch.setattr(
-        "app.services.clarification.detect_clarification_needed", lambda _message: None
+        "app.services.clarification.detect_clarification_needed", lambda *_args, **_kwargs: None
     )
     async def collect_events() -> list[str]:
         response = await chat_api.chat_stream_endpoint(

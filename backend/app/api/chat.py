@@ -199,11 +199,52 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         # Send session_id first (before any blocking routing/classification)
         yield f"event: session\ndata: {sid}\n\n"
 
-        # Resolve mode: auto → intent router, otherwise use explicit mode
+        # Resolve conversation targets before rule preflight or intent routing.
+        # This makes ConversationState the one authority for company references.
+        execution_context = {
+            "history": [],
+            "references": [],
+            "conversation_state": {},
+            "current_task": {},
+        }
+        try:
+            from app.graphs.agent_core.adapter import load_execution_context
+
+            execution_context = load_execution_context(sid, req.message)
+        except Exception:
+            # The execution stream retains its normal datastore error handling.
+            # The clarification preflight remains a best-effort rule fallback.
+            pass
+
+        # Programmatic clarification is only a fallback after structured state.
+        from app.services.clarification import detect_clarification_needed
+        supplier_references = list(execution_context.get("references") or [])
+        conversation_state = dict(execution_context.get("conversation_state") or {})
+        current_task = dict(execution_context.get("current_task") or {})
+        resolved_target_names = list(
+            current_task.get("target_supplier_names")
+            or conversation_state.get("selected_supplier_names")
+            or []
+        )
+        has_structured_context = bool(
+            supplier_references or conversation_state.get("active_suppliers")
+        )
+        clar = detect_clarification_needed(
+            req.message,
+            supplier_references=supplier_references,
+            resolved_target_names=resolved_target_names,
+            has_structured_context=has_structured_context,
+        )
+        if clar:
+            yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing}, ensure_ascii=False)}\n\n"
+            return
+
+        # Resolve mode only after target resolution and fallback clarification.
         mode = req.mode
         if mode == "auto":
             from app.graphs.router import router as intent_router
-            mode = intent_router.route(req.message).value
+
+            mode = intent_router.route(req.message, execution_context).value
         mode = _MODE_ALIASES.get(mode, mode)
 
         # Choose execution mode
@@ -223,33 +264,6 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             stream_fn = _langgraph_react_reflection_stream
         else:
             stream_fn = _langgraph_react_stream
-
-        # Programmatic clarification check
-        from app.services.clarification import detect_clarification_needed
-        supplier_references: list[dict] = []
-        known_company_names: list[str] = []
-        try:
-            from app.services.agent import _load_conversation_context
-
-            context = _load_conversation_context(sid)
-            supplier_references = context["references"]
-            known_company_names = [
-                str(reference["name"])
-                for reference in supplier_references
-                if reference.get("name")
-            ]
-        except Exception:
-            # The execution stream owns the normal database error handling.
-            # Clarification should remain usable when optional context is unavailable.
-            pass
-        clar = (
-            detect_clarification_needed(req.message, known_company_names, supplier_references)
-            if supplier_references
-            else detect_clarification_needed(req.message)
-        )
-        if clar:
-            yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing}, ensure_ascii=False)}\n\n"
-            return
 
         # Stream the chat response
         async for event in stream_fn(sid, req.message, pref_ctx):

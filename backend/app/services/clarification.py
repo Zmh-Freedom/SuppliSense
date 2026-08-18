@@ -84,6 +84,9 @@ def detect_clarification_needed(
     message: str,
     known_company_names: list[str] | None = None,
     supplier_references: list[dict] | None = None,
+    *,
+    resolved_target_names: list[str] | None = None,
+    has_structured_context: bool = False,
 ) -> ClarificationNeeded | None:
     """检测用户输入是否缺少必要信息。
 
@@ -98,6 +101,15 @@ def detect_clarification_needed(
     if len(msg) < 5:
         return None
 
+    if resolved_target_names:
+        return None
+
+    # ConversationState is the authoritative target resolver for a chat turn.
+    # Existing structured suppliers are sufficient context for every execution
+    # mode; a rule-only preflight must not ask the user to repeat a company name.
+    if has_structured_context:
+        return None
+
     references = supplier_references or [
         {"name": name}
         for name in known_company_names or []
@@ -109,7 +121,7 @@ def detect_clarification_needed(
     if resolution.needs_clarification:
         return ClarificationNeeded(
             message="请问您想分析哪家公司？请先提供企业名称或先完成供应商寻源。",
-            missing=["company_name"],
+            missing=["target_supplier_name"],
         )
     if any(name and name in msg for name in (known_company_names or [])):
         return None
@@ -131,7 +143,7 @@ def detect_clarification_needed(
     if has_intent:
         return ClarificationNeeded(
             message="请问您想分析哪家公司？请提供公司全称或简称。",
-            missing=["company_name"],
+            missing=["target_supplier_name"],
         )
 
     return None

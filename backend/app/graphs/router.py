@@ -98,11 +98,17 @@ class IntentRouter:
             self._llm.request_timeout = 5
         return self._llm
 
-    def route(self, message: str) -> Intent:
+    def route(
+        self,
+        message: str,
+        execution_context: dict | None = None,
+    ) -> Intent:
         """根据消息内容判断执行模式。
 
-        优先关键词匹配（零延迟），无命中时用 LLM 分类。
+        企业目标由 ConversationState/Target Resolver 在调用前解析；路由只
+        判断执行意图。优先关键词匹配（零延迟），语义无法由规则判断时才用 LLM。
         """
+        del execution_context
         # 1. 组合寻源 + 分析任务（必须优先于通用寻源关键词）
         if is_composite_request(message):
             logger.info("intent_routed_by_composite_keyword", intent=Intent.SUPERVISOR.value, message=message[:50])

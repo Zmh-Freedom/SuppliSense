@@ -430,11 +430,11 @@ feat(agent): add structured conversation state
 -> Supervisor
 ```
 
-- [ ] 规则预检只作为解析结果后的兜底；
-- [ ] Router 不重复解析企业目标；
-- [ ] LLM 仅处理规则无法判断的任务语义；
-- [ ] 澄清问题附带明确 missing fields；
-- [ ] 已有上下文时不得重复询问公司名称。
+- [x] 规则预检只作为解析结果后的兜底；
+- [x] Router 不重复解析企业目标；
+- [x] LLM 仅处理规则无法判断的任务语义；
+- [x] 澄清问题附带明确 missing fields；
+- [x] 已有上下文时不得重复询问公司名称。
 
 验收：真实多轮场景不再因模式不同而出现不同澄清结果。
 
