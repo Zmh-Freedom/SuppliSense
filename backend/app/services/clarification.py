@@ -3,6 +3,8 @@
 import re
 from dataclasses import dataclass, field
 
+from app.services.conversation_state import resolve_supplier_target_selection
+
 # Chinese company name pattern
 _COMPANY_PATTERNS = [
     "有限公司", "股份", "集团", "有限责任",
@@ -26,15 +28,6 @@ _NO_COMPANY_NEEDED_KEYWORDS = [
 
 # 代词前缀：这些开头的企业名候选应被拒绝（"该公司"/"本公司" 等）
 _PRONOUN_PREFIXES = ("该", "本", "贵", "此", "那", "这")
-
-# 只有在会话中已识别出供应商时，这些表达才可以作为企业目标。
-# 它们不能被当作企业简称，否则会绕过无上下文时的兜底澄清。
-_CONTEXT_REFERENCE_TOKENS = (
-    "它", "它们", "这家", "这两家", "这些家", "那些家",
-    "该供应商", "该企业", "该公司", "上述供应商", "上述企业",
-    "这些供应商", "这些企业", "推荐的供应商", "推荐企业",
-    "两家供应商", "两家公司", "这两家公司",
-)
 
 # 分词用的标点和空白
 _TOKEN_SEPARATORS = r"[，,。、；;:：\s（）()【】\[\]+和及与/]+"
@@ -90,6 +83,7 @@ def _extract_company_candidate(msg: str) -> str | None:
 def detect_clarification_needed(
     message: str,
     known_company_names: list[str] | None = None,
+    supplier_references: list[dict] | None = None,
 ) -> ClarificationNeeded | None:
     """检测用户输入是否缺少必要信息。
 
@@ -104,10 +98,20 @@ def detect_clarification_needed(
     if len(msg) < 5:
         return None
 
-    # Explicitly referenced entities from the current session satisfy the guard.
-    if any(name and name in msg for name in (known_company_names or [])):
+    references = supplier_references or [
+        {"name": name}
+        for name in known_company_names or []
+        if name
+    ]
+    resolution = resolve_supplier_target_selection(msg, references)
+    if resolution.target_supplier_names:
         return None
-    if known_company_names and any(token in msg for token in _CONTEXT_REFERENCE_TOKENS):
+    if resolution.needs_clarification:
+        return ClarificationNeeded(
+            message="请问您想分析哪家公司？请先提供企业名称或先完成供应商寻源。",
+            missing=["company_name"],
+        )
+    if any(name and name in msg for name in (known_company_names or [])):
         return None
 
     # 白名单：监控清单整体分析、寻源推荐等场景不需要公司名

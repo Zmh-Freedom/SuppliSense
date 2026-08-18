@@ -5,7 +5,11 @@ import asyncio
 from app.graphs.context import build_input_messages
 from app.services import agent
 from app.services.agent import extract_supplier_references
-from app.services.conversation_state import build_conversation_state, resolve_supplier_targets
+from app.services.conversation_state import (
+    build_conversation_state,
+    resolve_supplier_target_selection,
+    resolve_supplier_targets,
+)
 
 
 def test_extract_supplier_references_reads_nested_tool_results_and_deduplicates():
@@ -138,3 +142,30 @@ def test_resolve_supplier_targets_honors_explicit_and_ordinal_references():
 
     assert resolve_supplier_targets("分析乙电机有限公司风险", references) == ["乙电机有限公司"]
     assert resolve_supplier_targets("评估前两家", references) == ["甲电机有限公司", "乙电机有限公司"]
+
+
+def test_target_resolver_supports_aliases_exclusion_and_rank_filtering():
+    references = [
+        {"name": "甲电机有限公司", "aliases": ["甲电机"], "risk_level": "low"},
+        {"name": "乙电机有限公司", "aliases": ["乙电机"], "risk_level": "medium"},
+        {"name": "丙电机有限公司", "aliases": ["丙电机"], "risk_level": "low"},
+    ]
+
+    aliases = resolve_supplier_target_selection("对甲电机和丙电机做风险分析", references)
+    excluded = resolve_supplier_target_selection("除了乙电机，其余企业做 ESG 分析", references)
+    low_risk = resolve_supplier_target_selection("低风险的这些企业做舆情分析", references)
+    first = resolve_supplier_target_selection("排名第一的企业做合规分析", references)
+
+    assert aliases.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
+    assert excluded.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
+    assert low_risk.target_supplier_names == ["甲电机有限公司", "丙电机有限公司"]
+    assert first.target_supplier_names == ["甲电机有限公司"]
+    assert all(item.confidence >= 0.9 for item in [aliases, excluded, low_risk, first])
+
+
+def test_target_resolver_requires_clarification_for_contextual_reference_without_suppliers():
+    result = resolve_supplier_target_selection("对这些企业做风险评估", [])
+
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert result.confidence == 0.0

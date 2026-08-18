@@ -199,14 +199,16 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
         # Programmatic clarification check
         from app.services.clarification import detect_clarification_needed
+        supplier_references: list[dict] = []
         known_company_names: list[str] = []
         try:
             from app.services.agent import _load_conversation_context
 
             context = _load_conversation_context(sid)
+            supplier_references = context["references"]
             known_company_names = [
                 str(reference["name"])
-                for reference in context["references"]
+                for reference in supplier_references
                 if reference.get("name")
             ]
         except Exception:
@@ -214,8 +216,8 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # Clarification should remain usable when optional context is unavailable.
             pass
         clar = (
-            detect_clarification_needed(req.message, known_company_names)
-            if known_company_names
+            detect_clarification_needed(req.message, known_company_names, supplier_references)
+            if supplier_references
             else detect_clarification_needed(req.message)
         )
         if clar:

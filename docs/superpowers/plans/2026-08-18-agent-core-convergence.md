@@ -331,11 +331,11 @@ feat(agent): add structured conversation state
 - “低风险的这些企业”等基于已有结果的选择；
 - 无上下文时正确进入澄清。
 
-- [ ] 先写 resolver 参数化测试；
-- [ ] 实现规则优先解析和置信度；
-- [ ] 低置信度不猜测，返回 clarification；
-- [ ] API 预检改为消费 resolver 结果；
-- [ ] 删除重复指代词表或保留单一兼容门面。
+- [x] 先写 resolver 参数化测试；
+- [x] 实现规则优先解析和置信度；
+- [x] 低置信度不猜测，返回 clarification；
+- [x] API 预检改为消费 resolver 结果；
+- [x] 删除重复指代词表或保留单一兼容门面。
 
 验收：目标解析 Eval 正确率达到 100% 的固定规则用例，未知指代不误选企业。
 
