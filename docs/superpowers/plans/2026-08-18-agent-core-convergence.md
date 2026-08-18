@@ -345,11 +345,11 @@ feat(agent): add structured conversation state
 
 #### Task 4：实现 Task Matrix Planner
 
-- [ ] 将企业集合 × 分析维度生成唯一子任务；
-- [ ] 根据依赖决定串行和并行；
-- [ ] 生成 required/optional 和 evidence requirements；
-- [ ] 支持 partial、insufficient_evidence 和 failed；
-- [ ] 防止重复子任务和循环依赖。
+- [x] 将企业集合 × 分析维度生成唯一子任务；
+- [x] 根据依赖决定串行和并行；
+- [x] 生成 required/optional 和 evidence requirements；
+- [x] 支持 partial、insufficient_evidence 和 failed；
+- [x] 防止重复子任务和循环依赖。
 
 验收：7 家企业 × 风险、ESG、舆情生成 21 个唯一子任务；任一失败不丢失其余结果。
 

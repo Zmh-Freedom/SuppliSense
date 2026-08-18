@@ -55,6 +55,8 @@ class AgentSubtask(BaseModel):
     supplier_name: str | None = None
     dimension: str = Field(min_length=1)
     depends_on: list[str] = Field(default_factory=list)
+    required: bool = True
+    evidence_requirements: list[str] = Field(default_factory=list)
     status: SubtaskStatus = "pending"
     attempts: int = Field(default=0, ge=0)
     evidence_refs: list[str] = Field(default_factory=list)
@@ -81,6 +83,31 @@ class AgentTask(BaseModel):
         ]
         if len(pairs) != len(set(pairs)):
             raise ValueError("a task may contain only one subtask per supplier and dimension")
+        subtask_ids = {subtask.subtask_id for subtask in self.subtasks}
+        if len(subtask_ids) != len(self.subtasks):
+            raise ValueError("a task may not contain duplicate subtask ids")
+        dependencies = {subtask.subtask_id: subtask.depends_on for subtask in self.subtasks}
+        for subtask_id, depends_on in dependencies.items():
+            unknown = set(depends_on) - subtask_ids
+            if unknown:
+                raise ValueError(f"subtask {subtask_id} has unknown dependencies")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(subtask_id: str) -> None:
+            if subtask_id in visiting:
+                raise ValueError("subtask dependency cycle")
+            if subtask_id in visited:
+                return
+            visiting.add(subtask_id)
+            for dependency in dependencies[subtask_id]:
+                visit(dependency)
+            visiting.remove(subtask_id)
+            visited.add(subtask_id)
+
+        for subtask_id in subtask_ids:
+            visit(subtask_id)
         return self
 
 
