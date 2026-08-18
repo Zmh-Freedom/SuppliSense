@@ -47,6 +47,17 @@ class TestClarification:
         )
         assert result is None
 
+    def test_known_session_companies_satisfy_these_companies_reference(self):
+        result = detect_clarification_needed(
+            "那对这些企业进行风险评估",
+            known_company_names=["深圳市立创电子有限公司", "八方电气（苏州）股份有限公司"],
+        )
+        assert result is None
+
+    def test_these_companies_without_context_still_requires_clarification(self):
+        result = detect_clarification_needed("那对这些企业进行风险评估")
+        assert result is not None
+
     def test_empty_string_returns_none(self):
         result = detect_clarification_needed("   ")
         assert result is None

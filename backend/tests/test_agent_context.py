@@ -3,7 +3,9 @@
 import asyncio
 
 from app.graphs.context import build_input_messages
+from app.services import agent
 from app.services.agent import extract_supplier_references
+from app.services.conversation_state import build_conversation_state, resolve_supplier_targets
 
 
 def test_extract_supplier_references_reads_nested_tool_results_and_deduplicates():
@@ -84,4 +86,55 @@ def test_build_input_messages_includes_supplier_reference_context():
     )
 
     assert "固安捷工业品" in messages[0].content
+    assert "这些企业" in messages[0].content
     assert messages[-1].content == "它的风险怎么样？"
+
+
+def test_load_conversation_context_prefers_latest_structured_references(monkeypatch):
+    class Conversations:
+        def find_one(self, _query):
+            return {
+                "messages": [
+                    {"role": "user", "content": "找电机供应商"},
+                    {
+                        "role": "assistant",
+                        "content": "已找到候选供应商。",
+                        "references": [
+                            {"name": "甲电机有限公司", "kind": "supplier", "source": "search_suppliers"},
+                            {"name": "乙电机有限公司", "kind": "supplier", "source": "search_suppliers"},
+                        ],
+                    },
+                ],
+                "references": [{"name": "历史供应商有限公司", "kind": "supplier"}],
+            }
+
+    monkeypatch.setattr(agent, "get_db", lambda: {"conversations": Conversations()})
+
+    context = agent._load_conversation_context("context-test")
+
+    assert [reference["name"] for reference in context["references"]] == [
+        "甲电机有限公司", "乙电机有限公司",
+    ]
+
+
+def test_conversation_state_resolves_plural_supplier_analysis():
+    references = [
+        {"name": "甲电机有限公司", "kind": "supplier"},
+        {"name": "乙电机有限公司", "kind": "supplier"},
+    ]
+
+    state = build_conversation_state("对这些企业做风险和舆情分析", references)
+
+    assert state["selected_suppliers"] == ["甲电机有限公司", "乙电机有限公司"]
+    assert state["current_task"]["analysis_dimensions"] == ["risk", "sentiment"]
+
+
+def test_resolve_supplier_targets_honors_explicit_and_ordinal_references():
+    references = [
+        {"name": "甲电机有限公司"},
+        {"name": "乙电机有限公司"},
+        {"name": "丙电机有限公司"},
+    ]
+
+    assert resolve_supplier_targets("分析乙电机有限公司风险", references) == ["乙电机有限公司"]
+    assert resolve_supplier_targets("评估前两家", references) == ["甲电机有限公司", "乙电机有限公司"]

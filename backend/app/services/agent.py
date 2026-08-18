@@ -79,11 +79,7 @@ def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[st
                 visit(child)
 
     visit(value)
-    source = tool_name or "Agent 工具结果"
-    return _dedupe_references([
-        {"name": name, "kind": "supplier", "source": source}
-        for name in dict.fromkeys(names)
-    ])
+    return _dedupe_references(references)
 
 
 def _load_history(session_id: str) -> list[dict]:
@@ -91,15 +87,16 @@ def _load_history(session_id: str) -> list[dict]:
     return _load_conversation_context(session_id)["history"]
 
 
-def _load_conversation_context(session_id: str) -> dict[str, list[dict[str, Any]]]:
+def _load_conversation_context(session_id: str) -> dict[str, Any]:
     """加载消息与会话级供应商引用，兼容旧会话文档。"""
     db = get_db()
     doc = db["conversations"].find_one({"session_id": session_id})
     if not doc:
-        return {"history": [], "references": []}
+        return {"history": [], "references": [], "state": {}}
+    messages = doc.get("messages", [])
     history = [
         {"role": m["role"], "content": m["content"]}
-        for m in doc.get("messages", [])
+        for m in messages
         if m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str)
     ]
     references = _dedupe_references([
@@ -107,20 +104,32 @@ def _load_conversation_context(session_id: str) -> dict[str, list[dict[str, Any]
         for reference in doc.get("references", [])
         if isinstance(reference, dict) and isinstance(reference.get("name"), str)
     ])
-    # Prefer the most recent assistant answer so expressions such as “这两家”
-    # refer to the latest selected suppliers instead of every historical result.
+    # Prefer the structured references saved with the most recent assistant turn.
+    # This keeps tool output (including contact evidence) stable and avoids
+    # losing references when the natural-language answer omits company names.
     recent_references: list[dict[str, Any]] = []
-    for message in reversed(history):
+    for message in reversed(messages):
         if message["role"] != "assistant":
             continue
-        recent_references = extract_supplier_references(
-            message["content"], "conversation_history"
-        )
+        saved_references = message.get("references")
+        if isinstance(saved_references, list):
+            recent_references = _dedupe_references([
+                reference for reference in saved_references if isinstance(reference, dict)
+            ])
+        if not recent_references and isinstance(message.get("content"), str):
+            recent_references = extract_supplier_references(
+                message["content"], "conversation_history"
+            )
         if recent_references:
             break
     if recent_references:
         references = _dedupe_references(recent_references)
-    return {"history": history, "references": references}
+    state = doc.get("conversation_state")
+    return {
+        "history": history,
+        "references": references,
+        "state": state if isinstance(state, dict) else {},
+    }
 
 
 def _save_turn(
@@ -135,19 +144,40 @@ def _save_turn(
     try:
         db = get_db()
         now = datetime.now(timezone.utc)
+        previous_doc = db["conversations"].find_one(
+            {"session_id": session_id}, {"conversation_state": 1}
+        )
+        previous_state = (
+            previous_doc.get("conversation_state")
+            if isinstance(previous_doc, dict)
+            and isinstance(previous_doc.get("conversation_state"), dict)
+            else {}
+        )
+        normalized_references = _dedupe_references(references or [])
+        from app.services.conversation_state import build_conversation_state
+
+        conversation_state = build_conversation_state(
+            user_msg, normalized_references, previous_state
+        )
+        assistant_message: dict[str, Any] = {
+            "role": "assistant", "content": assistant_msg,
+        }
+        if normalized_references:
+            assistant_message["references"] = normalized_references
         update: dict[str, Any] = {
             "$push": {
                 "messages": {
                     "$each": [
                         {"role": "user", "content": user_msg},
-                        {"role": "assistant", "content": assistant_msg},
+                        assistant_message,
                     ]
                 }
             },
             "$setOnInsert": {"session_id": session_id, "created_at": now},
+            "$set": {"conversation_state": conversation_state, "updated_at": now},
         }
-        if references:
-            update["$addToSet"] = {"references": {"$each": references}}
+        if normalized_references:
+            update["$addToSet"] = {"references": {"$each": normalized_references}}
         db["conversations"].update_one(
             {"session_id": session_id},
             update,

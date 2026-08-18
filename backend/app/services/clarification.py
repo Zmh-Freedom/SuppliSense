@@ -27,6 +27,15 @@ _NO_COMPANY_NEEDED_KEYWORDS = [
 # 代词前缀：这些开头的企业名候选应被拒绝（"该公司"/"本公司" 等）
 _PRONOUN_PREFIXES = ("该", "本", "贵", "此", "那", "这")
 
+# 只有在会话中已识别出供应商时，这些表达才可以作为企业目标。
+# 它们不能被当作企业简称，否则会绕过无上下文时的兜底澄清。
+_CONTEXT_REFERENCE_TOKENS = (
+    "它", "它们", "这家", "这两家", "这些家", "那些家",
+    "该供应商", "该企业", "该公司", "上述供应商", "上述企业",
+    "这些供应商", "这些企业", "推荐的供应商", "推荐企业",
+    "两家供应商", "两家公司", "这两家公司",
+)
+
 # 分词用的标点和空白
 _TOKEN_SEPARATORS = r"[，,。、；;:：\s（）()【】\[\]+和及与/]+"
 
@@ -96,24 +105,9 @@ def detect_clarification_needed(
         return None
 
     # Explicitly referenced entities from the current session satisfy the guard.
-    if any(name and name in msg for name in (known_company_names or [])) or (
-        known_company_names
-        and any(
-            token in msg
-            for token in (
-                "它",
-                "这家",
-                "两家",
-                "这两家",
-                "两家公司",
-                "这两家公司",
-                "两家供应商",
-                "这两家供应商",
-                "该供应商",
-                "该企业",
-            )
-        )
-    ):
+    if any(name and name in msg for name in (known_company_names or [])):
+        return None
+    if known_company_names and any(token in msg for token in _CONTEXT_REFERENCE_TOKENS):
         return None
 
     # 白名单：监控清单整体分析、寻源推荐等场景不需要公司名
