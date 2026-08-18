@@ -6,6 +6,8 @@ import contextvars
 import time
 from typing import Any
 
+from app.graphs.agent_core.trace import sanitize_graph_trace_payload
+
 
 _CURRENT_RECORDER: contextvars.ContextVar["GraphTraceRecorder | None"] = contextvars.ContextVar(
     "sourcing_risk_graph_trace_recorder", default=None
@@ -23,7 +25,11 @@ class GraphTraceRecorder:
 
     def record(self, event_type: str, *, at_ms: int | float | None = None, **payload: Any) -> None:
         elapsed = (time.monotonic() - self.started_at) * 1000 if at_ms is None else at_ms
-        event = {"type": event_type, "at_ms": elapsed, "payload": dict(payload)}
+        event = {
+            "type": event_type,
+            "at_ms": elapsed,
+            "payload": sanitize_graph_trace_payload(dict(payload)),
+        }
         self.events.append(event)
         if self.sink is not None:
             try:

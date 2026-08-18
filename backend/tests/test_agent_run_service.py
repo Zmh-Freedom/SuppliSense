@@ -79,12 +79,14 @@ def test_persist_supervisor_snapshot_advances_terminal_run_status_atomically(
     )
 
     assert event_id == 7
-    assert events == [{
+    assert events[0] == {
         "run_id": "run-id",
         "version": 5,
         "event_type": "done",
         "payload": {"task_status": "COMPLETED", "final_answer": "完成", "status": "COMPLETED"},
-    }]
+    }
+    assert events[1]["event_type"] == "agent_trace"
+    assert events[1]["payload"]["kind"] == "run_completed"
 
 
 def test_create_supervisor_action_proposals_returns_existing_proposal_ids(

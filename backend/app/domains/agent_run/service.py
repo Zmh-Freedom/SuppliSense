@@ -42,6 +42,7 @@ from app.domains.agent_run.schemas import (
     IdentityResolutionRequest,
     AgentExecutionSnapshot,
 )
+from app.graphs.agent_core.trace import TRACE_EVENT_TYPE, build_agent_trace_events
 
 TERMINAL_STATUSES = frozenset(
     {
@@ -453,6 +454,16 @@ def persist_supervisor_snapshot(
             event_payload,
             cur=cur,
         )
+        for trace_event in build_agent_trace_events(
+            event_type, task_status, snapshot
+        ):
+            append_event(
+                run_id,
+                updated["version"],
+                TRACE_EVENT_TYPE,
+                trace_event,
+                cur=cur,
+            )
     return int(event["event_id"])
 
 
