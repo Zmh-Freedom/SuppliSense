@@ -380,11 +380,11 @@ feat(agent): add structured conversation state
 
 #### Task 6：实现通用 Loop Controller
 
-- [ ] 实现 iteration、tool budget、timeout 和 fingerprint；
-- [ ] 实现新增信息检测；
-- [ ] 实现 continue、complete、partial、needs_review、blocked 决策；
-- [ ] 所有退出记录 `stop_reason`；
-- [ ] 同一工具相同参数无新增信息时停止。
+- [x] 实现 iteration、tool budget、timeout 和 fingerprint；
+- [x] 实现新增信息检测；
+- [x] 实现 continue、complete、partial、needs_review、blocked 决策；
+- [x] 所有退出记录 `stop_reason`；
+- [x] 同一工具相同参数无新增信息时停止。
 
 验收：单元测试证明不存在无限循环；超过预算时保留已有结果并明确停止原因。
 
