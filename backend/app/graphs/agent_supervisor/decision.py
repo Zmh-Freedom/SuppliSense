@@ -43,9 +43,18 @@ def build_decision(state: AgentTaskState, merged: EvidenceMergeResult) -> Decisi
     """Create recommendations and approval requests without executing any action."""
     findings = _findings(state)
     risk_level = _risk_level(findings)
-    if merged.requires_review:
+    validation = state.get("evidence_validation", {})
+    validation_requires_review = bool(validation) and not bool(
+        validation.get("can_recommend")
+    )
+    if merged.requires_review or validation_requires_review:
         missing = "、".join(merged.missing_dimensions)
-        reasons = [reason for reason in ("存在冲突证据" if merged.conflicts else "", f"缺少{missing}证据" if missing else "") if reason]
+        limitations = validation.get("limitations", []) if isinstance(validation, dict) else []
+        reasons = [reason for reason in (
+            "存在冲突证据" if merged.conflicts else "",
+            f"缺少{missing}证据" if missing else "",
+            *[str(item) for item in limitations],
+        ) if reason]
         return DecisionResult(
             summary="证据需人工复核：" + "；".join(reasons),
             risk_level=risk_level,

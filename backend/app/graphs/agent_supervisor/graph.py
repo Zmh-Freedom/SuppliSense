@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from datetime import datetime, timezone
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -14,7 +15,9 @@ from app.core.config import settings
 from app.core.rollout_gate import require_v2_execution
 from app.domains.agent_run import service as agent_run_service
 from app.domains.agent_run.service import get_orchestration_run
-from app.graphs.agent_supervisor.agents import run_ready_tasks
+from app.graphs.agent_core.contracts import LoopState
+from app.graphs.agent_core.validator import validate_evidence
+from app.graphs.agent_supervisor.agents import run_agent_task, run_ready_tasks
 from app.graphs.agent_supervisor.contracts import AgentResult, TaskPlan
 from app.graphs.agent_supervisor.decision import build_decision
 from app.graphs.agent_supervisor.evidence import merge_evidence
@@ -184,19 +187,110 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
 
 
 async def merge_task_evidence(state: AgentTaskState) -> dict[str, Any]:
-    """Merge completed evidence while preserving required-task failures."""
-    merged = merge_evidence(_agent_results(state), _task_plan(state))
+    """Merge evidence and evaluate whether one targeted completion is justified."""
+    results = _agent_results(state)
+    plan = _task_plan(state)
+    merged = merge_evidence(results, plan)
     serialized = merged.model_dump(mode="json")
+    remediation_attempts = int(state.get("evidence_remediation_attempts", 0))
+    raw_loop = state.get("evidence_loop")
+    loop_state = (
+        LoopState.model_validate(raw_loop)
+        if isinstance(raw_loop, dict)
+        else LoopState(
+            loop_type="evidence",
+            iteration=0,
+            max_iterations=2,
+            tool_call_count=0,
+            max_tool_calls=2,
+            started_at=datetime.now(timezone.utc),
+            timeout_seconds=60,
+        )
+    )
+    validation = validate_evidence(
+        merged,
+        plan,
+        results,
+        loop_state,
+        remediation_attempts=remediation_attempts,
+    )
+    validation_serialized = validation.model_dump(mode="json")
     await _persist(
         state,
         "EVIDENCE_MERGING",
         "evidence_merge",
-        {"evidence_merge": serialized},
+        {
+            "evidence_merge": serialized,
+            "evidence_validation": validation_serialized,
+        },
     )
     return {
         "evidence": serialized["evidence"],
+        "evidence_validation": validation_serialized,
+        "evidence_loop": loop_state.model_dump(mode="json"),
         "task_status": "EVIDENCE_MERGING",
     }
+
+
+async def remediate_task_evidence(state: AgentTaskState) -> dict[str, Any]:
+    """Retry only missing required dimensions once, under the evidence budget."""
+    validation = state.get("evidence_validation", {})
+    if not isinstance(validation, dict) or not validation.get("should_remediate"):
+        return {}
+    attempts = int(state.get("evidence_remediation_attempts", 0))
+    if attempts >= 1:
+        return {}
+
+    plan = _task_plan(state)
+    results = _agent_results(state)
+    missing_dimensions = set(validation.get("insufficient_dimensions", []))
+    remediation_tasks = [
+        task
+        for task in plan.tasks
+        if task.required and task.agent in missing_dimensions
+    ][:2]
+    if not remediation_tasks:
+        return {}
+
+    for task in remediation_tasks:
+        result = await run_agent_task(task, {
+            **state,
+            "agent_results": {
+                task_id: item.model_dump(mode="json")
+                for task_id, item in results.items()
+            },
+        })
+        results[task.task_id] = result
+        await _persist(
+            state,
+            "EXECUTING",
+            "evidence_remediation_result",
+            {"task_id": task.task_id, "result": result.model_dump(mode="json")},
+        )
+
+    raw_loop = state.get("evidence_loop", {})
+    loop_state = LoopState.model_validate(raw_loop)
+    next_loop = loop_state.model_copy(update={
+        "iteration": loop_state.iteration + 1,
+        "tool_call_count": loop_state.tool_call_count + len(remediation_tasks),
+        "evidence_count_before": len(state.get("evidence", [])),
+    })
+    return {
+        "agent_results": {
+            task_id: result.model_dump(mode="json")
+            for task_id, result in results.items()
+        },
+        "evidence_remediation_attempts": attempts + 1,
+        "evidence_loop": next_loop.model_dump(mode="json"),
+        "task_status": "EXECUTING",
+    }
+
+
+def _after_evidence_merge(state: AgentTaskState) -> str:
+    validation = state.get("evidence_validation", {})
+    if isinstance(validation, dict) and validation.get("should_remediate"):
+        return "remediate_evidence"
+    return "build_decision"
 
 
 async def build_task_decision(state: AgentTaskState) -> dict[str, Any]:
@@ -312,6 +406,7 @@ def build_agent_supervisor_graph(
     graph.add_node("plan_task", plan_task)
     graph.add_node("execute_ready_tasks", execute_ready_tasks)
     graph.add_node("merge_evidence", merge_task_evidence)
+    graph.add_node("remediate_evidence", remediate_task_evidence)
     graph.add_node("build_decision", build_task_decision)
     graph.add_node("approval_gate", approval_gate)
     graph.add_node("finalize", finalize)
@@ -319,7 +414,15 @@ def build_agent_supervisor_graph(
     graph.add_edge("load_task", "plan_task")
     graph.add_edge("plan_task", "execute_ready_tasks")
     graph.add_edge("execute_ready_tasks", "merge_evidence")
-    graph.add_edge("merge_evidence", "build_decision")
+    graph.add_conditional_edges(
+        "merge_evidence",
+        _after_evidence_merge,
+        {
+            "remediate_evidence": "remediate_evidence",
+            "build_decision": "build_decision",
+        },
+    )
+    graph.add_edge("remediate_evidence", "merge_evidence")
     graph.add_edge("build_decision", "approval_gate")
     graph.add_edge("approval_gate", "finalize")
     graph.add_edge("finalize", END)

@@ -131,11 +131,39 @@ def test_review_required_evidence_prevents_deterministic_recommendation():
     }
     merged = merge_evidence({"compliance": AgentResult(agent="compliance", status="failed", summary="合规数据不可用")})
 
+    state["evidence_validation"] = {
+        "can_recommend": False,
+        "limitations": ["risk 维度缺少可用的独立证据。"],
+    }
     decision = build_decision(state, merged)
 
     assert decision.requires_review is True
     assert decision.recommendations == []
     assert decision.pending_approvals == []
+
+
+def test_decision_never_treats_empty_evidence_as_a_success_template():
+    """A completed-looking answer without evidence must remain explicitly limited."""
+    state = {
+        "recommendations": [{
+            "action_type": "add_to_watchlist",
+            "target": {"company_id": "company-1"},
+            "reason": "风险等级上升",
+        }],
+    }
+    merged = merge_evidence({
+        "risk": AgentResult(agent="risk", status="completed", summary="完成"),
+    }, TaskPlan(tasks=[PlannerTask(task_id="risk", agent="risk", required=True)]))
+
+    state["evidence_validation"] = {
+        "can_recommend": False,
+        "limitations": ["risk 维度缺少可用的独立证据。"],
+    }
+    decision = build_decision(state, merged)
+
+    assert decision.requires_review is True
+    assert decision.recommendations == []
+    assert "无法提供基于数据的风险判断" not in decision.summary
 
 
 @pytest.mark.parametrize("status", ["failed", "skipped"])
