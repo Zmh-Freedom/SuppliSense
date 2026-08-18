@@ -2,6 +2,7 @@
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
@@ -11,6 +12,8 @@ from bs4 import BeautifulSoup
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.domains.sourcing.supplier_repo import search_for_sourcing_v2
+from app.graphs.agent_core.contracts import LoopState
+from app.graphs.agent_core.loop import build_tool_fingerprint, evaluate_loop
 
 logger = get_logger()
 
@@ -515,6 +518,7 @@ def stage_external_candidates(run_id: str, candidates: list[dict]) -> list[dict]
             **candidate,
             **({"run_id": run_id} if run_id else {}),
             "status": "staged_candidate",
+            "verification_status": "unverified",
             "supplier_id": None,
             "company_id": None,
         }
@@ -531,24 +535,111 @@ def discover_candidates(requirement: dict, policy: dict) -> dict:
             "local_candidates": local_candidates,
             "external_candidates": [],
             "external_status": "not_required",
+            "external_stop_reason": "local_supply_sufficient",
+            "external_loop": _external_loop_summary(0, []),
         }
 
-    try:
-        external_candidates = stage_external_candidates(
-            str(requirement.get("run_id", "")), search_external_provider(requirement)
-        )
-    except Exception as exc:
-        return {
-            "source": "local",
-            "local_candidates": local_candidates,
-            "external_candidates": [],
-            "external_status": f"failed:{exc.__class__.__name__}",
-        }
+    external_result = _discover_external_candidates_in_loop(requirement, policy, local_candidates)
+    external_candidates = stage_external_candidates(
+        str(requirement.get("run_id", "")), external_result["candidates"]
+    )
     return {
-        "source": "local_and_external",
+        "source": "local_and_external" if external_candidates else "local",
         "local_candidates": local_candidates,
         "external_candidates": external_candidates,
-        "external_status": "staged",
+        "external_status": external_result["status"],
+        "external_stop_reason": external_result["stop_reason"],
+        "external_loop": external_result["loop"],
+    }
+
+
+def _discover_external_candidates_in_loop(
+    requirement: dict,
+    policy: dict,
+    local_candidates: list[dict],
+) -> dict[str, Any]:
+    """Run a read-only, three-stage fallback without changing supplier master data."""
+    category = _first_requirement_value(requirement.get("category"))
+    specification = _first_requirement_value(requirement.get("specification") or requirement.get("spec"))
+    region = _first_requirement_value(requirement.get("region") or requirement.get("region_required"))
+    started_at = datetime.now(timezone.utc)
+    candidates: list[dict] = []
+    failed_stages: list[str] = []
+    iterations = 0
+    loop_stop_reason: str | None = None
+
+    def run_stage(stage: str, action: Any, *, merge_candidates: bool = True) -> bool:
+        nonlocal candidates, iterations, loop_stop_reason
+        loop_state = LoopState(
+            loop_type="sourcing",
+            iteration=iterations,
+            max_iterations=3,
+            tool_call_count=iterations,
+            max_tool_calls=3,
+            started_at=started_at,
+            timeout_seconds=60,
+            evidence_count_before=len(local_candidates) + len(candidates),
+        )
+        preflight = evaluate_loop(
+            loop_state,
+            current_fingerprint=build_tool_fingerprint(stage, requirement),
+            evidence_count=loop_state.evidence_count_before + 1,
+        )
+        if preflight.status != "continue":
+            loop_stop_reason = preflight.stop_reason
+            return False
+        iterations += 1
+        try:
+            stage_candidates = action()
+        except Exception as exc:
+            failed_stages.append(stage)
+            logger.warning("supplier_discovery_stage_failed", stage=stage, error=type(exc).__name__)
+            return True
+        if merge_candidates:
+            candidates = _merge_external_candidates([*candidates, *stage_candidates])
+        else:
+            candidates = stage_candidates
+        return True
+
+    run_stage("tianyancha", lambda: _search_tianyancha_candidates(category, specification, region))
+    if not is_candidate_supply_sufficient([*local_candidates, *candidates], requirement, policy):
+        run_stage("web_search", lambda: _search_web_candidates(category, specification, region))
+
+    if candidates:
+        # Contact enrichment does not change a lead's identity or verification status.
+        run_stage(
+            "contact_enrichment",
+            lambda: _enrich_external_contacts(candidates),
+            merge_candidates=False,
+        )
+
+    is_sufficient = is_candidate_supply_sufficient([*local_candidates, *candidates], requirement, policy)
+    if loop_stop_reason:
+        status = "partial" if candidates else "blocked"
+        stop_reason = loop_stop_reason
+    elif candidates and is_sufficient:
+        status, stop_reason = "staged", "candidate_supply_sufficient"
+    elif candidates:
+        status, stop_reason = "partial", "external_sources_exhausted"
+    elif failed_stages:
+        status, stop_reason = "failed", "external_sources_failed"
+    else:
+        status, stop_reason = "not_found", "external_sources_exhausted"
+    return {
+        "candidates": candidates,
+        "status": status,
+        "stop_reason": stop_reason,
+        "loop": _external_loop_summary(iterations, failed_stages),
+    }
+
+
+def _external_loop_summary(iterations: int, failed_stages: list[str]) -> dict[str, Any]:
+    return {
+        "loop_type": "sourcing",
+        "iterations": iterations,
+        "max_iterations": 3,
+        "max_tool_calls": 3,
+        "failed_stages": failed_stages,
     }
 
 

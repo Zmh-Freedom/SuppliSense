@@ -366,7 +366,7 @@ feat(agent): add structured conversation state
 5. Plan-Execute；
 6. 旧 Supervisor 兼容入口。
 
-- [ ] 每个图只接收 `ConversationState + AgentTask`；
+- [x] 每个图只接收 `ConversationState + AgentTask`；
 - [x] 每个图通过统一适配器返回 Worker Result；
 - [x] 每轮完成后统一更新会话状态；
 - [x] 不再由各图分别从自然语言回答提取供应商；
@@ -392,12 +392,12 @@ feat(agent): add structured conversation state
 
 #### Task 7：接入 Sourcing Loop
 
-- [ ] 本地候选充足度判断；
-- [ ] 天眼查和联网发现分阶段执行；
-- [ ] 官网、电话、邮箱补全；
-- [ ] 企业身份去重和冲突标记；
-- [ ] 根据默认策略 + 品类策略模板判断是否继续；
-- [ ] 外部候选保持 staged/unverified。
+- [x] 本地候选充足度判断；
+- [x] 天眼查和联网发现分阶段执行；
+- [x] 官网、电话、邮箱补全；
+- [x] 企业身份去重和冲突标记；
+- [x] 根据默认策略 + 品类策略模板判断是否继续；
+- [x] 外部候选保持 staged/unverified。
 
 验收：本地充足时不产生不必要外部调用；本地不足时能扩展并在三轮内结束。
 

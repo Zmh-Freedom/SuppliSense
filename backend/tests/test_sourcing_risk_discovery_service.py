@@ -40,15 +40,21 @@ def test_local_candidates_prevent_external_provider_call(monkeypatch):
     """Removing local sufficiency short-circuit would make unnecessary external calls."""
     local = [_candidate("a"), _candidate("b"), _candidate("c")]
     monkeypatch.setattr(discovery_service, "search_local_suppliers", lambda *_: local)
-    external = Mock()
-    monkeypatch.setattr(discovery_service, "search_external_provider", external)
+    tianyancha = Mock()
+    web = Mock()
+    contact_enrichment = Mock()
+    monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", tianyancha)
+    monkeypatch.setattr(discovery_service, "_search_web_candidates", web)
+    monkeypatch.setattr(discovery_service, "_enrich_external_contacts", contact_enrichment)
 
     result = discovery_service.discover_candidates(_requirement(), _policy())
 
     assert result["source"] == "local"
     assert result["local_candidates"] == local
     assert result["external_status"] == "not_required"
-    external.assert_not_called()
+    tianyancha.assert_not_called()
+    web.assert_not_called()
+    contact_enrichment.assert_not_called()
 
 
 def test_insufficient_local_candidates_retain_local_results_and_stage_external(monkeypatch):
@@ -57,24 +63,36 @@ def test_insufficient_local_candidates_retain_local_results_and_stage_external(m
     monkeypatch.setattr(discovery_service, "search_local_suppliers", lambda *_: local)
     monkeypatch.setattr(
         discovery_service,
-        "search_external_provider",
-        lambda _: [{"name": "外部公司", "source_reference": "tyc:1"}],
+        "_search_tianyancha_candidates",
+        lambda *_: [
+            {
+                "supplier_name": "外部公司一",
+                "categories": ["摄像头"],
+                "specifications": ["IP67"],
+                "regions": ["华东"],
+                "qualifications": ["ISO9001"],
+                "source_reference": "tyc:1",
+            },
+            {
+                "supplier_name": "外部公司二",
+                "categories": ["摄像头"],
+                "specifications": ["IP67"],
+                "regions": ["华东"],
+                "qualifications": ["ISO9001"],
+                "source_reference": "tyc:2",
+            },
+        ],
     )
+    monkeypatch.setattr(discovery_service, "_enrich_external_contacts", lambda candidates: candidates)
 
     result = discovery_service.discover_candidates(_requirement(), _policy())
 
     assert result["source"] == "local_and_external"
     assert result["local_candidates"] == local
     assert result["external_status"] == "staged"
-    assert result["external_candidates"] == [
-        {
-            "name": "外部公司",
-            "source_reference": "tyc:1",
-            "status": "staged_candidate",
-            "supplier_id": None,
-            "company_id": None,
-        }
-    ]
+    assert [item["supplier_name"] for item in result["external_candidates"]] == ["外部公司一", "外部公司二"]
+    assert all(item["status"] == "staged_candidate" for item in result["external_candidates"])
+    assert all(item["supplier_id"] is None and item["company_id"] is None for item in result["external_candidates"])
 
 
 def test_external_candidates_are_staged_without_supplier_or_company_id():
@@ -273,14 +291,17 @@ def test_category_coverage_without_specification_coverage_uses_external_provider
         for name in ("a", "b", "c")
     ]
     monkeypatch.setattr(discovery_service, "search_local_suppliers", lambda *_: local)
-    external = Mock(return_value=[])
-    monkeypatch.setattr(discovery_service, "search_external_provider", external)
+    tianyancha = Mock(return_value=[])
+    web = Mock(return_value=[])
+    monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", tianyancha)
+    monkeypatch.setattr(discovery_service, "_search_web_candidates", web)
 
     result = discovery_service.discover_candidates(_requirement(), _policy())
 
-    assert result["source"] == "local_and_external"
-    assert result["external_status"] == "staged"
-    external.assert_called_once_with(_requirement())
+    assert result["source"] == "local"
+    assert result["external_status"] == "not_found"
+    tianyancha.assert_called_once()
+    web.assert_called_once()
 
 
 def test_local_repository_search_filters_active_category_specification_region_and_qualification(
