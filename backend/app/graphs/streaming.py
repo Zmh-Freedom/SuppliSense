@@ -44,7 +44,10 @@ async def stream_agent_supervisor_graph(
     execution_context: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Map Agent Supervisor updates onto the existing public SSE schema."""
-    config = run_config or {"configurable": {"thread_id": session_id}}
+    config = dict(run_config or {})
+    configurable = dict(config.get("configurable") or {})
+    configurable.setdefault("thread_id", session_id)
+    config["configurable"] = configurable
     input_data = graph_input if graph_input is not None else {
         "run_id": session_id,
         "user_query": user_message,
@@ -57,7 +60,7 @@ async def stream_agent_supervisor_graph(
 
     try:
         async for update in graph.astream(
-            input_data, config, stream_mode="updates"
+            input_data, config=config, stream_mode="updates"
         ):
             interrupt_data = _supervisor_interrupt_data(update)
             if interrupt_data is not None:

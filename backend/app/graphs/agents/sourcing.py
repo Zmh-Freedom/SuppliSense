@@ -9,7 +9,10 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import TypedDict
 
-from app.graphs.sourcing_risk_v2.checkpointer import compile_sourcing_risk_graph
+from app.graphs.sourcing_risk_v2.checkpointer import (
+    compile_sourcing_risk_graph,
+    get_sourcing_risk_checkpointer,
+)
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -123,7 +126,9 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
         msgs.insert(0, SystemMessage(content=preference_context))
     msgs.insert(0, SystemMessage(content=SOURCING_SYSTEM))
 
-    graph = build_sourcing_graph()
+    checkpointer = await get_sourcing_risk_checkpointer()
+    graph = build_sourcing_graph(checkpointer)
+    run_config = {"configurable": {"thread_id": session_id}}
     full_answer = ""
     discovered_references: list[dict] = []
 
@@ -138,6 +143,7 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
                 "conversation_state": context["conversation_state"],
                 "current_task": context["current_task"],
             },
+            config=run_config,
             version="v2",
         ):
             kind = event["event"]
