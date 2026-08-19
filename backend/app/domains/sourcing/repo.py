@@ -114,13 +114,44 @@ def update_result_action(result_id: str, action: str) -> None:
     )
 
 
-def create_access_application(supplier_name: str, request_id: str | None, applicant_id: str) -> str:
+def save_external_candidate(candidate: dict[str, Any]) -> None:
+    """Persist a review-only external candidate, never a supplier master identity."""
+    candidate_id = candidate.get("candidate_id")
+    if not candidate_id:
+        raise ValueError("外部候选缺少 candidate_id")
+    db = get_db()
+    db["external_supplier_candidates"].replace_one(
+        {"_id": candidate_id},
+        {**candidate, "_id": candidate_id, "updated_at": datetime.now(timezone.utc)},
+        upsert=True,
+    )
+
+
+def get_external_candidate(candidate_id: str) -> dict | None:
+    """Read a staged candidate without resolving or creating a supplier identity."""
+    return get_db()["external_supplier_candidates"].find_one({"_id": candidate_id})
+
+
+def get_external_candidate_by_name(supplier_name: str) -> dict | None:
+    """Resolve a staged candidate by its exact displayed supplier name."""
+    return get_db()["external_supplier_candidates"].find_one(
+        {"supplier_name": supplier_name.strip()}, sort=[("updated_at", -1)]
+    )
+
+
+def create_access_application(
+    supplier_name: str,
+    request_id: str | None,
+    applicant_id: str,
+    candidate_id: str | None = None,
+) -> str:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     supplier_id = resolve_supplier_id(supplier_name, auto_create=True)
     validated = _validate_access_app({
         "supplier_name": supplier_name,
         "supplier_id": supplier_id,
+        "candidate_id": candidate_id,
         "request_id": request_id,
         "applicant_id": applicant_id,
     })
@@ -135,6 +166,10 @@ def create_access_application(supplier_name: str, request_id: str | None, applic
 def get_access_application(aid: str) -> dict | None:
     db = get_db()
     return db["access_applications"].find_one({"_id": aid})
+
+
+def get_access_application_by_candidate(candidate_id: str) -> dict | None:
+    return get_db()["access_applications"].find_one({"candidate_id": candidate_id})
 
 
 def list_access_applications(

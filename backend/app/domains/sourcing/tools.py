@@ -54,6 +54,48 @@ def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
 
 
 @tool
+def select_external_supplier_candidate(
+    candidate_id: str = "",
+    supplier_name: str = "",
+    action: str = "apply_access",
+) -> dict:
+    """对联网待核验候选执行人工确认后的动作。
+
+    可使用 discover_web_suppliers 返回的 candidate_id，或使用候选展示的供应商全称。
+    只有天眼查唯一身份核验为 exact 的候选，且用户确认审批后，才会创建准入申请。
+    """
+    from app.domains.sourcing.repo import get_external_candidate, get_external_candidate_by_name
+    from app.graphs.approval import needs_approval, request_approval
+
+    candidate = get_external_candidate(candidate_id) if candidate_id else None
+    if not candidate and supplier_name.strip():
+        candidate = get_external_candidate_by_name(supplier_name)
+        candidate_id = str(candidate.get("_id", "")) if candidate else ""
+    if not candidate:
+        return {"success": False, "error": "external_candidate_not_found", "message": "未找到对应的联网候选，请提供供应商全称"}
+
+    args = {
+        "candidate_id": candidate_id,
+        "supplier_name": candidate.get("supplier_name", supplier_name),
+        "action": action,
+    }
+    if needs_approval("select_external_supplier_candidate", args):
+        try:
+            approved = request_approval("select_external_supplier_candidate", args)
+        except RuntimeError:
+            return {
+                "success": False,
+                "error": "approval_context_required",
+                "message": "外部候选准入必须在支持人工审批的 Agent 会话中执行",
+            }
+        if not approved:
+            return {"cancelled": True, "message": "用户取消了外部候选准入申请操作"}
+
+    from app.domains.sourcing.service import select_external_candidate
+    return select_external_candidate(candidate_id, action, user_id="agent")
+
+
+@tool
 def expand_supplier_library(keyword: str = "", industry: str = "", region: str = "") -> dict:
     """从天眼查搜索企业并自动导入供应商主库。当用户要寻找某类供应商但本地库找不到时使用。
 
@@ -80,6 +122,9 @@ def discover_web_suppliers(category: str, specification: str = "", region: str =
     requirement = {"category": category, "specification": specification, "region": region}
     candidates = search_external_provider(requirement)
     staged = stage_external_candidates("", candidates)
+    from app.domains.sourcing.repo import save_external_candidate
+    for candidate in staged:
+        save_external_candidate(candidate)
     return {
         "source": "public_web_search",
         "status": "staged_external",

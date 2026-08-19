@@ -15,12 +15,16 @@ from app.domains.sourcing.repo import (
     create_access_application,
     create_request,
     get_access_application,
+    get_access_application_by_candidate,
+    get_external_candidate,
+    get_external_candidate_by_name,
     get_request,
     get_result,
     get_results,
     list_access_applications,
     reject_access_application,
     save_result,
+    save_external_candidate,
     update_request_status,
     update_result_action,
 )
@@ -87,6 +91,8 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
                 "region": req_doc.get("region_required", ""),
             }),
         )
+        for candidate in external_candidates:
+            save_external_candidate(candidate)
     if not candidates and not external_candidates:
         update_request_status(request_id, "done", 0)
         return {
@@ -197,6 +203,49 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
         return {"success": True, "action": "apply_access", "application_id": aid}
 
     return {"success": False, "message": f"未知动作: {action}"}
+
+
+def select_external_candidate(
+    candidate_id: str = "",
+    action: str = "apply_access",
+    user_id: str = "agent",
+    supplier_name: str = "",
+) -> dict:
+    """Execute an approved action for a staged external candidate."""
+    candidate = get_external_candidate(candidate_id) if candidate_id else None
+    if not candidate and supplier_name.strip():
+        candidate = get_external_candidate_by_name(supplier_name)
+        candidate_id = str(candidate.get("_id", "")) if candidate else ""
+    if not candidate:
+        raise ValueError(f"外部候选不存在或已过期: {supplier_name or candidate_id}")
+    if candidate.get("status") not in {"staged_candidate", "access_pending"}:
+        raise ValueError(f"外部候选当前状态不可执行: {candidate.get('status', 'unknown')}")
+    if action != "apply_access":
+        raise ValueError(f"外部候选暂不支持动作: {action}")
+    if candidate.get("identity_status") != "exact":
+        raise ValueError("外部候选尚未完成天眼查唯一身份核验，不能申请准入")
+
+    existing = get_access_application_by_candidate(candidate_id)
+    if existing:
+        return {
+            "success": True,
+            "action": action,
+            "application_id": str(existing["_id"]),
+            "candidate_id": candidate_id,
+            "message": "该外部候选已有准入申请，未重复创建",
+        }
+
+    aid = create_access_application(
+        supplier_name=candidate.get("tianyancha_company_name") or candidate.get("supplier_name", ""),
+        request_id=candidate.get("request_id"),
+        applicant_id=user_id,
+        candidate_id=candidate_id,
+    )
+    from app.db.mongo import get_db
+    get_db()["external_supplier_candidates"].update_one(
+        {"_id": candidate_id}, {"$set": {"status": "access_pending", "access_application_id": aid}}
+    )
+    return {"success": True, "action": action, "application_id": aid, "candidate_id": candidate_id}
 
 
 def get_request_detail(request_id: str) -> dict | None:

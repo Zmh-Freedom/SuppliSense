@@ -31,6 +31,7 @@ _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "create_sourcing_request", "search_suppliers", "select_sourcing_result",
     "find_alternatives", "expand_supplier_library",
     "discover_web_suppliers",
+    "select_external_supplier_candidate",
     "analyze_trend", "analyze_watchlist_trend", "compare_companies",
     "get_watchlist", "check_alert",
 )]
@@ -51,8 +52,10 @@ RISK_PROMPT = """你是风险评估与寻源专家。
 3. 上市公司要分析财报，debt_ratio=0 表示数据缺失不要解读为低负债
 4. 用户需要找供应商时，用 create_sourcing_request 创建需求，再调用 search_suppliers 搜索
 5. 本地库找不到或结果太少时，优先用 discover_web_suppliers 联网发现待核验候选；不得自动写入供应商主库
-6. 监控清单相关：趋势分析调用 analyze_watchlist_trend，查看清单调用 get_watchlist
-7. 回答简洁，300 字以内，中文
+6. 用户确认联网候选准入时，必须使用 select_external_supplier_candidate(candidate_id, action="apply_access")；不得只用文字承诺，也不得把 candidate_id 当作 result_id
+   如果上下文中没有 candidate_id，可传入供应商全称 supplier_name，由工具解析候选
+7. 监控清单相关：趋势分析调用 analyze_watchlist_trend，查看清单调用 get_watchlist
+8. 回答简洁，300 字以内，中文
 
 图表输出（当回答包含对比数据或评分分布时，嵌入图表）：
 - 用 ```chart 代码块输出 JSON，支持 line/bar/radar/pie 四种类型

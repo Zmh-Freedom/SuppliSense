@@ -7,6 +7,7 @@ from app.domains.sourcing.service import (
     approve_application,
     reject_application,
     search_suppliers,
+    select_external_candidate,
 )
 
 
@@ -99,6 +100,10 @@ def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None
     )
     monkeypatch.setattr("app.domains.sourcing.service.update_request_status", lambda *args: None)
     monkeypatch.setattr(
+        "app.domains.sourcing_risk.discovery_service.search_external_provider",
+        lambda *_args: [],
+    )
+    monkeypatch.setattr(
         "app.domains.sourcing.service._vector_search",
         lambda *_args, **_kwargs: [{
             "supplier_name": "电子供应商",
@@ -117,3 +122,65 @@ def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None
 
     assert result["results"] == []
     assert "钢材" in result["message"]
+
+
+def test_external_candidate_requires_exact_identity_before_access(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.sourcing.service.get_external_candidate",
+        lambda _candidate_id: {
+            "candidate_id": "candidate-1",
+            "supplier_name": "网页候选",
+            "identity_status": "ambiguous",
+            "status": "staged_candidate",
+        },
+    )
+
+    try:
+        select_external_candidate("candidate-1", "apply_access", "agent")
+        assert False, "未唯一核验的候选不应创建准入申请"
+    except ValueError as exc:
+        assert "唯一身份核验" in str(exc)
+
+
+def test_external_candidate_creates_idempotent_access_application_after_exact_identity(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.sourcing.service.get_external_candidate",
+        lambda _candidate_id: {
+            "candidate_id": "candidate-1",
+            "supplier_name": "网页候选",
+            "tianyancha_company_name": "天眼查确认企业",
+            "identity_status": "exact",
+            "status": "staged_candidate",
+        },
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.service.get_access_application_by_candidate",
+        lambda _candidate_id: None,
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.service.create_access_application",
+        lambda **kwargs: (assert_candidate_payload(kwargs) or "application-1"),
+    )
+    monkeypatch.setattr(
+        "app.db.mongo.get_db",
+        lambda: {"external_supplier_candidates": FakeCollection()},
+    )
+
+    result = select_external_candidate("candidate-1", "apply_access", "agent")
+
+    assert result == {
+        "success": True,
+        "action": "apply_access",
+        "application_id": "application-1",
+        "candidate_id": "candidate-1",
+    }
+
+
+class FakeCollection:
+    def update_one(self, *_args, **_kwargs):
+        return None
+
+
+def assert_candidate_payload(payload: dict) -> None:
+    assert payload["supplier_name"] == "天眼查确认企业"
+    assert payload["candidate_id"] == "candidate-1"

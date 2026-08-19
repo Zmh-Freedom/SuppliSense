@@ -1,6 +1,7 @@
 """Local-first, side-effect-free supplier candidate discovery."""
 
 import re
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
@@ -72,6 +73,7 @@ def search_external_provider(requirement: dict) -> list[dict]:
     )
 
     merged = _merge_external_candidates([*tyc_candidates, *web_candidates])
+    merged = _verify_web_candidates_with_tianyancha(merged)
     limited = merged[: settings.SUPPLIER_DISCOVERY_WEB_MAX_RESULTS]
     return _enrich_external_contacts(limited)
 
@@ -307,6 +309,142 @@ def _merge_external_candidates(candidates: list[dict]) -> list[dict]:
     return merged
 
 
+def _verify_web_candidates_with_tianyancha(candidates: list[dict]) -> list[dict]:
+    """Verify web-discovered identities through Tianyancha without writing data.
+
+    Web search discovers leads, while Tianyancha is used as the read-only
+    identity evidence source.  No supplier/company document is created here;
+    the result remains a review-only candidate until a human approves it.
+    """
+    web_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.get("source") == "web_search" and candidate.get("supplier_name")
+    ]
+    if not web_candidates:
+        return candidates
+
+    def verify(index: int, candidate: dict) -> tuple[int, dict]:
+        return index, _verify_web_candidate_with_tianyancha(candidate)
+
+    verified = list(candidates)
+    with ThreadPoolExecutor(max_workers=min(4, len(web_candidates))) as executor:
+        futures = [
+            executor.submit(verify, index, candidate)
+            for index, candidate in enumerate(candidates)
+            if candidate.get("source") == "web_search" and candidate.get("supplier_name")
+        ]
+        for future in futures:
+            try:
+                index, candidate = future.result()
+            except Exception as exc:
+                logger.warning("supplier_tianyancha_verification_failed", error=type(exc).__name__)
+                continue
+            verified[index] = candidate
+
+    logger.info(
+        "supplier_tianyancha_verification_completed",
+        candidate_count=len(web_candidates),
+        exact_count=sum(item.get("identity_status") == "exact" for item in verified),
+        probable_count=sum(item.get("identity_status") == "probable" for item in verified),
+    )
+    return verified
+
+
+def _verify_web_candidate_with_tianyancha(candidate: dict) -> dict:
+    """Attach bounded Tianyancha identity evidence to one web lead."""
+    from app.services.tianyancha_client import search_companies
+
+    result = dict(candidate)
+    name = str(result.get("supplier_name") or "").strip()
+    result["identity_status"] = "unavailable"
+    result["identity_confidence"] = 0.0
+    result["tianyancha_verified"] = False
+    result["verification_reasons"] = []
+    if not name:
+        result["identity_status"] = "not_found"
+        return result
+
+    response = search_companies(keyword=name, page_size=5)
+    if not response:
+        result["verification_reasons"] = ["天眼查查询不可用或未返回结果"]
+        return result
+
+    items = [item for item in response.get("items", []) if isinstance(item, dict)]
+    exact_matches = [
+        item for item in items
+        if _normalise_company_name(item.get("name")) == _normalise_company_name(name)
+    ]
+    if len(exact_matches) == 1:
+        return _apply_tianyancha_identity(result, exact_matches[0], "exact")
+    if len(exact_matches) > 1:
+        result["identity_status"] = "ambiguous"
+        result["verification_reasons"] = ["天眼查返回多个同名企业"]
+        return result
+
+    probable_matches = [
+        item for item in items
+        if _company_name_contains(item.get("name"), name)
+    ]
+    if len(probable_matches) == 1:
+        return _apply_tianyancha_identity(result, probable_matches[0], "probable")
+    if len(probable_matches) > 1:
+        result["identity_status"] = "ambiguous"
+        result["verification_reasons"] = ["天眼查返回多个相近企业，无法唯一确认"]
+        return result
+
+    result["identity_status"] = "not_found"
+    result["verification_reasons"] = ["天眼查未找到名称匹配的企业"]
+    return result
+
+
+def _apply_tianyancha_identity(candidate: dict, item: dict, status: str) -> dict:
+    """Copy only identity evidence; never persist or promote a supplier."""
+    result = dict(candidate)
+    unified_code = _first_candidate_value(
+        item, "unifiedSocialCreditCode", "regNumber", "creditCode"
+    )
+    result.update({
+        "identity_status": status,
+        "identity_confidence": 0.98 if status == "exact" else 0.82,
+        "tianyancha_verified": status == "exact",
+        "tianyancha_company_name": str(item.get("name") or "").strip(),
+        "tianyancha_unified_social_credit_code": unified_code,
+        "tianyancha_legal_person": _first_candidate_value(item, "legalPersonName", "legalPerson"),
+        "tianyancha_registration_status": _first_candidate_value(item, "regStatus", "status"),
+        "tianyancha_registered_capital": _first_candidate_value(item, "regCapital", "registeredCapital"),
+        "tianyancha_registered_address": _first_candidate_value(item, "regLocation", "address"),
+        "verification_reasons": [
+            "天眼查企业名称精确匹配" if status == "exact" else "天眼查企业名称近似匹配",
+            "已获取天眼查企业身份信息" if unified_code else "天眼查未返回统一社会信用代码",
+        ],
+    })
+    if unified_code:
+        result["tianyancha_source_reference"] = f"tyc:{unified_code}"
+    return result
+
+
+def _normalise_company_name(value: Any) -> str:
+    """Normalize legal names for conservative identity comparison."""
+    return re.sub(r"[\s（）()·\-—_，,。]", "", str(value or "")).casefold()
+
+
+def _company_name_contains(left: Any, right: Any) -> bool:
+    normalized_left = _normalise_company_name(left)
+    normalized_right = _normalise_company_name(right)
+    return bool(normalized_left and normalized_right and (
+        normalized_left in normalized_right or normalized_right in normalized_left
+    ))
+
+
+def _first_candidate_value(item: dict, *keys: str) -> str | None:
+    for key in keys:
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
 def _enrich_external_contacts(candidates: list[dict]) -> list[dict]:
     """Enrich a bounded number of staged leads with read-only provider and web details."""
     limit = min(len(candidates), settings.SUPPLIER_DISCOVERY_CONTACT_ENRICHMENT_MAX_CANDIDATES)
@@ -516,9 +654,13 @@ def stage_external_candidates(run_id: str, candidates: list[dict]) -> list[dict]
     return [
         {
             **candidate,
+            "candidate_id": str(uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"supplisense:external:{candidate.get('source', 'unknown')}:{candidate.get('supplier_name', '')}",
+            )),
             **({"run_id": run_id} if run_id else {}),
             "status": "staged_candidate",
-            "verification_status": "unverified",
+            "verification_status": candidate.get("verification_status", "unverified"),
             "supplier_id": None,
             "company_id": None,
         }
@@ -606,6 +748,7 @@ def _discover_external_candidates_in_loop(
         run_stage("web_search", lambda: _search_web_candidates(category, specification, region))
 
     if candidates:
+        candidates = _verify_web_candidates_with_tianyancha(candidates)
         # Contact enrichment does not change a lead's identity or verification status.
         run_stage(
             "contact_enrichment",

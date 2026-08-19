@@ -83,6 +83,7 @@ class AccessApplicationDocument(BaseModel):
     """access_applications 集合文档。"""
     supplier_name: str
     supplier_id: str | None = None
+    candidate_id: str | None = None
     request_id: str | None = None
     applicant_id: str
     status: str = "pending"

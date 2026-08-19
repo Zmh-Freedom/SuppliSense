@@ -47,7 +47,9 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 定时报告：用 manage_scheduled_report
 - 找供应商/寻源：用 create_sourcing_request 创建需求，再用 search_suppliers 搜索候选
 - 供应商不足时：优先用 discover_web_suppliers 联网发现待核验候选；只有用户明确确认并允许入库时，才考虑 expand_supplier_library
-- 勾选结果：用 select_sourcing_result（watchlist 加入监控 / apply_access 申请准入）
+- 勾选本地结果：用 select_sourcing_result（watchlist 加入监控 / apply_access 申请准入）
+- 用户确认联网候选准入：必须用 select_external_supplier_candidate(candidate_id, action="apply_access")，不得把 candidate_id 当作 result_id
+- 用户说“执行/确认/同意准入”时，必须立即调用 select_external_supplier_candidate；可从上下文使用供应商全称 supplier_name，不得只回复“同意准入”或再次建议确认
 
 业务规则：
 - assess_risk 已含财报数据，上市公司要分析财报

@@ -1,6 +1,7 @@
 """LangGraph 流式输出适配为 SSE 事件格式，保持与前端兼容。"""
 
 import json
+import re
 from typing import Any, AsyncGenerator
 
 
@@ -18,6 +19,36 @@ _SUPERVISOR_STAGE_MESSAGES = {
 def _sse_event(event_type: str, data: dict) -> str:
     """Format data as SSE event string."""
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+_ACCESS_WRITE_TOOLS = {"select_sourcing_result", "select_external_supplier_candidate"}
+_ACCESS_SUCCESS_CLAIMS = re.compile(r"已(?:完成|成功)|正式成为|同意准入|准入成功")
+
+
+def _access_write_succeeded(tool_name: str, output: Any) -> bool:
+    """Only a durable application id is allowed to support an access-success claim."""
+    if tool_name not in _ACCESS_WRITE_TOOLS:
+        return False
+    value = output
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return False
+    return bool(
+        isinstance(value, dict)
+        and value.get("success") is True
+        and value.get("application_id")
+    )
+
+
+def _guard_access_answer(user_message: str, answer: str, access_succeeded: bool) -> str:
+    """Prevent a text-only ReAct answer from claiming a write that did not happen."""
+    if "准入" not in user_message or access_succeeded:
+        return answer
+    if not _ACCESS_SUCCESS_CLAIMS.search(answer):
+        return answer
+    return "未检测到准入申请成功回执，本次准入申请尚未提交。请重新发起准入申请，并完成人工审批。"
 
 
 def _supervisor_tool_name(agent: object) -> str:
@@ -196,6 +227,8 @@ async def stream_react_graph(
     full_answer = ""
     discovered_references: list[dict] = list(references or [])
     tool_call_count = 0
+    access_succeeded = False
+    buffer_access_answer = "准入" in user_message
     config = run_config or {}
 
     yield _sse_event("thinking", {"message": "正在分析您的问题..."})
@@ -217,7 +250,8 @@ async def stream_react_graph(
                 chunk = event.get("data", {}).get("chunk")
                 if chunk and chunk.content:
                     full_answer += chunk.content
-                    yield _sse_event("answer_chunk", {"text": chunk.content})
+                    if not buffer_access_answer:
+                        yield _sse_event("answer_chunk", {"text": chunk.content})
 
             # 工具调用开始
             elif kind == "on_tool_start":
@@ -239,6 +273,7 @@ async def stream_react_graph(
                     result = output
                 else:
                     result = json.dumps(output, ensure_ascii=False, default=str)
+                access_succeeded = access_succeeded or _access_write_succeeded(tool_name, output)
                 if len(result) > 2000:
                     result = result[:2000] + "...(截断)"
                 yield _sse_event("tool_result", {"tool": tool_name, "result": result})
@@ -255,7 +290,8 @@ async def stream_react_graph(
                 content = output.content if output and hasattr(output, "content") else ""
                 if content:
                     full_answer = content
-                    yield _sse_event("answer_chunk", {"text": content})
+                    if not buffer_access_answer:
+                        yield _sse_event("answer_chunk", {"text": content})
 
             # Reflector 发现问题时通知
             elif kind == "on_chain_end" and event.get("name") == "reflector":
@@ -264,6 +300,10 @@ async def stream_react_graph(
                     feedback = output.get("reflection_feedback", "")
                     if feedback:
                         yield _sse_event("thinking", {"message": f"正在优化回答: {feedback}"})
+
+        full_answer = _guard_access_answer(user_message, full_answer, access_succeeded)
+        if buffer_access_answer and full_answer:
+            yield _sse_event("answer_chunk", {"text": full_answer})
 
         # 保存对话历史
         if full_answer:

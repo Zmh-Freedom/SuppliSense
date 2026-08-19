@@ -20,6 +20,7 @@ _APPROVAL_TOOLS: dict[str, str] = {
     "add_to_watchlist": "将 {company_name} 加入监控清单",
     "remove_from_watchlist": "将 {company_name} 移出监控清单",
     "select_sourcing_result": "确认寻源结果操作: {action}",
+    "select_external_supplier_candidate": "确认外部候选 {candidate_id} 的准入申请",
 }
 
 # manage_scheduled_report 中需要审批的 action
@@ -46,6 +47,9 @@ def needs_approval(tool_name: str, tool_args: dict[str, Any]) -> bool:
     if tool_name == "select_sourcing_result":
         action = tool_args.get("action", "")
         return action in _APPROVAL_SOURCING_ACTIONS
+
+    if tool_name == "select_external_supplier_candidate":
+        return tool_args.get("action", "") == "apply_access"
 
     return tool_name in _APPROVAL_TOOLS
 

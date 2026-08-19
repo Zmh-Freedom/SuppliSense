@@ -126,6 +126,10 @@ def test_web_provider_returns_unverified_company_leads_without_writing(monkeypat
     request = Mock(return_value=Response())
     monkeypatch.setattr(discovery_service.httpx, "get", request)
     monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", lambda *_: [])
+    monkeypatch.setattr(
+        "app.services.tianyancha_client.search_companies",
+        lambda **_kwargs: {"items": [], "total": 0},
+    )
     monkeypatch.setattr(discovery_service, "_enrich_external_contacts", lambda candidates: candidates)
     monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_MAX_RESULTS", 5)
     monkeypatch.setattr(discovery_service.settings, "SUPPLIER_DISCOVERY_WEB_ENABLED", True)
@@ -137,6 +141,64 @@ def test_web_provider_returns_unverified_company_leads_without_writing(monkeypat
     assert result[0]["verification_status"] == "unverified"
     assert result[0]["source_reference"] == "https://steel.example.com"
     assert request.call_count == 1
+
+
+def test_web_candidate_is_verified_by_exact_tianyancha_identity_without_writing(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tianyancha_client.search_companies",
+        lambda **_kwargs: {
+            "items": [{
+                "name": "华东钢材供应有限公司",
+                "unifiedSocialCreditCode": "91310000TEST",
+                "legalPersonName": "张三",
+                "regStatus": "存续",
+            }],
+            "total": 1,
+        },
+    )
+
+    result = discovery_service._verify_web_candidates_with_tianyancha([
+        {
+            "supplier_name": "华东钢材供应有限公司",
+            "source": "web_search",
+            "verification_status": "unverified",
+        },
+    ])
+
+    assert result[0]["identity_status"] == "exact"
+    assert result[0]["identity_confidence"] == 0.98
+    assert result[0]["tianyancha_verified"] is True
+    assert result[0]["tianyancha_unified_social_credit_code"] == "91310000TEST"
+
+
+def test_web_candidate_with_multiple_similar_tianyancha_results_requires_review(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tianyancha_client.search_companies",
+        lambda **_kwargs: {
+            "items": [
+                {"name": "华东钢材供应有限公司"},
+                {"name": "华东钢材供应集团有限公司"},
+            ],
+            "total": 2,
+        },
+    )
+
+    result = discovery_service._verify_web_candidates_with_tianyancha([
+        {"supplier_name": "华东钢材供应", "source": "web_search"},
+    ])
+
+    assert result[0]["identity_status"] == "ambiguous"
+    assert result[0]["tianyancha_verified"] is False
+
+
+def test_staged_external_candidate_gets_stable_id_without_creating_identity():
+    staged = discovery_service.stage_external_candidates(
+        "run-id", [{"supplier_name": "外部公司", "source": "web_search"}]
+    )
+
+    assert staged[0]["candidate_id"]
+    assert staged[0]["supplier_id"] is None
+    assert staged[0]["company_id"] is None
 
 
 def test_tianyancha_candidates_enrich_contact_details_without_importing(monkeypatch):
