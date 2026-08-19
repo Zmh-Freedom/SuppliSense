@@ -2,7 +2,7 @@
 
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -73,6 +73,35 @@ class AgentState(TypedDict):
     current_task: dict
 
 
+def _forced_external_access_call(state: AgentState) -> AIMessage | None:
+    """Hard-route an unambiguous admission request to the external tool."""
+    messages = state.get("messages", [])
+    last = messages[-1] if messages else None
+    if not isinstance(last, HumanMessage) or "准入" not in str(last.content):
+        return None
+    candidates = [
+        reference
+        for reference in state.get("conversation_state", {}).get("active_suppliers", [])
+        if isinstance(reference, dict)
+        and reference.get("candidate_id")
+        and reference.get("candidate_type") == "external"
+        and reference.get("identity_status") == "exact"
+    ]
+    if len(candidates) != 1:
+        return None
+    candidate = candidates[0]
+    return AIMessage(content="", tool_calls=[{
+        "name": "select_external_supplier_candidate",
+        "args": {
+            "candidate_id": candidate["candidate_id"],
+            "supplier_name": candidate.get("name", ""),
+            "action": "apply_access",
+        },
+        "id": "forced-external-access",
+        "type": "tool_call",
+    }])
+
+
 # 模块级 LLM 单例，避免每次请求创建新连接
 _llm_instance = None
 
@@ -94,6 +123,9 @@ def build_react_graph(preference_context: str = ""):
     tool_node = ToolNode(TOOLS_LIST)
 
     async def agent(state: AgentState):
+        forced_call = _forced_external_access_call(state)
+        if forced_call:
+            return {"messages": [forced_call]}
         response = await llm.ainvoke(state["messages"])
         return {"messages": [response]}
 

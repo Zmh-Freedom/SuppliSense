@@ -23,6 +23,7 @@ def _sse_event(event_type: str, data: dict) -> str:
 
 _ACCESS_WRITE_TOOLS = {"select_sourcing_result", "select_external_supplier_candidate"}
 _ACCESS_SUCCESS_CLAIMS = re.compile(r"已(?:完成|成功)|正式成为|同意准入|准入成功")
+_MAX_AGENT_TOOL_CALLS = 12
 
 
 def _access_write_succeeded(tool_name: str, output: Any) -> bool:
@@ -259,6 +260,10 @@ async def stream_react_graph(
                 tool_input = event.get("data", {}).get("input", {})
                 yield _sse_event("tool_call", {"tool": tool_name, "args": tool_input})
                 tool_call_count += 1
+                if tool_call_count > _MAX_AGENT_TOOL_CALLS:
+                    raise RuntimeError(
+                        f"Agent 工具调用超过 {_MAX_AGENT_TOOL_CALLS} 次，已停止重复执行；请缩小本次任务范围"
+                    )
 
             # 工具调用结束
             elif kind == "on_tool_end":

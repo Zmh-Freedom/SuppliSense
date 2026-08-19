@@ -1,5 +1,7 @@
 """对话上下文管理 — 长对话摘要压缩。"""
 
+import json
+
 from langchain_core.messages import SystemMessage
 from app.graphs import build_shared_llm
 
@@ -80,6 +82,26 @@ async def build_input_messages(
             for reference in references
             if isinstance(reference, dict) and reference.get("name")
         ]
+        candidate_context = [
+            {
+                "name": reference.get("name"),
+                "candidate_id": reference.get("candidate_id"),
+                "candidate_type": reference.get("candidate_type"),
+                "identity_status": reference.get("identity_status"),
+            }
+            for reference in (references or [])
+            if isinstance(reference, dict)
+            and reference.get("name")
+            and reference.get("candidate_id")
+        ]
+        access_instruction = ""
+        if any(token in user_message for token in ("准入", "申请入库", "成为合格供应商")):
+            access_instruction = (
+                "用户正在请求供应商准入。若结构化候选中存在唯一匹配且 candidate_type=external，"
+                "必须立即调用 select_external_supplier_candidate(candidate_id=候选的candidate_id, "
+                "action=\"apply_access\")；不得调用 select_sourcing_result，也不得创建新的寻源请求。"
+                "若存在多个候选，先让用户选择；若没有候选，才说明缺少候选。"
+            )
         resolved_context = execution_context or build_execution_context(
             session_id="",
             user_message=user_message,
@@ -94,6 +116,10 @@ async def build_input_messages(
                     + "。用户说‘这些企业/上述企业/它们/推荐的供应商’时，"
                     "应将全部上述实体作为分析对象并逐家调用所需工具；"
                     "若用户明确提到其他企业，以用户当前表述为准。"
+                    + "结构化候选引用："
+                    + json.dumps(candidate_context, ensure_ascii=False)
+                    + "。"
+                    + access_instruction
                     + build_execution_prompt(resolved_context)
                 )
             )

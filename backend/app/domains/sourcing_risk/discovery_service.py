@@ -316,23 +316,25 @@ def _verify_web_candidates_with_tianyancha(candidates: list[dict]) -> list[dict]
     identity evidence source.  No supplier/company document is created here;
     the result remains a review-only candidate until a human approves it.
     """
-    web_candidates = [
+    verifiable_candidates = [
         candidate
         for candidate in candidates
-        if candidate.get("source") == "web_search" and candidate.get("supplier_name")
+        if candidate.get("source") in {"web_search", "tianyancha_search"}
+        and candidate.get("supplier_name")
     ]
-    if not web_candidates:
+    if not verifiable_candidates:
         return candidates
 
     def verify(index: int, candidate: dict) -> tuple[int, dict]:
         return index, _verify_web_candidate_with_tianyancha(candidate)
 
     verified = list(candidates)
-    with ThreadPoolExecutor(max_workers=min(4, len(web_candidates))) as executor:
+    with ThreadPoolExecutor(max_workers=min(4, len(verifiable_candidates))) as executor:
         futures = [
             executor.submit(verify, index, candidate)
             for index, candidate in enumerate(candidates)
-            if candidate.get("source") == "web_search" and candidate.get("supplier_name")
+            if candidate.get("source") in {"web_search", "tianyancha_search"}
+            and candidate.get("supplier_name")
         ]
         for future in futures:
             try:
@@ -344,7 +346,7 @@ def _verify_web_candidates_with_tianyancha(candidates: list[dict]) -> list[dict]
 
     logger.info(
         "supplier_tianyancha_verification_completed",
-        candidate_count=len(web_candidates),
+        candidate_count=len(verifiable_candidates),
         exact_count=sum(item.get("identity_status") == "exact" for item in verified),
         probable_count=sum(item.get("identity_status") == "probable" for item in verified),
     )
@@ -660,6 +662,7 @@ def stage_external_candidates(run_id: str, candidates: list[dict]) -> list[dict]
             )),
             **({"run_id": run_id} if run_id else {}),
             "status": "staged_candidate",
+            "candidate_type": "external",
             "verification_status": candidate.get("verification_status", "unverified"),
             "supplier_id": None,
             "company_id": None,

@@ -31,7 +31,8 @@ def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]
         for field in (
             "website_url", "contact_phone", "contact_email", "website_status",
             "contact_status", "website_url_source", "contact_phone_source",
-            "contact_email_source", "discovery_source",
+            "contact_email_source", "discovery_source", "candidate_id",
+            "candidate_type", "identity_status", "company_id",
         ):
             if not existing.get(field) and reference.get(field):
                 existing[field] = reference[field]
@@ -67,7 +68,8 @@ def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[st
                     for field in (
                         "source", "website_url", "website_status", "website_url_source",
                         "contact_phone", "contact_phone_source", "contact_email",
-                        "contact_email_source", "contact_status",
+                        "contact_email_source", "contact_status", "candidate_id",
+                        "candidate_type", "identity_status", "company_id",
                     ):
                         if item.get(field):
                             reference["discovery_source" if field == "source" else field] = item[field]

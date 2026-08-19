@@ -118,3 +118,20 @@ def test_discovery_loop_degrades_after_provider_failures_and_keeps_local_candida
     assert result["external_stop_reason"] == "external_sources_failed"
     assert result["external_loop"]["iterations"] == 2
     assert result["external_loop"]["failed_stages"] == ["tianyancha", "web_search"]
+
+
+def test_tianyancha_candidates_are_identity_verified_before_access(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.tianyancha_client.search_companies",
+        lambda **_kwargs: {"items": [{
+            "name": "天眼查企业",
+            "unifiedSocialCreditCode": "91310000TEST",
+        }]},
+    )
+
+    result = discovery_service._verify_web_candidates_with_tianyancha([
+        _external_candidate("天眼查企业", "tianyancha_search"),
+    ])
+
+    assert result[0]["identity_status"] == "exact"
+    assert result[0]["tianyancha_verified"] is True
