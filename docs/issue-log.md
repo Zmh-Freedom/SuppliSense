@@ -29,4 +29,4 @@
   4. 图级硬路由在唯一 `external + exact` 候选下直接生成 `select_external_supplier_candidate` 工具调用。
   5. Agent 工具调用增加 12 次上限，避免重复推理持续扩大。
 - 验证结果：29 项准入、上下文、发现流程回归测试通过；Python 编译检查和 `git diff --check` 通过。待重启服务后进行真实浏览器人工审批验收。
-- 关联提交：待补充（本次修复提交）。
+- 关联提交：`81c2bd7a fix(agent): route external supplier admission deterministically`
