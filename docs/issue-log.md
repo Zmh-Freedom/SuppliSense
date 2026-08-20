@@ -165,7 +165,7 @@
 - 修复方案：固定 Supervisor 测试的空执行上下文；将相关测试事件的 `next_attempt_at` 设置为历史时间，保证测试只验证自身事件，生产 claim 查询和排序不变。
 - 第二次复现：第一轮固定了普通 claim 测试后，完整清单继续暴露 stale-worker 回收测试抢到共享数据库中其他到期事件；仍属于测试事件排序未隔离。
 - 验证结果：定向 Shadow 门禁 68 项通过，Agent E2E 2 项通过；完整发布清单为 9 PASS、0 FAIL、1 BLOCKED。剩余 BLOCKED 为缺少 `.env.docker`，不属于代码失败。真实服务验收暂缓：后端未监听，PostgreSQL 持久化控制面为 `active/default`，未未经确认改写为 `active/shadow`。
-- 关联提交：待提交。
+- 关联提交：`9609a634 test: stabilize agent rollout acceptance gates`。
 
 ## ISS-20260820-009 供应商画像浏览器验收缺少前端开发服务器
 
