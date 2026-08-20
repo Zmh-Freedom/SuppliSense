@@ -18,7 +18,7 @@
 
 ```text
 用户输入
-  -> Conversation State Loader
+  -> Conversation State Loader（每个请求仅一次，作为 execution_context 透传）
   -> Target Resolver（名称、指代、序数、排除条件）
   -> Task Parser / Task Matrix Planner
   -> Supervisor（调度、依赖、预算、恢复）
@@ -84,7 +84,7 @@
 
 ## 6. 兼容与迁移
 
-`/api/v1/chat/stream`、ReAct、Plan-Execute 和已有图继续兼容。新能力通过适配层逐步接入统一状态与任务协议，不一次性替换所有入口。`agent_run`、事件回放、检查点和审批恢复是统一运行时基础设施。
+`/api/v1/chat/stream`、ReAct、Plan-Execute 和已有图继续兼容。聊天 API 生成的 `execution_context` 在本次请求内透传到全部执行图；供应商工具结果通过共享引用收集器合并，禁止由各图重新解析自然语言答案。`agent_run`、事件回放、检查点和审批恢复是统一运行时基础设施。恢复时 LangGraph `Command` 原样传入图，确保批准动作继续原暂停分支而非重新规划。
 
 推荐的稳定入口是：普通单一查询走兼容图；组合型寻源与风险任务进入 Supervisor；所有路径都读取、更新同一 ConversationState。
 

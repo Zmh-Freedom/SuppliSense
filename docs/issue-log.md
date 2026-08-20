@@ -12,7 +12,7 @@
 ## ISS-20260819-001 Agent 外部供应商准入陷入重复推理
 
 - 发现日期：2026-08-19
-- 状态：已修复，待真实浏览器验收
+- 状态：已修复；外部候选真实浏览器准入验收待单独执行
 - 优先级：P0
 - 现象：用户明确要求对“深圳市云钥科技有限公司”执行准入申请后，Agent 反复讨论 `result_id`、寻源结果和待核验状态，没有调用外部候选准入工具，也没有生成准入申请记录。
 - 影响：外部供应商无法从会话上下文稳定进入人工确认和准入申请链路；Agent 可能输出很长的自我推理，降低可用性并造成“已执行但未落库”的误判。
@@ -28,12 +28,12 @@
   3. 准入意图向 Agent 注入确定性工具路由，外部候选禁止误用 `result_id`。
   4. 图级硬路由在唯一 `external + exact` 候选下直接生成 `select_external_supplier_candidate` 工具调用。
   5. Agent 工具调用增加 12 次上限，避免重复推理持续扩大。
-- 验证结果：29 项准入、上下文、发现流程回归测试通过；Python 编译检查和 `git diff --check` 通过。待重启服务后进行真实浏览器人工审批验收。
+- 验证结果：29 项准入、上下文、发现流程回归测试通过；Python 编译检查和 `git diff --check` 通过。外部候选类型路由已由自动化测试覆盖；真实浏览器外部候选准入仍需使用可用的唯一核验候选单独验收。
 - 关联提交：`81c2bd7a fix(agent): route external supplier admission deterministically`
 
 ### 2026-08-20 回归：本地寻源结果准入未进入审批
 
-- 状态：代码已修复，集成验收受环境阻塞
+- 状态：已修复，真实工作台验收完成
 - 现象：用户从“工业相机供应商”推荐结果中指定“深圳市康斯得电子有限公司”申请准入后，Agent 仅以文字称将调用准入，随后流结束，前端没有人工审批卡片。
 - 影响：本地供应商推荐不能稳定进入准入申请；用户无法区分“已提出申请”和“未执行”。
 - 根因：
@@ -45,19 +45,19 @@
 - 验证结果：
   1. 37 项定向回归全部通过：本地/外部候选引用保留、类型路由、会话上下文、审批流 SSE、安全门禁和固定多轮评测。
   2. Supervisor、V2 寻源风险图、执行快照和审计轨迹共 56 项断言均执行通过；测试进程在异步资源收尾阶段未在 30 秒内返回汇总，未将其计为完整通过。
-  3. 浏览器/数据库集成验收阻塞：2026-08-20 就绪检查显示 MongoDB、Redis、PostgreSQL 均 `unavailable`，后端存活但返回 `503 not_ready`。按项目规则停止后续集成验证，待依赖恢复后复测。
+  3. 依赖恢复后，`/health/ready` 的 MongoDB、Redis、PostgreSQL 与 checkpoint 均为 `ok`；真实工作台返回 9 家本地候选，并正确展示本地 `result_id` 的人工审批卡片。未批准动作，未创建准入申请。
 - 关联提交：`d52141b2 fix(agent): complete admission approval flow`
 
 ## ISS-20260820-002 集成验证环境依赖不可用
 
 - 发现日期：2026-08-20
-- 状态：阻塞
+- 状态：已恢复
 - 优先级：P1
 - 现象：`GET /health/ready` 返回 `503`，MongoDB、Redis、PostgreSQL 均为 `unavailable`，而进程存活检查正常。
 - 影响：无法继续执行依赖会话持久化、寻源结果、审批恢复和供应商准入记录的集成/浏览器验收。
-- 根因：待确认，当前仅确认应用外部依赖未就绪；本轮未对容器、数据库或配置作写操作。
+- 根因：开发基础设施当时未运行；应用进程存活但依赖就绪检查失败。
 - 修复方案：由环境启动方恢复三项依赖后，先确认 `/health/ready` 全部为 `ok`，再执行准入审批的真实链路回归。
-- 验证结果：待环境恢复。
+- 验证结果：2026-08-20 已恢复，MongoDB、Redis、PostgreSQL 与 sourcing-risk checkpoint 全部为 `ok`；后续真实工作台寻源和审批卡链路已通过。
 
 ## ISS-20260820-003 寻源子图在数据库重启后使用失效连接
 
@@ -71,3 +71,39 @@
 - 修复方案：重启后端以重新建立数据库与 checkpoint 连接；在寻源流异常出口补充结构化日志，避免后续将非 LLM 异常误判为模型网络问题。
 - 验证结果：后端重启且 `/health/ready` 四项检查均为 `ok` 后，真实工作台“帮我找电机供应商”成功返回 9 家本地候选；随后对“八方电气（苏州）股份有限公司”发起准入，正确展示 `select_sourcing_result` 的人工审批卡片和有效 `result_id`。未批准动作，未创建准入申请。
 - 关联提交：`2c77c302 fix(agent): log sourcing stream failures`
+
+## ISS-20260820-004 聊天请求重复加载会话上下文
+
+- 发现日期：2026-08-20
+- 状态：已修复
+- 优先级：P1
+- 现象：聊天 API 已在路由与澄清前加载一次 `ConversationState`，但各执行模式的流函数又独立从 MongoDB 加载会话上下文。
+- 影响：同一请求存在重复数据库读取；在并发写入或恢复场景中，预检、路由和实际执行可能基于不同会话快照，导致重复目标解析或澄清结果不一致。
+- 根因：统一执行上下文已引入，但尚未作为请求级依赖传递至全部执行模式。
+- 修复方案：聊天 API 只构建一次 `execution_context`，将其传入各 LangGraph 流函数；补充回归测试，保证执行层不再次加载会话状态。
+- 验证结果：聊天 API 现将唯一 `execution_context` 透传给 ReAct、Plan-Execute、Supervisor、Sourcing、Agent Supervisor、Parallel 与 Reflection 图；30 项上下文/图/审批回归与 `agent_e2e` 快照复用场景通过。
+- 关联提交：`db943db6 refactor(agent): converge context and approval recovery`
+
+## ISS-20260820-005 ReAct 审批恢复不支持 LangGraph Command
+
+- 发现日期：2026-08-20
+- 状态：已修复
+- 优先级：P0
+- 现象：本地供应商准入可正确产生 `approval_required` 卡片，但点击批准后恢复流返回 `LLM 服务异常: 'Command' object has no attribute 'get'`，未继续执行准入工具。
+- 影响：人工审批通过后，写操作无法恢复，用户可能误以为已完成准入但没有实际结果。
+- 根因：`ReactGraphWithSystemPrompt.astream_events()` 假定输入一定是字典并调用 `.get()`；审批恢复传入的是 LangGraph `Command`。
+- 修复方案：图包装器仅在输入为字典时注入系统提示词；`Command` 原样透传至底层编译图。将“本地候选 → 审批卡 → API 批准恢复 → 成功回执”加入 CI 自动 E2E 回归集。
+- 验证结果：CI 自动 E2E 已覆盖“本地候选 → `approval_required` → `/resume` 批准 → 工具成功回执”，2 项 `agent_e2e` 通过；图包装器对普通输入注入系统提示词，对 `Command` 原样透传。
+- 关联提交：`db943db6 refactor(agent): converge context and approval recovery`
+
+## ISS-20260820-006 全量回归中的健康检查与调度锁测试隔离失败
+
+- 发现日期：2026-08-20
+- 状态：已修复
+- 优先级：P1
+- 现象：真实 `/health/ready` 返回 MongoDB、Redis、PostgreSQL 和 checkpoint 均为 `ok`，但全量 pytest 中 3 项健康检查单测返回 `503`，另有 1 项 PostgreSQL scheduler advisory-lock 测试无法取得首个锁。
+- 影响：CI 全量后端回归不能稳定作为合并门槛；当前不影响已运行实例的 readiness 判断。
+- 根因：健康检查单测没有固定 `AGENT_RUN_V2_ENABLED`，在开发环境启用 checkpoint 时会多出未 mock 的第四项检查；调度锁测试复用了生产 scheduler 的固定 advisory-lock key，与正在运行的后端竞争同一锁。
+- 修复方案：健康检查单测 fixture 明确关闭可选 checkpoint 检查以保持三项依赖测试边界；`SchedulerLeadership` 支持注入锁 key，测试使用专属 key 验证互斥，不影响生产默认 key。
+- 验证结果：`test_health.py` 与 `test_scheduler.py` 共 12 项通过；全量后端测试按时间窗口拆分执行，662 项均已覆盖，修复后无剩余失败。
+- 关联提交：`db943db6 refactor(agent): converge context and approval recovery`

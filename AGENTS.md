@@ -43,6 +43,9 @@ app/
 - 旧 `react`/`plan-execute`/`multi-agent` 模式名自动归一化到 LangGraph 对应图
 - `agent.py` 中的 `chat()` 作为同步端点回退保留
 - `agent.py` 中的 `_load_history`/`_save_turn`/`TOOLS` 由 LangGraph 图共享
+- 聊天 API 在每次请求中只加载一次 `execution_context`；路由、澄清和所有图必须消费该同一快照，不得在图内再次加载会话状态
+- 供应商引用只能通过 `graphs/agent_core/adapter.py` 的共享收集器合并；不得在各图复制提取、去重或自然语言回填逻辑
+- ReAct 审批恢复必须原样透传 LangGraph `Command`，不得将恢复命令当作普通消息输入
 - **新功能优先在 LangGraph 架构上开发**（`graphs/` + `tools/`）
 - **service 层不改** — 保持框架无关
 
@@ -114,6 +117,8 @@ app/
 - Mock 方式：`monkeypatch.setattr("app.services.xxx.func", mock_func)`
 - 断言：直接 `assert resp.status_code == 200` + `assert resp.json()["field"] == value`
 - 测试文件放在 `backend/tests/`，与被测模块对应
+- Agent 跨图流程使用 `@pytest.mark.agent_e2e`，必须无外部服务、固定输入并覆盖至少一个用户动作到可验证业务回执的完整链路
+- 本地执行 Agent E2E：`cd backend && python -m pytest -m agent_e2e -v`；CI 会单独执行该标记集
 
 ---
 

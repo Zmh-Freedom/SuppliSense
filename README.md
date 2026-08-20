@@ -56,6 +56,17 @@ cd frontend && npm run dev                                      # 前端热更�
 
 生产模式使用根目录 `.env.docker`，由 `./start.sh` / `./stop.sh` 显式传给 `docker-compose.yml`，与开发配置分离。两个环境文件都被 Git 忽略，禁止提交真实密钥。
 
+### Agent 开发验证
+
+```bash
+cd backend
+python -m pytest -m agent_e2e -v       # 固定 Agent 端到端回归：上下文、审批暂停与恢复
+python -m pytest -m "not agent_e2e" -v # 单元、图级与领域回归
+cd ../frontend && npm run lint && npm test -- --run && npm run build
+```
+
+`/api/v1/chat/stream` 会在每次请求中构建唯一的结构化会话快照，供路由、澄清和所有 LangGraph 执行图复用。供应商主数据、监控和准入等写操作必须出现人工审批卡片；批准后通过 LangGraph checkpoint 恢复，不得重新生成或绕过原动作。
+
 ### P1 企业身份与 Transactional Outbox
 
 P1 在 PostgreSQL 中维护企业法定主体、别名、核验与逻辑合并，并将企业创建、更新、核验和合并事实与对应 Outbox 事件放在同一事务提交。它**尚未**切换现有风险评估或 MongoDB 供应商库的读写路径；评估不会隐式创建供应商。
@@ -236,6 +247,7 @@ app/
 - **SSE 流式输出**：支持 `thinking`, `tool_call`, `tool_result`, `answer_chunk`, `approval_required`, `done`, `error` 事件
 - **Human-in-the-Loop**：高风险操作（移除监控/申请准入）触发审批中断，可恢复执行
 - **长对话摘要**：超过 8 轮自动压缩上下文，避免 token 超限
+- **统一会话状态**：供应商引用、任务矩阵、Loop 状态和审批上下文由同一 `ConversationState` 持久化，避免跨模式丢失目标企业
 
 ---
 

@@ -20,9 +20,18 @@
 
 - 单元测试覆盖目标解析、任务矩阵、Loop 退出、证据合并、策略评分、审批拦截和错误降级。
 - 图级测试覆盖组合任务并行/依赖、部分失败、暂停恢复和 SSE 事件映射。
+- `agent_e2e` 覆盖固定的跨层用户链路：请求级会话快照复用，以及“本地候选 → 审批暂停 → API 批准恢复 → 成功工具回执”。该集无外部服务，必须在 CI 单独执行。
 - 前端测试覆盖聊天引用卡、工作流、审批卡、部分结果与错误状态。
 - 集成测试仅在 PostgreSQL 与 MongoDB 健康时运行；任一不可用立即停止集成测试并报告阻塞。
 - 每次合并前必须通过相关后端 pytest、前端测试、前端构建和 `git diff --check`。
+
+执行命令：
+
+```bash
+cd backend
+python -m pytest -m "not agent_e2e" -v
+python -m pytest -m agent_e2e -v
+```
 
 ## 3. 离线 Eval 集
 
@@ -58,3 +67,5 @@ Eval 集必须包含固定输入、期望目标、最小证据要求和可接受
 | 2026-08-18 | 聊天与寻源工作台前端测试 | 通过，26 项 | `ChatView`、`SourcingRiskWorkbench` |
 | 2026-08-18 | 前端生产构建 | 通过 | `tsc -b && vite build` |
 | 2026-08-18 | 集成/端到端验证前置健康检查 | 阻塞 | `http://127.0.0.1:8000/health/ready` 无法连接；未运行集成测试，待服务与 PostgreSQL/MongoDB 可用后恢复 |
+| 2026-08-20 | PostgreSQL、MongoDB、Redis 与 checkpoint 就绪检查 | 通过 | `/health/ready` 四项均为 `ok`；恢复后完成真实工作台本地候选与审批卡验证。 |
+| 2026-08-20 | Agent 自动 E2E 回归 | 通过，2 项 | `test_agent_e2e_workflows.py` 覆盖审批暂停/恢复和请求级快照复用；GitHub CI 单独执行 `-m agent_e2e`。 |

@@ -1,7 +1,7 @@
 # Agent 核心收敛与受控 Loop 实施计划
 
 日期：2026-08-18  
-状态：待确认后执行  
+状态：实施完成，持续回归（2026-08-20）
 范围：Agent 核心能力、智能寻源、供应商风险分析、对话工作流；不包含生产部署环境改造
 
 ## 1. 目标
@@ -46,10 +46,10 @@
 - [x] ReAct 上下文可注入多个供应商并逐家调用工具；
 - [x] 外部供应商发现支持天眼查、联网搜索、官网与联系方式补全；
 - [x] 所有业务写操作保持人工确认边界；
-- [ ] 所有执行图统一消费同一个会话状态；
-- [ ] 多企业、多维度请求形成持久化任务矩阵；
-- [ ] 寻源、证据补全、校验和降级使用统一受控 Loop；
-- [ ] Trace、端到端 Eval 和质量门槛形成闭环。
+- [x] 所有执行图统一消费同一个会话状态；
+- [x] 多企业、多维度请求形成持久化任务矩阵；
+- [x] 寻源、证据补全、校验和降级使用统一受控 Loop；
+- [x] Trace、端到端 Eval 和质量门槛形成闭环。
 
 ## 4. 目标架构
 
@@ -290,11 +290,11 @@ Validator 检查：
 
 #### Task 1：完成当前基础变更的验证与提交拆分
 
-- [ ] 复核外部供应商联系方式补全边界，确认只读且不会自动导入主数据；
-- [ ] 复核初版 ConversationState 与澄清机制；
-- [ ] 执行后端相关测试、前端测试和构建；
-- [ ] 将联系方式补全与会话状态基础拆成语义清晰的 Conventional Commits；
-- [ ] 记录当前端到端基线用例及结果。
+- [x] 复核外部供应商联系方式补全边界，确认只读且不会自动导入主数据；
+- [x] 复核初版 ConversationState 与澄清机制；
+- [x] 执行后端相关测试、前端测试和构建；
+- [x] 将联系方式补全与会话状态基础拆成语义清晰的 Conventional Commits；
+- [x] 记录当前端到端基线用例及结果。
 
 建议提交：
 
@@ -489,6 +489,8 @@ feat(agent): add structured conversation state
 
 #### Task 13：建立多轮端到端 Eval
 
+- [x] 固定 12 个离线多轮 Eval，并新增 CI 自动执行的 `agent_e2e`：本地候选 → 审批暂停 → API 批准恢复 → 成功回执，以及寻源模式会话快照复用。
+
 固定用例至少包含：
 
 1. 寻源后询问“这些企业风险如何”；
@@ -521,11 +523,11 @@ feat(agent): add structured conversation state
 
 独立执行，避免与 Task 15 扩张为一个长期任务。
 
-- [ ] 通过调用关系确认旧路径无流量；
-- [ ] 删除各图重复供应商提取和澄清逻辑；
-- [ ] 保留明确的兼容适配期限和 feature flag；
-- [ ] 不删除仍被同步回退端点使用的代码；
-- [ ] 执行全量回归。
+- [x] 通过调用关系确认旧路径无流量：`chat.py` 只构建一次请求级 `execution_context`，全部流函数显式接收该快照；
+- [x] 删除各图重复供应商提取逻辑，统一由 `agent_core.adapter.collect_supplier_references()` 合并；澄清仅在 API 的 Target Resolver 之后执行；
+- [x] 保留 `AGENT_RUN_V2_*` rollout flags、旧 mode alias 和同步回退入口作为兼容门面；统一会话状态不另设可关闭开关，以免回退到会话不一致路径；
+- [x] 未删除仍由同步回退端点使用的 `agent.py` 持久化与工具注册代码；
+- [x] 执行核心图、上下文、审批与 `agent_e2e` 回归。
 
 建议提交：`refactor(agent): remove legacy context duplication`
 
@@ -533,11 +535,11 @@ feat(agent): add structured conversation state
 
 独立执行。
 
-- [ ] 更新 `AGENTS.md` 的 Agent 状态和新功能开发边界；
-- [ ] 更新 README 的开发验证命令；
-- [ ] 更新 Agent 架构图；
-- [ ] 记录 Loop 默认预算和品类策略覆盖方式；
-- [ ] 增加故障定位和回放说明。
+- [x] 更新 `AGENTS.md` 的 Agent 状态、新功能边界和 E2E 约定；
+- [x] 更新 README 的开发验证命令；
+- [x] 更新活动架构图，标明请求级快照、共享引用收集和审批恢复；
+- [x] 记录 Loop 默认预算和品类策略覆盖方式；
+- [x] 增加故障定位和回放说明。
 
 建议提交：`docs(agent): document converged execution architecture`
 
@@ -593,7 +595,9 @@ PostgreSQL 或 MongoDB 任一不可用时立即停止集成测试并标记环境
 
 ### 10.2 Feature Flags
 
-建议配置：
+当前生效的灰度开关为 `AGENT_RUN_V2_ENABLED`、`AGENT_RUN_V2_ROLLOUT`、`AGENT_RUN_V2_CANARY_PERCENT` 和 `AGENT_RUN_V2_ROLLOUT_STATE`。统一会话状态、任务矩阵、受控 Loop 与校验器为所有聊天图的安全基线，不提供关闭后退回重复解析路径的开关。
+
+历史建议的开关名称保留在此处，仅用于设计追溯：
 
 ```text
 AGENT_UNIFIED_STATE_ENABLED
