@@ -81,3 +81,68 @@ def test_relationship_entities_include_local_supplier_link(monkeypatch):
 
     assert entities[0]["supplier_id"] == "supplier-2"
     assert "supplier_id" not in entities[1]
+
+
+def test_build_supplier_profile_passes_context_to_all_sections(monkeypatch):
+    """Each profile section receives the current company and master snapshot."""
+    master = {"_id": "supplier-1", "name": "示例供应商", "categories": []}
+    monkeypatch.setattr("app.domains.supplier.repo.get_supplier", lambda supplier_id: master)
+    monkeypatch.setattr("app.domains.supplier.repo.get_changelog", lambda supplier_id, limit: [])
+    monkeypatch.setattr(service, "_load_cached_enrichment", lambda profile: {})
+    monkeypatch.setattr(service, "_build_basic_info", lambda profile, enrichment: {"name": profile["name"]})
+
+    calls: dict[str, tuple] = {}
+
+    def record(section: str, *args):
+        calls[section] = args
+        return {} if section != "alerts" else []
+
+    section_functions = {
+        "risk": "_build_risk_summary",
+        "sentiment": "_build_sentiment_summary",
+        "compliance": "_build_compliance_status",
+        "esg": "_build_esg_summary",
+        "relationships": "_build_relationship_summary",
+    }
+    for section, function_name in section_functions.items():
+        monkeypatch.setattr(service, function_name, lambda *args, _section=section: record(_section, *args))
+    monkeypatch.setattr(service, "_build_alert_list", lambda *args: record("alerts", *args))
+    monkeypatch.setattr(service, "_build_financial_snapshot", lambda *args: record("financial", *args))
+
+    profile = service.build_supplier_profile("supplier-1")
+
+    assert profile["basic_info"] == {"name": "示例供应商"}
+    assert calls["risk"] == ("示例供应商",)
+    assert calls["financial"] == ("示例供应商", master)
+    assert calls["sentiment"] == ("示例供应商",)
+    assert calls["compliance"] == ("示例供应商",)
+    assert calls["esg"] == ("示例供应商",)
+    assert calls["alerts"] == ("示例供应商",)
+    assert calls["relationships"] == ("示例供应商",)
+
+
+def test_compliance_status_handles_empty_tianyancha_result(monkeypatch):
+    """A no-result cache document must be treated as zero findings."""
+    collections = {
+        name: Mock() for name in (
+            "lawSuit",
+            "executedPerson",
+            "dishonesty",
+            "abnormal",
+            "punishmentInfo",
+            "taxArrears",
+        )
+    }
+    for collection in collections.values():
+        collection.find_one.return_value = {"items": {"result": None}}
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: collections)
+    monkeypatch.setattr(
+        "app.domains.risk.sanctions_service.check_sanctions",
+        lambda company_name: {"clean": True, "match_count": 0},
+    )
+
+    status = service._build_compliance_status("示例供应商")
+
+    assert status["sanctions_clean"] is True
+    assert status["lawsuit_count"] == 0
+    assert status["administrative_penalty_count"] == 0

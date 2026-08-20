@@ -18,17 +18,25 @@
 | 2. 财务历史、告警变化、关联跳转 | 已完成 | 支持财务历史标准化、告警字段变化详情以及关联实体的本地供应商链接。 |
 | 3. 编辑、重新评估、监控闭环 | 已完成 | 三类写操作均先展示确认卡，再执行 mutation；成功后失效画像、供应商库、监控和看板缓存。 |
 | 4. 关系图与审计增强 | 已完成 | 画像页加入关系图、关联实体跳转和审计日志的按需加载更多。 |
-| 5. 定向测试与计划验收 | 部分完成 | 后端画像服务 3 项、前端画像 6 项、lint、类型检查和生产构建通过；依赖 PostgreSQL/MongoDB 的 API 集成验收因本机基础设施不可连接而阻塞，关联 `ISS-20260820-002`。 |
+| 5. 定向测试与计划验收 | 已完成 | 后端画像服务 5 项、风险 API 2 项、前端画像 6 项、lint、类型检查和生产构建通过；依赖容器恢复后 readiness 四项均 `ok`。已登录 Chrome 完成画像分区、确认卡、关系图、关联跳转和审计标签验收，未执行任何写操作。 |
 
 **已验证命令：**
 
-- `cd backend && python -m pytest tests/test_supplier_profile_service.py -v`（3 passed）
+- `cd backend && python -m pytest tests/test_supplier_profile_service.py -v`（5 passed）
+- `cd backend && python -m pytest tests/test_risk.py -v`（2 passed）
 - `cd frontend && npm run lint && npm run typecheck && npm run test -- --run src/__tests__/SupplierProfilePage.test.tsx && npm run build`（全部通过，画像测试 6 passed）
+- `curl http://127.0.0.1:8002/health/ready`（MongoDB、Redis、PostgreSQL、sourcing-risk checkpoint 全部 `ok`）
 
-**待依赖恢复后执行：**
+**验收结论：**
 
-- `cd backend && python -m pytest tests/test_supplier_profile_service.py tests/test_risk.py -v`
-- 已登录浏览器的画像页 API 联调：编辑确认、重新评估确认、加入/移出监控确认、关联跳转和审计加载更多。
+- PostgreSQL、MongoDB、Redis 已恢复并通过 readiness 检查；画像后端与前端定向回归均通过。
+- 已登录 Chrome 完成画像页只读联调；写操作仅验证人工确认卡，未执行实际变更。
+
+### 浏览器验收记录
+
+- 本钢板材画像：编辑主数据、重新评估、加入监控均弹出人工确认卡，均未点击“确认执行”。
+- 广西双英画像：风险、财务、舆情、合规、ESG、告警和关联数据均可加载；关系图显示关联实体，并成功跳转到本地主数据“大明电子股份有限公司”。
+- 大明电子画像：审计标签正常加载，当前数据无变更记录，显示“暂无变更记录”。
 
 ## Global Constraints
 

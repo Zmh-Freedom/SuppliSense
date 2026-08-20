@@ -36,13 +36,13 @@ def build_supplier_profile(supplier_id: str) -> dict:
     # Build each section independently — failures are logged but don't block
     profile: dict = {
         "basic_info": _build_basic_info(master, enrichment),
-        "risk": _try_build("risk", name, _build_risk_summary),
-        "financial": _try_build("financial", name, _build_financial_snapshot, master),
-        "sentiment": _try_build("sentiment", name, _build_sentiment_summary),
-        "compliance": _try_build("compliance", name, _build_compliance_status),
-        "esg": _try_build("esg", name, _build_esg_summary),
-        "alerts": _try_build("alerts", name, _build_alert_list) or [],
-        "relationships": _try_build("relationships", name, _build_relationship_summary),
+        "risk": _try_build("risk", name, _build_risk_summary, name),
+        "financial": _try_build("financial", name, _build_financial_snapshot, name, master),
+        "sentiment": _try_build("sentiment", name, _build_sentiment_summary, name),
+        "compliance": _try_build("compliance", name, _build_compliance_status, name),
+        "esg": _try_build("esg", name, _build_esg_summary, name),
+        "alerts": _try_build("alerts", name, _build_alert_list, name) or [],
+        "relationships": _try_build("relationships", name, _build_relationship_summary, name),
         "changelog": _try_build("changelog", supplier_id, get_changelog, supplier_id, 20) or [],
     }
 
@@ -402,7 +402,9 @@ def _build_compliance_status(company_name: str) -> dict:
             return 0
         items = doc.get("items", {})
         if isinstance(items, dict):
-            return items.get("result", {}).get("total", 0) or 0
+            result = items.get("result")
+            if isinstance(result, dict):
+                return result.get("total", 0) or 0
         return 0
 
     # Sanctions
