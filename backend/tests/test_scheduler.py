@@ -95,8 +95,8 @@ def test_postgres_scheduler_advisory_lock_allows_only_one_leader() -> None:
     """A replacement worker can take over only after the prior scheduler session releases its lock."""
     from app.services.scheduler_leadership import SchedulerLeadership
 
-    first = SchedulerLeadership()
-    second = SchedulerLeadership()
+    first = SchedulerLeadership(lock_key=914_623_018)
+    second = SchedulerLeadership(lock_key=914_623_018)
     try:
         assert first.acquire() is True
         assert second.acquire() is False

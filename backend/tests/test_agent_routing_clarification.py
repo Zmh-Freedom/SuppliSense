@@ -51,7 +51,8 @@ def test_chat_resolves_context_before_clarification_for_explicit_mode(monkeypatc
         },
     )
 
-    async def stream(*_args):
+    async def stream(*_args, execution_context=None):
+        assert execution_context is not None
         calls.append("stream")
         yield 'event: done\ndata: {"answer": "ok"}\n\n'
 
@@ -69,10 +70,41 @@ def test_chat_resolves_context_before_clarification_for_explicit_mode(monkeypatc
     assert not any(event.startswith("event: clarification") for event in events)
 
 
+def test_chat_passes_one_execution_context_snapshot_to_selected_graph(monkeypatch) -> None:
+    context = {
+        "history": [{"role": "assistant", "content": "已找到甲公司"}],
+        "references": [{"name": "甲公司", "result_id": "result-1", "candidate_type": "local"}],
+        "conversation_state": {"active_suppliers": [{"name": "甲公司"}]},
+        "current_task": {"target_supplier_names": ["甲公司"]},
+    }
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "app.graphs.agent_core.adapter.load_execution_context",
+        lambda _sid, _message: calls.append("context") or context,
+    )
+
+    async def stream(_sid, _message, _preferences, execution_context=None):
+        calls.append("stream")
+        assert execution_context is context
+        yield 'event: done\ndata: {"answer": "ok"}\n\n'
+
+    monkeypatch.setattr(chat_api, "_langgraph_react_stream", stream)
+    response = asyncio.run(
+        chat_api.chat_stream_endpoint(
+            chat_api.ChatRequest(message="分析甲公司的风险", session_id="snapshot-run", mode="react"),
+            SimpleNamespace(state=SimpleNamespace(user_id="")),
+        )
+    )
+
+    _collect_events(response)
+
+    assert calls == ["context", "stream"]
+
+
 def test_router_uses_rules_before_llm_and_never_receives_supplier_targets(monkeypatch) -> None:
     router = IntentRouter()
     llm = object()
     monkeypatch.setattr(router, "_get_llm", lambda: llm)
 
     assert router.route("帮我找电机供应商") == Intent.SOURCING
-

@@ -29,6 +29,7 @@ def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]
             by_name[name] = item
             continue
         for field in (
+            "kind", "source",
             "website_url", "contact_phone", "contact_email", "website_status",
             "contact_status", "website_url_source", "contact_phone_source",
             "contact_email_source", "discovery_source", "candidate_id",

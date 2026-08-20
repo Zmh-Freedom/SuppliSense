@@ -610,11 +610,11 @@ async def stream_parallel_graph(
         # 保存对话历史
         discovered_references = list(references or [])
         if all_text:
-            from app.services.agent import extract_supplier_references
+            from app.graphs.agent_core.adapter import collect_supplier_references
 
-            for reference in extract_supplier_references(all_text, "Agent 回答"):
-                if reference not in discovered_references:
-                    discovered_references.append(reference)
+            discovered_references = collect_supplier_references(
+                discovered_references, all_text, "Agent 回答"
+            )
             save_execution_turn(
                 session_id, user_message, all_text, discovered_references
             )

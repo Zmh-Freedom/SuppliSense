@@ -10,6 +10,7 @@ from app.graphs.agent_core.contracts import (
     LoopState,
     migrate_conversation_state,
 )
+from app.graphs.agent_core.adapter import collect_supplier_references
 
 
 def test_conversation_state_migrates_legacy_references_without_losing_contacts():
@@ -49,6 +50,22 @@ def test_conversation_state_is_json_serializable():
 
     assert payload["schema_version"] == 1
     assert payload["session_id"] == "session-1"
+
+
+def test_collect_supplier_references_merges_same_supplier_evidence():
+    collected = collect_supplier_references(
+        [{"name": "甲公司", "candidate_id": "candidate-1"}],
+        {"supplier_name": "甲公司", "contact_phone": "0755-12345678"},
+        "supplier_detail",
+    )
+
+    assert collected == [{
+        "name": "甲公司",
+        "candidate_id": "candidate-1",
+        "kind": "supplier",
+        "source": "supplier_detail",
+        "contact_phone": "0755-12345678",
+    }]
 
 
 def test_agent_task_rejects_duplicate_supplier_dimension_subtasks():

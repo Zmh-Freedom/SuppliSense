@@ -157,11 +157,11 @@ async def stream_agent_supervisor_graph(
                                     "result": result,
                                 },
                             )
-                            from app.services.agent import extract_supplier_references
+                            from app.graphs.agent_core.adapter import collect_supplier_references
 
-                            for reference in extract_supplier_references(result, agent):
-                                if reference not in discovered_references:
-                                    discovered_references.append(reference)
+                            discovered_references = collect_supplier_references(
+                                discovered_references, result, agent
+                            )
 
                 if stage == "finalize":
                     answer = output.get("final_answer")
@@ -170,14 +170,14 @@ async def stream_agent_supervisor_graph(
                         yield _sse_event("answer_chunk", {"text": answer})
 
         if full_answer:
-            from app.services.agent import _save_turn
-            from app.services.agent import extract_supplier_references
+            from app.graphs.agent_core.adapter import (
+                collect_supplier_references,
+                save_execution_turn,
+            )
 
-            for reference in extract_supplier_references(full_answer, "Agent 回答"):
-                if reference not in discovered_references:
-                    discovered_references.append(reference)
-
-            from app.graphs.agent_core.adapter import save_execution_turn
+            discovered_references = collect_supplier_references(
+                discovered_references, full_answer, "Agent 回答"
+            )
 
             save_execution_turn(
                 session_id, user_message, full_answer, discovered_references
@@ -269,11 +269,11 @@ async def stream_react_graph(
             elif kind == "on_tool_end":
                 tool_name = event.get("name", "")
                 output = event.get("data", {}).get("output", "")
-                from app.services.agent import extract_supplier_references
+                from app.graphs.agent_core.adapter import collect_supplier_references
 
-                for reference in extract_supplier_references(output, tool_name):
-                    if reference not in discovered_references:
-                        discovered_references.append(reference)
+                discovered_references = collect_supplier_references(
+                    discovered_references, output, tool_name
+                )
                 if isinstance(output, str):
                     result = output
                 else:
@@ -338,14 +338,14 @@ async def stream_react_graph(
 
         # 保存对话历史
         if full_answer:
-            from app.services.agent import _save_turn
-            from app.services.agent import extract_supplier_references
+            from app.graphs.agent_core.adapter import (
+                collect_supplier_references,
+                save_execution_turn,
+            )
 
-            for reference in extract_supplier_references(full_answer, "Agent 回答"):
-                if reference not in discovered_references:
-                    discovered_references.append(reference)
-
-            from app.graphs.agent_core.adapter import save_execution_turn
+            discovered_references = collect_supplier_references(
+                discovered_references, full_answer, "Agent 回答"
+            )
 
             save_execution_turn(
                 session_id, user_message, full_answer, discovered_references

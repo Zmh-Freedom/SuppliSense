@@ -114,7 +114,12 @@ def _route_after_agent(state: SourcingState):
     return END
 
 
-async def stream_sourcing_graph(session_id: str, message: str, preference_context: str = ""):
+async def stream_sourcing_graph(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict | None = None,
+):
     """SSE stream wrapper for the sourcing subgraph."""
 
     from app.graphs.agent_core.adapter import (
@@ -124,7 +129,7 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
     from app.graphs.streaming import _sse_event
     from app.graphs.context import build_input_messages
 
-    context = load_execution_context(session_id, message)
+    context = execution_context or load_execution_context(session_id, message)
     msgs = await build_input_messages(
         context["history"], message, context["references"], context
     )
@@ -180,11 +185,11 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
                 output = event["data"].get("output", "")
                 result = getattr(output, "content", output)
                 yield _sse_event("tool_result", {"tool": event["name"], "result": str(result)[:500]})
-                from app.services.agent import extract_supplier_references
+                from app.graphs.agent_core.adapter import collect_supplier_references
 
-                for reference in extract_supplier_references(result, event["name"]):
-                    if reference not in discovered_references:
-                        discovered_references.append(reference)
+                discovered_references = collect_supplier_references(
+                    discovered_references, result, event["name"]
+                )
 
     except Exception as e:
         logger.exception(
@@ -197,11 +202,11 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
         return
 
     try:
-        from app.services.agent import extract_supplier_references
+        from app.graphs.agent_core.adapter import collect_supplier_references
 
-        for reference in extract_supplier_references(full_answer, "Agent 回答"):
-            if reference not in discovered_references:
-                discovered_references.append(reference)
+        discovered_references = collect_supplier_references(
+            discovered_references, full_answer, "Agent 回答"
+        )
         save_execution_turn(session_id, message, full_answer, discovered_references)
     except Exception:
         pass

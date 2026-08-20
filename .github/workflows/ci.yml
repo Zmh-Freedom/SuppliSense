@@ -35,8 +35,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run tests
-        run: python -m pytest -v
+      - name: Run unit and graph tests
+        run: python -m pytest -v -m "not agent_e2e"
+
+      - name: Run Agent E2E regression suite
+        run: python -m pytest -v -m agent_e2e
 
   frontend:
     runs-on: ubuntu-latest

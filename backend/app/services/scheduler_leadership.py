@@ -9,8 +9,9 @@ SCHEDULER_ADVISORY_LOCK_KEY = 914_623_017
 class SchedulerLeadership:
     """Hold a session-scoped advisory lock for exactly one scheduler owner."""
 
-    def __init__(self) -> None:
+    def __init__(self, lock_key: int = SCHEDULER_ADVISORY_LOCK_KEY) -> None:
         self._connection: PgConnection | None = None
+        self._lock_key = lock_key
 
     def acquire(self) -> bool:
         if self._connection is not None:
@@ -18,7 +19,7 @@ class SchedulerLeadership:
         connection = get_conn()
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_try_advisory_lock(%s)", (SCHEDULER_ADVISORY_LOCK_KEY,))
+                cursor.execute("SELECT pg_try_advisory_lock(%s)", (self._lock_key,))
                 acquired = bool(cursor.fetchone()[0])
             connection.commit()
         except Exception:
@@ -37,7 +38,7 @@ class SchedulerLeadership:
             return
         try:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT pg_advisory_unlock(%s)", (SCHEDULER_ADVISORY_LOCK_KEY,))
+                cursor.execute("SELECT pg_advisory_unlock(%s)", (self._lock_key,))
             connection.commit()
         finally:
             put_conn(connection)

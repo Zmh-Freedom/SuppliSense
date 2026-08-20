@@ -179,18 +179,20 @@ def build_react_graph(
             self._graph = g
 
         async def astream_events(self, input_data, **kwargs):
-            messages = input_data.get("messages", [])
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=prompt)] + messages
-                input_data = {**input_data, "messages": messages}
+            if isinstance(input_data, dict):
+                messages = input_data.get("messages", [])
+                if not messages or not isinstance(messages[0], SystemMessage):
+                    messages = [SystemMessage(content=prompt)] + messages
+                    input_data = {**input_data, "messages": messages}
             async for event in self._graph.astream_events(input_data, **kwargs):
                 yield event
 
         async def ainvoke(self, input_data, **kwargs):
-            messages = input_data.get("messages", [])
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=prompt)] + messages
-                input_data = {**input_data, "messages": messages}
+            if isinstance(input_data, dict):
+                messages = input_data.get("messages", [])
+                if not messages or not isinstance(messages[0], SystemMessage):
+                    messages = [SystemMessage(content=prompt)] + messages
+                    input_data = {**input_data, "messages": messages}
             return await self._graph.ainvoke(input_data, **kwargs)
 
     return ReactGraphWithSystemPrompt(compiled)
@@ -270,28 +272,30 @@ def build_react_graph_with_reflection(
             self._graph = g
 
         async def astream_events(self, input_data, **kwargs):
-            messages = input_data.get("messages", [])
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=prompt)] + messages
-            input_data = {
-                **input_data,
-                "messages": messages,
-                "reflection_feedback": input_data.get("reflection_feedback", ""),
-                "reflection_count": input_data.get("reflection_count", 0),
-            }
+            if isinstance(input_data, dict):
+                messages = input_data.get("messages", [])
+                if not messages or not isinstance(messages[0], SystemMessage):
+                    messages = [SystemMessage(content=prompt)] + messages
+                input_data = {
+                    **input_data,
+                    "messages": messages,
+                    "reflection_feedback": input_data.get("reflection_feedback", ""),
+                    "reflection_count": input_data.get("reflection_count", 0),
+                }
             async for event in self._graph.astream_events(input_data, **kwargs):
                 yield event
 
         async def ainvoke(self, input_data, **kwargs):
-            messages = input_data.get("messages", [])
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=prompt)] + messages
-            input_data = {
-                **input_data,
-                "messages": messages,
-                "reflection_feedback": input_data.get("reflection_feedback", ""),
-                "reflection_count": input_data.get("reflection_count", 0),
-            }
+            if isinstance(input_data, dict):
+                messages = input_data.get("messages", [])
+                if not messages or not isinstance(messages[0], SystemMessage):
+                    messages = [SystemMessage(content=prompt)] + messages
+                input_data = {
+                    **input_data,
+                    "messages": messages,
+                    "reflection_feedback": input_data.get("reflection_feedback", ""),
+                    "reflection_count": input_data.get("reflection_count", 0),
+                }
             return await self._graph.ainvoke(input_data, **kwargs)
 
     return ReactReflectionGraphWithSystemPrompt(compiled)

@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -11,7 +12,12 @@ from app.core.deps import get_current_user
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
-async def _langgraph_react_stream(session_id: str, message: str, preference_context: str = ""):
+async def _langgraph_react_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
     """LangGraph ReAct 模式流式输出。"""
     from app.graphs.react_graph import build_react_graph
     from app.graphs.streaming import stream_react_graph
@@ -22,7 +28,7 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
         preference_context,
         checkpointer=await get_sourcing_risk_checkpointer(),
     )
-    context = load_execution_context(session_id, message)
+    context = execution_context or load_execution_context(session_id, message)
     # 传入 config 用于 Human-in-the-Loop 恢复
     run_config = {"configurable": {"thread_id": session_id}}
     async for event in stream_react_graph(
@@ -37,12 +43,17 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
         yield event
 
 
-async def _langgraph_plan_execute_stream(session_id: str, message: str, preference_context: str = ""):
+async def _langgraph_plan_execute_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
     """LangGraph Plan-Execute 模式流式输出。"""
     from app.graphs.plan_execute_graph import stream_plan_execute_graph
     from app.graphs.agent_core.adapter import load_execution_context
 
-    context = load_execution_context(session_id, message)
+    context = execution_context or load_execution_context(session_id, message)
     async for event in stream_plan_execute_graph(
         message,
         session_id,
@@ -54,12 +65,17 @@ async def _langgraph_plan_execute_stream(session_id: str, message: str, preferen
         yield event
 
 
-async def _langgraph_supervisor_stream(session_id: str, message: str, preference_context: str = ""):
+async def _langgraph_supervisor_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
     """LangGraph Supervisor 多智能体模式流式输出。"""
     from app.graphs.supervisor_graph import stream_supervisor_graph
     from app.graphs.agent_core.adapter import load_execution_context
 
-    context = load_execution_context(session_id, message)
+    context = execution_context or load_execution_context(session_id, message)
     async for event in stream_supervisor_graph(
         message,
         session_id,
@@ -71,16 +87,26 @@ async def _langgraph_supervisor_stream(session_id: str, message: str, preference
         yield event
 
 
-async def _langgraph_sourcing_stream(session_id: str, message: str, preference_context: str = ""):
+async def _langgraph_sourcing_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
     """LangGraph Sourcing 寻源子图流式输出。"""
     from app.graphs.agents.sourcing import stream_sourcing_graph
 
-    async for event in stream_sourcing_graph(session_id, message, preference_context):
+    async for event in stream_sourcing_graph(
+        session_id, message, preference_context, execution_context
+    ):
         yield event
 
 
 async def _langgraph_agent_supervisor_stream(
-    session_id: str, message: str, preference_context: str = ""
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
 ):
     """Agent Supervisor 组合寻源与风险任务流式输出。"""
     del preference_context
@@ -92,7 +118,7 @@ async def _langgraph_agent_supervisor_stream(
     graph = build_agent_supervisor_graph()
     run_config = {"configurable": {"thread_id": session_id}}
     try:
-        context = load_execution_context(session_id, message)
+        context = execution_context or load_execution_context(session_id, message)
     except Exception:
         # Conversation references are an enhancement; an unavailable MongoDB
         # must not alter the Supervisor's existing read-only execution path.
@@ -123,12 +149,17 @@ async def _langgraph_agent_supervisor_stream(
         yield event
 
 
-async def _langgraph_parallel_stream(session_id: str, message: str, preference_context: str = ""):
+async def _langgraph_parallel_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
     """LangGraph Parallel 并行多 Agent Map-Reduce 流式输出。"""
     from app.graphs.parallel_graph import stream_parallel_graph
     from app.graphs.agent_core.adapter import load_execution_context
 
-    context = load_execution_context(session_id, message)
+    context = execution_context or load_execution_context(session_id, message)
     async for event in stream_parallel_graph(
         message,
         session_id,
@@ -140,7 +171,12 @@ async def _langgraph_parallel_stream(session_id: str, message: str, preference_c
         yield event
 
 
-async def _langgraph_react_reflection_stream(session_id: str, message: str, preference_context: str = ""):
+async def _langgraph_react_reflection_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
     """LangGraph ReAct + Self-Reflection 流式输出。"""
     from app.graphs.react_graph import build_react_graph_with_reflection
     from app.graphs.streaming import stream_react_graph
@@ -151,7 +187,7 @@ async def _langgraph_react_reflection_stream(session_id: str, message: str, pref
         preference_context,
         checkpointer=await get_sourcing_risk_checkpointer(),
     )
-    context = load_execution_context(session_id, message)
+    context = execution_context or load_execution_context(session_id, message)
     run_config = {"configurable": {"thread_id": session_id}}
     async for event in stream_react_graph(
         graph,
@@ -274,7 +310,12 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             stream_fn = _langgraph_react_stream
 
         # Stream the chat response
-        async for event in stream_fn(sid, req.message, pref_ctx):
+        async for event in stream_fn(
+            sid,
+            req.message,
+            pref_ctx,
+            execution_context=execution_context,
+        ):
             yield event
 
     return StreamingResponse(

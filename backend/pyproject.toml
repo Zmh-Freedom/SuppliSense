@@ -1,6 +1,9 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "agent_e2e: deterministic end-to-end Agent workflow regression",
+]
 
 [tool.coverage.run]
 source = ["app"]

@@ -9,6 +9,20 @@ from app.graphs.agent_core.planner import plan_supplier_analysis_task
 from app.services.conversation_state import build_conversation_state
 
 
+def collect_supplier_references(
+    existing_references: list[dict[str, Any]],
+    value: Any,
+    source: str,
+) -> list[dict[str, Any]]:
+    """Merge supplier evidence from one graph event through the shared extractor."""
+    from app.services.agent import _dedupe_references, extract_supplier_references
+
+    return _dedupe_references([
+        *existing_references,
+        *extract_supplier_references(value, source),
+    ])
+
+
 def load_execution_context(session_id: str, user_message: str) -> dict[str, Any]:
     """Load durable conversation facts and resolve the current Agent task."""
     from app.services.agent import _load_conversation_context

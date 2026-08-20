@@ -3,10 +3,17 @@
 import asyncio
 import threading
 
+import pytest
 from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 
 from app.api import health
+
+
+@pytest.fixture(autouse=True)
+def _disable_optional_checkpoint_check(monkeypatch):
+    """Keep readiness unit tests scoped to their three explicitly mocked dependencies."""
+    monkeypatch.setattr(health.settings, "AGENT_RUN_V2_ENABLED", False)
 
 
 class HealthyMongo:
