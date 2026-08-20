@@ -345,6 +345,15 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
     monkeypatch.setattr(
         "app.services.clarification.detect_clarification_needed", lambda *_args, **_kwargs: None
     )
+    monkeypatch.setattr(
+        "app.graphs.agent_core.adapter.load_execution_context",
+        lambda *_args: {
+            "history": [],
+            "references": [],
+            "conversation_state": {},
+            "current_task": {},
+        },
+    )
     async def collect_events() -> list[str]:
         response = await chat_api.chat_stream_endpoint(
             chat_api.ChatRequest(

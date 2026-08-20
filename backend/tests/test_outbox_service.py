@@ -241,6 +241,13 @@ def test_claim_events_leases_only_the_due_event_for_the_worker(monkeypatch):
             aggregate_id,
             {"company_id": str(aggregate_id)},
         )
+        # Make this fixture deterministically win over unrelated due events in
+        # a shared developer database; production claim ordering is unchanged.
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "UPDATE outbox_events SET next_attempt_at = %s WHERE event_id = %s",
+                (datetime(1970, 1, 1, tzinfo=timezone.utc), str(event_id)),
+            )
 
         claimed = claim_events("test-claim-worker", batch_size=1, lease_seconds=60)
 
@@ -354,6 +361,13 @@ def test_stale_worker_cannot_publish_or_fail_an_event_reclaimed_by_another_worke
             aggregate_id,
             {"company_id": str(aggregate_id)},
         )
+        # Keep this event ahead of unrelated due rows in a shared developer
+        # database; the production claim query and ordering are unchanged.
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "UPDATE outbox_events SET next_attempt_at = %s WHERE event_id = %s",
+                (datetime(1970, 1, 1, tzinfo=timezone.utc), str(event_id)),
+            )
 
         result = process_outbox_batch("test-stale-worker-a", 1, 3, 60)
 

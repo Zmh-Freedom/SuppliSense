@@ -154,6 +154,19 @@
 - 验证结果：CI 已增加 PostgreSQL、MongoDB、Redis service containers 和固定环境变量；后端非集成/非 Agent E2E 回归 439 项通过，覆盖率 49.73%（门槛 20%）；三数据库集成测试 3 项通过；前端 lint、Vitest 8 个文件/46 项、TypeScript 检查和生产构建全部通过；CI YAML 解析通过，`git diff --check` 通过。
 - 关联提交：`7b0f632e ci: add quality and database integration gates`。
 
+## ISS-20260820-012 Agent V2 完整验收与定向回归结果不一致
+
+- 发现日期：2026-08-20
+- 状态：已修复（真实 Shadow 环境待切换）
+- 优先级：P1
+- 现象：Agent V2 Shadow 专项门禁 68 项、Agent E2E 2 项均通过；执行完整发布清单的 `migration_schema` 全量 pytest（670 项）时，`tests/test_agent_supervisor_graph.py::test_composite_chat_auto_mode_invokes_agent_supervisor_stream` 与 `tests/test_outbox_service.py::test_claim_events_leases_only_the_due_event_for_the_worker` 失败。
+- 影响：完整发布清单被判定为 `FAIL`，当前不能把灰度验收结论标记为全量通过；需要确认失败是否来自共享数据库状态、测试顺序/时序或实际回归。
+- 根因：Supervisor 测试未固定结构化执行上下文，受共享会话数据影响后调用了带 `graph_input` 的新接口；Outbox 两个回收/租约测试未固定测试事件的到期排序，在共享开发数据库中抢到了其他遗留到期事件。
+- 修复方案：固定 Supervisor 测试的空执行上下文；将相关测试事件的 `next_attempt_at` 设置为历史时间，保证测试只验证自身事件，生产 claim 查询和排序不变。
+- 第二次复现：第一轮固定了普通 claim 测试后，完整清单继续暴露 stale-worker 回收测试抢到共享数据库中其他到期事件；仍属于测试事件排序未隔离。
+- 验证结果：定向 Shadow 门禁 68 项通过，Agent E2E 2 项通过；完整发布清单为 9 PASS、0 FAIL、1 BLOCKED。剩余 BLOCKED 为缺少 `.env.docker`，不属于代码失败。真实服务验收暂缓：后端未监听，PostgreSQL 持久化控制面为 `active/default`，未未经确认改写为 `active/shadow`。
+- 关联提交：待提交。
+
 ## ISS-20260820-009 供应商画像浏览器验收缺少前端开发服务器
 
 - 发现日期：2026-08-20
