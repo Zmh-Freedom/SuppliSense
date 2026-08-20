@@ -13,6 +13,9 @@ from app.graphs.sourcing_risk_v2.checkpointer import (
     compile_sourcing_risk_graph,
     get_sourcing_risk_checkpointer,
 )
+from app.core.logging import get_logger
+
+logger = get_logger()
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -184,6 +187,11 @@ async def stream_sourcing_graph(session_id: str, message: str, preference_contex
                         discovered_references.append(reference)
 
     except Exception as e:
+        logger.exception(
+            "sourcing_graph_stream_failed",
+            session_id=session_id,
+            error=str(e),
+        )
         from app.graphs import format_llm_error
         yield _sse_event("error", {"message": format_llm_error(e)})
         return
