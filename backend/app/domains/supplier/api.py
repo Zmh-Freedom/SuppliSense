@@ -130,11 +130,12 @@ async def get_supplier_changelog(
 ):
     """Get the change log for a supplier."""
     import asyncio
-    from app.domains.supplier.repo import get_changelog, get_supplier
+    from app.domains.supplier.repo import count_changelog, get_changelog, get_supplier
 
     existing = await asyncio.to_thread(get_supplier, supplier_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
 
     changelog = await asyncio.to_thread(get_changelog, supplier_id, limit)
-    return {"supplier_id": supplier_id, "items": changelog, "total": len(changelog)}
+    total = await asyncio.to_thread(count_changelog, supplier_id)
+    return {"supplier_id": supplier_id, "items": changelog, "total": total}

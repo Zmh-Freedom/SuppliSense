@@ -344,6 +344,7 @@ export interface SupplierEntry {
   registered_capital?: string;
   establish_time?: string;
   reg_status?: string;
+  industry?: string;
   categories: string[];
   regions: string[];
   status: string;
@@ -464,6 +465,7 @@ export interface SupplierMasterData {
   contact_person?: string;
   contact_phone?: string;
   contact_email?: string;
+  website_url?: string;
   address?: string;
   scale?: string;
   description?: string;
@@ -493,6 +495,14 @@ export interface ProfileBasicInfo {
   contact_person?: string;
   contact_phone?: string;
   contact_email?: string;
+  website_url?: string;
+  source?: string;
+  updated_at?: string;
+  industry_source?: string;
+  industry_updated_at?: string;
+  website_url_source?: string;
+  contact_phone_source?: string;
+  contact_email_source?: string;
   status: string;
 }
 
@@ -517,6 +527,13 @@ export interface ProfileFinancialSnapshot {
   credit_rating?: string;
   annual_revenue?: number;
   cached_at?: string;
+  history: {
+    period: string;
+    revenue?: number;
+    net_profit?: number;
+    debt_ratio?: number;
+    cash_flow?: number;
+  }[];
 }
 
 export interface ProfileSentimentSummary {
@@ -547,6 +564,7 @@ export interface ProfileESGSummary {
 
 export interface ProfileAlertItem {
   _id: string;
+  company_name?: string;
   severity: string;
   changes: { field: string; old: unknown; new: unknown }[];
   created_at: string;
@@ -557,7 +575,7 @@ export interface ProfileRelationshipSummary {
   branch_count: number;
   dependency_count: number;
   high_risk_related_count: number;
-  entities: { name: string; relation_type: string; risk_score?: number }[];
+  entities: { name: string; relation_type: string; risk_score?: number; supplier_id?: string }[];
 }
 
 export interface ChangelogEntry {

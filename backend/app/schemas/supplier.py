@@ -19,11 +19,13 @@ class SupplierUpdateInput(BaseModel):
     registered_capital: str | None = None
     establish_time: str | None = None
     reg_status: str | None = None
+    industry: str | None = None
     categories: list[str] | None = None
     regions: list[str] | None = None
     contact_person: str | None = None
     contact_phone: str | None = None
     contact_email: str | None = None
+    website_url: str | None = None
     address: str | None = None
     scale: str | None = None
     description: str | None = None
@@ -43,11 +45,13 @@ class SupplierMasterResponse(BaseModel):
     registered_capital: str | None = None
     establish_time: str | None = None
     reg_status: str | None = None
+    industry: str | None = None
     categories: list[str] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
     contact_person: str | None = None
     contact_phone: str | None = None
     contact_email: str | None = None
+    website_url: str | None = None
     address: str | None = None
     scale: str | None = None
     description: str | None = None
@@ -103,6 +107,14 @@ class ProfileBasicInfo(BaseModel):
     contact_person: str | None = None
     contact_phone: str | None = None
     contact_email: str | None = None
+    website_url: str | None = None
+    source: str | None = None
+    updated_at: str | None = None
+    industry_source: str | None = None
+    industry_updated_at: str | None = None
+    website_url_source: str | None = None
+    contact_phone_source: str | None = None
+    contact_email_source: str | None = None
     status: str = "prospective"
 
 
@@ -131,6 +143,7 @@ class ProfileFinancialSnapshot(BaseModel):
     credit_rating: str | None = None
     annual_revenue: float | None = None
     cached_at: str | None = None
+    history: list[dict] = Field(default_factory=list)
 
 
 class ProfileSentimentSummary(BaseModel):
@@ -169,6 +182,7 @@ class ProfileAlertItem(BaseModel):
     """画像 — 告警条目。"""
 
     id: str = Field(alias="_id")
+    company_name: str | None = None
     severity: str
     changes: list[dict] = Field(default_factory=list)
     created_at: str

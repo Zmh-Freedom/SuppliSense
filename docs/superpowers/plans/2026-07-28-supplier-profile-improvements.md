@@ -8,6 +8,28 @@
 
 **Tech Stack:** FastAPI、Pydantic v2、PyMongo、pytest、React 19、TypeScript、TanStack Query、Tailwind、recharts、@xyflow/react。
 
+## 2026-08-20 实施与验收记录
+
+本次实施遵循项目新增的“所有写操作必须人工确认”边界。因此原计划中“画像读取时自动回写行业主数据”的设计不再适用：行业、官网和联系方式仅从已缓存的天眼查数据和暂存候选中**只读补全展示**，并返回字段级来源和更新时间；用户只有在画像页编辑并二次确认后，才会写入主数据和审计日志。
+
+| 阶段 | 状态 | 实施结果 |
+| --- | --- | --- |
+| 1. 行业/联系方式/来源与更新时间 | 已完成 | 聚合主数据、天眼查缓存和外部暂存候选，展示来源、字段更新时间和官网/电话/邮箱。 |
+| 2. 财务历史、告警变化、关联跳转 | 已完成 | 支持财务历史标准化、告警字段变化详情以及关联实体的本地供应商链接。 |
+| 3. 编辑、重新评估、监控闭环 | 已完成 | 三类写操作均先展示确认卡，再执行 mutation；成功后失效画像、供应商库、监控和看板缓存。 |
+| 4. 关系图与审计增强 | 已完成 | 画像页加入关系图、关联实体跳转和审计日志的按需加载更多。 |
+| 5. 定向测试与计划验收 | 部分完成 | 后端画像服务 3 项、前端画像 6 项、lint、类型检查和生产构建通过；依赖 PostgreSQL/MongoDB 的 API 集成验收因本机基础设施不可连接而阻塞，关联 `ISS-20260820-002`。 |
+
+**已验证命令：**
+
+- `cd backend && python -m pytest tests/test_supplier_profile_service.py -v`（3 passed）
+- `cd frontend && npm run lint && npm run typecheck && npm run test -- --run src/__tests__/SupplierProfilePage.test.tsx && npm run build`（全部通过，画像测试 6 passed）
+
+**待依赖恢复后执行：**
+
+- `cd backend && python -m pytest tests/test_supplier_profile_service.py tests/test_risk.py -v`
+- 已登录浏览器的画像页 API 联调：编辑确认、重新评估确认、加入/移出监控确认、关联跳转和审计加载更多。
+
 ## Global Constraints
 
 - 不改变既有 API 字段含义或删除字段，只增加可选字段。

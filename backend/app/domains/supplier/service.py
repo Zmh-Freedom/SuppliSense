@@ -31,10 +31,11 @@ def build_supplier_profile(supplier_id: str) -> dict:
         raise ValueError(f"Supplier {supplier_id} not found")
 
     name = master["name"]
+    enrichment = _try_build("master_enrichment", name, _load_cached_enrichment, master) or {}
 
     # Build each section independently — failures are logged but don't block
     profile: dict = {
-        "basic_info": _build_basic_info(master),
+        "basic_info": _build_basic_info(master, enrichment),
         "risk": _try_build("risk", name, _build_risk_summary),
         "financial": _try_build("financial", name, _build_financial_snapshot, master),
         "sentiment": _try_build("sentiment", name, _build_sentiment_summary),
@@ -62,8 +63,25 @@ def _try_build(section: str, key: str, fn, *args):
         return None
 
 
-def _build_basic_info(master: dict) -> dict:
-    """Extract basic info from the master record."""
+def _build_basic_info(master: dict, enrichment: dict | None = None) -> dict:
+    """Build read-only master data view with source and freshness metadata.
+
+    Cached Tianyancha and staged-candidate fields are display-only fallbacks.
+    A profile read must never silently promote those values into supplier master
+    data, because that is a business write requiring human confirmation.
+    """
+    enrichment = enrichment or {}
+    master_source = str(master.get("source") or "manual")
+    master_updated_at = _to_iso(master.get("updated_at") or master.get("created_at"))
+    industry = master.get("industry") or enrichment.get("industry")
+    categories = master.get("categories", [])
+    if not industry and categories:
+        industry = categories[0]
+
+    website_url = master.get("website_url") or enrichment.get("website_url")
+    contact_phone = master.get("contact_phone") or enrichment.get("contact_phone")
+    contact_email = master.get("contact_email") or enrichment.get("contact_email")
+
     return {
         "name": master.get("name", ""),
         "unified_code": master.get("unified_code"),
@@ -71,16 +89,129 @@ def _build_basic_info(master: dict) -> dict:
         "registered_capital": master.get("registered_capital"),
         "establish_time": master.get("establish_time"),
         "reg_status": master.get("reg_status"),
-        "industry": master.get("industry"),
-        "categories": master.get("categories", []),
+        "industry": industry,
+        "categories": categories,
         "regions": master.get("regions", []),
         "scale": master.get("scale"),
         "address": master.get("address"),
         "contact_person": master.get("contact_person"),
-        "contact_phone": master.get("contact_phone"),
-        "contact_email": master.get("contact_email"),
+        "contact_phone": contact_phone,
+        "contact_email": contact_email,
+        "website_url": website_url,
+        "source": master_source,
+        "updated_at": master_updated_at,
+        "industry_source": (
+            master_source if master.get("industry") else enrichment.get("industry_source") or master_source
+        ),
+        "industry_updated_at": (
+            master_updated_at if master.get("industry") else enrichment.get("industry_updated_at") or master_updated_at
+        ),
+        "website_url_source": (
+            master_source if master.get("website_url") else enrichment.get("website_url_source")
+        ),
+        "contact_phone_source": (
+            master_source if master.get("contact_phone") else enrichment.get("contact_phone_source")
+        ),
+        "contact_email_source": (
+            master_source if master.get("contact_email") else enrichment.get("contact_email_source")
+        ),
         "status": master.get("status", "prospective"),
     }
+
+
+def _load_cached_enrichment(master: dict) -> dict:
+    """Read cached public enrichment without network calls or master-data writes."""
+    from app.db.mongo import get_db
+
+    db = get_db()
+    name = str(master.get("name") or "")
+    if not name:
+        return {}
+
+    result: dict = {}
+    candidate = db["external_supplier_candidates"].find_one(
+        {"$or": [{"supplier_name": name}, {"tianyancha_company_name": name}]},
+        sort=[("updated_at", -1)],
+    )
+    if candidate:
+        _merge_enrichment_fields(
+            result,
+            candidate,
+            default_source=str(candidate.get("source") or "staged_external"),
+            updated_at=candidate.get("updated_at"),
+        )
+
+    baseinfo = db["baseinfo"].find_one({"name": name})
+    parsed_baseinfo = _parse_baseinfo_result(baseinfo)
+    if parsed_baseinfo:
+        from app.domains.sourcing.supplier_repo import _resolve_category
+
+        industry = _resolve_category(parsed_baseinfo)
+        if industry and not result.get("industry"):
+            result["industry"] = industry
+            result["industry_source"] = "tianyancha_baseinfo_cache"
+            result["industry_updated_at"] = _to_iso(
+                baseinfo.get("updated_at") if baseinfo else None
+            )
+        _merge_enrichment_fields(
+            result,
+            {
+                "website_url": _first_string(parsed_baseinfo, "website", "webSite", "websiteUrl", "webUrl"),
+                "contact_phone": _first_string(parsed_baseinfo, "phone", "phoneNumber", "tel", "telephone"),
+                "contact_email": _first_string(parsed_baseinfo, "email", "emailAddress", "mail"),
+            },
+            default_source="tianyancha_baseinfo_cache",
+            updated_at=baseinfo.get("updated_at") if baseinfo else None,
+        )
+    return result
+
+
+def _parse_baseinfo_result(baseinfo: dict | None) -> dict | None:
+    """Extract a Tianyancha baseinfo result from either supported cache shape."""
+    if not isinstance(baseinfo, dict):
+        return None
+    items = baseinfo.get("items")
+    if isinstance(items, dict) and isinstance(items.get("result"), dict):
+        return items["result"]
+    result = baseinfo.get("result")
+    return result if isinstance(result, dict) else None
+
+
+def _merge_enrichment_fields(
+    target: dict,
+    values: dict,
+    *,
+    default_source: str,
+    updated_at: object,
+) -> None:
+    """Copy missing contact fields while preserving per-field provenance."""
+    for field in ("website_url", "contact_phone", "contact_email"):
+        value = str(values.get(field) or "").strip()
+        if value and not target.get(field):
+            target[field] = value
+            target[f"{field}_source"] = values.get(f"{field}_source") or default_source
+    if values.get("industry") and not target.get("industry"):
+        target["industry"] = values["industry"]
+        target["industry_source"] = values.get("industry_source") or default_source
+        target["industry_updated_at"] = _to_iso(updated_at)
+
+
+def _first_string(values: dict, *keys: str) -> str | None:
+    """Return the first non-empty string in a source payload."""
+    for key in keys:
+        value = str(values.get(key) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _to_iso(value: object) -> str | None:
+    """Serialize optional timestamps consistently for API consumers."""
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
 
 
 # ---- Risk ----
@@ -177,6 +308,7 @@ def _build_financial_snapshot(company_name: str, master: dict) -> dict | None:
         "credit_rating": master.get("credit_rating"),
         "annual_revenue": master.get("annual_revenue"),
         "cached_at": None,
+        "history": [],
     }
 
     if cache:
@@ -192,8 +324,38 @@ def _build_financial_snapshot(company_name: str, master: dict) -> dict | None:
         cached_at = cache.get("cached_at")
         if cached_at and hasattr(cached_at, "isoformat"):
             result["cached_at"] = cached_at.isoformat()
+        result["history"] = _normalise_financial_history(cache)
 
     return result
+
+
+def _normalise_financial_history(cache: dict) -> list[dict]:
+    """Normalize historical financial records from supported cache payloads."""
+    raw_history = (
+        cache.get("history")
+        or cache.get("financial_history")
+        or cache.get("metrics_history")
+        or []
+    )
+    if not isinstance(raw_history, list):
+        return []
+
+    history: list[dict] = []
+    for item in raw_history:
+        if not isinstance(item, dict):
+            continue
+        metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else item
+        period = item.get("period") or item.get("date") or item.get("year") or item.get("report_date")
+        row = {
+            "period": str(period) if period is not None else "",
+            "revenue": metrics.get("revenue") or metrics.get("annual_revenue"),
+            "net_profit": metrics.get("net_profit"),
+            "debt_ratio": metrics.get("debt_ratio"),
+            "cash_flow": metrics.get("cash_flow"),
+        }
+        if row["period"] and any(value is not None for key, value in row.items() if key != "period"):
+            history.append(row)
+    return history
 
 
 # ---- Sentiment ----
@@ -305,6 +467,7 @@ def _build_alert_list(company_name: str) -> list[dict]:
             created_at = created_at.isoformat()
         result.append({
             "_id": str(doc["_id"]),
+            "company_name": company_name,
             "severity": doc.get("severity", "warning"),
             "changes": doc.get("changes", []),
             "created_at": str(created_at) if created_at else "",
@@ -321,13 +484,35 @@ def _build_relationship_summary(company_name: str) -> dict | None:
         result = analyze_contagion(company_name)
         if result:
             entities = result.get("related_entities", [])
+            normalized_entities = _attach_supplier_links(entities if isinstance(entities, list) else [])
             return {
                 "related_count": result.get("related_count", 0),
                 "branch_count": result.get("branch_count", 0),
                 "dependency_count": result.get("dependency_count", 0),
                 "high_risk_related_count": result.get("high_risk_related_count", 0),
-                "entities": entities if isinstance(entities, list) else [],
+                "entities": normalized_entities,
             }
     except Exception:
         pass
     return None
+
+
+def _attach_supplier_links(entities: list[dict]) -> list[dict]:
+    """Attach supplier ids to related entities when they exist in the local library."""
+    from app.domains.supplier.repo import get_supplier_by_name
+
+    normalized: list[dict] = []
+    resolved: dict[str, str | None] = {}
+    for entity in entities:
+        if not isinstance(entity, dict):
+            continue
+        item = dict(entity)
+        name = str(item.get("name") or "").strip()
+        if name:
+            if name not in resolved:
+                supplier = get_supplier_by_name(name)
+                resolved[name] = str(supplier.get("_id")) if supplier else None
+            if resolved[name]:
+                item["supplier_id"] = resolved[name]
+        normalized.append(item)
+    return normalized

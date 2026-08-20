@@ -59,6 +59,13 @@
 - 修复方案：由环境启动方恢复三项依赖后，先确认 `/health/ready` 全部为 `ok`，再执行准入审批的真实链路回归。
 - 验证结果：2026-08-20 已恢复，MongoDB、Redis、PostgreSQL 与 sourcing-risk checkpoint 全部为 `ok`；后续真实工作台寻源和审批卡链路已通过。
 
+### 2026-08-20 再次复发：供应商画像计划验收依赖不可连接
+
+- 状态：阻塞（等待开发基础设施恢复）
+- 现象：执行 `python -m pytest tests/test_supplier_profile_service.py tests/test_risk.py -v` 时，画像服务测试 3 项通过；`test_risk.py` 在 FastAPI lifespan 阶段因 PostgreSQL `localhost:5432` 拒绝连接而报错，同时 MongoDB `localhost:27017` 索引初始化失败。
+- 影响：本轮不能执行依赖 PostgreSQL/MongoDB 的 API 集成验收；不影响无外部依赖的画像聚合和前端定向回归。
+- 处置：按集成测试依赖不可用即停止的约束，未尝试修复业务代码或绕过依赖。待基础设施恢复后，重跑画像服务测试、`test_risk.py` 以及画像 API 联调。
+
 ## ISS-20260820-003 寻源子图在数据库重启后使用失效连接
 
 - 发现日期：2026-08-20
@@ -107,3 +114,15 @@
 - 修复方案：健康检查单测 fixture 明确关闭可选 checkpoint 检查以保持三项依赖测试边界；`SchedulerLeadership` 支持注入锁 key，测试使用专属 key 验证互斥，不影响生产默认 key。
 - 验证结果：`test_health.py` 与 `test_scheduler.py` 共 12 项通过；全量后端测试按时间窗口拆分执行，662 项均已覆盖，修复后无剩余失败。
 - 关联提交：`db943db6 refactor(agent): converge context and approval recovery`
+
+## ISS-20260820-007 供应商画像测试对可重复来源文案作唯一匹配
+
+- 发现日期：2026-08-20
+- 状态：已修复
+- 优先级：P2
+- 现象：供应商画像定向测试以 `getByText("来源：company_website")` 断言来源文案；当官网与邮箱都来自官网抓取时，测试因匹配到两个正常元素而失败。
+- 影响：前端定向回归出现误报，无法作为画像功能的稳定验收依据。
+- 根因：测试将“单个来源文本”错误建模为页面唯一内容，未考虑来源是字段级元数据、可合法重复。
+- 修复方案：改为断言至少一个匹配项，并继续验证官网链接和告警变更详情，避免弱化真实业务覆盖。
+- 验证结果：前端画像定向测试通过；断言继续覆盖官网链接、来源展示与告警变更详情。
+- 关联提交：`3fd311ce feat(supplier): complete profile operations and traceability`

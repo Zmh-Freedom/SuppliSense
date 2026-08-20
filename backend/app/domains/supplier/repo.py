@@ -25,3 +25,8 @@ def get_changelog(supplier_id: str, limit: int = 50) -> list[dict]:
     for doc in docs:
         doc["_id"] = str(doc["_id"])
     return docs
+
+
+def count_changelog(supplier_id: str) -> int:
+    """Return the total number of audit entries for a supplier."""
+    return get_db()["supplier_changelog"].count_documents({"supplier_id": supplier_id})

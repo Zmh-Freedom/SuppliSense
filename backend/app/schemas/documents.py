@@ -19,12 +19,14 @@ class SupplierDocument(BaseModel):
     registered_capital: str | None = None
     establish_time: str | None = None
     reg_status: str | None = None
+    industry: str | None = None
     categories: list[str] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
     # 联系方式
     contact_person: str | None = None
     contact_phone: str | None = None
     contact_email: str | None = None
+    website_url: str | None = None
     address: str | None = None
     # 经营信息
     scale: str | None = None

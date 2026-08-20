@@ -1,16 +1,27 @@
-import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
+import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
-import type { SupplierProfile } from '../types';
+import type { ProfileBasicInfo, SupplierProfile } from '../types';
 import { getRiskColor } from '../riskColors';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+type ProfileTab = 'overview' | 'risk' | 'financial' | 'relationships' | 'changelog';
+type PendingAction = 'save' | 'assess' | 'watch' | 'unwatch' | null;
+type EditableBasicInfo = Pick<ProfileBasicInfo, 'industry' | 'contact_person' | 'contact_phone' | 'contact_email' | 'website_url' | 'address'>;
 
 export default function SupplierProfilePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'overview' | 'risk' | 'financial' | 'relationships' | 'changelog'>('overview');
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<ProfileTab>('overview');
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState<EditableBasicInfo | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [notice, setNotice] = useState('');
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.supplierProfile(id!),
@@ -18,415 +29,109 @@ export default function SupplierProfilePage() {
     enabled: !!id,
   });
 
-  if (isLoading) {
-    return (
-      <div className="max-w-4xl mx-auto py-6 px-4">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 w-48 bg-gray-200 rounded" />
-          <div className="h-64 bg-gray-100 rounded-2xl" />
-        </div>
-      </div>
-    );
-  }
+  const invalidateProfile = () => {
+    if (id) queryClient.invalidateQueries({ queryKey: queryKeys.supplierProfile(id) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.suppliers });
+    queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+  };
 
-  if (error || !data) {
-    return (
-      <div className="max-w-4xl mx-auto py-6 px-4">
-        <button onClick={() => navigate('/suppliers')} className="text-sm text-[var(--color-primary-bg)] hover:underline mb-4">
-          &larr; 返回供应商列表
-        </button>
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-8 text-center">
-          <p className="text-[var(--color-text-secondary)]">
-            {error ? '加载供应商画像失败' : '供应商不存在'}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const { basic_info, risk, financial, sentiment, compliance, esg, alerts, relationships, changelog } = data;
-  const riskScore = risk?.risk_score ?? 0;
-  const riskLevel = risk?.risk_level ?? '未知';
-
-  return (
-    <div className="max-w-4xl mx-auto py-6 px-4">
-      {/* ---- header ---- */}
-      <button
-        onClick={() => navigate('/suppliers')}
-        className="text-sm text-[var(--color-primary-bg)] hover:underline mb-3 inline-block"
-      >
-        &larr; 返回供应商列表
-      </button>
-
-      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm mb-5">
-        <div className="flex items-start justify-between flex-wrap gap-4">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-bold" style={{ color: '#333' }}>{basic_info.name}</h1>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs" style={{ color: '#555' }}>
-              {basic_info.unified_code && <span>统一社会信用代码：{basic_info.unified_code}</span>}
-              {basic_info.legal_person && <span>法定代表人：{basic_info.legal_person}</span>}
-              {basic_info.reg_status && <span>经营状态：{basic_info.reg_status}</span>}
-            </div>
-            <div className="flex flex-wrap gap-2 mt-2">
-              <StatusBadge status={basic_info.status} />
-              {basic_info.scale && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{basic_info.scale}</span>}
-              {risk?.in_watchlist && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">监控中</span>}
-            </div>
-          </div>
-
-          {/* risk score circle */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="flex flex-col items-center">
-              <div
-                className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md"
-                style={{ background: getRiskColor(riskScore) }}
-              >
-                {riskScore}
-              </div>
-              <span className="text-xs mt-1 font-semibold" style={{ color: getRiskColor(riskScore) }}>
-                {riskLevel}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* quick info cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-[var(--color-border)]">
-          <InfoCard label="注册资本" value={basic_info.registered_capital ?? '-'} />
-          <InfoCard label="成立时间" value={basic_info.establish_time ?? '-'} />
-          <InfoCard label="行业" value={basic_info.industry ?? basic_info.categories?.[0] ?? '-'} />
-          <InfoCard label="地区" value={basic_info.regions?.[0] ?? '-'} />
-        </div>
-      </div>
-
-      {/* ---- tabs ---- */}
-      <div className="flex gap-1 mb-4 border-b border-[var(--color-border)] pb-0">
-        {([
-          ['overview', '概览'],
-          ['risk', '风险'],
-          ['financial', '财务'],
-          ['relationships', '关联'],
-          ['changelog', '日志'],
-        ] as const).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`px-4 py-2 text-sm rounded-t-lg transition-colors ${
-              tab === key
-                ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-transparent font-semibold text-[var(--color-primary-bg)]'
-                : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'
-            }`}
-            style={tab === key ? { marginBottom: -1 } : undefined}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* ---- tab content ---- */}
-      {tab === 'overview' && <OverviewTab risk={risk} sentiment={sentiment} compliance={compliance} alerts={alerts} />}
-      {tab === 'risk' && <RiskTab compliance={compliance} esg={esg} />}
-      {tab === 'financial' && <FinancialTab financial={financial} />}
-      {tab === 'relationships' && <RelationshipsTab relationships={relationships} />}
-      {tab === 'changelog' && <ChangelogTab changelog={changelog} supplierId={id!} />}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tab content components
-// ---------------------------------------------------------------------------
-
-function OverviewTab({
-  risk, sentiment, compliance, alerts,
-}: {
-  risk?: SupplierProfile['risk'];
-  sentiment?: SupplierProfile['sentiment'];
-  compliance?: SupplierProfile['compliance'];
-  alerts: SupplierProfile['alerts'];
-}) {
-  return (
-    <div className="space-y-4">
-      {/* summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <SummaryCard label="风险评分" value={risk?.risk_score?.toString() ?? '-'} color={risk ? getRiskColor(risk.risk_score) : '#999'} />
-        <SummaryCard label="舆情" value={sentiment?.overall_sentiment ?? '-'} color="#8b5cf6" />
-        <SummaryCard label="制裁筛查" value={compliance?.sanctions_clean ? '正常' : `${compliance?.sanctions_match_count}条匹配`} color={compliance?.sanctions_clean ? '#2d8c63' : '#e06060'} />
-        <SummaryCard label="告警" value={alerts.length.toString()} color={alerts.length > 0 ? '#e06060' : '#999'} />
-      </div>
-
-      {/* risk trend chart */}
-      {risk && risk.trend.length >= 2 && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>风险评分趋势（近90天）</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={risk.trend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#999' }} axisLine={{ stroke: '#eee' }} tickLine={false} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#999' }} axisLine={{ stroke: '#eee' }} tickLine={false} />
-              <Tooltip
-                contentStyle={{ background: '#fff', border: '1px solid #e8e8e3', borderRadius: 12, fontSize: 12 }}
-                formatter={(value) => [`${Number(value ?? 0)} 分`, '风险评分']}
-              />
-              <Line type="monotone" dataKey="risk_score" stroke={getRiskColor(risk.risk_score)} strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
-      {/* recent alerts */}
-      {alerts.length > 0 && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>最近告警</h3>
-          <div className="space-y-2">
-            {alerts.slice(0, 5).map((a) => (
-              <div key={a._id} className="flex items-center justify-between py-2 px-3 rounded-xl bg-gray-50 text-sm">
-                <span className="font-medium" style={{ color: a.severity === 'critical' ? '#e06060' : '#d4a040' }}>
-                  {a.severity === 'critical' ? '🔴 严重' : '🟡 警告'}
-                </span>
-                <span className="text-xs text-gray-400">{a.created_at}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RiskTab({
-  compliance, esg,
-}: {
-  compliance?: SupplierProfile['compliance'];
-  esg?: SupplierProfile['esg'];
-}) {
-  return (
-    <div className="space-y-4">
-      {/* compliance detail */}
-      {compliance && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>合规状态</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <Metric label="制裁匹配" value={compliance.sanctions_match_count.toString()} warn={!compliance.sanctions_clean} />
-            <Metric label="诉讼" value={compliance.lawsuit_count.toString()} warn={compliance.lawsuit_count > 10} />
-            <Metric label="被执行" value={compliance.executed_count.toString()} warn={compliance.executed_count > 0} />
-            <Metric label="失信" value={compliance.dishonesty_count.toString()} warn={compliance.dishonesty_count > 0} />
-            <Metric label="经营异常" value={compliance.abnormal_operation_count.toString()} warn={compliance.abnormal_operation_count > 0} />
-            <Metric label="行政处罚" value={compliance.administrative_penalty_count.toString()} warn={compliance.administrative_penalty_count > 3} />
-          </div>
-        </div>
-      )}
-
-      {/* esg */}
-      {esg && (esg.environmental || esg.social || esg.governance) && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>ESG 评估</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {esg.environmental && (
-              <ESGMetric title="环境 (E)" score={esg.environmental.score} level={esg.environmental.level} />
-            )}
-            {esg.social && (
-              <ESGMetric title="社会 (S)" score={esg.social.score} level={esg.social.level} />
-            )}
-            {esg.governance && (
-              <ESGMetric title="治理 (G)" score={esg.governance.score} level={esg.governance.level} />
-            )}
-          </div>
-        </div>
-      )}
-
-      {!compliance && !esg && (
-        <div className="text-center py-12 text-sm text-gray-400">暂无风险详细数据</div>
-      )}
-    </div>
-  );
-}
-
-function FinancialTab({
-  financial,
-}: {
-  financial?: SupplierProfile['financial'];
-}) {
-  if (!financial) {
-    return <div className="text-center py-12 text-sm text-gray-400">暂无财务数据（可能为非上市企业）</div>;
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>增长指标</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Metric label="营收增长率" value={financial.revenue_growth != null ? `${financial.revenue_growth.toFixed(1)}%` : '-'} warn={financial.revenue_growth != null && financial.revenue_growth < 0} />
-          <Metric label="净利润增长率" value={financial.net_profit_growth != null ? `${financial.net_profit_growth.toFixed(1)}%` : '-'} warn={financial.net_profit_growth != null && financial.net_profit_growth < 0} />
-          <Metric label="ROE" value={financial.roe != null ? `${financial.roe.toFixed(1)}%` : '-'} />
-          <Metric label="净利率" value={financial.net_profit_margin != null ? `${financial.net_profit_margin.toFixed(1)}%` : '-'} />
-        </div>
-      </div>
-
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>偿债与流动性</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <Metric label="资产负债率" value={financial.debt_ratio != null ? `${financial.debt_ratio.toFixed(1)}%` : '-'} warn={financial.debt_ratio != null && financial.debt_ratio > 70} />
-          <Metric label="现金流(亿)" value={financial.cash_flow != null ? financial.cash_flow.toFixed(2) : '-'} warn={financial.cash_flow != null && financial.cash_flow < 0} />
-          <Metric label="流动比率" value={financial.current_ratio != null ? financial.current_ratio.toFixed(2) : '-'} />
-          <Metric label="速动比率" value={financial.quick_ratio != null ? financial.quick_ratio.toFixed(2) : '-'} />
-        </div>
-      </div>
-
-      {(financial.credit_rating || financial.annual_revenue) && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>主数据财务信息</h3>
-          <div className="grid grid-cols-2 gap-3">
-            {financial.credit_rating && <Metric label="信用评级" value={financial.credit_rating} />}
-            {financial.annual_revenue && <Metric label="年营收(万元)" value={financial.annual_revenue.toLocaleString()} />}
-          </div>
-        </div>
-      )}
-
-      {financial.cached_at && (
-        <p className="text-xs text-gray-400 text-right">数据更新于 {financial.cached_at}</p>
-      )}
-    </div>
-  );
-}
-
-function RelationshipsTab({ relationships }: { relationships?: SupplierProfile['relationships'] }) {
-  if (!relationships || relationships.related_count === 0) {
-    return <div className="text-center py-12 text-sm text-gray-400">暂无关联关系数据</div>;
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <SummaryCard label="关联方" value={relationships.related_count.toString()} color="#6366f1" />
-        <SummaryCard label="分支机构" value={relationships.branch_count.toString()} color="#8b5cf6" />
-        <SummaryCard label="供应链依赖" value={relationships.dependency_count.toString()} color="#a78bfa" />
-        <SummaryCard label="高风险关联" value={relationships.high_risk_related_count.toString()} color="#e06060" />
-      </div>
-
-      {relationships.entities.length > 0 && (
-        <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3" style={{ color: '#333' }}>关联实体</h3>
-          <div className="space-y-2">
-            {relationships.entities.map((e, i) => (
-              <div key={i} className="flex items-center justify-between py-2.5 px-3 rounded-xl bg-gray-50 text-sm">
-                <span className="font-medium">{e.name}</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-600">{e.relation_type}</span>
-                  {e.risk_score != null && (
-                    <span className="text-xs font-semibold" style={{ color: getRiskColor(e.risk_score) }}>
-                      {e.risk_score}分
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ChangelogTab({ changelog, supplierId }: { changelog: SupplierProfile['changelog']; supplierId: string }) {
-  const { data: changelogData, isLoading } = useQuery({
-    queryKey: queryKeys.supplierChangelog(supplierId),
-    queryFn: () => api.get<{ items: SupplierProfile['changelog'] }>(`/suppliers/${supplierId}/changelog?limit=20`),
-    enabled: changelog.length === 0,
+  const updateMutation = useMutation({
+    mutationFn: (payload: EditableBasicInfo) => api.put(`/suppliers/${id}`, payload),
+    onSuccess: () => {
+      invalidateProfile();
+      setIsEditing(false);
+      setDraft(null);
+      setPendingAction(null);
+      setNotice('主数据已更新，并已写入变更审计日志。');
+    },
+    onError: () => setNotice('主数据更新失败，请稍后重试。'),
+  });
+  const assessMutation = useMutation({
+    mutationFn: (companyName: string) => api.post('/risk/assess', { company_name: companyName, force_refresh: true }),
+    onSuccess: () => {
+      invalidateProfile();
+      setPendingAction(null);
+      setNotice('已提交重新评估；若存在缓存，将在后台刷新后更新画像。');
+    },
+    onError: () => setNotice('重新评估提交失败，请稍后重试。'),
+  });
+  const watchMutation = useMutation({
+    mutationFn: ({ companyName, inWatchlist }: { companyName: string; inWatchlist: boolean }) => (
+      inWatchlist
+        ? api.delete('/alert/watch', { company_name: companyName })
+        : api.post('/alert/watch', { company_name: companyName })
+    ),
+    onSuccess: (_, variables) => {
+      invalidateProfile();
+      setPendingAction(null);
+      setNotice(variables.inWatchlist ? '已移出风险监控。' : '已加入风险监控。');
+    },
+    onError: () => setNotice('监控设置更新失败，请稍后重试。'),
   });
 
-  const entries = changelog.length > 0 ? changelog : (changelogData?.items ?? []);
+  if (isLoading) return <ProfileLoading />;
+  if (error || !data) return <ProfileLoadError onBack={() => navigate('/suppliers')} />;
 
-  if (isLoading) {
-    return <div className="text-center py-12 text-sm text-gray-400">加载中...</div>;
-  }
+  const { basic_info: basicInfo, risk, financial, sentiment, compliance, esg, alerts, relationships, changelog } = data;
+  const riskScore = risk?.risk_score ?? 0;
+  const riskLevel = risk?.risk_level ?? '未知';
+  const isBusy = updateMutation.isPending || assessMutation.isPending || watchMutation.isPending;
 
-  if (entries.length === 0) {
-    return <div className="text-center py-12 text-sm text-gray-400">暂无变更记录</div>;
-  }
-
-  return (
-    <div className="space-y-3">
-      {entries.map((entry, i) => (
-        <div key={i} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
-          <div className="text-xs text-gray-400 mb-2">{entry.changed_at}</div>
-          {Object.entries(entry.changed).map(([field, change]) => (
-            <div key={field} className="flex items-center gap-2 text-sm py-1">
-              <span className="font-medium min-w-[80px]">{field}</span>
-              <span className="text-red-400 line-through">{String(change.old ?? '-')}</span>
-              <span className="text-gray-300">&rarr;</span>
-              <span className="text-green-600">{String(change.new ?? '-')}</span>
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    approved: 'bg-green-50 text-green-600',
-    active: 'bg-green-50 text-green-600',
-    prospective: 'bg-blue-50 text-blue-600',
-    suspended: 'bg-amber-50 text-amber-600',
-    blocked: 'bg-red-50 text-red-600',
-    deprecated: 'bg-gray-50 text-gray-400',
+  const startEditing = () => {
+    setDraft({ industry: basicInfo.industry, contact_person: basicInfo.contact_person, contact_phone: basicInfo.contact_phone, contact_email: basicInfo.contact_email, website_url: basicInfo.website_url, address: basicInfo.address });
+    setIsEditing(true);
+    setNotice('');
   };
-  const labels: Record<string, string> = {
-    approved: '已准入',
-    active: '活跃',
-    prospective: '待考察',
-    suspended: '已停用',
-    blocked: '已拉黑',
-    deprecated: '已淘汰',
+  const confirmAction = () => {
+    if (pendingAction === 'save' && draft) updateMutation.mutate(draft);
+    if (pendingAction === 'assess') assessMutation.mutate(basicInfo.name);
+    if (pendingAction === 'watch') watchMutation.mutate({ companyName: basicInfo.name, inWatchlist: false });
+    if (pendingAction === 'unwatch') watchMutation.mutate({ companyName: basicInfo.name, inWatchlist: true });
   };
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded-full ${colors[status] ?? 'bg-gray-50 text-gray-500'}`}>
-      {labels[status] ?? status}
-    </span>
-  );
+  const confirmationCopy: Record<Exclude<PendingAction, null>, string> = {
+    save: '确认将当前编辑内容写入供应商主数据吗？该操作会生成审计日志。',
+    assess: '确认重新评估该供应商的风险吗？系统可能发起数据刷新并更新风险快照。',
+    watch: '确认将该供应商加入风险监控吗？后续巡检将持续检查其风险变化。',
+    unwatch: '确认将该供应商移出风险监控吗？移出后将不再接收其风险变化告警。',
+  };
+
+  return <div className="max-w-5xl mx-auto py-6 px-4">
+    <button onClick={() => navigate('/suppliers')} className="text-sm text-[var(--color-primary-bg)] hover:underline mb-3 inline-block">&larr; 返回供应商列表</button>
+    <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm mb-5">
+      <div className="flex items-start justify-between flex-wrap gap-4"><div className="flex-1 min-w-0"><h1 className="text-xl font-bold" style={{ color: '#333' }}>{basicInfo.name}</h1><div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs" style={{ color: '#555' }}>{basicInfo.unified_code && <span>统一社会信用代码：{basicInfo.unified_code}</span>}{basicInfo.legal_person && <span>法定代表人：{basicInfo.legal_person}</span>}{basicInfo.reg_status && <span>经营状态：{basicInfo.reg_status}</span>}</div><div className="flex flex-wrap gap-2 mt-2"><StatusBadge status={basicInfo.status} />{basicInfo.scale && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{basicInfo.scale}</span>}{risk?.in_watchlist && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">监控中</span>}</div></div><div className="flex flex-col items-center shrink-0"><div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md" style={{ background: getRiskColor(riskScore) }}>{riskScore}</div><span className="text-xs mt-1 font-semibold" style={{ color: getRiskColor(riskScore) }}>{riskLevel}</span></div></div>
+      <div className="flex flex-wrap gap-2 mt-4"><button onClick={startEditing} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-gray-50">编辑主数据</button><button onClick={() => setPendingAction('assess')} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-gray-50">重新评估</button><button onClick={() => setPendingAction(risk?.in_watchlist ? 'unwatch' : 'watch')} className="text-xs px-3 py-1.5 rounded-lg bg-[var(--color-primary-bg)] text-white hover:opacity-90">{risk?.in_watchlist ? '移出监控' : '加入监控'}</button></div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-[var(--color-border)]"><InfoCard label="注册资本" value={basicInfo.registered_capital ?? '-'} /><InfoCard label="成立时间" value={basicInfo.establish_time ?? '-'} /><InfoCard label="行业" value={basicInfo.industry ?? basicInfo.categories?.[0] ?? '-'} meta={formatSource(basicInfo.industry_source, basicInfo.industry_updated_at)} /><InfoCard label="地区" value={basicInfo.regions?.[0] ?? '-'} /></div>
+    </section>
+    <ContactAndSourceCard basicInfo={basicInfo} />
+    {isEditing && draft && <EditMasterData draft={draft} onChange={setDraft} onSave={() => setPendingAction('save')} onCancel={() => setIsEditing(false)} />}
+    {pendingAction && <ConfirmationCard message={confirmationCopy[pendingAction]} busy={isBusy} onConfirm={confirmAction} onCancel={() => setPendingAction(null)} />}
+    {notice && <p role="status" className="mb-4 rounded-xl border border-[var(--color-border)] bg-gray-50 px-4 py-3 text-sm text-[var(--color-text-secondary)]">{notice}</p>}
+    <nav className="flex gap-1 mb-4 border-b border-[var(--color-border)] pb-0" aria-label="供应商画像标签">{([['overview', '概览'], ['risk', '风险'], ['financial', '财务'], ['relationships', '关联'], ['changelog', '日志']] as const).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`px-4 py-2 text-sm rounded-t-lg transition-colors ${tab === key ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-transparent font-semibold text-[var(--color-primary-bg)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`} style={tab === key ? { marginBottom: -1 } : undefined}>{label}</button>)}</nav>
+    {tab === 'overview' && <OverviewTab risk={risk} sentiment={sentiment} compliance={compliance} alerts={alerts} />}
+    {tab === 'risk' && <RiskTab compliance={compliance} esg={esg} />}
+    {tab === 'financial' && <FinancialTab financial={financial} />}
+    {tab === 'relationships' && <RelationshipsTab relationships={relationships} centerName={basicInfo.name} />}
+    {tab === 'changelog' && <ChangelogTab changelog={changelog} supplierId={id!} />}
+  </div>;
 }
 
-function InfoCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-xs text-gray-400">{label}</div>
-      <div className="text-sm font-medium mt-0.5 truncate" title={value}>{value}</div>
-    </div>
-  );
-}
-
-function SummaryCard({ label, value, color }: { label: string; value: string; color: string }) {
-  return (
-    <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
-      <div className="text-2xl font-bold" style={{ color }}>{value}</div>
-      <div className="text-xs text-gray-400 mt-1">{label}</div>
-    </div>
-  );
-}
-
-function Metric({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
-  return (
-    <div>
-      <div className="text-xs text-gray-400">{label}</div>
-      <div className={`text-sm font-semibold mt-0.5 ${warn ? 'text-red-500' : ''}`} style={warn ? undefined : { color: '#333' }}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function ESGMetric({ title, score, level }: { title: string; score: number; level: string }) {
-  return (
-    <div className="text-center p-3 rounded-xl bg-gray-50">
-      <div className="text-xs text-gray-400">{title}</div>
-      <div className="text-xl font-bold mt-1" style={{ color: getRiskColor(score) }}>{score}</div>
-      <div className="text-xs mt-0.5" style={{ color: getRiskColor(score) }}>{level}</div>
-    </div>
-  );
-}
+function ProfileLoading() { return <div className="max-w-5xl mx-auto py-6 px-4"><div className="animate-pulse space-y-4"><div className="h-8 w-48 bg-gray-200 rounded" /><div className="h-64 bg-gray-100 rounded-2xl" /></div></div>; }
+function ProfileLoadError({ onBack }: { onBack: () => void }) { return <div className="max-w-5xl mx-auto py-6 px-4"><button onClick={onBack} className="text-sm text-[var(--color-primary-bg)] hover:underline mb-4">&larr; 返回供应商列表</button><div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-8 text-center text-[var(--color-text-secondary)]">加载供应商画像失败</div></div>; }
+function ContactAndSourceCard({ basicInfo }: { basicInfo: ProfileBasicInfo }) { const contacts = [['官网', basicInfo.website_url, basicInfo.website_url_source], ['电话', basicInfo.contact_phone, basicInfo.contact_phone_source], ['邮箱', basicInfo.contact_email, basicInfo.contact_email_source], ['联系人', basicInfo.contact_person, basicInfo.source]] as const; return <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm mb-5"><div className="flex items-center justify-between gap-3 mb-3"><h2 className="text-sm font-semibold" style={{ color: '#333' }}>联系方式与数据来源</h2><span className="text-xs text-gray-400">主数据更新于 {basicInfo.updated_at ?? '未知'}</span></div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{contacts.map(([label, value, source]) => <div key={label} className="rounded-xl bg-gray-50 px-3 py-2.5"><div className="text-xs text-gray-400">{label}</div>{label === '官网' && value ? <a href={value} target="_blank" rel="noreferrer" className="block text-sm font-medium text-[var(--color-primary-bg)] truncate hover:underline">{value}</a> : <div className="text-sm font-medium truncate">{value ?? '-'}</div>}<div className="text-[11px] text-gray-400 mt-1">{source ? `来源：${source}` : '来源待补全'}</div></div>)}</div>{basicInfo.address && <p className="text-xs text-gray-500 mt-3">地址：{basicInfo.address}</p>}</section>; }
+function EditMasterData({ draft, onChange, onSave, onCancel }: { draft: EditableBasicInfo; onChange: (value: EditableBasicInfo) => void; onSave: () => void; onCancel: () => void }) { const fields: { key: keyof EditableBasicInfo; label: string; type?: string }[] = [{ key: 'industry', label: '行业' }, { key: 'contact_person', label: '联系人' }, { key: 'contact_phone', label: '电话' }, { key: 'contact_email', label: '邮箱', type: 'email' }, { key: 'website_url', label: '官网', type: 'url' }, { key: 'address', label: '地址' }]; return <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm mb-5"><h2 className="text-sm font-semibold mb-3">编辑供应商主数据</h2><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{fields.map(({ key, label, type }) => <label key={key} className="text-xs text-gray-500">{label}<input aria-label={label} type={type ?? 'text'} value={draft[key] ?? ''} onChange={(event) => onChange({ ...draft, [key]: event.target.value || undefined })} className="block mt-1 w-full rounded-lg border border-[var(--color-border)] bg-white px-3 py-2 text-sm text-[#333]" /></label>)}</div><div className="flex gap-2 mt-4"><button onClick={onSave} className="text-xs px-3 py-1.5 rounded-lg bg-[var(--color-primary-bg)] text-white">保存并确认</button><button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)]">取消</button></div></section>; }
+function ConfirmationCard({ message, busy, onConfirm, onCancel }: { message: string; busy: boolean; onConfirm: () => void; onCancel: () => void }) { return <section className="mb-5 rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="text-sm text-amber-900">{message}</p><div className="flex gap-2 mt-3"><button onClick={onConfirm} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg bg-amber-700 text-white disabled:opacity-50">{busy ? '执行中…' : '确认执行'}</button><button onClick={onCancel} disabled={busy} className="text-xs px-3 py-1.5 rounded-lg border border-amber-300 text-amber-900">取消</button></div></section>; }
+function OverviewTab({ risk, sentiment, compliance, alerts }: { risk?: SupplierProfile['risk']; sentiment?: SupplierProfile['sentiment']; compliance?: SupplierProfile['compliance']; alerts: SupplierProfile['alerts'] }) { return <div className="space-y-4"><div className="grid grid-cols-2 sm:grid-cols-4 gap-3"><SummaryCard label="风险评分" value={risk?.risk_score?.toString() ?? '-'} color={risk ? getRiskColor(risk.risk_score) : '#999'} /><SummaryCard label="舆情" value={sentiment?.overall_sentiment ?? '-'} color="#8b5cf6" /><SummaryCard label="制裁筛查" value={compliance?.sanctions_clean ? '正常' : `${compliance?.sanctions_match_count}条匹配`} color={compliance?.sanctions_clean ? '#2d8c63' : '#e06060'} /><SummaryCard label="告警" value={alerts.length.toString()} color={alerts.length > 0 ? '#e06060' : '#999'} /></div>{risk && risk.trend.length >= 2 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">风险评分趋势（近90天）</h3><ResponsiveContainer width="100%" height={200}><LineChart data={risk.trend}><CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} /><XAxis dataKey="date" tick={{ fontSize: 10, fill: '#999' }} /><YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#999' }} /><Tooltip formatter={(value) => [`${Number(value ?? 0)} 分`, '风险评分']} /><Line type="monotone" dataKey="risk_score" stroke={getRiskColor(risk.risk_score)} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></section>}{alerts.length > 0 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">最近告警</h3><div className="space-y-2">{alerts.slice(0, 5).map((alert) => <div key={alert._id} className="rounded-xl bg-gray-50 py-2 px-3 text-sm"><div className="flex items-center justify-between gap-3"><span className="font-medium" style={{ color: alert.severity === 'critical' ? '#e06060' : '#d4a040' }}>{alert.severity === 'critical' ? '🔴 严重' : '🟡 警告'}</span><span className="text-xs text-gray-400">{alert.created_at}</span></div><p className="mt-1 text-xs text-gray-500">{formatAlertChanges(alert.changes)}</p></div>)}</div></section>}</div>; }
+function RiskTab({ compliance, esg }: { compliance?: SupplierProfile['compliance']; esg?: SupplierProfile['esg'] }) { return <div className="space-y-4">{compliance && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">合规状态</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><Metric label="制裁匹配" value={compliance.sanctions_match_count.toString()} warn={!compliance.sanctions_clean} /><Metric label="诉讼" value={compliance.lawsuit_count.toString()} warn={compliance.lawsuit_count > 10} /><Metric label="被执行" value={compliance.executed_count.toString()} warn={compliance.executed_count > 0} /><Metric label="失信" value={compliance.dishonesty_count.toString()} warn={compliance.dishonesty_count > 0} /><Metric label="经营异常" value={compliance.abnormal_operation_count.toString()} warn={compliance.abnormal_operation_count > 0} /><Metric label="行政处罚" value={compliance.administrative_penalty_count.toString()} warn={compliance.administrative_penalty_count > 3} /></div></section>}{esg && (esg.environmental || esg.social || esg.governance) && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">ESG 评估</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{esg.environmental && <ESGMetric title="环境 (E)" score={esg.environmental.score} level={esg.environmental.level} />}{esg.social && <ESGMetric title="社会 (S)" score={esg.social.score} level={esg.social.level} />}{esg.governance && <ESGMetric title="治理 (G)" score={esg.governance.score} level={esg.governance.level} />}</div></section>}{!compliance && !esg && <div className="text-center py-12 text-sm text-gray-400">暂无风险详细数据</div>}</div>; }
+function FinancialTab({ financial }: { financial?: SupplierProfile['financial'] }) { if (!financial) return <div className="text-center py-12 text-sm text-gray-400">暂无财务数据（可能为非上市企业）</div>; return <div className="space-y-4">{financial.history.length > 0 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">财务历史</h3><ResponsiveContainer width="100%" height={220}><LineChart data={financial.history}><CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} /><XAxis dataKey="period" tick={{ fontSize: 10, fill: '#999' }} /><YAxis tick={{ fontSize: 10, fill: '#999' }} /><Tooltip /><Line type="monotone" dataKey="revenue" name="营收" stroke="#2563eb" strokeWidth={2} /><Line type="monotone" dataKey="net_profit" name="净利润" stroke="#16a34a" strokeWidth={2} /></LineChart></ResponsiveContainer></section>}<section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">增长指标</h3><div className="grid grid-cols-2 sm:grid-cols-4 gap-3"><Metric label="营收增长率" value={percent(financial.revenue_growth)} warn={(financial.revenue_growth ?? 0) < 0} /><Metric label="净利润增长率" value={percent(financial.net_profit_growth)} warn={(financial.net_profit_growth ?? 0) < 0} /><Metric label="ROE" value={percent(financial.roe)} /><Metric label="净利率" value={percent(financial.net_profit_margin)} /></div></section><section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">偿债与流动性</h3><div className="grid grid-cols-2 sm:grid-cols-4 gap-3"><Metric label="资产负债率" value={percent(financial.debt_ratio)} warn={(financial.debt_ratio ?? 0) > 70} /><Metric label="现金流(亿)" value={financial.cash_flow != null ? financial.cash_flow.toFixed(2) : '-'} warn={(financial.cash_flow ?? 0) < 0} /><Metric label="流动比率" value={financial.current_ratio?.toFixed(2) ?? '-'} /><Metric label="速动比率" value={financial.quick_ratio?.toFixed(2) ?? '-'} /></div></section>{(financial.credit_rating || financial.annual_revenue) && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">主数据财务信息</h3><div className="grid grid-cols-2 gap-3">{financial.credit_rating && <Metric label="信用评级" value={financial.credit_rating} />}{financial.annual_revenue != null && <Metric label="年营收(万元)" value={financial.annual_revenue.toLocaleString()} />}</div></section>}{financial.cached_at && <p className="text-xs text-gray-400 text-right">数据更新于 {financial.cached_at}</p>}</div>; }
+function RelationshipsTab({ relationships, centerName }: { relationships?: SupplierProfile['relationships']; centerName: string }) { const graph = useMemo(() => buildRelationshipGraph(centerName, relationships?.entities ?? []), [centerName, relationships?.entities]); if (!relationships || relationships.related_count === 0) return <div className="text-center py-12 text-sm text-gray-400">暂无关联关系数据</div>; return <div className="space-y-4"><div className="grid grid-cols-2 sm:grid-cols-4 gap-3"><SummaryCard label="关联方" value={relationships.related_count.toString()} color="#6366f1" /><SummaryCard label="分支机构" value={relationships.branch_count.toString()} color="#8b5cf6" /><SummaryCard label="供应链依赖" value={relationships.dependency_count.toString()} color="#a78bfa" /><SummaryCard label="高风险关联" value={relationships.high_risk_related_count.toString()} color="#e06060" /></div><section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-3 shadow-sm"><h3 className="px-2 pt-2 text-sm font-semibold">关联关系图</h3><div className="h-72 mt-2"><ReactFlow nodes={graph.nodes} edges={graph.edges} fitView nodesDraggable={false} nodesConnectable={false} elementsSelectable={false}><Background gap={16} size={1} /><Controls showInteractive={false} /></ReactFlow></div></section>{relationships.entities.length > 0 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">关联实体</h3><div className="space-y-2">{relationships.entities.map((entity, index) => <div key={`${entity.name}-${index}`} className="flex items-center justify-between py-2.5 px-3 rounded-xl bg-gray-50 text-sm"><div className="min-w-0">{entity.supplier_id ? <Link to={`/suppliers/${entity.supplier_id}`} className="font-medium hover:underline text-[var(--color-primary-bg)]">{entity.name}</Link> : <span className="font-medium">{entity.name}</span>}<p className="text-[11px] text-gray-400 mt-0.5">{entity.supplier_id ? '已关联供应商主数据，可打开画像' : '未关联本地供应商主数据'}</p></div><div className="flex items-center gap-2 shrink-0"><span className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-600">{entity.relation_type}</span>{entity.risk_score != null && <span className="text-xs font-semibold" style={{ color: getRiskColor(entity.risk_score) }}>{entity.risk_score}分</span>}</div></div>)}</div></section>}</div>; }
+function ChangelogTab({ changelog, supplierId }: { changelog: SupplierProfile['changelog']; supplierId: string }) { const [limit, setLimit] = useState(20); const { data, isLoading } = useQuery({ queryKey: queryKeys.supplierChangelog(supplierId, limit), queryFn: () => api.get<{ items: SupplierProfile['changelog']; total: number }>(`/suppliers/${supplierId}/changelog?limit=${limit}`), enabled: changelog.length === 0 || limit > 20 }); const entries = limit === 20 && changelog.length > 0 ? changelog : (data?.items ?? changelog); const total = data?.total ?? changelog.length; if (isLoading && entries.length === 0) return <div className="text-center py-12 text-sm text-gray-400">加载中...</div>; if (entries.length === 0) return <div className="text-center py-12 text-sm text-gray-400">暂无变更记录</div>; return <div className="space-y-3">{entries.map((entry, index) => <div key={`${entry.changed_at}-${index}`} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-4 shadow-sm"><div className="text-xs text-gray-400 mb-2">{entry.changed_at}</div>{Object.entries(entry.changed).map(([field, change]) => <div key={field} className="flex items-center gap-2 text-sm py-1"><span className="font-medium min-w-[80px]">{field}</span><span className="text-red-400 line-through">{String(change.old ?? '-')}</span><span className="text-gray-300">&rarr;</span><span className="text-green-600">{String(change.new ?? '-')}</span></div>)}</div>)}{total > entries.length && <button onClick={() => setLimit(Math.min(total, 100))} disabled={isLoading} className="w-full text-sm rounded-xl border border-[var(--color-border)] py-2 hover:bg-gray-50">{isLoading ? '加载中…' : `加载全部 ${total} 条审计记录`}</button>}</div>; }
+function buildRelationshipGraph(centerName: string, entities: NonNullable<SupplierProfile['relationships']>['entities']): { nodes: Node[]; edges: Edge[] } { const nodes: Node[] = [{ id: 'center', position: { x: 260, y: 110 }, data: { label: centerName }, style: { background: '#1e293b', color: '#fff', borderRadius: 12, border: '1px solid #475569', padding: 12, fontWeight: 600, maxWidth: 160 } }]; const edges: Edge[] = []; entities.slice(0, 12).forEach((entity, index) => { const angle = (Math.PI * 2 * index) / Math.max(entities.length, 1); const score = entity.risk_score ?? 0; const nodeId = `related-${index}`; nodes.push({ id: nodeId, position: { x: 260 + Math.cos(angle) * 220, y: 110 + Math.sin(angle) * 110 }, data: { label: entity.name }, style: { background: '#fff', border: `1px solid ${getRiskColor(score)}`, borderRadius: 10, padding: 9, fontSize: 12, maxWidth: 150 } }); edges.push({ id: `edge-${index}`, source: 'center', target: nodeId, label: entity.relation_type, style: { stroke: '#a78bfa' }, labelStyle: { fontSize: 10, fill: '#6b7280' } }); }); return { nodes, edges }; }
+function StatusBadge({ status }: { status: string }) { const colors: Record<string, string> = { approved: 'bg-green-50 text-green-600', active: 'bg-green-50 text-green-600', prospective: 'bg-blue-50 text-blue-600', suspended: 'bg-amber-50 text-amber-600', blocked: 'bg-red-50 text-red-600', deprecated: 'bg-gray-50 text-gray-400' }; const labels: Record<string, string> = { approved: '已准入', active: '活跃', prospective: '待考察', suspended: '已停用', blocked: '已拉黑', deprecated: '已淘汰' }; return <span className={`text-xs px-1.5 py-0.5 rounded-full ${colors[status] ?? 'bg-gray-50 text-gray-500'}`}>{labels[status] ?? status}</span>; }
+function InfoCard({ label, value, meta }: { label: string; value: string; meta?: string }) { return <div><div className="text-xs text-gray-400">{label}</div><div className="text-sm font-medium mt-0.5 truncate" title={value}>{value}</div>{meta && <div className="text-[10px] text-gray-400 mt-0.5 truncate" title={meta}>{meta}</div>}</div>; }
+function SummaryCard({ label, value, color }: { label: string; value: string; color: string }) { return <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm"><div className="text-2xl font-bold" style={{ color }}>{value}</div><div className="text-xs text-gray-400 mt-1">{label}</div></div>; }
+function Metric({ label, value, warn }: { label: string; value: string; warn?: boolean }) { return <div><div className="text-xs text-gray-400">{label}</div><div className={`text-sm font-semibold mt-0.5 ${warn ? 'text-red-500' : ''}`} style={warn ? undefined : { color: '#333' }}>{value}</div></div>; }
+function ESGMetric({ title, score, level }: { title: string; score: number; level: string }) { return <div className="text-center p-3 rounded-xl bg-gray-50"><div className="text-xs text-gray-400">{title}</div><div className="text-xl font-bold mt-1" style={{ color: getRiskColor(score) }}>{score}</div><div className="text-xs mt-0.5" style={{ color: getRiskColor(score) }}>{level}</div></div>; }
+function formatSource(source?: string, updatedAt?: string) { return [source ? `来源：${source}` : '', updatedAt ? `更新：${updatedAt}` : ''].filter(Boolean).join(' · '); }
+function formatAlertChanges(changes: SupplierProfile['alerts'][number]['changes']) { if (!changes.length) return '未提供变更明细'; return changes.map((change) => `${change.field || '字段'}：${String(change.old ?? '-')} → ${String(change.new ?? '-')}`).join('；'); }
+function percent(value?: number) { return value != null ? `${value.toFixed(1)}%` : '-'; }
