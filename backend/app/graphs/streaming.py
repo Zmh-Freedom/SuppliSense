@@ -289,6 +289,32 @@ async def stream_react_graph(
                 if chart:
                     yield _sse_event("chart_data", chart)
 
+            # With a checkpointer, LangGraph reports interrupt() from a tool
+            # as a tool error event and then closes the graph normally.  It is
+            # not propagated to the outer try/except, so convert it here.
+            elif kind == "on_tool_error":
+                error = event.get("data", {}).get("error")
+                if not isinstance(error, Exception) or not _is_graph_interrupt(error):
+                    continue
+                interrupt_data = _extract_interrupt_data(error)
+                from app.graphs.interrupt_store import store as store_interrupt
+
+                store_interrupt(
+                    session_id=session_id,
+                    graph=graph,
+                    config=config,
+                    mode="react",
+                    user_message=user_message,
+                )
+                yield _sse_event("approval_required", {
+                    "message": interrupt_data.get("message", "确认此操作？"),
+                    "tool": interrupt_data.get("tool", event.get("name", "")),
+                    "args": interrupt_data.get("args", {}),
+                    "session_id": session_id,
+                    "requires_human_approval": True,
+                })
+                return
+
             # LLM 完成（非流式响应或工具调用后的回答）
             elif kind == "on_chat_model_end":
                 output = event.get("data", {}).get("output")
@@ -367,13 +393,23 @@ def _is_graph_interrupt(exc: Exception) -> bool:
 
 def _extract_interrupt_data(exc: Exception) -> dict:
     """从 GraphInterrupt 异常中提取中断数据。"""
+    def unwrap(value: Any) -> dict | None:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, (list, tuple)) and value:
+            return unwrap(value[0])
+        nested_value = getattr(value, "value", None)
+        if nested_value is not None:
+            return unwrap(nested_value)
+        return None
+
     try:
         # GraphInterrupt 通常有 args[0] 作为中断值
         if hasattr(exc, "args") and exc.args:
-            data = exc.args[0]
-            if isinstance(data, dict):
+            data = unwrap(exc.args[0])
+            if data is not None:
                 return data
-            return {"message": str(data)}
+            return {"message": str(exc.args[0])}
     except Exception:
         pass
 

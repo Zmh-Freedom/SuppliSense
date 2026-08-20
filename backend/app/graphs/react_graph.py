@@ -1,6 +1,6 @@
 """LangGraph ReAct agent graph — 替代 agent.py 中的手写 ReAct 循环。"""
 
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
@@ -47,9 +47,9 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 定时报告：用 manage_scheduled_report
 - 找供应商/寻源：用 create_sourcing_request 创建需求，再用 search_suppliers 搜索候选
 - 供应商不足时：优先用 discover_web_suppliers 联网发现待核验候选；只有用户明确确认并允许入库时，才考虑 expand_supplier_library
-- 勾选本地结果：用 select_sourcing_result（watchlist 加入监控 / apply_access 申请准入）
-- 用户确认联网候选准入：必须用 select_external_supplier_candidate(candidate_id, action="apply_access")，不得把 candidate_id 当作 result_id
-- 用户说“执行/确认/同意准入”时，必须立即调用 select_external_supplier_candidate；可从上下文使用供应商全称 supplier_name，不得只回复“同意准入”或再次建议确认
+- 本地寻源候选准入：必须用 select_sourcing_result(result_id, action="apply_access")
+- 联网候选准入：只有 identity_status=exact 时用 select_external_supplier_candidate(candidate_id, action="apply_access")，不得把 candidate_id 当作 result_id
+- 用户说“执行/确认/同意准入”时，必须按结构化候选类型立即调用对应工具；不得只回复“同意准入”或再次建议确认
 
 业务规则：
 - assess_risk 已含财报数据，上市公司要分析财报
@@ -73,23 +73,46 @@ class AgentState(TypedDict):
     current_task: dict
 
 
-def _forced_external_access_call(state: AgentState) -> AIMessage | None:
-    """Hard-route an unambiguous admission request to the external tool."""
+_ACCESS_REQUEST_TOKENS = ("准入", "申请入库", "成为合格供应商")
+
+
+def _forced_access_call(state: AgentState) -> AIMessage | None:
+    """Hard-route one unambiguous admission request to its typed selection tool."""
     messages = state.get("messages", [])
     last = messages[-1] if messages else None
-    if not isinstance(last, HumanMessage) or "准入" not in str(last.content):
+    if not isinstance(last, HumanMessage) or not any(
+        token in str(last.content) for token in _ACCESS_REQUEST_TOKENS
+    ):
         return None
-    candidates = [
+    active_suppliers = [
         reference
         for reference in state.get("conversation_state", {}).get("active_suppliers", [])
-        if isinstance(reference, dict)
-        and reference.get("candidate_id")
-        and reference.get("candidate_type") == "external"
-        and reference.get("identity_status") == "exact"
+        if isinstance(reference, dict) and reference.get("name")
     ]
+    explicit_candidates = [
+        candidate for candidate in active_suppliers
+        if str(candidate["name"]) in str(last.content)
+    ]
+    candidates = explicit_candidates or active_suppliers
     if len(candidates) != 1:
         return None
     candidate = candidates[0]
+    if candidate.get("candidate_type") == "local" and candidate.get("result_id"):
+        return AIMessage(content="", tool_calls=[{
+            "name": "select_sourcing_result",
+            "args": {
+                "result_id": candidate["result_id"],
+                "action": "apply_access",
+            },
+            "id": "forced-local-access",
+            "type": "tool_call",
+        }])
+    if not (
+        candidate.get("candidate_id")
+        and candidate.get("candidate_type") == "external"
+        and candidate.get("identity_status") == "exact"
+    ):
+        return None
     return AIMessage(content="", tool_calls=[{
         "name": "select_external_supplier_candidate",
         "args": {
@@ -100,6 +123,11 @@ def _forced_external_access_call(state: AgentState) -> AIMessage | None:
         "id": "forced-external-access",
         "type": "tool_call",
     }])
+
+
+def _forced_external_access_call(state: AgentState) -> AIMessage | None:
+    """Backward-compatible alias retained for existing integrations and tests."""
+    return _forced_access_call(state)
 
 
 # 模块级 LLM 单例，避免每次请求创建新连接
@@ -113,7 +141,9 @@ def _get_llm():
     return _llm_instance
 
 
-def build_react_graph(preference_context: str = ""):
+def build_react_graph(
+    preference_context: str = "", checkpointer: Any = None,
+):
     """编译 ReAct 图（带 system prompt 注入，可选偏好上下文）。"""
     prompt = SYSTEM_PROMPT
     if preference_context:
@@ -123,7 +153,7 @@ def build_react_graph(preference_context: str = ""):
     tool_node = ToolNode(TOOLS_LIST)
 
     async def agent(state: AgentState):
-        forced_call = _forced_external_access_call(state)
+        forced_call = _forced_access_call(state)
         if forced_call:
             return {"messages": [forced_call]}
         response = await llm.ainvoke(state["messages"])
@@ -142,7 +172,7 @@ def build_react_graph(preference_context: str = ""):
     graph.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
     graph.add_edge("tools", "agent")
 
-    compiled = graph.compile()
+    compiled = graph.compile(checkpointer=checkpointer)
 
     class ReactGraphWithSystemPrompt:
         def __init__(self, g):
@@ -166,7 +196,9 @@ def build_react_graph(preference_context: str = ""):
     return ReactGraphWithSystemPrompt(compiled)
 
 
-def build_react_graph_with_reflection(preference_context: str = ""):
+def build_react_graph_with_reflection(
+    preference_context: str = "", checkpointer: Any = None,
+):
     """编译带 Self-Reflection 的 ReAct 图。
 
     在 agent 产生 final answer 后，reflector 审查输出质量（幻觉、一致性、完整性）。
@@ -229,7 +261,7 @@ def build_react_graph_with_reflection(preference_context: str = ""):
         {"agent": "agent", END: END},
     )
 
-    compiled = graph.compile()
+    compiled = graph.compile(checkpointer=checkpointer)
 
     class ReactReflectionGraphWithSystemPrompt:
         """注入 system prompt + 初始化 reflection 字段。"""

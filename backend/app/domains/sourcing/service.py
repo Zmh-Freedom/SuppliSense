@@ -123,6 +123,7 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         rid = str(uuid.uuid4())
         item = {
             "result_id": rid,
+            "candidate_type": "local",
             "supplier_name": name,
             "match_score": round(match_score, 3),
             "risk_score": risk_score,
@@ -169,6 +170,7 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         ),
         "results": [{
             "result_id": r["result_id"],
+            "candidate_type": r["candidate_type"],
             "supplier_name": r["supplier_name"],
             "match_score": r["match_score"],
             "risk_score": r["risk_score"],

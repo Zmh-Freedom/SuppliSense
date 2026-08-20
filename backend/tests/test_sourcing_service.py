@@ -124,6 +124,41 @@ def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None
     assert "钢材" in result["message"]
 
 
+def test_search_suppliers_marks_local_results_for_typed_agent_routing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.sourcing.service.get_request",
+        lambda _request_id: {"category": "工业相机", "spec": ""},
+    )
+    monkeypatch.setattr("app.domains.sourcing.service.update_request_status", lambda *args: None)
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._vector_search",
+        lambda *_args, **_kwargs: [{
+            "supplier_name": "深圳市康斯得电子有限公司",
+            "content": "工业相机 视觉模组",
+            "metadata": {},
+            "match_score": 0.9,
+        }],
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._filter_category_candidates",
+        lambda candidates, _category: candidates,
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing_risk.discovery_service.search_external_provider",
+        lambda _requirement: [],
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._batch_assess_risk",
+        lambda _candidates: {"深圳市康斯得电子有限公司": {"risk_score": 20, "risk_level": "low"}},
+    )
+    monkeypatch.setattr("app.domains.sourcing.service.save_result", lambda *_args: None)
+
+    result = search_suppliers("request-1")
+
+    assert result["results"][0]["candidate_type"] == "local"
+    assert result["results"][0]["result_id"]
+
+
 def test_external_candidate_requires_exact_identity_before_access(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.domains.sourcing.service.get_external_candidate",

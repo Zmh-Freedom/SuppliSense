@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage
 from app.graphs.context import build_input_messages
 from app.services import agent
 from app.services.agent import extract_supplier_references
-from app.graphs.react_graph import _forced_external_access_call
+from app.graphs.react_graph import _forced_access_call, _forced_external_access_call
 from app.services.conversation_state import (
     build_conversation_state,
     resolve_supplier_target_selection,
@@ -85,6 +85,29 @@ def test_extract_supplier_references_preserves_external_candidate_identity():
     }]
 
 
+def test_extract_supplier_references_preserves_local_result_identity():
+    result = extract_supplier_references(
+        {
+            "results": [{
+                "supplier_name": "深圳市康斯得电子有限公司",
+                "result_id": "local-result-1",
+                "candidate_type": "local",
+                "risk_level": "low",
+            }]
+        },
+        "search_suppliers",
+    )
+
+    assert result == [{
+        "name": "深圳市康斯得电子有限公司",
+        "kind": "supplier",
+        "source": "search_suppliers",
+        "result_id": "local-result-1",
+        "candidate_type": "local",
+        "risk_level": "low",
+    }]
+
+
 def test_extract_supplier_references_reads_company_names_from_markdown_answer():
     result = extract_supplier_references(
         "1. 深圳市立创电子有限公司\n2. 八方电气（苏州）股份有限公司",
@@ -139,6 +162,23 @@ def test_build_input_messages_routes_access_to_external_candidate_tool():
     assert "不得调用 select_sourcing_result" in messages[0].content
 
 
+def test_build_input_messages_routes_access_to_local_result_tool():
+    messages = asyncio.run(
+        build_input_messages(
+            [],
+            "对深圳市康斯得电子有限公司执行准入申请",
+            [{
+                "name": "深圳市康斯得电子有限公司",
+                "result_id": "local-result-1",
+                "candidate_type": "local",
+            }],
+        )
+    )
+
+    assert "local-result-1" in messages[0].content
+    assert "必须立即调用 select_sourcing_result" in messages[0].content
+
+
 def test_react_graph_hard_routes_unambiguous_external_access_request():
     forced_call = _forced_external_access_call({
         "messages": [HumanMessage(content="对深圳市云钥科技有限公司执行准入申请")],
@@ -153,6 +193,23 @@ def test_react_graph_hard_routes_unambiguous_external_access_request():
     assert forced_call is not None
     assert forced_call.tool_calls[0]["name"] == "select_external_supplier_candidate"
     assert forced_call.tool_calls[0]["args"]["candidate_id"] == "candidate-cloud-key"
+
+
+def test_react_graph_hard_routes_unambiguous_local_access_request():
+    forced_call = _forced_access_call({
+        "messages": [HumanMessage(content="对深圳市康斯得电子有限公司执行准入申请")],
+        "conversation_state": {"active_suppliers": [{
+            "name": "深圳市康斯得电子有限公司",
+            "result_id": "local-result-1",
+            "candidate_type": "local",
+        }]},
+    })
+
+    assert forced_call is not None
+    assert forced_call.tool_calls[0]["name"] == "select_sourcing_result"
+    assert forced_call.tool_calls[0]["args"] == {
+        "result_id": "local-result-1", "action": "apply_access",
+    }
 
 
 def test_load_conversation_context_prefers_latest_structured_references(monkeypatch):

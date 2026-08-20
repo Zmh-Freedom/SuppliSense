@@ -79,12 +79,13 @@ async def build_input_messages(
 
         names = [
             str(reference.get("name"))
-            for reference in references
+        for reference in (references or [])
             if isinstance(reference, dict) and reference.get("name")
         ]
         candidate_context = [
             {
                 "name": reference.get("name"),
+                "result_id": reference.get("result_id"),
                 "candidate_id": reference.get("candidate_id"),
                 "candidate_type": reference.get("candidate_type"),
                 "identity_status": reference.get("identity_status"),
@@ -92,14 +93,16 @@ async def build_input_messages(
             for reference in (references or [])
             if isinstance(reference, dict)
             and reference.get("name")
-            and reference.get("candidate_id")
+            and (reference.get("result_id") or reference.get("candidate_id"))
         ]
         access_instruction = ""
         if any(token in user_message for token in ("准入", "申请入库", "成为合格供应商")):
             access_instruction = (
-                "用户正在请求供应商准入。若结构化候选中存在唯一匹配且 candidate_type=external，"
-                "必须立即调用 select_external_supplier_candidate(candidate_id=候选的candidate_id, "
-                "action=\"apply_access\")；不得调用 select_sourcing_result，也不得创建新的寻源请求。"
+                "用户正在请求供应商准入。若结构化候选中存在唯一匹配且 candidate_type=local，"
+                "必须立即调用 select_sourcing_result(result_id=候选的result_id, action=\"apply_access\")。"
+                "若唯一匹配且 candidate_type=external 且 identity_status=exact，必须立即调用 "
+                "select_external_supplier_candidate(candidate_id=候选的candidate_id, action=\"apply_access\")。"
+                "外部候选不得调用 select_sourcing_result；不得创建新的寻源请求，也不得只输出文字结论。"
                 "若存在多个候选，先让用户选择；若没有候选，才说明缺少候选。"
             )
         resolved_context = execution_context or build_execution_context(

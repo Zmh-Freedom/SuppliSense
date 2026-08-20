@@ -37,6 +37,7 @@ class SupplierReference(BaseModel):
     kind: str = "supplier"
     source: str | None = None
     discovery_source: str | None = None
+    result_id: str | None = None
     candidate_id: str | None = None
     candidate_type: str | None = None
     identity_status: str | None = None

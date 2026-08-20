@@ -45,7 +45,11 @@ def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
         try:
             approved = request_approval("select_sourcing_result", {"result_id": result_id, "action": action})
         except RuntimeError:
-            approved = True
+            return {
+                "success": False,
+                "error": "approval_context_required",
+                "message": "准入申请必须在支持人工审批的 Agent 会话中执行",
+            }
         if not approved:
             return {"cancelled": True, "message": f"用户取消了准入申请操作"}
 

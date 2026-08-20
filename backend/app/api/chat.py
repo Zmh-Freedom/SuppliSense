@@ -16,8 +16,12 @@ async def _langgraph_react_stream(session_id: str, message: str, preference_cont
     from app.graphs.react_graph import build_react_graph
     from app.graphs.streaming import stream_react_graph
     from app.graphs.agent_core.adapter import load_execution_context
+    from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
 
-    graph = build_react_graph(preference_context)
+    graph = build_react_graph(
+        preference_context,
+        checkpointer=await get_sourcing_risk_checkpointer(),
+    )
     context = load_execution_context(session_id, message)
     # 传入 config 用于 Human-in-the-Loop 恢复
     run_config = {"configurable": {"thread_id": session_id}}
@@ -141,8 +145,12 @@ async def _langgraph_react_reflection_stream(session_id: str, message: str, pref
     from app.graphs.react_graph import build_react_graph_with_reflection
     from app.graphs.streaming import stream_react_graph
     from app.graphs.agent_core.adapter import load_execution_context
+    from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
 
-    graph = build_react_graph_with_reflection(preference_context)
+    graph = build_react_graph_with_reflection(
+        preference_context,
+        checkpointer=await get_sourcing_risk_checkpointer(),
+    )
     context = load_execution_context(session_id, message)
     run_config = {"configurable": {"thread_id": session_id}}
     async for event in stream_react_graph(
