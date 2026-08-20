@@ -139,6 +139,21 @@
 - 验证结果：重启后 `GET /health/ready` 返回 200，MongoDB、Redis、PostgreSQL 与 sourcing-risk checkpoint 均为 `ok`；`tests/test_supplier_profile_service.py tests/test_risk.py` 共 5 项通过。
 - 关联提交：`38c6f684 fix(supplier): restore profile section aggregation`。
 
+## ISS-20260820-011 CI 缺少前端门禁、覆盖率和三数据库集成环境
+
+- 发现日期：2026-08-20
+- 状态：已修复
+- 优先级：P1
+- 现象：`.github/workflows/ci.yml` 只执行后端 pytest、Agent E2E、前端 TypeScript 检查和构建；未执行前端 lint/Vitest，后端未安装或执行 pytest-cov，也未提供 PostgreSQL、MongoDB、Redis 服务容器。现有部分 FastAPI 测试通过应用 lifespan 访问真实数据库，CI 环境因此无法稳定区分单元回归与集成回归。
+- 影响：代码合并无法自动发现前端 lint/测试回归，后端覆盖率没有质量门槛，数据库连接池、schema、Mongo 索引和 Redis 连通性没有 CI 级真实验证。
+- 根因：CI 工作流未声明三项 service container；pytest 只有 `agent_e2e` 标记，没有 `integration` 标记；`backend/requirements.txt` 未包含 pytest-cov；覆盖率配置 `fail_under = 0`。
+- 修复方案：增加 `integration` pytest 标记并标注真实数据库测试；加入一个覆盖 PostgreSQL/MongoDB/Redis ping、schema/index 初始化和 Redis round-trip 的集成测试；CI 后端 job 提供三项服务并分别执行覆盖率回归、数据库集成回归和 Agent E2E；前端 job 增加 lint 与 Vitest；加入 pytest-cov 依赖并设置当前可达的覆盖率最低门槛。
+- 验证期间新增环境问题：本地系统 Python 的用户 site-packages 中存在权限异常的 `a1_coverage.pth`，直接安装 pytest-cov 返回 `Operation not permitted`；该问题属于本机 Python 环境，不属于仓库依赖或 CI 配置，已使用临时隔离目录完成验证。
+- 验证期间新增环境问题：三数据库集成测试首次使用测试密码连接已有本地 MongoDB 容器时认证失败；未重置容器或修改现有数据，改用现有开发环境配置后验证通过。测试清理已改为不掩盖主连接/认证错误。
+- 补充修复：测试 fixture 在设置默认值前加载项目 `.env`，避免默认测试密码覆盖本地数据库凭据；CI 环境变量仍优先于默认值。
+- 验证结果：CI 已增加 PostgreSQL、MongoDB、Redis service containers 和固定环境变量；后端非集成/非 Agent E2E 回归 439 项通过，覆盖率 49.73%（门槛 20%）；三数据库集成测试 3 项通过；前端 lint、Vitest 8 个文件/46 项、TypeScript 检查和生产构建全部通过；CI YAML 解析通过，`git diff --check` 通过。
+- 关联提交：待提交。
+
 ## ISS-20260820-009 供应商画像浏览器验收缺少前端开发服务器
 
 - 发现日期：2026-08-20

@@ -25,6 +25,58 @@ jobs:
       run:
         working-directory: backend
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sra
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: sra
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sra -d sra"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      mongo:
+        image: mongo:8
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: ci_password
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SECRET_KEY: ci-secret-key-for-testing-only-32chars
+      MONGO_HOST: 127.0.0.1
+      MONGO_PORT: 27017
+      MONGO_USER: root
+      MONGO_PASSWORD: ci_password
+      MONGO_DB: tianyancha_test
+      PG_HOST: 127.0.0.1
+      PG_PORT: 5432
+      PG_USER: sra
+      PG_PASSWORD: ci_password
+      PG_DB: sra
+      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_PASSWORD: ""
+      AGENT_RUN_V2_ENABLED: "false"
+
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +87,24 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run unit and graph tests
-        run: python -m pytest -v -m "not agent_e2e"
+      - name: Run unit and graph tests with coverage
+        run: >-
+          python -m pytest -v
+          -m "not integration and not agent_e2e"
+          --cov=app
+          --cov-report=term-missing
+          --cov-report=xml
+          --cov-fail-under=20
+
+      - name: Run PostgreSQL, MongoDB, and Redis integration tests
+        run: python -m pytest -v -m integration
+
+      - name: Upload backend coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+          if-no-files-found: error
 
       - name: Run Agent E2E regression suite
         run: python -m pytest -v -m agent_e2e
@@ -61,6 +129,12 @@ jobs:
 
       - name: Type check
         run: npx tsc -b
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run Vitest
+        run: npm test -- --run
 
       - name: Build
         run: npm run build

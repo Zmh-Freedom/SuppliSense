@@ -3,6 +3,7 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 markers = [
     "agent_e2e: deterministic end-to-end Agent workflow regression",
+    "integration: tests that require live PostgreSQL, MongoDB, or Redis services",
 ]
 
 [tool.coverage.run]
@@ -12,5 +13,5 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 0
+fail_under = 20
 show_missing = true

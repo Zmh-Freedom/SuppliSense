@@ -67,6 +67,16 @@ cd ../frontend && npm run lint && npm test -- --run && npm run build
 
 `/api/v1/chat/stream` 会在每次请求中构建唯一的结构化会话快照，供路由、澄清和所有 LangGraph 执行图复用。供应商主数据、监控和准入等写操作必须出现人工审批卡片；批准后通过 LangGraph checkpoint 恢复，不得重新生成或绕过原动作。
 
+CI 还会在 PostgreSQL（pgvector）、MongoDB 和 Redis 服务容器中执行数据库集成回归：
+
+```bash
+cd backend
+python -m pytest -m "not integration and not agent_e2e" --cov=app --cov-report=term-missing --cov-fail-under=20
+python -m pytest -m integration -v
+```
+
+`integration` 标记只用于需要真实数据库服务的测试；本地执行前需确保三项开发依赖已启动。前端 CI 独立执行 `npm run lint`、`npm test -- --run`、类型检查和生产构建。
+
 ### P1 企业身份与 Transactional Outbox
 
 P1 在 PostgreSQL 中维护企业法定主体、别名、核验与逻辑合并，并将企业创建、更新、核验和合并事实与对应 Outbox 事件放在同一事务提交。它**尚未**切换现有风险评估或 MongoDB 供应商库的读写路径；评估不会隐式创建供应商。
