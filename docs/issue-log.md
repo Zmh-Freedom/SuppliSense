@@ -125,4 +125,4 @@
 - 根因：测试将“单个来源文本”错误建模为页面唯一内容，未考虑来源是字段级元数据、可合法重复。
 - 修复方案：改为断言至少一个匹配项，并继续验证官网链接和告警变更详情，避免弱化真实业务覆盖。
 - 验证结果：前端画像定向测试通过；断言继续覆盖官网链接、来源展示与告警变更详情。
-- 关联提交：`3fd311ce feat(supplier): complete profile operations and traceability`
+- 关联提交：`315b0a44 feat(supplier): complete profile operations and traceability`
