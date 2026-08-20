@@ -152,7 +152,7 @@
 - 验证期间新增环境问题：三数据库集成测试首次使用测试密码连接已有本地 MongoDB 容器时认证失败；未重置容器或修改现有数据，改用现有开发环境配置后验证通过。测试清理已改为不掩盖主连接/认证错误。
 - 补充修复：测试 fixture 在设置默认值前加载项目 `.env`，避免默认测试密码覆盖本地数据库凭据；CI 环境变量仍优先于默认值。
 - 验证结果：CI 已增加 PostgreSQL、MongoDB、Redis service containers 和固定环境变量；后端非集成/非 Agent E2E 回归 439 项通过，覆盖率 49.73%（门槛 20%）；三数据库集成测试 3 项通过；前端 lint、Vitest 8 个文件/46 项、TypeScript 检查和生产构建全部通过；CI YAML 解析通过，`git diff --check` 通过。
-- 关联提交：待提交。
+- 关联提交：`7b0f632e ci: add quality and database integration gates`。
 
 ## ISS-20260820-009 供应商画像浏览器验收缺少前端开发服务器
 
