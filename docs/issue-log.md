@@ -137,7 +137,7 @@
 - 根因：8002 监听的是基础设施启动前遗留的 Uvicorn reload 进程，进程内的 checkpoint 未完成初始化；当前代码新建 `TestClient` 实例的 readiness 为 200，说明不是路由实现缺陷。
 - 修复方案：使用当前工作区配置重启本地后端，使其重新建立 PostgreSQL、MongoDB、Redis 和 checkpoint 连接。
 - 验证结果：重启后 `GET /health/ready` 返回 200，MongoDB、Redis、PostgreSQL 与 sourcing-risk checkpoint 均为 `ok`；`tests/test_supplier_profile_service.py tests/test_risk.py` 共 5 项通过。
-- 关联提交：待提交。
+- 关联提交：`38c6f684 fix(supplier): restore profile section aggregation`。
 
 ## ISS-20260820-009 供应商画像浏览器验收缺少前端开发服务器
 
@@ -149,7 +149,7 @@
 - 根因：本地 Vite 前端开发服务器未运行。
 - 修复方案：启动前端开发服务器，确认页面可访问后执行不落库的页面验收。
 - 验证结果：启动 Vite 后 `http://127.0.0.1:50008/` 返回 200，浏览器可进入登录页；后续画像页验收等待已登录会话。
-- 关联提交：待提交。
+- 关联提交：`38c6f684 fix(supplier): restore profile section aggregation`。
 
 ## ISS-20260820-010 供应商画像聚合函数漏传企业名称
 
@@ -163,4 +163,4 @@
 - 修复期间新增测试问题：合规回归测试初版将不存在的 `assess_sanctions` 作为桩函数，实际模块 API 为 `check_sanctions`；该问题仅影响测试桩初始化，不影响生产代码执行。
 - 浏览器验收期间新增测试问题：关联跳转已成功，但验收脚本随后对未限定名称的 `heading` 使用严格匹配，因页面同时存在多个标题而产生自动化断言错误；已改为按画像标题精确定位，不影响产品功能。
 - 验证结果：已补齐画像聚合各分区的 `company_name`/`master` 参数，并兼容合规集合中 `items.result = null` 的无结果缓存。供应商画像定向测试 5 项通过；风险 API 定向测试 2 项通过；真实浏览器验证风险、财务、舆情、合规、ESG、告警和关联数据均可加载，关系图显示 2 个关联实体，点击“大明电子股份有限公司”成功跳转；编辑、重新评估和加入监控均展示人工确认卡且未执行写操作；审计标签正常加载并在无记录时显示空状态。前端画像测试 6 项、lint、类型检查和生产构建通过；`/health/ready` 四项检查均为 `ok`。
-- 关联提交：待提交。
+- 关联提交：`38c6f684 fix(supplier): restore profile section aggregation`。
