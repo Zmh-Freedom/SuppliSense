@@ -484,7 +484,7 @@ export default function ChatView() {
                     <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
                   </svg>
                 </div>
-                <h2 className="text-xl font-bold text-[var(--color-text)]">AI Agent</h2>
+                <h2 className="text-xl font-bold text-[var(--color-text)]">AI 工作台</h2>
                 <p className="text-sm text-gray-500 leading-relaxed">
                   自主调用 20+ 数据工具，完成供应商风险分析、舆情监控、合规筛查等任务
                 </p>

@@ -87,6 +87,12 @@ def ensure_indexes() -> None:
         db["external_supplier_candidates"].create_index(
             [("status", 1), ("updated_at", -1)], background=True
         )
+        db["supplier_master_snapshots"].create_index(
+            [("source", 1), ("source_record_id", 1)], unique=True, background=True
+        )
+        db["supplier_master_snapshots"].create_index(
+            [("name", 1), ("status", 1)], background=True
+        )
         db["agent_report_exports"].create_index(
             [("agent_action_key", 1)], unique=True, sparse=True, background=True
         )

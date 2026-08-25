@@ -193,7 +193,7 @@ export default function Sidebar({ onClose }: Props) {
       <div className="px-4 pt-5 pb-3 flex items-center justify-between">
         <div>
           <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">SuppliSense</h1>
-          <p className="text-[11px] text-gray-400 mt-0.5">AI-Powered Sourcing &amp; Risk Intelligence</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">AI 寻源与供应商风险</p>
         </div>
         <AlertBell />
       </div>

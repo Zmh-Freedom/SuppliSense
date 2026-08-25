@@ -141,6 +141,15 @@ def _scheduled_outbox() -> None:
     run_outbox_once()
 
 
+def _scheduled_feishu_supplier_sync() -> None:
+    try:
+        from app.services.feishu_bitable import sync_supplier_master
+
+        sync_supplier_master()
+    except Exception as exc:
+        logger.error("feishu_supplier_sync_failed", error=str(exc))
+
+
 def start_scheduler() -> None:
     if _scheduler.running:
         return
@@ -160,6 +169,8 @@ def start_scheduler() -> None:
     _add_job(_scheduled_sentiment, sentiment_cron, "sentiment_check")
     _add_job(_scheduled_notify, notify_cron, "alert_notify")
     _add_job(_scheduled_proactive, proactive_cron, "proactive_agent")
+    if settings.FEISHU_BITABLE_ENABLED:
+        _add_job(_scheduled_feishu_supplier_sync, settings.FEISHU_SUPPLIER_SYNC_CRON, "feishu_supplier_sync")
     _add_outbox_job()
 
     try:

@@ -139,6 +139,21 @@ async def add_supplier(body: SupplierInput):
     return {"supplier_id": sid, "status": "created"}
 
 
+@router.post(
+    "/suppliers/sync",
+    summary="同步飞书正式供应商",
+    description="只读读取飞书多维表格并更新本地供应商快照，不会向飞书写入任何数据。",
+    dependencies=[Depends(require_admin_or_analyst)],
+)
+async def sync_supplier_master():
+    from app.services.feishu_bitable import FeishuBitableError, sync_supplier_master as _sync
+
+    try:
+        return await asyncio.to_thread(_sync)
+    except FeishuBitableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.put(
     "/suppliers/{supplier_id}",
     summary="编辑供应商",
@@ -160,7 +175,7 @@ async def update_supplier(supplier_id: str, body: SupplierUpdateInput):
 @router.get(
     "/suppliers",
     summary="供应商列表",
-    description="查询本地供应商库。hide_bare 默认 true，隐藏 source=auto 且无品类/地域的空壳记录。",
+    description="查询供应商主数据只读视图。启用飞书同步后优先查询飞书本地快照；hide_bare 默认 true。",
 )
 async def list_suppliers(
     keyword: str | None = Query(None),

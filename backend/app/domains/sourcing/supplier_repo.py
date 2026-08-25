@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.config import settings
 from app.db.mongo import get_db
 from app.core.logging import get_logger
 from app.schemas.documents import SupplierDocument
@@ -363,7 +364,8 @@ def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:
     """Read matching active suppliers from the local library without side effects."""
     db = get_db()
     candidates: list[dict] = []
-    for supplier in db["suppliers"].find({"status": "active"}):
+    collection = _supplier_read_collection(db)
+    for supplier in collection.find({"status": "active"}):
         candidate = _normalise_sourcing_candidate(supplier)
         reasons = _sourcing_match_reasons(candidate, requirement)
         if reasons is not None:
@@ -432,6 +434,7 @@ def list_suppliers(
     hide_bare: bool = True,
 ) -> dict[str, Any]:
     db = get_db()
+    collection = _supplier_read_collection(db)
     filt: dict[str, Any] = {}
     if keyword:
         filt["name"] = {"$regex": keyword, "$options": "i"}
@@ -444,13 +447,23 @@ def list_suppliers(
             {"regions": {"$exists": True, "$not": {"$size": 0}}},
         ]
 
-    total = db["suppliers"].count_documents(filt)
-    cursor = db["suppliers"].find(filt).sort("created_at", -1).skip((page - 1) * page_size).limit(page_size)
+    total = collection.count_documents(filt)
+    sort_field = "synced_at" if collection.name == "supplier_master_snapshots" else "created_at"
+    cursor = collection.find(filt).sort(sort_field, -1).skip((page - 1) * page_size).limit(page_size)
     items = list(cursor)
     for item in items:
         item["_id"] = str(item["_id"])
 
     return {"items": items, "total": total}
+
+
+def _supplier_read_collection(db: Any) -> Any:
+    """Return the configured formal supplier read model with safe fallback."""
+    if settings.FEISHU_BITABLE_ENABLED:
+        snapshots = db["supplier_master_snapshots"]
+        if snapshots.count_documents({"source": "feishu_bitable"}, limit=1) > 0:
+            return snapshots
+    return db["suppliers"]
 
 
 def list_embedding_dirty() -> list[dict]:

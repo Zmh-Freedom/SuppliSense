@@ -93,19 +93,26 @@ export default function Layout() {
           </div>
         </main>
 
-        {/* Floating Agent button */}
+        {/* Global AI entry: every business page can continue with current context. */}
         {activePath !== '/chat' && activePath !== '/login' && (
           <button
             onClick={() => {
               const isAssess = activePath === '/assess';
               const segments = location.pathname.split('/');
               const companyFromUrl = isAssess && segments.length > 2 ? decodeURIComponent(segments[2]) : '';
-              const q = companyFromUrl ? `?q=${encodeURIComponent(`请对${companyFromUrl}进行全面深度分析`)}` : '';
+              const prompt = companyFromUrl
+                ? `请对${companyFromUrl}进行风险评估，并列出需要人工复核的证据`
+                : activePath === '/sourcing'
+                  ? '请结合当前智能寻源结果，比较候选供应商的匹配度和风险'
+                  : activePath === '/suppliers'
+                    ? '请帮我分析供应商库中需要重点关注的风险'
+                    : '请结合当前页面内容继续分析';
+              const q = `?q=${encodeURIComponent(prompt)}`;
               navigate(`/chat${q}`);
             }}
             className="fixed bottom-6 right-6 z-20 w-14 h-14 rounded-2xl bg-[var(--color-primary-bg)] text-white shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center group"
-            title="AI Agent"
-            aria-label="AI Agent"
+            title="问 AI"
+            aria-label="问 AI"
           >
             <svg className="w-6 h-6 group-hover:scale-110 transition-transform duration-200" viewBox="0 0 24 24" fill="currentColor" stroke="none">
               <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>

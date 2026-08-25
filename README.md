@@ -28,6 +28,7 @@ FastAPI ──→ LangGraph Agent 编排层
          ├── 天眼查 API (工商 / 司法 / 经营)
          ├── AkShare (A股 / 港股财报)
          ├── DuckDuckGo (新闻搜索)
+         ├── 飞书多维表格 (正式供应商主数据，只读同步)
          └── 飞书 Webhook (告警推送)
 ```
 
@@ -65,7 +66,20 @@ python -m pytest -m "not agent_e2e" -v # 单元、图级与领域回归
 cd ../frontend && npm run lint && npm test -- --run && npm run build
 ```
 
-`/api/v1/chat/stream` 会在每次请求中构建唯一的结构化会话快照，供路由、澄清和所有 LangGraph 执行图复用。供应商主数据、监控和准入等写操作必须出现人工审批卡片；批准后通过 LangGraph checkpoint 恢复，不得重新生成或绕过原动作。
+`/api/v1/chat/stream` 会在每次请求中构建唯一的结构化会话快照，供路由、澄清和所有 LangGraph 执行图复用。当前 SuppliSense 负责供应商推荐和风险监控；供应商主数据来自飞书多维表格只读同步，加入监控等本地写操作必须出现人工审批卡片。供应商准入由外部供应商管理系统负责，不在当前 Agent 执行范围内。
+
+### 飞书正式供应商主数据（只读）
+
+配置 `backend/.env` 中的 `FEISHU_BITABLE_*` 和自建应用凭据后，将 `FEISHU_BITABLE_ENABLED=true`。系统通过 tenant access token 分页读取 Bitable 记录，写入本地 `supplier_master_snapshots` 快照；供应商库和寻源查询优先使用快照，未配置或快照为空时回退本地供应商库。
+
+管理员或分析师可以手动触发同步：
+
+```bash
+curl -X POST -H "Authorization: Bearer <access-token>" \
+  http://localhost:8000/api/v1/sourcing/suppliers/sync
+```
+
+同步接口只读取飞书，不包含任何写回操作。系统也会按 `FEISHU_SUPPLIER_SYNC_CRON` 定时同步。
 
 CI 还会在 PostgreSQL（pgvector）、MongoDB 和 Redis 服务容器中执行数据库集成回归：
 
@@ -109,16 +123,15 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 
 ---
 
-## 功能模块（7 个标签页）
+## 功能模块
 
 | 标签 | 路由 | 功能 |
 |------|------|------|
-| **风险看板** | `/` | 统计卡片 + 风险分布 + 预警列表 + PMI 宏观指标 |
-| **企业评估** | `/assess` | 13 维度评分 + 15 财务指标 + ESG + 制裁 + 传染图谱 + 情景模拟 + Excel/HTML 导出 |
-| **智能寻源** | `/sourcing` | 采购需求 → 向量检索 → 并行风险评估 → Top-N 排序推荐 → 监控/准入 |
-| **供应商库** | `/suppliers` | 供应商主数据管理 + `/suppliers/:id` 供应商画像（8 领域聚合） |
-| **Agent** | `/chat` | 25 工具 AI 对话，6 种编排模式自动路由，SSE 流式 + Human-in-the-Loop 审批 |
-| **关系图谱** | `/contagion` | 风险传染路径 + 股权穿透 + 供应链依赖 |
+| **AI 工作台** | `/chat` | 25 工具 AI 对话，6 种编排模式自动路由，SSE 流式 + 上下文证据 |
+| **总览** | `/` | 风险分布、预警摘要和供应商风险概览 |
+| **智能寻源** | `/sourcing` | 采购需求 → 多源候选 → 风险评估 → Top-N 推荐 → 人工确认加入监控 |
+| **风险监控** | `/assess` | 单供应商风险评估、趋势、证据和监控联动 |
+| **供应商库** | `/suppliers` | 正式供应商主数据只读视图 + `/suppliers/:id` 供应商画像 |
 | **设置** | `/settings` | 用户偏好 + 监控清单管理 + 告警规则 + 知识库 |
 
 ---
@@ -132,7 +145,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 | LLM | DeepSeek Chat（langchain-openai, OpenAI 兼容 API） |
 | 数据库 | MongoDB (pymongo + motor) + PostgreSQL pgvector + Redis |
 | 认证 | JWT (HttpOnly Cookie + Refresh Token) + BCrypt |
-| 调度 | APScheduler（6 个定时任务） |
+| 调度 | APScheduler（风险、舆情、告警、主动 Agent、Outbox、飞书同步） |
 | 实时通信 | WebSocket（指数退避重连）+ SSE（对话流式） |
 | 日志 | structlog（结构化日志）+ Sentry（异常监控） |
 | 监控 | Prometheus metrics + 请求 ID 追踪 |
@@ -142,7 +155,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 | 状态管理 | TanStack Query 5（服务端状态）+ localStorage（持久化） |
 | 图表 | recharts（趋势图）+ @xyflow/react（关系图谱） |
 | Markdown | react-markdown（聊天消息渲染） |
-| 数据源 | 天眼查 API / AkShare / DuckDuckGo |
+| 数据源 | 飞书多维表格 / 天眼查 API / AkShare / DuckDuckGo |
 | 通知 | 飞书 Webhook（HMAC-SHA256） |
 | CI/CD | GitHub Actions（pytest + tsc + vite build） |
 
@@ -171,7 +184,7 @@ app/
 │       └── sourcing.py         # 寻源子图
 ├── domains/       # 业务领域（repo → service → api 分层）
 │   ├── risk/      # 风险评估 / 舆情 / ESG / 传染 / 制裁 / 宏观 / 替代
-│   ├── sourcing/  # 智能寻源 / 准入审批
+│   ├── sourcing/  # 智能寻源 / 监控联动
 │   ├── supplier/  # 供应商主数据 / 供应商画像
 │   ├── alert/     # 预警监控 / 通知
 │   ├── auth/      # 用户认证 / 权限管理

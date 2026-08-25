@@ -79,7 +79,7 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
     await completeStream()
 
-    expect(screen.getByText('AI Agent')).toBeInTheDocument()
+    expect(screen.getByText('AI 工作台')).toBeInTheDocument()
   })
 
   it('does not recreate a deleted session when its stream completes', async () => {

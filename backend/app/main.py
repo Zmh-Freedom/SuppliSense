@@ -100,6 +100,17 @@ def _validate_config():
         "CHANGE_ME_生成一个64位随机字符串",
     ):
         errors.append("SECRET_KEY 仍为占位符，请设置真实的随机密钥。")
+    if settings.FEISHU_BITABLE_ENABLED:
+        missing_feishu = [
+            name for name, value in (
+                ("FEISHU_APP_ID", settings.FEISHU_APP_ID),
+                ("FEISHU_APP_SECRET", settings.FEISHU_APP_SECRET),
+                ("FEISHU_BITABLE_APP_TOKEN", settings.FEISHU_BITABLE_APP_TOKEN),
+                ("FEISHU_BITABLE_TABLE_ID", settings.FEISHU_BITABLE_TABLE_ID),
+            ) if not value
+        ]
+        if missing_feishu:
+            errors.append(f"飞书多维表格已启用，但缺少配置: {', '.join(missing_feishu)}")
     if not settings.USE_PG_USERS:
         logger.warning("USE_PG_USERS=false 已废弃，用户系统仅支持 PostgreSQL。将强制使用 PG。")
     if errors:

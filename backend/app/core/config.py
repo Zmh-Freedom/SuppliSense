@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     # Feishu
     FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
+    # Feishu Bitable read-only supplier master integration
+    FEISHU_BITABLE_ENABLED: bool = os.getenv("FEISHU_BITABLE_ENABLED", "false").lower() == "true"
+    FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
+    FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
+    FEISHU_BITABLE_APP_TOKEN: str = os.getenv("FEISHU_BITABLE_APP_TOKEN", "")
+    FEISHU_BITABLE_TABLE_ID: str = os.getenv("FEISHU_BITABLE_TABLE_ID", "")
+    FEISHU_BITABLE_BASE_URL: str = os.getenv("FEISHU_BITABLE_BASE_URL", "https://open.feishu.cn")
+    FEISHU_BITABLE_PAGE_SIZE: int = int(os.getenv("FEISHU_BITABLE_PAGE_SIZE", "100"))
+    FEISHU_BITABLE_TIMEOUT_SECONDS: float = float(os.getenv("FEISHU_BITABLE_TIMEOUT_SECONDS", "10"))
+    FEISHU_SUPPLIER_SYNC_CRON: str = os.getenv("FEISHU_SUPPLIER_SYNC_CRON", "0 */6 * * *")
 
     # PostgreSQL
     PG_HOST: str = os.getenv("PG_HOST", "localhost")

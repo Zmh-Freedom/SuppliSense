@@ -80,7 +80,9 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     for (const decision of run?.decisions ?? []) groups.set(decision.group, [...(groups.get(decision.group) ?? []), decision]);
     return groups;
   }, [run?.decisions]);
-  const proposals = run?.proposals ?? run?.action_proposals ?? [];
+  const proposals = (run?.proposals ?? run?.action_proposals ?? []).filter(
+    proposal => proposal.action_type === 'add_watchlist',
+  );
   const runId = run?.id ?? run?.run_id ?? activeRunId;
 
   const submitRequirement = () => {

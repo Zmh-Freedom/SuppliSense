@@ -17,9 +17,8 @@ export default function SourcingPage() {
   const [currentRequestId, setCurrentRequestId] = useState('');
   const [steps, setSteps] = useState<Step[]>([]);
   const [selectMsg, setSelectMsg] = useState('');
-  // Track which results have been watchlisted / applied
+  // Track which results have been added to risk monitoring.
   const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
-  const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
 
   const historyQuery = useQuery({
     queryKey: queryKeys.sourcingRequests,
@@ -108,9 +107,6 @@ export default function SourcingPage() {
       if (vars.action === 'watchlist') {
         setWatchedIds(prev => new Set(prev).add(vars.resultId));
         setSelectMsg('已加入监控列表');
-      } else {
-        setAppliedIds(prev => new Set(prev).add(vars.resultId));
-        setSelectMsg('已提交准入申请');
       }
       setTimeout(() => setSelectMsg(''), 3000);
     },
@@ -127,7 +123,7 @@ export default function SourcingPage() {
         <SourcingRiskWorkbench />
 
         <div className="border-t border-[var(--color-border)] pt-6">
-          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-4">旧版寻源记录</h2>
+          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-4">历史寻源请求</h2>
         <h2 className="text-lg font-bold text-[var(--color-text)]">智能寻源</h2>
 
         {/* 采购需求表单 */}
@@ -226,8 +222,7 @@ export default function SourcingPage() {
                 key={r.result_id}
                 result={r}
                 watched={watchedIds.has(r.result_id)}
-                applied={appliedIds.has(r.result_id)}
-                onSelect={action => selectMutation.mutate({ resultId: r.result_id, action })}
+                onWatch={() => selectMutation.mutate({ resultId: r.result_id, action: 'watchlist' })}
               />
             ))}
           </div>
@@ -286,11 +281,10 @@ function StatusBadge({ status, count }: { status: string; count: number }) {
   return <span className="text-xs text-gray-400">{status}</span>;
 }
 
-function SourcingResultCard({ result, watched, applied, onSelect }: {
+function SourcingResultCard({ result, watched, onWatch }: {
   result: SourcingResultItem;
   watched: boolean;
-  applied: boolean;
-  onSelect: (action: string) => void;
+  onWatch: () => void;
 }) {
   const color = getRiskColor(result.risk_score ?? 50);
   const matchPct = (result.match_score * 100).toFixed(0);
@@ -308,7 +302,6 @@ function SourcingResultCard({ result, watched, applied, onSelect }: {
               </span>
             )}
             {watched && <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">已监控</span>}
-            {applied && <span className="text-xs text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full">已申请</span>}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
             <span title="向量语义匹配度">
@@ -328,20 +321,10 @@ function SourcingResultCard({ result, watched, applied, onSelect }: {
             <span className="text-xs text-blue-400 border border-blue-200 rounded-lg px-3 py-1.5">✓ 已监控</span>
           ) : (
             <button
-              onClick={() => onSelect('watchlist')}
+              onClick={onWatch}
               className="text-xs border border-[var(--color-border)] rounded-lg px-3 py-1.5 hover:bg-[var(--color-surface-hover)] transition-colors"
             >
               加入监控
-            </button>
-          )}
-          {applied ? (
-            <span className="text-xs text-green-500 border border-green-200 rounded-lg px-3 py-1.5">✓ 已申请</span>
-          ) : (
-            <button
-              onClick={() => onSelect('apply_access')}
-              className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] transition-colors"
-            >
-              申请准入
             </button>
           )}
         </div>
