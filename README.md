@@ -542,6 +542,7 @@ Shadow → Internal → Canary → Default 逐阶段推进。Promotion 必须同
 | `docs/project-status-report-2026Q2.md` | 2026 Q2 阶段报告 |
 | `docs/manual-test-issues.md` | 手动测试问题汇总（20+ 问题） |
 | `docs/superpowers/specs/2026-06-17-sourcing-and-risk-system-design.md` | 智能寻源 + 风险预警体系设计 |
+| `docs/integration/feishu-bitable-data-contract.md` | 当前有效的飞书供应商三表数据契约 |
 | `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` | 当前唯一有效计划：供应商推荐、风险监控与飞书只读数据源 |
 | `docs/superpowers/plans/2026-06-16-enterprise-upgrade-zh.md` | 企业级升级实施计划 |
 | `docs/SuppliSense_项目评审_v3.pdf` | 项目评审演示 |
