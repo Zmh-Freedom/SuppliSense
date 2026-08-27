@@ -170,11 +170,13 @@ def test_redis_command_preserves_special_password_as_one_argument(tmp_path) -> N
         "\n".join((
             "MONGO_PASSWORD=fixture",
             "PG_PASSWORD=fixture",
-            f"REDIS_PASSWORD={json.dumps(password)}",
+            "REDIS_PASSWORD=fixture",
         )),
         encoding="utf-8",
     )
     shutil.copy2(env_file, tmp_path / ".env.docker")
+    run_env = os.environ.copy()
+    run_env["REDIS_PASSWORD"] = password
 
     result = subprocess.run(
         [
@@ -184,6 +186,7 @@ def test_redis_command_preserves_special_password_as_one_argument(tmp_path) -> N
         ],
         text=True,
         capture_output=True,
+        env=run_env,
         check=False,
     )
 

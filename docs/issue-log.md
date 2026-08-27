@@ -40,14 +40,16 @@
 ## ISS-20260827-002 CI backend Compose 特殊密码夹具解析失败
 
 - 发现日期：2026-08-27
-- 状态：已修复；等待 CI 重跑
+- 状态：修复中；等待 CI 重跑
 - 优先级：P1
 - 现象：GitHub Actions 的 backend 检查中，`tests/test_compose.py::test_redis_command_preserves_special_password_as_one_argument` 失败；441 项测试通过，失败命令报告 `REDIS_PASSWORD` 缺少值。
 - 影响：Pull Request 的 backend CI 失败，无法完成自动合并检查；当前失败不是 PostgreSQL、MongoDB 或 Redis 服务不可用。
 - 根因：测试将包含空格和特殊字符的 Redis 密码以未加引号的形式写入 dotenv 夹具；GitHub Runner 使用的 Compose 版本按 dotenv 语法将其解析为无效值，本地 Compose 版本未复现该差异。
 - 修复方案：将测试夹具中的特殊密码按 dotenv 双引号格式写入，并继续验证 Compose 展开后的 exec-form 命令参数与原密码完全一致；补充跨环境回归验证。
-- 验证结果：本地 `tests/test_compose.py` 8 项通过；GitHub Actions 原失败为 441 项通过、1 项失败，失败已定位为未加引号的 dotenv 特殊密码夹具。完整本地测试受当前缺少 `pytest-cov` 和 PostgreSQL 未启动影响，未将环境阻塞误判为代码失败。
-- 关联提交：`3d669f01`
+- 复发记录：将夹具改为双引号后，GitHub Runner 仍报告 `REDIS_PASSWORD` 缺少值；本地 Compose 可以通过，说明不同 Compose 版本对该边界 dotenv 输入的解析行为不一致。
+- 修复方案（第二轮）：将特殊密码通过子进程环境变量注入，保持 `.env` 仅提供其他配置，测试单独验证 Compose 插值和 exec-form 参数不拆分；不修改生产 Compose 配置。
+- 验证结果：本地 `tests/test_compose.py` 8 项通过；第二轮修复后的 GitHub Actions 重跑待完成。完整本地测试受当前缺少 `pytest-cov` 和 PostgreSQL 未启动影响，未将环境阻塞误判为代码失败。
+- 关联提交：`3d669f01`；第二轮修复待提交。
 
 ## ISS-20260825-002 缺少飞书多维表格正式供应商只读适配层
 
