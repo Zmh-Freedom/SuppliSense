@@ -90,6 +90,6 @@
 
 ## 7. 文档治理
 
-本文件是 Agent 架构和边界的唯一活动设计依据；任务顺序、开关、迁移和测试执行以《Agent 核心收敛与受控 Loop 实施计划》为准；质量门槛以《Agent 验收与评测手册》为准。
+本文件是 Agent 架构和边界的活动设计依据；任务顺序、开关、迁移和测试执行以 `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` 为唯一有效实施计划；质量门槛以《Agent 验收与评测手册》为准。
 
 历史 V2 和 Supervisor 设计/计划保存在 `docs/archive/agent-design/`，只用于实现追溯，不再作为新开发依据。

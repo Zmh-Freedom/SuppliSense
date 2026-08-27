@@ -1,7 +1,7 @@
 # Agent 核心收敛与受控 Loop 实施计划
 
 日期：2026-08-18  
-状态：实施完成，持续回归（2026-08-20）
+状态：已完成的历史计划（2026-08-20）；后续开发以 `2026-08-27-sourcing-risk-feishu-plan.md` 为准
 范围：Agent 核心能力、智能寻源、供应商风险分析、对话工作流；不包含生产部署环境改造
 
 ## 1. 目标
@@ -19,7 +19,7 @@
 
 ## 2. 与现有设计的关系
 
-本计划是当前唯一的 Agent 实施计划，并以以下活动文档为准：
+本计划是已完成的 Agent 核心收敛实施记录；后续供应商推荐、风险监控和飞书数据源开发以 `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` 为唯一有效计划，并以以下活动文档为准：
 
 - `docs/superpowers/specs/2026-08-18-agent-unified-architecture.md`：架构、职责和业务边界；
 - `docs/release/agent-acceptance-and-evaluation.md`：测试、评测与质量门槛。
