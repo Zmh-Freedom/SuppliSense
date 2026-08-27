@@ -70,7 +70,7 @@ cd ../frontend && npm run lint && npm test -- --run && npm run build
 
 ### 飞书正式供应商主数据（只读）
 
-配置 `backend/.env` 中的 `FEISHU_BITABLE_*`、`FEISHU_SUPPLIER_*_TABLE_ID` 和自建应用凭据后，将 `FEISHU_BITABLE_ENABLED=true`。三张表分别是 `FEISHU_SUPPLIER_MASTER_TABLE_ID`（供应商主数据）、`FEISHU_SUPPLIER_CAPABILITY_TABLE_ID`（供货能力）和 `FEISHU_SUPPLIER_CONTACT_TABLE_ID`（联系人）。迁移期间，主数据表仍可使用旧的 `FEISHU_BITABLE_TABLE_ID` 作为回退。系统通过 tenant access token 分页读取 Bitable 记录，写入本地快照；供应商库和寻源查询优先使用快照，未配置或快照为空时回退本地供应商库。
+配置 `backend/.env` 中的 `FEISHU_BITABLE_*`、`FEISHU_SUPPLIER_*_TABLE_ID` 和自建应用凭据后，将 `FEISHU_BITABLE_ENABLED=true`。三张表分别是 `FEISHU_SUPPLIER_MASTER_TABLE_ID`（供应商主数据）、`FEISHU_SUPPLIER_CAPABILITY_TABLE_ID`（供货能力）和 `FEISHU_SUPPLIER_CONTACT_TABLE_ID`（联系人）。系统通过 tenant access token 分页读取 Bitable 记录，写入本地快照；供应商库和寻源查询优先使用快照，未配置或快照为空时回退本地供应商库。
 
 管理员或分析师可以手动触发同步：
 

@@ -178,4 +178,4 @@ FEISHU_SUPPLIER_CAPABILITY_TABLE_ID   # 供应商供货能力
 FEISHU_SUPPLIER_CONTACT_TABLE_ID      # 供应商联系人
 ```
 
-迁移期间，未设置 `FEISHU_SUPPLIER_MASTER_TABLE_ID` 时，允许使用旧的 `FEISHU_BITABLE_TABLE_ID` 作为主数据表回退。能力表和联系人表没有旧配置回退；在三表同步启用前必须分别配置。
+三张表均必须分别配置对应的 table ID；不再支持旧的单表配置变量。三表同步启用前必须完成三项配置。

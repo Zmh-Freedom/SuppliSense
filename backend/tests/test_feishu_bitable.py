@@ -95,6 +95,10 @@ def test_build_clients_use_independent_supplier_table_ids(monkeypatch) -> None:
     assert build_supplier_contact_client().table_id == "tbl-contact"
 
 
+def test_settings_no_longer_expose_legacy_single_table_id() -> None:
+    assert not hasattr(settings, "FEISHU_BITABLE_TABLE_ID")
+
+
 class FakeCollection:
     name = "supplier_master_snapshots"
 

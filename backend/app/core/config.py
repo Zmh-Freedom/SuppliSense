@@ -65,11 +65,7 @@ class Settings(BaseSettings):
     FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
     FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
     FEISHU_BITABLE_APP_TOKEN: str = os.getenv("FEISHU_BITABLE_APP_TOKEN", "")
-    # Legacy single-table setting. Keep it as a fallback for the supplier master table.
-    FEISHU_BITABLE_TABLE_ID: str = os.getenv("FEISHU_BITABLE_TABLE_ID", "")
-    FEISHU_SUPPLIER_MASTER_TABLE_ID: str = os.getenv(
-        "FEISHU_SUPPLIER_MASTER_TABLE_ID", ""
-    ) or FEISHU_BITABLE_TABLE_ID
+    FEISHU_SUPPLIER_MASTER_TABLE_ID: str = os.getenv("FEISHU_SUPPLIER_MASTER_TABLE_ID", "")
     FEISHU_SUPPLIER_CAPABILITY_TABLE_ID: str = os.getenv(
         "FEISHU_SUPPLIER_CAPABILITY_TABLE_ID", ""
     )

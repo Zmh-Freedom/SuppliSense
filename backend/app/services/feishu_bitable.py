@@ -279,7 +279,7 @@ def _build_client(table_id: str) -> FeishuBitableClient:
 
 
 def build_client() -> FeishuBitableClient:
-    """Build the legacy-compatible client for the supplier master table."""
+    """Build the client for the supplier master table."""
     return _build_client(settings.FEISHU_SUPPLIER_MASTER_TABLE_ID)
 
 
