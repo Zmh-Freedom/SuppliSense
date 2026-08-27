@@ -170,7 +170,7 @@ def test_redis_command_preserves_special_password_as_one_argument(tmp_path) -> N
         "\n".join((
             "MONGO_PASSWORD=fixture",
             "PG_PASSWORD=fixture",
-            f"REDIS_PASSWORD={password}",
+            f"REDIS_PASSWORD={json.dumps(password)}",
         )),
         encoding="utf-8",
     )
