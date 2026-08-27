@@ -97,7 +97,7 @@ class FeishuBitableClient:
         """Read all Bitable records through page-token pagination."""
         if not self.app_token or not self.table_id:
             raise FeishuBitableError(
-                "未配置 FEISHU_BITABLE_APP_TOKEN 或 FEISHU_BITABLE_TABLE_ID"
+                "未配置 FEISHU_BITABLE_APP_TOKEN 或供应商表的 table ID"
             )
 
         token = self.get_tenant_access_token()
@@ -266,16 +266,36 @@ def normalize_supplier_record(record: dict[str, Any], *, synced_at: datetime | N
     }
 
 
-def build_client() -> FeishuBitableClient:
+def _build_client(table_id: str) -> FeishuBitableClient:
     return FeishuBitableClient(
         app_id=settings.FEISHU_APP_ID,
         app_secret=settings.FEISHU_APP_SECRET,
         app_token=settings.FEISHU_BITABLE_APP_TOKEN,
-        table_id=settings.FEISHU_BITABLE_TABLE_ID,
+        table_id=table_id,
         base_url=settings.FEISHU_BITABLE_BASE_URL,
         page_size=settings.FEISHU_BITABLE_PAGE_SIZE,
         timeout_seconds=settings.FEISHU_BITABLE_TIMEOUT_SECONDS,
     )
+
+
+def build_client() -> FeishuBitableClient:
+    """Build the legacy-compatible client for the supplier master table."""
+    return _build_client(settings.FEISHU_SUPPLIER_MASTER_TABLE_ID)
+
+
+def build_supplier_master_client() -> FeishuBitableClient:
+    """Build a client configured for the supplier master table."""
+    return _build_client(settings.FEISHU_SUPPLIER_MASTER_TABLE_ID)
+
+
+def build_supplier_capability_client() -> FeishuBitableClient:
+    """Build a client configured for the supplier capability table."""
+    return _build_client(settings.FEISHU_SUPPLIER_CAPABILITY_TABLE_ID)
+
+
+def build_supplier_contact_client() -> FeishuBitableClient:
+    """Build a client configured for the supplier contact table."""
+    return _build_client(settings.FEISHU_SUPPLIER_CONTACT_TABLE_ID)
 
 
 def sync_supplier_master(client: FeishuBitableClient | None = None) -> dict[str, Any]:

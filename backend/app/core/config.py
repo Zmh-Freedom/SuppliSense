@@ -65,7 +65,17 @@ class Settings(BaseSettings):
     FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
     FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
     FEISHU_BITABLE_APP_TOKEN: str = os.getenv("FEISHU_BITABLE_APP_TOKEN", "")
+    # Legacy single-table setting. Keep it as a fallback for the supplier master table.
     FEISHU_BITABLE_TABLE_ID: str = os.getenv("FEISHU_BITABLE_TABLE_ID", "")
+    FEISHU_SUPPLIER_MASTER_TABLE_ID: str = os.getenv(
+        "FEISHU_SUPPLIER_MASTER_TABLE_ID", ""
+    ) or FEISHU_BITABLE_TABLE_ID
+    FEISHU_SUPPLIER_CAPABILITY_TABLE_ID: str = os.getenv(
+        "FEISHU_SUPPLIER_CAPABILITY_TABLE_ID", ""
+    )
+    FEISHU_SUPPLIER_CONTACT_TABLE_ID: str = os.getenv(
+        "FEISHU_SUPPLIER_CONTACT_TABLE_ID", ""
+    )
     FEISHU_BITABLE_BASE_URL: str = os.getenv("FEISHU_BITABLE_BASE_URL", "https://open.feishu.cn")
     FEISHU_BITABLE_PAGE_SIZE: int = int(os.getenv("FEISHU_BITABLE_PAGE_SIZE", "100"))
     FEISHU_BITABLE_TIMEOUT_SECONDS: float = float(os.getenv("FEISHU_BITABLE_TIMEOUT_SECONDS", "10"))

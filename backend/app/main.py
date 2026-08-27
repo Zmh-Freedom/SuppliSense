@@ -106,7 +106,7 @@ def _validate_config():
                 ("FEISHU_APP_ID", settings.FEISHU_APP_ID),
                 ("FEISHU_APP_SECRET", settings.FEISHU_APP_SECRET),
                 ("FEISHU_BITABLE_APP_TOKEN", settings.FEISHU_BITABLE_APP_TOKEN),
-                ("FEISHU_BITABLE_TABLE_ID", settings.FEISHU_BITABLE_TABLE_ID),
+                ("FEISHU_SUPPLIER_MASTER_TABLE_ID", settings.FEISHU_SUPPLIER_MASTER_TABLE_ID),
             ) if not value
         ]
         if missing_feishu:

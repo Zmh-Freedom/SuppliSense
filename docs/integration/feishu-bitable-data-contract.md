@@ -167,3 +167,15 @@ supplier_code                  -> 主数据、能力表、联系人表关联
 - 关闭飞书或同步失败时可回退本地数据，并明确返回来源状态。
 
 CSV 建表模板位于 `outputs/feishu_supplier_template/`，字段发生变更时必须先修改本契约，再同步模板、适配器和测试。
+
+## 9. 配置约定
+
+三张表使用同一个飞书自建应用和 `FEISHU_BITABLE_APP_TOKEN`，通过以下环境变量分别指定：
+
+```text
+FEISHU_SUPPLIER_MASTER_TABLE_ID       # 供应商主数据
+FEISHU_SUPPLIER_CAPABILITY_TABLE_ID   # 供应商供货能力
+FEISHU_SUPPLIER_CONTACT_TABLE_ID      # 供应商联系人
+```
+
+迁移期间，未设置 `FEISHU_SUPPLIER_MASTER_TABLE_ID` 时，允许使用旧的 `FEISHU_BITABLE_TABLE_ID` 作为主数据表回退。能力表和联系人表没有旧配置回退；在三表同步启用前必须分别配置。

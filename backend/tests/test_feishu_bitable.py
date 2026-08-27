@@ -6,7 +6,13 @@ import httpx
 
 from app.core.config import settings
 from app.services import feishu_bitable
-from app.services.feishu_bitable import FeishuBitableClient, normalize_supplier_record
+from app.services.feishu_bitable import (
+    FeishuBitableClient,
+    build_supplier_capability_client,
+    build_supplier_contact_client,
+    build_supplier_master_client,
+    normalize_supplier_record,
+)
 
 
 class FakeResponse:
@@ -77,6 +83,16 @@ def test_bitable_client_reads_all_pages_and_reuses_token(monkeypatch) -> None:
     assert [record["record_id"] for record in records] == ["rec-1", "rec-2"]
     assert calls == [("GET", None), ("GET", "page-2")]
     assert client.get_tenant_access_token() == "tenant-token"
+
+
+def test_build_clients_use_independent_supplier_table_ids(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "FEISHU_SUPPLIER_MASTER_TABLE_ID", "tbl-master")
+    monkeypatch.setattr(settings, "FEISHU_SUPPLIER_CAPABILITY_TABLE_ID", "tbl-capability")
+    monkeypatch.setattr(settings, "FEISHU_SUPPLIER_CONTACT_TABLE_ID", "tbl-contact")
+
+    assert build_supplier_master_client().table_id == "tbl-master"
+    assert build_supplier_capability_client().table_id == "tbl-capability"
+    assert build_supplier_contact_client().table_id == "tbl-contact"
 
 
 class FakeCollection:
