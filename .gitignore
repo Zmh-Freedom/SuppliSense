@@ -81,3 +81,6 @@ docs/SuppliSense_项目评审*.pptx
 docs/arch-*.jpg
 docs/s*-tiny.jpg
 docs/slide*-*.png
+
+# 本地供应商 Excel 转换结果（可能包含业务联系方式）
+outputs/feishu_supplier_import/

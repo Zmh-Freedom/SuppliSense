@@ -81,6 +81,17 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 
 同步接口只读取飞书，不包含任何写回操作。系统也会按 `FEISHU_SUPPLIER_SYNC_CRON` 定时同步。
 
+如果需要把旧供应商注册 Excel 转成三张飞书导入表，可执行：
+
+```bash
+python backend/scripts/convert_supplier_workbook.py \
+  "/path/to/供应商注册导入验证数据-合并版.xlsx" \
+  --output-dir outputs/feishu_supplier_import \
+  --default-category "汽车零部件"
+```
+
+详细映射规则见 `docs/integration/feishu-import-converter.md`。脚本只生成 CSV，不会修改源文件或写入飞书。
+
 CI 还会在 PostgreSQL（pgvector）、MongoDB 和 Redis 服务容器中执行数据库集成回归：
 
 ```bash
@@ -543,6 +554,7 @@ Shadow → Internal → Canary → Default 逐阶段推进。Promotion 必须同
 | `docs/manual-test-issues.md` | 手动测试问题汇总（20+ 问题） |
 | `docs/superpowers/specs/2026-06-17-sourcing-and-risk-system-design.md` | 智能寻源 + 风险预警体系设计 |
 | `docs/integration/feishu-bitable-data-contract.md` | 当前有效的飞书供应商三表数据契约 |
+| `docs/integration/feishu-import-converter.md` | 旧供应商注册 Excel 转飞书三表 CSV 说明 |
 | `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` | 当前唯一有效计划：供应商推荐、风险监控与飞书只读数据源 |
 | `docs/superpowers/plans/2026-06-16-enterprise-upgrade-zh.md` | 企业级升级实施计划 |
 | `docs/SuppliSense_项目评审_v3.pdf` | 项目评审演示 |
