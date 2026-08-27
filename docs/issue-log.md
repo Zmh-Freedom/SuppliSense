@@ -49,7 +49,7 @@
 - 复发记录：将夹具改为双引号后，GitHub Runner 仍报告 `REDIS_PASSWORD` 缺少值；本地 Compose 可以通过，说明不同 Compose 版本对该边界 dotenv 输入的解析行为不一致。
 - 修复方案（第二轮）：将特殊密码通过子进程环境变量注入，保持 `.env` 仅提供其他配置，测试单独验证 Compose 插值和 exec-form 参数不拆分；不修改生产 Compose 配置。
 - 验证结果：本地 `tests/test_compose.py` 8 项通过；第二轮修复后的 GitHub Actions 重跑待完成。完整本地测试受当前缺少 `pytest-cov` 和 PostgreSQL 未启动影响，未将环境阻塞误判为代码失败。
-- 关联提交：`3d669f01`；第二轮修复待提交。
+- 关联提交：`3d669f01`、`2a72f38d`。
 
 ## ISS-20260825-002 缺少飞书多维表格正式供应商只读适配层
 
