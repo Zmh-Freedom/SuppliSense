@@ -93,6 +93,24 @@ def ensure_indexes() -> None:
         db["supplier_master_snapshots"].create_index(
             [("name", 1), ("status", 1)], background=True
         )
+        db["supplier_capability_snapshots"].create_index(
+            [("source", 1), ("source_record_id", 1)], unique=True, background=True
+        )
+        db["supplier_capability_snapshots"].create_index(
+            [("supplier_id", 1), ("category", 1)], background=True
+        )
+        db["supplier_contact_snapshots"].create_index(
+            [("source", 1), ("source_record_id", 1)], unique=True, background=True
+        )
+        db["supplier_contact_snapshots"].create_index(
+            [("supplier_id", 1), ("is_primary_contact", 1)], background=True
+        )
+        db["feishu_supplier_identity_map"].create_index(
+            [("source_system", 1), ("supplier_code", 1)], unique=True, background=True
+        )
+        db["feishu_supplier_identity_map"].create_index(
+            [("source_system", 1), ("source_record_id", 1)], unique=True, background=True
+        )
         db["agent_report_exports"].create_index(
             [("agent_action_key", 1)], unique=True, sparse=True, background=True
         )

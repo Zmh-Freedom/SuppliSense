@@ -138,7 +138,9 @@ class FeishuBitableClient:
 
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "supplier_code": ("supplier_code", "supplierCode", "供应商代码", "供货商代码"),
     "name": ("supplier_name", "company_name", "name", "供应商名称", "公司名称", "orgName"),
+    "short_name": ("short_name", "shortName", "供应商简称"),
     "unified_code": (
         "unified_code", "unified_social_credit_code", "credit_code", "统一社会信用代码",
         "taxCode", "documentNumber",
@@ -149,7 +151,12 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "reg_status": ("reg_status", "regStatus", "工商状态", "登记状态"),
     "industry": ("industry", "行业", "所属行业"),
     "categories": ("categories", "main_categories", "category", "主营品类", "品类"),
+    "major_products": ("major_products", "majorProducts", "主要产品"),
+    "business_scope": ("business_scope", "businessScope", "经营范围"),
     "regions": ("regions", "region", "经营地区", "地区"),
+    "province": ("province", "注册地址省份", "省份"),
+    "city": ("city", "注册地址城市", "市"),
+    "address": ("address", "注册地址", "详细地址", "注册地址-详细地址"),
     "contact_person": ("contact_person", "contactPerson", "供应商负责人", "联系人"),
     "contact_phone": ("contact_phone", "phone", "telephone", "联系电话", "电话"),
     "contact_email": ("contact_email", "email", "邮箱", "电子邮箱"),
@@ -158,6 +165,24 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "supplier_level": ("supplier_level", "level", "供应商等级"),
     "is_formal_supplier": ("is_formal_supplier", "isFormalSupplier", "是否正式供应商"),
     "source_updated_at": ("source_updated_at", "updated_at", "更新时间", "数据更新时间"),
+    "category": ("category", "品类"),
+    "product_name": ("product_name", "productName", "产品名称"),
+    "product_keywords": ("product_keywords", "productKeywords", "产品关键词"),
+    "process_capability": ("process_capability", "processCapability", "工艺能力"),
+    "design_development": (
+        "design_development", "designDevelopment", "是否具备设计开发能力",
+        "是否具备设计和开发能力",
+    ),
+    "supply_regions": ("supply_regions", "supplyRegions", "供货区域"),
+    "production_site": ("production_site", "productionSite", "生产地"),
+    "capacity_description": ("capacity_description", "capacityDescription", "产能说明"),
+    "qualifications": ("qualifications", "qualification", "相关资质概况"),
+    "capability_status": ("capability_status", "capabilityStatus", "能力状态"),
+    "contact_title": ("contact_title", "title", "职务"),
+    "contact_type": ("contact_type", "contactType", "联系人类型"),
+    "is_primary_contact": ("is_primary_contact", "isPrimaryContact", "是否主要联系人"),
+    "is_verified": ("is_verified", "isVerified", "是否已验证"),
+    "verified_at": ("verified_at", "verifiedAt", "验证时间"),
 }
 
 
@@ -215,7 +240,7 @@ def _bool_value(value: Any) -> bool | None:
 def _normalise_status(status: Any, is_formal: Any) -> str:
     formal = _bool_value(is_formal)
     value = (_scalar(status) or "").casefold()
-    if formal is True or value in {"formal", "active", "approved", "正式供应商", "正式"}:
+    if formal is True or value in {"formal", "active", "approved", "正式供应商", "正式", "正常"}:
         return "active"
     if value in {"suspended", "暂停", "暂停合作"}:
         return "suspended"
@@ -226,21 +251,28 @@ def _normalise_status(status: Any, is_formal: Any) -> str:
     return "prospective"
 
 
-def normalize_supplier_record(record: dict[str, Any], *, synced_at: datetime | None = None) -> dict[str, Any] | None:
+def normalize_supplier_record(
+    record: dict[str, Any], *, synced_at: datetime | None = None, supplier_id: str | None = None
+) -> dict[str, Any] | None:
     """Map a Bitable record to the local read model without writing anywhere."""
     fields = record.get("fields")
     if not isinstance(fields, dict):
         return None
+    supplier_code = _scalar(_field_value(fields, _FIELD_ALIASES["supplier_code"]))
     name = _scalar(_field_value(fields, _FIELD_ALIASES["name"]))
     record_id = _scalar(record.get("record_id"))
-    if not name or not record_id:
+    if not supplier_code or not name or not record_id:
         return None
 
     updated = synced_at or datetime.now(timezone.utc)
+    stable_supplier_id = supplier_id or f"feishu:{record_id}"
     return {
-        "_id": f"feishu:{record_id}",
+        "_id": stable_supplier_id,
+        "supplier_id": stable_supplier_id,
+        "supplier_code": supplier_code,
         "source_record_id": record_id,
         "name": name,
+        "short_name": _scalar(_field_value(fields, _FIELD_ALIASES["short_name"])),
         "unified_code": _scalar(_field_value(fields, _FIELD_ALIASES["unified_code"])),
         "legal_person": _scalar(_field_value(fields, _FIELD_ALIASES["legal_person"])),
         "registered_capital": _scalar(_field_value(fields, _FIELD_ALIASES["registered_capital"])),
@@ -248,7 +280,10 @@ def normalize_supplier_record(record: dict[str, Any], *, synced_at: datetime | N
         "reg_status": _scalar(_field_value(fields, _FIELD_ALIASES["reg_status"])),
         "industry": _scalar(_field_value(fields, _FIELD_ALIASES["industry"])),
         "categories": _string_list(_field_value(fields, _FIELD_ALIASES["categories"])),
+        "major_products": _string_list(_field_value(fields, _FIELD_ALIASES["major_products"])),
+        "business_scope": _scalar(_field_value(fields, _FIELD_ALIASES["business_scope"])),
         "regions": _string_list(_field_value(fields, _FIELD_ALIASES["regions"])),
+        "address": _scalar(_field_value(fields, _FIELD_ALIASES["address"])),
         "contact_person": _scalar(_field_value(fields, _FIELD_ALIASES["contact_person"])),
         "contact_phone": _scalar(_field_value(fields, _FIELD_ALIASES["contact_phone"])),
         "contact_email": _scalar(_field_value(fields, _FIELD_ALIASES["contact_email"])),
@@ -259,8 +294,88 @@ def normalize_supplier_record(record: dict[str, Any], *, synced_at: datetime | N
         ),
         "supplier_level": _scalar(_field_value(fields, _FIELD_ALIASES["supplier_level"])),
         "source": "feishu_bitable",
+        "source_system": "feishu_bitable",
         "source_updated_at": _scalar(_field_value(fields, _FIELD_ALIASES["source_updated_at"])),
         "synced_at": updated,
+        "sync_status": "current",
+        "raw_fields": fields,
+    }
+
+
+def _source_record_id(record: dict[str, Any]) -> str | None:
+    return _scalar(record.get("record_id"))
+
+
+def _supplier_code(record: dict[str, Any]) -> str | None:
+    fields = record.get("fields")
+    if not isinstance(fields, dict):
+        return None
+    return _scalar(_field_value(fields, _FIELD_ALIASES["supplier_code"]))
+
+
+def normalize_supplier_capability_record(
+    record: dict[str, Any], *, supplier_id: str, supplier_code: str, synced_at: datetime
+) -> dict[str, Any] | None:
+    """Map one Feishu capability record to the local capability snapshot."""
+    fields = record.get("fields")
+    record_id = _source_record_id(record)
+    if not isinstance(fields, dict) or not record_id:
+        return None
+    category = _scalar(_field_value(fields, _FIELD_ALIASES["category"]))
+    product_name = _scalar(_field_value(fields, _FIELD_ALIASES["product_name"]))
+    if not category or not product_name:
+        return None
+    return {
+        "_id": f"feishu:capability:{record_id}",
+        "supplier_id": supplier_id,
+        "supplier_code": supplier_code,
+        "source": "feishu_bitable",
+        "source_system": "feishu_bitable",
+        "source_record_id": record_id,
+        "category": category,
+        "product_name": product_name,
+        "product_keywords": _string_list(_field_value(fields, _FIELD_ALIASES["product_keywords"])),
+        "process_capability": _scalar(_field_value(fields, _FIELD_ALIASES["process_capability"])),
+        "design_development": _bool_value(_field_value(fields, _FIELD_ALIASES["design_development"])),
+        "supply_regions": _string_list(_field_value(fields, _FIELD_ALIASES["supply_regions"])),
+        "production_site": _scalar(_field_value(fields, _FIELD_ALIASES["production_site"])),
+        "capacity_description": _scalar(_field_value(fields, _FIELD_ALIASES["capacity_description"])),
+        "qualifications": _scalar(_field_value(fields, _FIELD_ALIASES["qualifications"])),
+        "capability_status": _scalar(_field_value(fields, _FIELD_ALIASES["capability_status"])) or "待验证",
+        "source_updated_at": _scalar(_field_value(fields, _FIELD_ALIASES["source_updated_at"])),
+        "synced_at": synced_at,
+        "sync_status": "current",
+        "raw_fields": fields,
+    }
+
+
+def normalize_supplier_contact_record(
+    record: dict[str, Any], *, supplier_id: str, supplier_code: str, synced_at: datetime
+) -> dict[str, Any] | None:
+    """Map one Feishu contact record to the local contact snapshot."""
+    fields = record.get("fields")
+    record_id = _source_record_id(record)
+    if not isinstance(fields, dict) or not record_id:
+        return None
+    contact_name = _scalar(_field_value(fields, ("contact_name", "contactName", "联系人姓名", "姓名")))
+    if not contact_name:
+        return None
+    return {
+        "_id": f"feishu:contact:{record_id}",
+        "supplier_id": supplier_id,
+        "supplier_code": supplier_code,
+        "source": "feishu_bitable",
+        "source_system": "feishu_bitable",
+        "source_record_id": record_id,
+        "contact_name": contact_name,
+        "title": _scalar(_field_value(fields, _FIELD_ALIASES["contact_title"])),
+        "contact_type": _scalar(_field_value(fields, _FIELD_ALIASES["contact_type"])) or "其他",
+        "phone": _scalar(_field_value(fields, ("phone", "telephone", "电话", "联系电话"))),
+        "email": _scalar(_field_value(fields, ("email", "邮箱", "电子邮箱"))),
+        "is_primary_contact": _bool_value(_field_value(fields, _FIELD_ALIASES["is_primary_contact"])),
+        "is_verified": _bool_value(_field_value(fields, _FIELD_ALIASES["is_verified"])),
+        "verified_at": _scalar(_field_value(fields, _FIELD_ALIASES["verified_at"])),
+        "synced_at": synced_at,
         "sync_status": "current",
         "raw_fields": fields,
     }
@@ -337,4 +452,226 @@ def sync_supplier_master(client: FeishuBitableClient | None = None) -> dict[str,
         "skipped": skipped,
         "status": "ok",
         "synced_at": synced_at.isoformat(),
+    }
+
+
+def _resolve_supplier_id(db: Any, supplier_code: str, source_record_id: str) -> str:
+    """Resolve a stable platform ID by supplier code, then by source record ID."""
+    collection = db["feishu_supplier_identity_map"]
+    query = {"source_system": "feishu_bitable", "supplier_code": supplier_code}
+    existing = collection.find_one(query)
+    if existing is None:
+        existing = collection.find_one({
+            "source_system": "feishu_bitable",
+            "source_record_id": source_record_id,
+        })
+    if existing and existing.get("supplier_id"):
+        return str(existing["supplier_id"])
+
+    supplier_id = f"supplier:feishu:{uuid.uuid4()}"
+    collection.update_one(
+        query,
+        {
+            "$set": {
+                "source_system": "feishu_bitable",
+                "supplier_code": supplier_code,
+                "source_record_id": source_record_id,
+                "updated_at": datetime.now(timezone.utc),
+            },
+            "$setOnInsert": {"supplier_id": supplier_id},
+        },
+        upsert=True,
+    )
+    resolved = collection.find_one(query)
+    return str(resolved.get("supplier_id", supplier_id)) if resolved else supplier_id
+
+
+def _upsert_snapshot(collection: Any, document: dict[str, Any], *, query: dict[str, Any]) -> None:
+    """Upsert a snapshot without attempting to mutate MongoDB's immutable _id."""
+    payload = dict(document)
+    document_id = payload.pop("_id", None)
+    update: dict[str, Any] = {"$set": payload}
+    if document_id is not None:
+        update["$setOnInsert"] = {"_id": document_id}
+    collection.update_one(query, update, upsert=True)
+
+
+def _read_supplier_table(client: FeishuBitableClient) -> tuple[list[dict[str, Any]] | None, str | None]:
+    try:
+        return client.list_records(), None
+    except Exception as exc:
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> str | None:
+    """Reject a configured table whose fields do not match the contract."""
+    if not records:
+        return None
+    field_keys = {
+        _normalise_key(str(key))
+        for record in records
+        if isinstance(record, dict) and isinstance(record.get("fields"), dict)
+        for key in record["fields"]
+    }
+    expected_fields = {
+        "supplier_master": (
+            ("供应商代码", "supplier_code", "supplierCode"),
+            ("供应商名称", "supplier_name", "company_name", "name"),
+        ),
+        "supplier_capability": (
+            ("品类", "category"),
+            ("产品名称", "product_name", "productName"),
+        ),
+        "supplier_contact": (("联系人姓名", "contact_name", "contactName", "姓名"),),
+    }[table_name]
+    missing = [
+        aliases[0]
+        for aliases in expected_fields
+        if not field_keys.intersection({_normalise_key(alias) for alias in aliases})
+    ]
+    if missing:
+        return f"表结构不符合契约，缺少字段: {', '.join(missing)}"
+    return None
+
+
+def sync_supplier_tables() -> dict[str, Any]:
+    """Synchronize master, capability, and contact tables into local snapshots."""
+    if not settings.FEISHU_BITABLE_ENABLED:
+        return {"enabled": False, "synced": 0, "skipped": 0, "status": "disabled"}
+
+    synced_at = datetime.now(timezone.utc)
+    batch_id = str(uuid.uuid4())
+    table_clients = {
+        "supplier_master": build_supplier_master_client(),
+        "supplier_capability": build_supplier_capability_client(),
+        "supplier_contact": build_supplier_contact_client(),
+    }
+    table_records: dict[str, list[dict[str, Any]] | None] = {}
+    errors: list[dict[str, str]] = []
+    table_results: dict[str, dict[str, Any]] = {}
+
+    for table_name, client in table_clients.items():
+        records, error = _read_supplier_table(client)
+        table_records[table_name] = records
+        table_results[table_name] = {
+            "status": "ok" if records is not None else "failed",
+            "fetched": len(records) if records is not None else 0,
+            "synced": 0,
+            "skipped": 0,
+        }
+        if error:
+            errors.append({"table": table_name, "reason": error})
+        elif records is not None:
+            schema_error = _validate_table_schema(table_name, records)
+            if schema_error:
+                table_results[table_name]["status"] = "invalid_schema"
+                errors.append({"table": table_name, "reason": schema_error})
+
+    db = get_db()
+    supplier_ids: dict[str, str] = {}
+    master_records = table_records["supplier_master"]
+    if master_records is not None:
+        master_collection = db["supplier_master_snapshots"]
+        seen_codes: set[str] = set()
+        for record in master_records:
+            code = _supplier_code(record)
+            record_id = _source_record_id(record)
+            if not code or not record_id or code in seen_codes:
+                table_results["supplier_master"]["skipped"] += 1
+                errors.append({
+                    "table": "supplier_master",
+                    "source_record_id": record_id or "",
+                    "reason": "缺少供应商代码/来源记录 ID或供应商代码重复",
+                })
+                continue
+            seen_codes.add(code)
+            supplier_id = _resolve_supplier_id(db, code, record_id)
+            normalized = normalize_supplier_record(record, synced_at=synced_at, supplier_id=supplier_id)
+            if normalized is None:
+                table_results["supplier_master"]["skipped"] += 1
+                errors.append({
+                    "table": "supplier_master",
+                    "source_record_id": record_id,
+                    "reason": "缺少供应商代码、供应商名称或字段格式无效",
+                })
+                continue
+            normalized["sync_batch_id"] = batch_id
+            _upsert_snapshot(
+                master_collection,
+                normalized,
+                query={"source": "feishu_bitable", "source_record_id": record_id},
+            )
+            supplier_ids[code] = supplier_id
+            table_results["supplier_master"]["synced"] += 1
+        master_collection.update_many(
+            {"source": "feishu_bitable", "sync_batch_id": {"$ne": batch_id}},
+            {"$set": {"sync_status": "stale"}},
+        )
+
+    for table_name, collection_name, normalizer in (
+        ("supplier_capability", "supplier_capability_snapshots", normalize_supplier_capability_record),
+        ("supplier_contact", "supplier_contact_snapshots", normalize_supplier_contact_record),
+    ):
+        records = table_records[table_name]
+        if records is None or master_records is None or table_results[table_name]["status"] != "ok":
+            continue
+        collection = db[collection_name]
+        for record in records:
+            code = _supplier_code(record)
+            record_id = _source_record_id(record)
+            supplier_id = supplier_ids.get(code or "")
+            if not code or not record_id or not supplier_id:
+                table_results[table_name]["skipped"] += 1
+                errors.append({
+                    "table": table_name,
+                    "source_record_id": record_id or "",
+                    "reason": "供应商代码缺失或无法关联主数据",
+                })
+                continue
+            normalized = normalizer(
+                record,
+                supplier_id=supplier_id,
+                supplier_code=code,
+                synced_at=synced_at,
+            )
+            if normalized is None:
+                table_results[table_name]["skipped"] += 1
+                errors.append({
+                    "table": table_name,
+                    "source_record_id": record_id,
+                    "reason": "必填字段缺失或字段格式无效",
+                })
+                continue
+            normalized["sync_batch_id"] = batch_id
+            _upsert_snapshot(
+                collection,
+                normalized,
+                query={"source": "feishu_bitable", "source_record_id": record_id},
+            )
+            table_results[table_name]["synced"] += 1
+        collection.update_many(
+            {"source": "feishu_bitable", "sync_batch_id": {"$ne": batch_id}},
+            {"$set": {"sync_status": "stale"}},
+        )
+
+    failed_tables = [name for name, result in table_results.items() if result["status"] != "ok"]
+    status = "ok" if not failed_tables else ("failed" if len(failed_tables) == len(table_results) else "partial_failed")
+    logger.info(
+        "feishu_supplier_tables_synced",
+        status=status,
+        batch_id=batch_id,
+        master_synced=table_results["supplier_master"]["synced"],
+        capability_synced=table_results["supplier_capability"]["synced"],
+        contact_synced=table_results["supplier_contact"]["synced"],
+        error_count=len(errors),
+    )
+    return {
+        "enabled": True,
+        "synced": table_results["supplier_master"]["synced"],
+        "skipped": table_results["supplier_master"]["skipped"],
+        "status": status,
+        "synced_at": synced_at.isoformat(),
+        "batch_id": batch_id,
+        "tables": table_results,
+        "errors": errors,
     }

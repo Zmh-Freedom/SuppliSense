@@ -146,7 +146,7 @@ async def add_supplier(body: SupplierInput):
     dependencies=[Depends(require_admin_or_analyst)],
 )
 async def sync_supplier_master():
-    from app.services.feishu_bitable import FeishuBitableError, sync_supplier_master as _sync
+    from app.services.feishu_bitable import FeishuBitableError, sync_supplier_tables as _sync
 
     try:
         return await asyncio.to_thread(_sync)
