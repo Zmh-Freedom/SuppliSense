@@ -47,7 +47,7 @@
 - 根因：测试将包含空格和特殊字符的 Redis 密码以未加引号的形式写入 dotenv 夹具；GitHub Runner 使用的 Compose 版本按 dotenv 语法将其解析为无效值，本地 Compose 版本未复现该差异。
 - 修复方案：将测试夹具中的特殊密码按 dotenv 双引号格式写入，并继续验证 Compose 展开后的 exec-form 命令参数与原密码完全一致；补充跨环境回归验证。
 - 验证结果：本地 `tests/test_compose.py` 8 项通过；GitHub Actions 原失败为 441 项通过、1 项失败，失败已定位为未加引号的 dotenv 特殊密码夹具。完整本地测试受当前缺少 `pytest-cov` 和 PostgreSQL 未启动影响，未将环境阻塞误判为代码失败。
-- 关联提交：待提交。
+- 关联提交：`3d669f01`
 
 ## ISS-20260825-002 缺少飞书多维表格正式供应商只读适配层
 
