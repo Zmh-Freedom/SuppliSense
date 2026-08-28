@@ -6,7 +6,9 @@ import checker from 'vite-plugin-checker'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const backendPort = env.SUPPLISENSE_BACKEND_PORT || '8000'
-  const backendUrl = `http://localhost:${backendPort}`
+  // The dev backend binds to IPv4 loopback; using localhost may resolve to ::1
+  // on macOS and make the Vite proxy return 502 despite a healthy backend.
+  const backendUrl = `http://127.0.0.1:${backendPort}`
 
   return {
     plugins: [
