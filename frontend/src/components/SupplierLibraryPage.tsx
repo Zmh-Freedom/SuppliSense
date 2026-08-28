@@ -68,7 +68,7 @@ export default function SupplierLibraryPage() {
         <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-xs text-blue-800">
           <div className="font-medium">数据来源：供应商主数据</div>
           <div className="mt-1 text-blue-700">
-            当前展示系统历史缓存；飞书多维表格同步适配器接入后，将以飞书正式供应商数据为准。此页面不执行录入、编辑或准入操作。
+            当前按本地只读快照展示；已启用飞书同步时以飞书正式供应商数据为准。此页面不执行录入、编辑或准入操作。
           </div>
         </div>
 
@@ -128,6 +128,11 @@ export default function SupplierLibraryPage() {
                       {supplier.industry && <span>{supplier.industry}</span>}
                       {supplier.regions?.length > 0 && <span>{supplier.regions.join(', ')}</span>}
                     </div>
+                    {supplier.products?.length ? (
+                      <div className="text-[var(--color-text-muted)] text-xs mt-1">
+                        <span className="text-gray-400">供货产品：</span>{supplier.products.join(', ')}
+                      </div>
+                    ) : null}
                     <div className="text-gray-400 text-[10px] mt-1 space-x-3">
                       {supplier.unified_code && <span>统一社会信用代码：{supplier.unified_code}</span>}
                       {supplier.legal_person && <span>法人：{supplier.legal_person}</span>}

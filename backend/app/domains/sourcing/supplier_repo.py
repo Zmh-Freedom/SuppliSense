@@ -581,8 +581,40 @@ def list_suppliers(
     items = list(cursor)
     for item in items:
         item["_id"] = str(item["_id"])
+    _enrich_supplier_library_items(db, items)
 
     return {"items": items, "total": total}
+
+
+def _enrich_supplier_library_items(db: Any, items: list[dict[str, Any]]) -> None:
+    """Merge current capability snapshots into the supplier-library read model."""
+    supplier_ids = [
+        str(item.get("supplier_id") or item.get("_id"))
+        for item in items
+        if item.get("supplier_id") or item.get("_id")
+    ]
+    capabilities = _load_supplier_snapshots(db, "supplier_capability_snapshots", supplier_ids)
+
+    for item in items:
+        supplier_id = str(item.get("supplier_id") or item.get("_id"))
+        capability_items = [
+            _public_capability_snapshot(snapshot)
+            for snapshot in capabilities.get(supplier_id, [])
+        ]
+        item["categories"] = _unique_strings([
+            *_string_list(item.get("categories")),
+            *(capability.get("category") for capability in capability_items),
+        ])
+        item["regions"] = _unique_strings([
+            *_string_list(item.get("regions")),
+            *(region for capability in capability_items for region in capability.get("supply_regions", [])),
+        ])
+        item["products"] = _unique_strings([
+            *_string_list(item.get("products")),
+            *(capability.get("product_name") for capability in capability_items),
+            *(keyword for capability in capability_items for keyword in capability.get("product_keywords", [])),
+        ])
+        item["capabilities"] = capability_items
 
 
 def _supplier_read_collection(db: Any) -> Any:

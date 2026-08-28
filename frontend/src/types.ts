@@ -365,6 +365,8 @@ export interface SupplierEntry {
   industry?: string;
   categories: string[];
   regions: string[];
+  products?: string[];
+  capabilities?: Array<Record<string, unknown>>;
   status: string;
   source?: string;
 }
