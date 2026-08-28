@@ -23,6 +23,8 @@ class SourcingRequestResponse(BaseModel):
 
 class SourcingResultItem(BaseModel):
     result_id: str
+    supplier_id: str | None = None
+    supplier_code: str | None = None
     supplier_name: str
     match_score: float
     risk_score: float | None = None
@@ -30,6 +32,16 @@ class SourcingResultItem(BaseModel):
     final_rank: float
     match_reason: str = ""
     risk_summary: str = ""
+    industry: str | None = None
+    categories: list[str] = []
+    capabilities: list[dict] = []
+    contacts: list[dict] = []
+    website_url: str | None = None
+    contact_person: str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    source: str | None = None
+    source_updated_at: datetime | str | None = None
     selected: bool = False
     action: str | None = None
 

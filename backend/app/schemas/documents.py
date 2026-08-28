@@ -68,12 +68,23 @@ class SourcingResultDocument(BaseModel):
     request_id: str
     supplier_name: str
     supplier_id: str | None = None
+    supplier_code: str | None = None
     match_score: float
     risk_score: float | None = None
     risk_level: str = "unknown"
     final_rank: float
     match_reason: str = ""
     risk_summary: str = ""
+    industry: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    capabilities: list[dict] = Field(default_factory=list)
+    contacts: list[dict] = Field(default_factory=list)
+    website_url: str | None = None
+    contact_person: str | None = None
+    contact_phone: str | None = None
+    contact_email: str | None = None
+    source: str | None = None
+    source_updated_at: datetime | str | None = None
     selected: bool = False
     action: str | None = None
     created_at: datetime | None = None

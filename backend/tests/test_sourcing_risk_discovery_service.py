@@ -407,3 +407,77 @@ def test_local_repository_search_filters_active_category_specification_region_an
     assert candidates[0]["match_reasons"] == [
         "category:摄像头", "specification:IP67", "region:华东", "qualifications:ISO9001"
     ]
+
+
+def test_local_repository_merges_feishu_capability_and_contact_snapshots(monkeypatch):
+    """Formal sourcing must match and expose facts from all three Feishu snapshots."""
+    supplier = {
+        "_id": "feishu:supplier-1",
+        "supplier_id": "feishu:supplier-1",
+        "supplier_code": "SUP-001",
+        "name": "工业相机供应商",
+        "status": "active",
+        "categories": [],
+        "regions": [],
+        "source": "feishu_bitable",
+        "sync_status": "current",
+    }
+    capability = {
+        "supplier_id": "feishu:supplier-1",
+        "supplier_code": "SUP-001",
+        "source": "feishu_bitable",
+        "sync_status": "current",
+        "category": "工业相机",
+        "product_name": "4K工业相机模组",
+        "product_keywords": ["Sony IMX", "GigE"],
+        "supply_regions": ["华南"],
+        "qualifications": "ISO9001",
+        "capability_status": "已验证",
+    }
+    contact = {
+        "supplier_id": "feishu:supplier-1",
+        "supplier_code": "SUP-001",
+        "source": "feishu_bitable",
+        "sync_status": "current",
+        "contact_name": "张三",
+        "phone": "0755-12345678",
+        "email": "sales@example.com",
+        "is_primary_contact": True,
+    }
+
+    class Collection:
+        def __init__(self, name, documents):
+            self.name = name
+            self.documents = documents
+
+        def find(self, _query):
+            return self.documents
+
+    database = {
+        "supplier_master_snapshots": Collection("supplier_master_snapshots", [supplier]),
+        "supplier_capability_snapshots": Collection("supplier_capability_snapshots", [capability]),
+        "supplier_contact_snapshots": Collection("supplier_contact_snapshots", [contact]),
+    }
+    monkeypatch.setattr(supplier_repo, "get_db", lambda: database)
+    monkeypatch.setattr(
+        supplier_repo,
+        "_supplier_read_collection",
+        lambda _db: database["supplier_master_snapshots"],
+    )
+
+    candidates = supplier_repo.search_for_sourcing_v2({
+        "category": "工业相机",
+        "specification": "4K",
+        "region": "华南",
+        "qualifications": "ISO9001",
+    })
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["supplier_code"] == "SUP-001"
+    assert candidate["categories"] == ["工业相机"]
+    assert "4K工业相机模组" in candidate["specifications"]
+    assert candidate["regions"] == ["华南"]
+    assert candidate["qualifications"] == ["ISO9001"]
+    assert candidate["contact_phone"] == "0755-12345678"
+    assert candidate["contacts"][0]["email"] == "sales@example.com"

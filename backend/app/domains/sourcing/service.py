@@ -8,6 +8,7 @@ Sourcing service — 智能寻源业务逻辑。
 import uuid
 from typing import Any
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.postgres import get_cursor
 from app.domains.sourcing.repo import (
@@ -76,8 +77,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         query_parts.append(req_doc["region_required"])
     query_text = " ".join(p for p in query_parts if p)
 
-    # 2. 向量检索 (limit to top_k=10 for speed)
-    candidates = _vector_search(query_text, top_k=10)
+    # 2. 正式供应商优先使用飞书三表快照；未启用时保持 PG 向量检索兼容路径。
+    snapshot_candidates = _search_feishu_snapshot_suppliers(req_doc)
+    candidates = snapshot_candidates if snapshot_candidates is not None else _vector_search(query_text, top_k=10)
     candidates = _filter_category_candidates(candidates, req_doc.get("category", ""))
     external_candidates: list[dict] = []
     if len(candidates) < 3:
@@ -121,16 +123,30 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         final_rank *= (1 - i * 0.02)
 
         rid = str(uuid.uuid4())
+        match_reasons = supp.get("match_reasons") or []
+        match_reason = "、".join(match_reasons) if match_reasons else risk_info.get("summary", "")
         item = {
             "result_id": rid,
             "candidate_type": "local",
+            "supplier_id": supp.get("supplier_id"),
+            "supplier_code": supp.get("supplier_code"),
             "supplier_name": name,
             "match_score": round(match_score, 3),
             "risk_score": risk_score,
             "risk_level": risk_level,
             "final_rank": round(final_rank, 3),
-            "match_reason": risk_info.get("summary", ""),
+            "match_reason": match_reason,
             "risk_summary": risk_info.get("summary", ""),
+            "industry": supp.get("industry"),
+            "categories": supp.get("categories", []),
+            "capabilities": supp.get("capabilities", []),
+            "contacts": supp.get("contacts", []),
+            "website_url": supp.get("website_url"),
+            "contact_person": supp.get("contact_person"),
+            "contact_phone": supp.get("contact_phone"),
+            "contact_email": supp.get("contact_email"),
+            "source": supp.get("source"),
+            "source_updated_at": supp.get("source_updated_at"),
             "selected": False,
             "action": None,
         }
@@ -144,6 +160,7 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
     for r in top10:
         save_result(r["result_id"], {
             "request_id": request_id,
+            "supplier_id": r["supplier_id"],
             "supplier_name": r["supplier_name"],
             "match_score": r["match_score"],
             "risk_score": r["risk_score"],
@@ -151,6 +168,17 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
             "final_rank": r["final_rank"],
             "match_reason": r["match_reason"],
             "risk_summary": r["risk_summary"],
+            "supplier_code": r["supplier_code"],
+            "industry": r["industry"],
+            "categories": r["categories"],
+            "capabilities": r["capabilities"],
+            "contacts": r["contacts"],
+            "website_url": r["website_url"],
+            "contact_person": r["contact_person"],
+            "contact_phone": r["contact_phone"],
+            "contact_email": r["contact_email"],
+            "source": r["source"],
+            "source_updated_at": r["source_updated_at"],
         })
 
     update_request_status(request_id, "done", len(top10))
@@ -171,6 +199,8 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         "results": [{
             "result_id": r["result_id"],
             "candidate_type": r["candidate_type"],
+            "supplier_id": r["supplier_id"],
+            "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
             "match_score": r["match_score"],
             "risk_score": r["risk_score"],
@@ -178,6 +208,16 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
             "final_rank": r["final_rank"],
             "match_reason": r["match_reason"],
             "risk_summary": r["risk_summary"],
+            "industry": r["industry"],
+            "categories": r["categories"],
+            "capabilities": r["capabilities"],
+            "contacts": r["contacts"],
+            "website_url": r["website_url"],
+            "contact_person": r["contact_person"],
+            "contact_phone": r["contact_phone"],
+            "contact_email": r["contact_email"],
+            "source": r["source"],
+            "source_updated_at": r["source_updated_at"],
         } for r in top10],
     }
 
@@ -387,6 +427,83 @@ def _vector_search(query_text: str, top_k: int = 20) -> list[dict[str, Any]]:
         ]
 
 
+def _search_feishu_snapshot_suppliers(req_doc: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Search formal Feishu snapshots when a current master snapshot is available.
+
+    ``None`` means the formal read model is unavailable and preserves the legacy
+    PostgreSQL vector path. An empty list is a valid formal search miss and must
+    not silently fall back to stale local vectors.
+    """
+    if not settings.FEISHU_BITABLE_ENABLED:
+        return None
+
+    from app.domains.sourcing.supplier_repo import (
+        search_for_sourcing_v2,
+        has_current_feishu_supplier_snapshot,
+    )
+
+    if not has_current_feishu_supplier_snapshot():
+        return None
+
+    qualifications = req_doc.get("qualifications")
+    if isinstance(qualifications, (list, tuple)):
+        qualifications = ",".join(str(item) for item in qualifications if item)
+    requirement = {
+        "category": req_doc.get("category", ""),
+        "specification": req_doc.get("spec", ""),
+        "region": req_doc.get("region_required", ""),
+        "qualifications": qualifications or "",
+    }
+    try:
+        candidates = search_for_sourcing_v2(requirement)
+    except Exception as exc:
+        logger.warning("feishu_snapshot_search_failed", error=type(exc).__name__)
+        return None
+    return [
+        {
+            **candidate,
+            "content": " ".join([
+                str(candidate.get("supplier_name") or ""),
+                *candidate.get("categories", []),
+                *candidate.get("specifications", []),
+                *candidate.get("regions", []),
+            ]),
+            "metadata": {
+                "supplier_id": candidate.get("supplier_id"),
+                "supplier_code": candidate.get("supplier_code"),
+                "categories": candidate.get("categories", []),
+                "source": candidate.get("source"),
+            },
+            "match_score": _snapshot_match_score(candidate, requirement),
+        }
+        for candidate in candidates
+    ]
+
+
+def _snapshot_match_score(candidate: dict[str, Any], requirement: dict[str, Any]) -> float:
+    """Calculate transparent constraint coverage for non-vector snapshot matches."""
+    requested_fields = {
+        field
+        for field in ("category", "specification", "region", "qualifications")
+        if _requirement_values(requirement.get(field))
+    }
+    if not requested_fields:
+        return 0.5
+    matched_fields = {
+        reason.split(":", 1)[0]
+        for reason in candidate.get("match_reasons", [])
+        if isinstance(reason, str) and ":" in reason
+    }
+    return round(len(requested_fields & matched_fields) / len(requested_fields), 3)
+
+
+def _requirement_values(value: Any) -> list[str]:
+    """Parse comma-separated sourcing constraints for transparent scoring."""
+    if not isinstance(value, str):
+        return []
+    return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
+
+
 def _filter_category_candidates(
     candidates: list[dict[str, Any]], category: Any,
 ) -> list[dict[str, Any]]:
@@ -407,12 +524,28 @@ def _filter_category_candidates(
 
 
 def _candidate_category_text(candidate: dict[str, Any]) -> str:
-    """Build searchable category text from current and legacy PG records."""
+    """Build searchable category text from snapshots and legacy PG records."""
     metadata = candidate.get("metadata")
     metadata_categories = metadata.get("categories", []) if isinstance(metadata, dict) else []
     if isinstance(metadata_categories, str):
         metadata_categories = [metadata_categories]
-    values = [candidate.get("content", ""), *metadata_categories]
+    capability_values = [
+        value
+        for item in candidate.get("capabilities", [])
+        if isinstance(item, dict)
+        for value in (
+            item.get("category"),
+            item.get("product_name"),
+            *item.get("product_keywords", []),
+        )
+        if value
+    ]
+    values = [
+        candidate.get("content", ""),
+        *metadata_categories,
+        *candidate.get("categories", []),
+        *capability_values,
+    ]
     return _normalise_category_text(" ".join(str(value) for value in values if value))
 
 

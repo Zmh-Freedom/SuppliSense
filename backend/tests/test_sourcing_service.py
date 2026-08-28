@@ -95,6 +95,10 @@ def test_category_filter_keeps_unstructured_search_backward_compatible() -> None
 
 def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None:
     monkeypatch.setattr(
+        "app.domains.sourcing.service._search_feishu_snapshot_suppliers",
+        lambda _request: None,
+    )
+    monkeypatch.setattr(
         "app.domains.sourcing.service.get_request",
         lambda _request_id: {"category": "钢材", "spec": ""},
     )
@@ -125,6 +129,10 @@ def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None
 
 
 def test_search_suppliers_marks_local_results_for_typed_agent_routing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._search_feishu_snapshot_suppliers",
+        lambda _request: None,
+    )
     monkeypatch.setattr(
         "app.domains.sourcing.service.get_request",
         lambda _request_id: {"category": "工业相机", "spec": ""},
@@ -157,6 +165,48 @@ def test_search_suppliers_marks_local_results_for_typed_agent_routing(monkeypatc
 
     assert result["results"][0]["candidate_type"] == "local"
     assert result["results"][0]["result_id"]
+
+
+def test_search_suppliers_uses_feishu_snapshot_candidate_details(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.sourcing.service.get_request",
+        lambda _request_id: {"category": "工业相机", "spec": "4K"},
+    )
+    monkeypatch.setattr("app.domains.sourcing.service.update_request_status", lambda *args: None)
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._search_feishu_snapshot_suppliers",
+        lambda _request: [{
+            "supplier_id": "feishu:supplier-1",
+            "supplier_code": "SUP-001",
+            "supplier_name": "工业相机供应商",
+            "match_score": 1.0,
+            "match_reasons": ["category:工业相机", "specification:4K"],
+            "categories": ["工业相机"],
+            "capabilities": [{"product_name": "4K工业相机模组"}],
+            "contacts": [{"contact_name": "张三", "phone": "0755-12345678"}],
+            "contact_person": "张三",
+            "contact_phone": "0755-12345678",
+            "source": "feishu_bitable",
+        }],
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing_risk.discovery_service.search_external_provider",
+        lambda _requirement: [],
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._batch_assess_risk",
+        lambda _candidates: {"工业相机供应商": {"risk_score": 20, "risk_level": "low"}},
+    )
+    monkeypatch.setattr("app.domains.sourcing.service.save_result", lambda *_args: None)
+
+    result = search_suppliers("request-1")
+
+    item = result["results"][0]
+    assert item["supplier_id"] == "feishu:supplier-1"
+    assert item["supplier_code"] == "SUP-001"
+    assert item["capabilities"][0]["product_name"] == "4K工业相机模组"
+    assert item["contact_phone"] == "0755-12345678"
+    assert item["source"] == "feishu_bitable"
 
 
 def test_external_candidate_requires_exact_identity_before_access(monkeypatch) -> None:

@@ -365,8 +365,26 @@ def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:
     db = get_db()
     candidates: list[dict] = []
     collection = _supplier_read_collection(db)
-    for supplier in collection.find({"status": "active"}):
-        candidate = _normalise_sourcing_candidate(supplier)
+    is_feishu_snapshot = getattr(collection, "name", "") == "supplier_master_snapshots"
+    supplier_filter = {"status": "active"}
+    if is_feishu_snapshot:
+        supplier_filter.update({"source": "feishu_bitable", "sync_status": "current"})
+    suppliers = list(collection.find(supplier_filter))
+    supplier_ids = [
+        str(supplier.get("supplier_id") or supplier.get("_id"))
+        for supplier in suppliers
+        if supplier.get("supplier_id") or supplier.get("_id")
+    ]
+    capabilities = _load_supplier_snapshots(db, "supplier_capability_snapshots", supplier_ids)
+    contacts = _load_supplier_snapshots(db, "supplier_contact_snapshots", supplier_ids)
+
+    for supplier in suppliers:
+        supplier_id = str(supplier.get("supplier_id") or supplier.get("_id"))
+        candidate = _normalise_sourcing_candidate(
+            supplier,
+            capabilities=capabilities.get(supplier_id, []),
+            contacts=contacts.get(supplier_id, []),
+        )
         reasons = _sourcing_match_reasons(candidate, requirement)
         if reasons is not None:
             candidate["match_reasons"] = reasons
@@ -374,19 +392,114 @@ def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:
     return candidates
 
 
-def _normalise_sourcing_candidate(supplier: dict) -> dict:
+def _load_supplier_snapshots(
+    db: Any,
+    collection_name: str,
+    supplier_ids: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Load current child snapshots once and group them by stable supplier ID."""
+    if not supplier_ids:
+        return {}
+    try:
+        collection = db[collection_name]
+    except (KeyError, TypeError):
+        return {}
+    records = collection.find({
+        "source": "feishu_bitable",
+        "sync_status": "current",
+        "supplier_id": {"$in": supplier_ids},
+    })
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        supplier_id = str(record.get("supplier_id") or "")
+        if supplier_id:
+            grouped.setdefault(supplier_id, []).append(record)
+    return grouped
+
+
+def _normalise_sourcing_candidate(
+    supplier: dict,
+    *,
+    capabilities: list[dict[str, Any]] | None = None,
+    contacts: list[dict[str, Any]] | None = None,
+) -> dict:
     """Return the stable, read-only candidate payload used by sourcing risk."""
+    capability_items = [_public_capability_snapshot(item) for item in (capabilities or [])]
+    contact_items = [_public_contact_snapshot(item) for item in (contacts or [])]
+    primary_contact = next(
+        (item for item in contact_items if item.get("is_primary_contact")),
+        contact_items[0] if contact_items else {},
+    )
+    categories = _unique_strings([
+        *_string_list(supplier.get("categories")),
+        *(item.get("category") for item in capability_items),
+    ])
+    specifications = _unique_strings([
+        *_string_list(supplier.get("specifications")),
+        *(item.get("product_name") for item in capability_items),
+        *(keyword for item in capability_items for keyword in item.get("product_keywords", [])),
+    ])
+    regions = _unique_strings([
+        *_string_list(supplier.get("regions") or supplier.get("region")),
+        *(region for item in capability_items for region in item.get("supply_regions", [])),
+    ])
+    qualifications = _unique_strings([
+        *_string_list(supplier.get("qualifications")),
+        *(item.get("qualifications") for item in capability_items),
+    ])
     return {
         "supplier_id": str(supplier.get("supplier_id") or supplier.get("_id")),
+        "supplier_code": supplier.get("supplier_code"),
         "supplier_name": supplier.get("name", ""),
-        "categories": _string_list(supplier.get("categories")),
-        "specifications": _string_list(supplier.get("specifications")),
-        "regions": _string_list(supplier.get("regions") or supplier.get("region")),
+        "short_name": supplier.get("short_name"),
+        "industry": supplier.get("industry"),
+        "categories": categories,
+        "specifications": specifications,
+        "regions": regions,
         "status": supplier.get("status"),
-        "qualifications": _string_list(supplier.get("qualifications")),
+        "qualifications": qualifications,
         "capacity": supplier.get("capacity"),
         "updated_at": supplier.get("updated_at"),
+        "source_updated_at": supplier.get("source_updated_at") or supplier.get("synced_at"),
+        "source": supplier.get("source", "local"),
+        "website_url": supplier.get("website_url"),
+        "contact_person": supplier.get("contact_person") or primary_contact.get("contact_name"),
+        "contact_phone": supplier.get("contact_phone") or primary_contact.get("phone"),
+        "contact_email": supplier.get("contact_email") or primary_contact.get("email"),
+        "capabilities": capability_items,
+        "contacts": contact_items,
         "match_reasons": [],
+    }
+
+
+def _public_capability_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Expose capability facts to the Agent without leaking raw Feishu fields."""
+    return {
+        "category": snapshot.get("category"),
+        "product_name": snapshot.get("product_name"),
+        "product_keywords": _string_list(snapshot.get("product_keywords")),
+        "process_capability": snapshot.get("process_capability"),
+        "design_development": snapshot.get("design_development"),
+        "supply_regions": _string_list(snapshot.get("supply_regions")),
+        "production_site": snapshot.get("production_site"),
+        "capacity_description": snapshot.get("capacity_description"),
+        "qualifications": snapshot.get("qualifications"),
+        "capability_status": snapshot.get("capability_status"),
+        "source_updated_at": snapshot.get("source_updated_at") or snapshot.get("synced_at"),
+    }
+
+
+def _public_contact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Expose contact facts with the same read-only source timestamp semantics."""
+    return {
+        "contact_name": snapshot.get("contact_name"),
+        "title": snapshot.get("title"),
+        "contact_type": snapshot.get("contact_type"),
+        "phone": snapshot.get("phone"),
+        "email": snapshot.get("email"),
+        "is_primary_contact": snapshot.get("is_primary_contact"),
+        "is_verified": snapshot.get("is_verified"),
+        "verified_at": snapshot.get("verified_at"),
     }
 
 
@@ -413,6 +526,21 @@ def _string_list(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [item for item in value if isinstance(item, str)]
     return []
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    """Keep ordered, non-empty string values used for matching and display."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        item = value.strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 def _requirement_values(value: Any) -> list[str]:
@@ -460,10 +588,27 @@ def list_suppliers(
 def _supplier_read_collection(db: Any) -> Any:
     """Return the configured formal supplier read model with safe fallback."""
     if settings.FEISHU_BITABLE_ENABLED:
-        snapshots = db["supplier_master_snapshots"]
-        if snapshots.count_documents({"source": "feishu_bitable"}, limit=1) > 0:
+        try:
+            snapshots = db["supplier_master_snapshots"]
+        except (KeyError, TypeError):
+            snapshots = None
+        if snapshots is not None and has_current_feishu_supplier_snapshot(db):
             return snapshots
     return db["suppliers"]
+
+
+def has_current_feishu_supplier_snapshot(db: Any | None = None) -> bool:
+    """Return whether the formal Feishu master read model has current rows."""
+    if not settings.FEISHU_BITABLE_ENABLED:
+        return False
+    database = db if db is not None else get_db()
+    try:
+        return database["supplier_master_snapshots"].count_documents(
+            {"source": "feishu_bitable", "sync_status": "current"},
+            limit=1,
+        ) > 0
+    except (KeyError, TypeError, AttributeError):
+        return False
 
 
 def list_embedding_dirty() -> list[dict]:

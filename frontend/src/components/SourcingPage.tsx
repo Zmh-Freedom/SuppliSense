@@ -314,6 +314,20 @@ function SourcingResultCard({ result, watched, onWatch }: {
               推荐 {rankPct}%
             </span>
           </div>
+          {(result.categories?.length || result.capabilities?.length) && (
+            <div className="mt-2 text-xs text-[var(--color-text-muted)] space-y-1">
+              {result.categories?.length ? <p>主营品类：{result.categories.join('、')}</p> : null}
+              {result.capabilities?.length ? <p>供货能力：{result.capabilities.map(item => String(item.product_name || item.category || '')).filter(Boolean).join('、')}</p> : null}
+            </div>
+          )}
+          {(result.website_url || result.contact_person || result.contact_phone || result.contact_email) && (
+            <div className="mt-2 text-xs text-[var(--color-text-muted)] space-y-1">
+              {result.website_url ? <a href={result.website_url} target="_blank" rel="noreferrer" className="block w-fit text-[var(--color-primary-bg)] hover:underline">官网</a> : null}
+              {result.contact_person ? <p>联系人：{result.contact_person}</p> : null}
+              {result.contact_phone ? <p>电话：{result.contact_phone}</p> : null}
+              {result.contact_email ? <a href={`mailto:${result.contact_email}`} className="block w-fit text-[var(--color-primary-bg)] hover:underline">邮箱：{result.contact_email}</a> : null}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2 shrink-0 ml-4">

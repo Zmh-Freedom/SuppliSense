@@ -171,6 +171,8 @@ export interface SourcingRequestInput {
 
 export interface SourcingResultItem {
   result_id: string;
+  supplier_id?: string | null;
+  supplier_code?: string | null;
   supplier_name: string;
   match_score: number;
   risk_score: number | null;
@@ -178,6 +180,16 @@ export interface SourcingResultItem {
   final_rank: number;
   match_reason: string;
   risk_summary: string;
+  industry?: string | null;
+  categories?: string[];
+  capabilities?: Array<Record<string, unknown>>;
+  contacts?: Array<Record<string, unknown>>;
+  website_url?: string | null;
+  contact_person?: string | null;
+  contact_phone?: string | null;
+  contact_email?: string | null;
+  source?: string | null;
+  source_updated_at?: string | null;
   selected: boolean;
   action: string | null;
 }
@@ -253,8 +265,14 @@ export interface SourcingRiskCandidate {
   supplier_id?: string | null;
   supplier_name?: string;
   name?: string;
+  supplier_code?: string | null;
   source?: 'local' | 'staged_external' | string;
   status?: string;
+  industry?: string | null;
+  categories?: string[];
+  capabilities?: Array<Record<string, unknown>>;
+  contacts?: Array<Record<string, unknown>>;
+  source_updated_at?: string | null;
   website_url?: string;
   website_status?: 'unverified' | 'not_found' | string;
   website_url_source?: string;
