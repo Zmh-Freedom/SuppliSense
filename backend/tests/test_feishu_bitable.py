@@ -11,6 +11,7 @@ from app.services.feishu_bitable import (
     build_supplier_capability_client,
     build_supplier_contact_client,
     build_supplier_master_client,
+    build_supplier_transaction_client,
     normalize_supplier_record,
 )
 
@@ -91,10 +92,12 @@ def test_build_clients_use_independent_supplier_table_ids(monkeypatch) -> None:
     monkeypatch.setattr(settings, "FEISHU_SUPPLIER_MASTER_TABLE_ID", "tbl-master")
     monkeypatch.setattr(settings, "FEISHU_SUPPLIER_CAPABILITY_TABLE_ID", "tbl-capability")
     monkeypatch.setattr(settings, "FEISHU_SUPPLIER_CONTACT_TABLE_ID", "tbl-contact")
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "tbl-transaction")
 
     assert build_supplier_master_client().table_id == "tbl-master"
     assert build_supplier_capability_client().table_id == "tbl-capability"
     assert build_supplier_contact_client().table_id == "tbl-contact"
+    assert build_supplier_transaction_client().table_id == "tbl-transaction"
 
 
 def test_settings_no_longer_expose_legacy_single_table_id() -> None:

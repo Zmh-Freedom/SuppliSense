@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Feishu
     FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
-    # Feishu Bitable read-only supplier master integration
+    # Feishu Bitable supplier source integration
     FEISHU_BITABLE_ENABLED: bool = os.getenv("FEISHU_BITABLE_ENABLED", "false").lower() == "true"
     FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
     FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     )
     FEISHU_SUPPLIER_CONTACT_TABLE_ID: str = os.getenv(
         "FEISHU_SUPPLIER_CONTACT_TABLE_ID", ""
+    )
+    FEISHU_BITABLE_TRANSACTION_TABLE_ID: str = os.getenv(
+        "FEISHU_BITABLE_TRANSACTION_TABLE_ID", ""
     )
     FEISHU_BITABLE_BASE_URL: str = os.getenv("FEISHU_BITABLE_BASE_URL", "https://open.feishu.cn")
     FEISHU_BITABLE_PAGE_SIZE: int = int(os.getenv("FEISHU_BITABLE_PAGE_SIZE", "100"))

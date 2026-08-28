@@ -413,6 +413,11 @@ def build_supplier_contact_client() -> FeishuBitableClient:
     return _build_client(settings.FEISHU_SUPPLIER_CONTACT_TABLE_ID)
 
 
+def build_supplier_transaction_client() -> FeishuBitableClient:
+    """Build a read client configured for the supplier transaction snapshot table."""
+    return _build_client(settings.FEISHU_BITABLE_TRANSACTION_TABLE_ID)
+
+
 def sync_supplier_master(client: FeishuBitableClient | None = None) -> dict[str, Any]:
     """Synchronize Feishu supplier records into a local read-only snapshot."""
     if not settings.FEISHU_BITABLE_ENABLED:
