@@ -76,6 +76,12 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
 
     name = profile.company_name
 
+    # 司法风险查询必须至少拥有一份立案信息快照；已有快照复用，避免
+    # 每次 Agent 读取风险时重复调用付费接口。
+    from app.services.tianyancha_client import ensure_court_register_evidence
+
+    ensure_court_register_evidence(name)
+
     risk = get_risk_info(name)
     indicators = get_risk_indicators(name)
     financial = get_financial_metrics(name)

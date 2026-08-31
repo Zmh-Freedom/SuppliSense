@@ -43,6 +43,7 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
 
     # Always read individual collections as ground-truth supplement
     lawsuit = db["lawSuit"].find_one({"name": company_name})
+    court_register = db["courtRegister"].find_one({"name": company_name})
     abnormal = db["abnormal"].find_one({"name": company_name})
     punishment = db["punishmentInfo"].find_one({"name": company_name})
     executed = db["executedPerson"].find_one({"name": company_name})
@@ -69,7 +70,7 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
                         penalty_count += total
             # Supplement zero counts from individual collections
             if lawsuit_count == 0:
-                lawsuit_count = _total(lawsuit)
+                lawsuit_count = _total(lawsuit) + _total(court_register)
             if abnormal_count == 0:
                 abnormal_count = _total(abnormal)
             if penalty_count == 0:
@@ -83,7 +84,7 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
 
     # 2. Fallback: old individual collections
     return RiskInfo(
-        lawsuit_count=_total(lawsuit),
+        lawsuit_count=_total(lawsuit) + _total(court_register),
         executed_count=_total(executed),
         abnormal_operation_count=_total(abnormal),
         administrative_penalty_count=_total(punishment),
@@ -141,7 +142,9 @@ def get_risk_indicators(company_name: str) -> dict:
 
     # Supplement zero counts from individual collections (only those with dedicated endpoints)
     if indicators["lawsuit_count"] == 0:
-        indicators["lawsuit_count"] = _total("lawSuit")
+        indicators["lawsuit_count"] = (
+            _total("lawSuit") + _total("courtRegister")
+        )
     if indicators["executed_count"] == 0:
         indicators["executed_count"] = _total("executedPerson")
     if indicators["dishonesty_count"] == 0:

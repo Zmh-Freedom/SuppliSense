@@ -4,7 +4,7 @@ from app.core.cache import cached
 from app.domains.risk.repo_company import get_baseinfo, get_risk_info
 from app.schemas.company import CompanyProfile
 from app.schemas.risk import RiskInfo
-from app.services.tianyancha_client import fetch_company
+from app.services.tianyancha_client import ensure_court_register_evidence, fetch_company
 
 
 @cached("company_profile", ttl=7200)
@@ -29,6 +29,7 @@ def get_company_profile(company_name: str) -> CompanyProfile:
 
 @cached("company_risk", ttl=7200)
 def get_company_risk(company_name: str) -> RiskInfo:
+    ensure_court_register_evidence(company_name)
     risk = get_risk_info(company_name)
     if risk is None:
         _try_fetch_from_api(company_name)

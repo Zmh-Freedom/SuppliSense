@@ -131,6 +131,7 @@ def test_compliance_status_handles_empty_tianyancha_result(monkeypatch):
     collections = {
         name: Mock() for name in (
             "lawSuit",
+            "courtRegister",
             "executedPerson",
             "dishonesty",
             "abnormal",
@@ -151,3 +152,22 @@ def test_compliance_status_handles_empty_tianyancha_result(monkeypatch):
     assert status["sanctions_clean"] is True
     assert status["lawsuit_count"] == 0
     assert status["administrative_penalty_count"] == 0
+
+
+def test_compliance_status_includes_court_register_cases(monkeypatch):
+    """Court registration records supplement lawsuit evidence in the profile."""
+    collections = {name: Mock() for name in ("lawSuit", "courtRegister", "executedPerson", "dishonesty", "abnormal", "punishmentInfo", "taxArrears")}
+    collections["lawSuit"].find_one.return_value = {"items": {"result": {"total": 2}}}
+    collections["courtRegister"].find_one.return_value = {"items": {"result": {"total": 3}}}
+    for name, collection in collections.items():
+        if name not in {"lawSuit", "courtRegister"}:
+            collection.find_one.return_value = None
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: collections)
+    monkeypatch.setattr(
+        "app.domains.risk.sanctions_service.check_sanctions",
+        lambda company_name: {"clean": True, "match_count": 0},
+    )
+
+    status = service._build_compliance_status("示例供应商")
+
+    assert status["lawsuit_count"] == 5

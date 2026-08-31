@@ -9,6 +9,7 @@
   /services/open/ic/baseinfo/normal       企业基本信息
   /services/open/risk/riskInfo/2.0        天眼风险信息
   /services/open/jr/lawSuit/3.0           法律诉讼
+  /services/open/jr/courtRegister/2.0     立案信息
   /services/open/mr/abnormal/2.0           经营异常
   /services/open/mr/punishmentInfo/3.0     行政处罚
   /services/open/mr/illegalinfo/2.0        严重违法
@@ -37,6 +38,7 @@ _ENDPOINTS: list[tuple[str, str, str]] = [
     ("branch", "/services/open/ic/branch/2.0", "items"),            # 分支机构
     # -- 司法风险 (jr) --
     ("lawSuit", "/services/open/jr/lawSuit/3.0", "items"),          # 法律诉讼
+    ("courtRegister", "/services/open/jr/courtRegister/2.0", "items"),  # 立案信息
     ("dishonesty", "/services/open/jr/dishonesty/3.0", "items"),    # 失信被执行人
     ("executedPerson", "/services/open/jr/executedPerson/3.0", "items"),  # 被执行人
     ("courtAnnouncement", "/services/open/jr/courtAnnouncement/3.0", "items"),  # 开庭公告
@@ -127,6 +129,26 @@ def fetch_branches(company_name: str) -> dict | None:
     if resp is not None:
         _save("branch", company_name, resp, "items")
     return resp
+
+
+def ensure_court_register_evidence(company_name: str) -> bool:
+    """Ensure a company has cached Tianyancha court-registration evidence.
+
+    Judicial consumers call this before reading local risk data. An existing
+    snapshot, including a provider-confirmed no-result response, is reused so
+    an interactive query does not repeatedly consume the paid API quota.
+    """
+    db = get_db()
+    if db["courtRegister"].find_one({"name": company_name}):
+        return True
+    if not TOKEN:
+        return False
+
+    response = _call("/services/open/jr/courtRegister/2.0", company_name)
+    if response is None:
+        return False
+    _save("courtRegister", company_name, response, "items")
+    return True
 
 
 def query(endpoint: str, keyword: str) -> dict | None:

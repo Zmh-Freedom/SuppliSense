@@ -423,7 +423,7 @@ def _build_compliance_status(company_name: str) -> dict:
     return {
         "sanctions_clean": sanctions_clean,
         "sanctions_match_count": sanctions_count,
-        "lawsuit_count": _count("lawSuit"),
+        "lawsuit_count": _count("lawSuit") + _count("courtRegister"),
         "executed_count": _count("executedPerson"),
         "dishonesty_count": _count("dishonesty"),
         "abnormal_operation_count": _count("abnormal"),

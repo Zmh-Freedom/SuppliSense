@@ -163,7 +163,7 @@ def ensure_indexes() -> None:
         )
         # 天眼查数据集合（按企业名查询，之前缺失）
         _tianyancha_collections = [
-            "riskInfo", "lawSuit", "abnormal", "punishmentInfo", "executedPerson",
+            "riskInfo", "lawSuit", "courtRegister", "abnormal", "punishmentInfo", "executedPerson",
             "dishonesty", "equityPledge", "branch", "news", "alert_rules",
         ]
         for col in _tianyancha_collections:
