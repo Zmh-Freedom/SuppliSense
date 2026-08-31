@@ -29,6 +29,7 @@ from app.domains.company.api import router as company_identity_router
 from app.domains.outbox.api import router as outbox_router
 from app.domains.knowledge.api import router as knowledge_router
 from app.domains.risk.api_risk import router as risk_router
+from app.domains.risk.api_business_risk import router as business_risk_router
 from app.domains.risk.api_company import router as company_router
 from app.domains.risk.api_compare import router as compare_router
 from app.domains.risk.api_financial import router as financial_router
@@ -284,6 +285,7 @@ api_v1.include_router(outbox_router)
 api_v1.include_router(financial_router, prefix="/financial", tags=["financial"])
 api_v1.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 api_v1.include_router(risk_router, prefix="/risk", tags=["risk"])
+api_v1.include_router(business_risk_router, prefix="/risk", tags=["risk"])
 api_v1.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 api_v1.include_router(p2_router, prefix="/p2", tags=["p2"])
 api_v1.include_router(macro_router, prefix="/analysis", tags=["analysis"])

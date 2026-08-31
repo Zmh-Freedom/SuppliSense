@@ -50,3 +50,22 @@ def scenario_simulate(company_name: str, scenario: str = "bankruptcy") -> dict:
     """
     from app.domains.risk.scenario_service import simulate
     return simulate(company_name, scenario)
+
+
+@tool
+def assess_business_risk(supplier_reference: str, category_code: str = "") -> dict:
+    """评估正式供应商的商务风险 P0。
+
+    仅使用飞书真实且校验通过的交易月度快照，当前正式输出供应依赖与
+    可替代性；合同、结算和价格仅作为观察信号，不会被误报为完整评分。
+
+    Args:
+        supplier_reference: 飞书供应商代码或供应商全称。
+        category_code: 可选品类代码；供应商有多个采购品类时建议提供。
+    """
+    from app.domains.risk.business_risk_service import assess_business_risk_p0
+
+    return assess_business_risk_p0(
+        supplier_reference,
+        category_code=category_code or None,
+    )

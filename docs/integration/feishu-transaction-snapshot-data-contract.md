@@ -1,6 +1,6 @@
 # 飞书供应商交易月度快照数据契约
 
-版本：v1.0
+版本：v1.1
 生效日期：2026-08-28
 状态：开发测试有效
 
@@ -60,7 +60,19 @@ FEISHU_BITABLE_TRANSACTION_TABLE_ID
 
 该变量只保存 table ID；真实应用凭据只能留在本地 `.env`，不得提交到仓库。
 
-## 5. 开发测试数据灌入
+## 5. 只读同步与数据质量隔离
+
+运行时由既有 `POST /api/v1/sourcing/suppliers/sync` 统一读取四张飞书表，并在本地保存到
+`supplier_transaction_snapshots`。服务端不调用任何飞书创建、更新或删除接口。
+
+- 未配置 `FEISHU_BITABLE_TRANSACTION_TABLE_ID` 时，交易表被跳过，既有三表同步不受影响。
+- 每条快照按 `source + source_record_id` 幂等更新，批次中未再次读取到的记录会被标为 `stale`。
+- 空 Excel 导入导致的文本数值可被安全解析；无法解析的数值、缺少核心字段、结算恒等式不平衡都会保留在本地，并写入 `validation_errors` 或 `data_quality_issues`。
+- 仅同时满足 `data_mode=real`、`data_quality_status` 无错误、`sync_status=current` 的记录可进入正式商务风险 P0。`synthetic`、`unknown`、`invalid` 数据只可用于开发、演示和回归。
+- 当前正式启用的是“供应依赖与可替代性”子维度。合同状态、未结算暴露、价格变化只作为观察信号展示，不生成完整商务风险分数或正式告警。
+- 开发演示可设置 `BUSINESS_RISK_DEMO_ENABLED=true`；该开关还必须同时满足 `DEBUG=true` 才生效。启用后，P0 会在没有真实快照时读取校验通过的 `synthetic` 快照，并返回 `assessment_data_mode=demo`、`decision_usable=false` 和不可用于正式决策的限制。生产或未启用演示开关时，`synthetic` 始终被隔离。
+
+## 6. 开发测试数据灌入
 
 在 `backend` 目录执行：
 

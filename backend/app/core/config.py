@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     FEISHU_BITABLE_PAGE_SIZE: int = int(os.getenv("FEISHU_BITABLE_PAGE_SIZE", "100"))
     FEISHU_BITABLE_TIMEOUT_SECONDS: float = float(os.getenv("FEISHU_BITABLE_TIMEOUT_SECONDS", "10"))
     FEISHU_SUPPLIER_SYNC_CRON: str = os.getenv("FEISHU_SUPPLIER_SYNC_CRON", "0 */6 * * *")
+    # 商务风险 P0 演示模式：仅 DEBUG=true 时允许使用 data_mode=synthetic 快照。
+    BUSINESS_RISK_DEMO_ENABLED: bool = os.getenv(
+        "BUSINESS_RISK_DEMO_ENABLED", "false"
+    ).lower() == "true"
 
     # PostgreSQL
     PG_HOST: str = os.getenv("PG_HOST", "localhost")

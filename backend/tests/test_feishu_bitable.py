@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 
 import httpx
 
@@ -13,6 +13,7 @@ from app.services.feishu_bitable import (
     build_supplier_master_client,
     build_supplier_transaction_client,
     normalize_supplier_record,
+    normalize_supplier_transaction_record,
 )
 
 
@@ -104,6 +105,78 @@ def test_settings_no_longer_expose_legacy_single_table_id() -> None:
     assert not hasattr(settings, "FEISHU_BITABLE_TABLE_ID")
 
 
+def test_normalize_transaction_snapshot_parses_text_numbers_and_marks_synthetic() -> None:
+    result = normalize_supplier_transaction_record(
+        {
+            "record_id": "txn-1",
+            "fields": {
+                "快照ID": "SYN-TXN-1",
+                "统计月份": "2026年08月",
+                "快照日期": "2026-08-31",
+                "供应商代码": "S-1",
+                "采购组织代码": "PO-1",
+                "基地": "华南",
+                "物料号": "MAT-1",
+                "物料名称": "相机模组",
+                "计量单位": "件",
+                "收货数量": "1,000",
+                "正结算数量": "1000",
+                "负结算数量": "-10",
+                "实结算数量": "990",
+                "已结算数量": "800",
+                "未结算数量": "190",
+                "单价": "12.5",
+                "币种": "CNY",
+                "金额口径": "含税",
+                "合同状态": "履行中",
+                "收货金额": "12500",
+                "实结算金额": "12375",
+                "已结算金额": "10000",
+                "未结算金额": "2375",
+                "数据来源": "test",
+                "数据模式": "synthetic",
+                "更新时间": "2026-08-28T10:00:00+08:00",
+            },
+        },
+        supplier_id="supplier:1",
+        supplier_code="S-1",
+        synced_at=datetime.now(timezone.utc),
+    )
+
+    assert result is not None
+    assert result["snapshot_month"] == "2026-08"
+    assert result["received_qty"] == 1000.0
+    assert result["contract_status"] == "active"
+    assert result["data_mode"] == "synthetic"
+    assert result["eligible_for_formal_assessment"] is False
+    assert result["data_quality_status"] == "valid"
+
+
+def test_normalize_transaction_snapshot_excludes_reconciliation_warning_from_formal_assessment() -> None:
+    result = normalize_supplier_transaction_record(
+        {
+            "record_id": "txn-invalid",
+            "fields": {
+                "快照ID": "TXN-2", "统计月份": "2026-08", "快照日期": "2026-08-31",
+                "供应商代码": "S-1", "采购组织代码": "PO-1", "基地": "华南",
+                "物料号": "MAT-1", "计量单位": "件", "收货数量": "10",
+                "正结算数量": "10", "负结算数量": "0", "实结算数量": "10",
+                "已结算数量": "8", "未结算数量": "2", "单价": "100", "币种": "CNY",
+                "金额口径": "含税", "合同状态": "履行中", "收货金额": "1000",
+                "实结算金额": "1000", "已结算金额": "800", "未结算金额": "100",
+                "数据来源": "erp", "数据模式": "real", "更新时间": "2026-08-28T10:00:00+08:00",
+            },
+        },
+        supplier_id="supplier:1",
+        supplier_code="S-1",
+        synced_at=datetime.now(timezone.utc),
+    )
+
+    assert result is not None
+    assert result["data_quality_status"] == "warning"
+    assert result["eligible_for_formal_assessment"] is False
+
+
 class FakeCollection:
     name = "supplier_master_snapshots"
 
@@ -191,6 +264,7 @@ class MultiFakeDatabase:
                 "supplier_master_snapshots",
                 "supplier_capability_snapshots",
                 "supplier_contact_snapshots",
+                "supplier_transaction_snapshots",
                 "feishu_supplier_identity_map",
             )
         }
@@ -214,6 +288,7 @@ def test_sync_supplier_tables_links_three_snapshots_by_supplier_code(monkeypatch
     database = MultiFakeDatabase()
     monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
     monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "")
     monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
         {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一", "供应商状态": "正常"}},
     ]))
@@ -239,10 +314,47 @@ def test_sync_supplier_tables_links_three_snapshots_by_supplier_code(monkeypatch
     assert result["errors"][0]["reason"] == "供应商代码缺失或无法关联主数据"
 
 
+def test_sync_supplier_tables_persists_transaction_snapshot_when_configured(monkeypatch) -> None:
+    database = MultiFakeDatabase()
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "tbl-transaction")
+    monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
+        {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_capability_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_contact_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_transaction_client", lambda: RecordsClient([
+        {
+            "record_id": "txn-1",
+            "fields": {
+                "快照ID": "TXN-1", "统计月份": "2026-08", "快照日期": "2026-08-31",
+                "供应商代码": "S-1", "采购组织代码": "PO-1", "基地": "华南",
+                "物料号": "MAT-1", "物料名称": "相机模组", "计量单位": "件",
+                "收货数量": "10", "正结算数量": "10", "负结算数量": "0",
+                "实结算数量": "10", "已结算数量": "8", "未结算数量": "2",
+                "单价": "100", "币种": "CNY", "金额口径": "含税", "合同状态": "履行中",
+                "收货金额": "1000", "实结算金额": "1000", "已结算金额": "800", "未结算金额": "200",
+                "数据来源": "erp", "数据模式": "real", "更新时间": "2026-08-28T10:00:00+08:00",
+            },
+        },
+    ]))
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result["status"] == "ok"
+    assert result["tables"]["supplier_transaction"]["synced"] == 1
+    saved = database.collections["supplier_transaction_snapshots"].documents[0]
+    assert saved["supplier_code"] == "S-1"
+    assert saved["data_mode"] == "real"
+    assert saved["eligible_for_formal_assessment"] is True
+
+
 def test_sync_supplier_tables_reports_partial_failure_without_marking_failed_table_stale(monkeypatch) -> None:
     database = MultiFakeDatabase()
     monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
     monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "")
     monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
         {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一"}},
     ]))
@@ -265,6 +377,7 @@ def test_sync_supplier_tables_rejects_swapped_table_schema(monkeypatch) -> None:
     database = MultiFakeDatabase()
     monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
     monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "")
     monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
         {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一"}},
     ]))

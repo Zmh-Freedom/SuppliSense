@@ -105,6 +105,27 @@ def ensure_indexes() -> None:
         db["supplier_contact_snapshots"].create_index(
             [("supplier_id", 1), ("is_primary_contact", 1)], background=True
         )
+        db["supplier_transaction_snapshots"].create_index(
+            [("source", 1), ("source_record_id", 1)], unique=True, background=True
+        )
+        db["supplier_transaction_snapshots"].create_index(
+            [
+                ("supplier_code", 1),
+                ("snapshot_month", -1),
+                ("sync_status", 1),
+                ("data_mode", 1),
+            ],
+            background=True,
+        )
+        db["supplier_transaction_snapshots"].create_index(
+            [
+                ("category_code", 1),
+                ("purchasing_org_code", 1),
+                ("base", 1),
+                ("snapshot_month", -1),
+            ],
+            background=True,
+        )
         db["feishu_supplier_identity_map"].create_index(
             [("source_system", 1), ("supplier_code", 1)], unique=True, background=True
         )

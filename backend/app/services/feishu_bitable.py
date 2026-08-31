@@ -7,9 +7,11 @@ snapshot for querying and risk analysis.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -183,6 +185,33 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "is_primary_contact": ("is_primary_contact", "isPrimaryContact", "是否主要联系人"),
     "is_verified": ("is_verified", "isVerified", "是否已验证"),
     "verified_at": ("verified_at", "verifiedAt", "验证时间"),
+    "snapshot_id": ("snapshot_id", "snapshotId", "快照ID", "快照Id"),
+    "snapshot_month": ("snapshot_month", "snapshotMonth", "统计月份", "统计月"),
+    "snapshot_date": ("snapshot_date", "snapshotDate", "快照日期"),
+    "purchasing_org_code": ("purchasing_org_code", "purchasingOrgCode", "采购组织代码"),
+    "base": ("base", "基地"),
+    "category_code": ("category_code", "categoryCode", "品类代码"),
+    "category_name": ("category_name", "categoryName", "品类名称", "品类"),
+    "material_code": ("material_code", "materialCode", "物料号", "物料编码"),
+    "material_name": ("material_name", "materialName", "物料名称"),
+    "unit": ("unit", "计量单位", "单位"),
+    "received_qty": ("received_qty", "receivedQty", "收货数量"),
+    "positive_settlement_qty": ("positive_settlement_qty", "positiveSettlementQty", "正结算数量"),
+    "negative_settlement_qty": ("negative_settlement_qty", "negativeSettlementQty", "负结算数量"),
+    "actual_settlement_qty": ("actual_settlement_qty", "actualSettlementQty", "实结算数量", "实结算"),
+    "settled_qty": ("settled_qty", "settledQty", "已结算数量", "已结算"),
+    "unsettled_qty": ("unsettled_qty", "unsettledQty", "未结算数量", "未结算"),
+    "unit_price": ("unit_price", "unitPrice", "单价"),
+    "currency": ("currency", "币种"),
+    "amount_basis": ("amount_basis", "amountBasis", "金额口径"),
+    "contract_number": ("contract_number", "contractNumber", "合同编号"),
+    "contract_status": ("contract_status", "contractStatus", "合同状态"),
+    "received_amount": ("received_amount", "receivedAmount", "收货金额"),
+    "actual_settlement_amount": ("actual_settlement_amount", "actualSettlementAmount", "实结算金额"),
+    "settled_amount": ("settled_amount", "settledAmount", "已结算金额"),
+    "unsettled_amount": ("unsettled_amount", "unsettledAmount", "未结算金额"),
+    "data_source": ("data_source", "dataSource", "数据来源"),
+    "data_mode": ("data_mode", "dataMode", "数据模式"),
 }
 
 
@@ -235,6 +264,59 @@ def _bool_value(value: Any) -> bool | None:
     if scalar.casefold() in {"false", "0", "no", "否", "非正式供应商", "潜在"}:
         return False
     return None
+
+
+def _decimal_value(value: Any) -> float | None:
+    """Parse Bitable number or text-number fields without guessing malformed values."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    scalar = _scalar(value)
+    if not scalar:
+        return None
+    normalized = scalar.replace(",", "").replace("，", "").replace(" ", "")
+    if not re.fullmatch(r"[+-]?(?:\d+(?:\.\d+)?|\.\d+)", normalized):
+        return None
+    try:
+        return float(Decimal(normalized))
+    except InvalidOperation:
+        return None
+
+
+def _normalise_month(value: Any) -> str | None:
+    scalar = _scalar(value)
+    if not scalar:
+        return None
+    matched = re.search(r"(20\d{2})[-/.年](\d{1,2})", scalar)
+    if not matched:
+        return None
+    month = int(matched.group(2))
+    if not 1 <= month <= 12:
+        return None
+    return f"{matched.group(1)}-{month:02d}"
+
+
+def _normalise_contract_status(value: Any) -> str:
+    raw = (_scalar(value) or "").casefold()
+    if raw in {"履行中", "有效", "有效合同", "active", "valid"}:
+        return "active"
+    if raw in {"即将到期", "临期", "expiring"}:
+        return "expiring"
+    if raw in {"已到期", "到期", "expired"}:
+        return "expired"
+    if raw in {"未签", "未签订", "无合同", "unsigned"}:
+        return "unsigned"
+    return "unknown"
+
+
+def _normalise_data_mode(value: Any) -> str:
+    raw = (_scalar(value) or "").casefold()
+    if raw in {"real", "正式", "真实", "生产"}:
+        return "real"
+    if raw in {"synthetic", "mock", "test", "测试", "合成"}:
+        return "synthetic"
+    return "unknown"
 
 
 def _normalise_status(status: Any, is_formal: Any) -> str:
@@ -375,6 +457,142 @@ def normalize_supplier_contact_record(
         "is_primary_contact": _bool_value(_field_value(fields, _FIELD_ALIASES["is_primary_contact"])),
         "is_verified": _bool_value(_field_value(fields, _FIELD_ALIASES["is_verified"])),
         "verified_at": _scalar(_field_value(fields, _FIELD_ALIASES["verified_at"])),
+        "synced_at": synced_at,
+        "sync_status": "current",
+        "raw_fields": fields,
+    }
+
+
+def _add_reconciliation_issue(
+    issues: list[str],
+    left: float | None,
+    right: float | None,
+    label: str,
+) -> None:
+    if left is not None and right is not None and abs(left - right) > 0.01:
+        issues.append(f"{label}不平衡")
+
+
+def normalize_supplier_transaction_record(
+    record: dict[str, Any], *, supplier_id: str, supplier_code: str, synced_at: datetime
+) -> dict[str, Any] | None:
+    """Map one monthly transaction record to a read-only local snapshot.
+
+    A malformed commercial field does not silently become zero.  The raw row is
+    retained for traceability, while validation and reconciliation findings make
+    it ineligible for formal P0 assessment until the source is corrected.
+    """
+    fields = record.get("fields")
+    record_id = _source_record_id(record)
+    if not isinstance(fields, dict) or not record_id:
+        return None
+
+    snapshot_id = _scalar(_field_value(fields, _FIELD_ALIASES["snapshot_id"]))
+    snapshot_month = _normalise_month(_field_value(fields, _FIELD_ALIASES["snapshot_month"]))
+    snapshot_date = _scalar(_field_value(fields, _FIELD_ALIASES["snapshot_date"]))
+    material_code = _scalar(_field_value(fields, _FIELD_ALIASES["material_code"]))
+    purchasing_org_code = _scalar(_field_value(fields, _FIELD_ALIASES["purchasing_org_code"]))
+    base = _scalar(_field_value(fields, _FIELD_ALIASES["base"]))
+    unit = _scalar(_field_value(fields, _FIELD_ALIASES["unit"]))
+    currency = _scalar(_field_value(fields, _FIELD_ALIASES["currency"]))
+    amount_basis = _scalar(_field_value(fields, _FIELD_ALIASES["amount_basis"]))
+    data_source = _scalar(_field_value(fields, _FIELD_ALIASES["data_source"]))
+    data_mode = _normalise_data_mode(_field_value(fields, _FIELD_ALIASES["data_mode"]))
+    source_updated_at = _scalar(_field_value(fields, _FIELD_ALIASES["source_updated_at"]))
+
+    required = {
+        "快照ID": snapshot_id,
+        "统计月份": snapshot_month,
+        "快照日期": snapshot_date,
+        "采购组织代码": purchasing_org_code,
+        "基地": base,
+        "物料号": material_code,
+        "计量单位": unit,
+        "币种": currency,
+        "金额口径": amount_basis,
+        "数据来源": data_source,
+        "数据模式": None if data_mode == "unknown" else data_mode,
+        "更新时间": source_updated_at,
+    }
+    validation_errors = [name for name, value in required.items() if value in (None, "")]
+
+    quantities = {
+        "received_qty": _decimal_value(_field_value(fields, _FIELD_ALIASES["received_qty"])),
+        "positive_settlement_qty": _decimal_value(_field_value(fields, _FIELD_ALIASES["positive_settlement_qty"])),
+        "negative_settlement_qty": _decimal_value(_field_value(fields, _FIELD_ALIASES["negative_settlement_qty"])),
+        "actual_settlement_qty": _decimal_value(_field_value(fields, _FIELD_ALIASES["actual_settlement_qty"])),
+        "settled_qty": _decimal_value(_field_value(fields, _FIELD_ALIASES["settled_qty"])),
+        "unsettled_qty": _decimal_value(_field_value(fields, _FIELD_ALIASES["unsettled_qty"])),
+    }
+    amounts = {
+        "unit_price": _decimal_value(_field_value(fields, _FIELD_ALIASES["unit_price"])),
+        "received_amount": _decimal_value(_field_value(fields, _FIELD_ALIASES["received_amount"])),
+        "actual_settlement_amount": _decimal_value(_field_value(fields, _FIELD_ALIASES["actual_settlement_amount"])),
+        "settled_amount": _decimal_value(_field_value(fields, _FIELD_ALIASES["settled_amount"])),
+        "unsettled_amount": _decimal_value(_field_value(fields, _FIELD_ALIASES["unsettled_amount"])),
+    }
+    for field_name, value in {**quantities, **amounts}.items():
+        if value is None:
+            validation_errors.append(f"{field_name}格式无效或缺失")
+
+    quality_issues: list[str] = []
+    if quantities["negative_settlement_qty"] is not None and quantities["negative_settlement_qty"] > 0:
+        quality_issues.append("负结算数量应使用负数")
+    if quantities["positive_settlement_qty"] is not None and quantities["negative_settlement_qty"] is not None:
+        _add_reconciliation_issue(
+            quality_issues,
+            quantities["actual_settlement_qty"],
+            quantities["positive_settlement_qty"] + quantities["negative_settlement_qty"],
+            "实结算数量与正负结算数量",
+        )
+    _add_reconciliation_issue(
+        quality_issues,
+        quantities["actual_settlement_qty"],
+        (quantities["settled_qty"] + quantities["unsettled_qty"])
+        if quantities["settled_qty"] is not None and quantities["unsettled_qty"] is not None else None,
+        "实结算数量与已未结算数量",
+    )
+    _add_reconciliation_issue(
+        quality_issues,
+        amounts["actual_settlement_amount"],
+        (amounts["settled_amount"] + amounts["unsettled_amount"])
+        if amounts["settled_amount"] is not None and amounts["unsettled_amount"] is not None else None,
+        "实结算金额与已未结算金额",
+    )
+
+    return {
+        "_id": f"feishu:transaction:{record_id}",
+        "supplier_id": supplier_id,
+        "supplier_code": supplier_code,
+        "supplier_name": _scalar(_field_value(fields, _FIELD_ALIASES["name"])),
+        "source": "feishu_bitable",
+        "source_system": "feishu_bitable",
+        "source_record_id": record_id,
+        "snapshot_id": snapshot_id,
+        "snapshot_month": snapshot_month,
+        "snapshot_date": snapshot_date,
+        "purchasing_org_code": purchasing_org_code,
+        "base": base,
+        "category_code": _scalar(_field_value(fields, _FIELD_ALIASES["category_code"])),
+        "category_name": _scalar(_field_value(fields, _FIELD_ALIASES["category_name"])),
+        "material_code": material_code,
+        "material_name": _scalar(_field_value(fields, _FIELD_ALIASES["material_name"])),
+        "unit": unit,
+        **quantities,
+        **amounts,
+        "currency": currency,
+        "amount_basis": amount_basis,
+        "contract_number": _scalar(_field_value(fields, _FIELD_ALIASES["contract_number"])),
+        "contract_status": _normalise_contract_status(
+            _field_value(fields, _FIELD_ALIASES["contract_status"])
+        ),
+        "data_source": data_source,
+        "data_mode": data_mode,
+        "source_updated_at": source_updated_at,
+        "validation_errors": validation_errors,
+        "data_quality_issues": quality_issues,
+        "data_quality_status": "invalid" if validation_errors else ("warning" if quality_issues else "valid"),
+        "eligible_for_formal_assessment": data_mode == "real" and not validation_errors and not quality_issues,
         "synced_at": synced_at,
         "sync_status": "current",
         "raw_fields": fields,
@@ -528,6 +746,12 @@ def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> st
             ("产品名称", "product_name", "productName"),
         ),
         "supplier_contact": (("联系人姓名", "contact_name", "contactName", "姓名"),),
+        "supplier_transaction": (
+            ("快照ID", "snapshot_id", "snapshotId"),
+            ("统计月份", "snapshot_month", "snapshotMonth"),
+            ("供应商代码", "supplier_code", "supplierCode"),
+            ("物料号", "material_code", "materialCode"),
+        ),
     }[table_name]
     missing = [
         aliases[0]
@@ -540,7 +764,7 @@ def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> st
 
 
 def sync_supplier_tables() -> dict[str, Any]:
-    """Synchronize master, capability, and contact tables into local snapshots."""
+    """Synchronize configured supplier tables into local read-only snapshots."""
     if not settings.FEISHU_BITABLE_ENABLED:
         return {"enabled": False, "synced": 0, "skipped": 0, "status": "disabled"}
 
@@ -551,6 +775,8 @@ def sync_supplier_tables() -> dict[str, Any]:
         "supplier_capability": build_supplier_capability_client(),
         "supplier_contact": build_supplier_contact_client(),
     }
+    if settings.FEISHU_BITABLE_TRANSACTION_TABLE_ID:
+        table_clients["supplier_transaction"] = build_supplier_transaction_client()
     table_records: dict[str, list[dict[str, Any]] | None] = {}
     errors: list[dict[str, str]] = []
     table_results: dict[str, dict[str, Any]] = {}
@@ -616,7 +842,10 @@ def sync_supplier_tables() -> dict[str, Any]:
     for table_name, collection_name, normalizer in (
         ("supplier_capability", "supplier_capability_snapshots", normalize_supplier_capability_record),
         ("supplier_contact", "supplier_contact_snapshots", normalize_supplier_contact_record),
+        ("supplier_transaction", "supplier_transaction_snapshots", normalize_supplier_transaction_record),
     ):
+        if table_name not in table_records:
+            continue
         records = table_records[table_name]
         if records is None or master_records is None or table_results[table_name]["status"] != "ok":
             continue
@@ -668,6 +897,7 @@ def sync_supplier_tables() -> dict[str, Any]:
         master_synced=table_results["supplier_master"]["synced"],
         capability_synced=table_results["supplier_capability"]["synced"],
         contact_synced=table_results["supplier_contact"]["synced"],
+        transaction_synced=table_results.get("supplier_transaction", {}).get("synced", 0),
         error_count=len(errors),
     )
     return {

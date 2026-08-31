@@ -1,7 +1,7 @@
 """LangGraph 工具定义 — 从各领域导入，统一注册。"""
 
 from app.domains.risk.tools_search import search_company
-from app.domains.risk.tools_risk import assess_risk, predict_risk, macro_risk, scenario_simulate
+from app.domains.risk.tools_risk import assess_business_risk, assess_risk, predict_risk, macro_risk, scenario_simulate
 from app.domains.risk.tools_analysis import (
     esg_assessment,
     contagion_analysis,
@@ -27,6 +27,7 @@ from app.domains.sourcing.tools import (
 TOOLS_LIST = [
     search_company,
     assess_risk,
+    assess_business_risk,
     check_alert,
     get_watchlist,
     analyze_watchlist_trend,

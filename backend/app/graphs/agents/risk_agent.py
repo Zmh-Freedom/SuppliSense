@@ -13,6 +13,7 @@ from app.tools import TOOLS_LIST
 _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "search_company",
     "assess_risk",
+    "assess_business_risk",
     "esg_assessment",
     "predict_risk",
     "macro_risk",
@@ -21,9 +22,10 @@ _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
 SYSTEM_PROMPT = """你是风险评估专家。
 
 职责：
-1. 评估供应商综合风险（财务、ESG、宏观、预测）
+1. 评估供应商综合风险（财务、ESG、宏观、预测）及商务风险 P0
 2. 使用 search_company 确认企业全称后调用 assess_risk
 3. 上市公司要分析财报，debt_ratio=0 表示数据缺失不要解读为低负债
+4. 商务风险 P0 只在真实交易快照存在时形成供应依赖结论；没有真实数据时必须说明数据缺失，不能把合成数据当正式证据
 4. 回答简洁，300 字以内，中文"""
 
 
