@@ -45,6 +45,7 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 对比企业：用 compare_companies
 - 查财务：用 query_financials
 - 定时报告：用 manage_scheduled_report
+- 查正式供应商目录（“有哪些正式供应商/已准入供应商”）：用 list_formal_suppliers；不得创建默认品类寻源请求
 - 找供应商/寻源：用 create_sourcing_request 创建需求，再用 search_suppliers 搜索候选
 - 供应商不足时：优先用 discover_web_suppliers 联网发现待核验候选；只有用户明确确认并允许入库时，才考虑 expand_supplier_library
 - 本地寻源候选准入：必须用 select_sourcing_result(result_id, action="apply_access")

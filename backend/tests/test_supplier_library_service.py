@@ -1,7 +1,7 @@
 """Supplier-library read-model tests."""
 
 from app.core.config import settings
-from app.domains.sourcing.supplier_repo import get_supplier, list_suppliers
+from app.domains.sourcing.supplier_repo import get_supplier, list_formal_suppliers, list_suppliers
 
 
 class FakeCursor:
@@ -67,6 +67,7 @@ class FakeDatabase:
                     "regions": [],
                     "status": "active",
                     "source": "feishu_bitable",
+                    "sync_status": "current",
                 }],
             ),
             "supplier_capability_snapshots": FakeCollection(
@@ -112,3 +113,25 @@ def test_get_supplier_reads_current_feishu_master_by_view_or_stable_id(monkeypat
 
     assert by_view_id and by_view_id["name"] == "示例汽车零部件有限公司"
     assert by_stable_id and by_stable_id["_id"] == "master-1"
+
+
+def test_list_formal_suppliers_reads_active_feishu_directory(monkeypatch) -> None:
+    database = FakeDatabase()
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+
+    result = list_formal_suppliers()
+
+    assert result["total"] == 1
+    assert result["items"] == [{
+        "supplier_id": "supplier:feishu:1",
+        "supplier_code": None,
+        "supplier_name": "示例汽车零部件有限公司",
+        "status": "active",
+        "categories": ["汽车零部件"],
+        "regions": ["华东"],
+        "products": ["制动卡钳", "制动", "卡钳"],
+        "website_url": None,
+        "source": "feishu_bitable",
+        "source_updated_at": None,
+    }]

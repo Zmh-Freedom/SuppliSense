@@ -16,6 +16,7 @@ from app.domains.risk.tools_report import generate_report, manage_scheduled_repo
 from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist, analyze_watchlist_trend
 from app.domains.knowledge.tools import knowledge_search
 from app.domains.sourcing.tools import (
+    list_formal_suppliers,
     create_sourcing_request,
     search_suppliers,
     select_sourcing_result,
@@ -47,6 +48,7 @@ TOOLS_LIST = [
     compare_companies,
     query_financials,
     manage_scheduled_report,
+    list_formal_suppliers,
     create_sourcing_request,
     search_suppliers,
     select_sourcing_result,

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Annotated
 
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.types import TypedDict
@@ -40,12 +41,16 @@ SOURCING_SYSTEM = """你是一个采购寻源助手。用户想通过自然语�
 3. 调用 search_suppliers 执行搜索并获取排序结果
 4. 以清晰的格式呈现候选供应商，包括匹配分、风险分和推荐理由
 
+如果用户问“有哪些正式供应商 / 已准入供应商 / 正式供应商数量或清单”，必须直接调用 list_formal_suppliers；这不是采购寻源，不得创建品类为“综合”等默认需求。
+
 如果有供应商结果，请以表格形式展示关键信息；外部候选优先展示官网/来源链接、电话、邮箱（没有则明确写“待核验/未找到”），然后是风险要点。
 如果无匹配结果，告知用户并建议扩充供应商库。
 用户说“执行/确认/同意准入”时，必须调用 select_external_supplier_candidate；优先传入 candidate_id，否则传入上下文中的 supplier_name，不能只输出文字结论。"""
 
 
 _SOURCING_TOOLS = None
+_FORMAL_DIRECTORY_TOKENS = ("正式供应商", "已准入供应商", "合格供应商")
+_DIRECTORY_REQUEST_TOKENS = ("哪些", "哪几", "清单", "列表", "多少", "几个", "有谁")
 
 
 def _get_sourcing_tools():
@@ -53,6 +58,7 @@ def _get_sourcing_tools():
     global _SOURCING_TOOLS
     if _SOURCING_TOOLS is None:
         from app.tools import (
+            list_formal_suppliers,
             create_sourcing_request,
             search_suppliers,
             select_sourcing_result,
@@ -60,6 +66,7 @@ def _get_sourcing_tools():
             select_external_supplier_candidate,
         )
         _SOURCING_TOOLS = [
+            list_formal_suppliers,
             create_sourcing_request,
             search_suppliers,
             select_sourcing_result,
@@ -67,6 +74,46 @@ def _get_sourcing_tools():
             select_external_supplier_candidate,
         ]
     return _SOURCING_TOOLS
+
+
+def _is_formal_supplier_directory_query(state: SourcingState) -> bool:
+    """Whether the latest user message is a formal supplier directory request."""
+    messages = state.get("messages", [])
+    last_message = messages[-1] if messages else None
+    if not isinstance(last_message, HumanMessage):
+        return False
+    content = str(last_message.content)
+    if not any(token in content for token in _FORMAL_DIRECTORY_TOKENS):
+        return False
+    return any(token in content for token in _DIRECTORY_REQUEST_TOKENS)
+
+
+def _format_formal_supplier_directory(result: dict) -> str:
+    """Format a read-only supplier directory result without another LLM turn."""
+    items = result.get("items", [])
+    total = result.get("total", 0)
+    if not items:
+        return "当前没有查询到正式（已准入）的供应商。"
+
+    rows = ["| 供应商代码 | 供应商名称 | 品类 | 供货区域 |", "| --- | --- | --- | --- |"]
+    for item in items:
+        def display(value: object) -> str:
+            return str(value or "—").replace("|", "、").replace("\n", " ")
+
+        rows.append(
+            "| {supplier_code} | {supplier_name} | {categories} | {regions} |".format(
+                supplier_code=display(item.get("supplier_code")),
+                supplier_name=display(item.get("supplier_name")),
+                categories=display("、".join(item.get("categories") or [])),
+                regions=display("、".join(item.get("regions") or [])),
+            )
+        )
+
+    suffix = "" if total == len(items) else f"（以下展示前 {len(items)} 家）"
+    return (
+        f"当前共有 {total} 家正式（已准入）供应商{suffix}，数据来自已同步的供应商主数据快照：\n\n"
+        + "\n".join(rows)
+    )
 
 
 def build_sourcing_graph(checkpointer: AsyncPostgresSaver | None = None):
@@ -87,6 +134,15 @@ def build_sourcing_graph(checkpointer: AsyncPostgresSaver | None = None):
 
 async def _sourcing_agent(state: SourcingState):
     from app.graphs import build_shared_llm
+
+    if _is_formal_supplier_directory_query(state):
+        # This is a deterministic read-only query. Returning the directory here
+        # prevents the model from inventing a default category or skipping the
+        # result after the required lookup completes.
+        from app.domains.sourcing.supplier_repo import list_formal_suppliers
+
+        result = await asyncio.to_thread(list_formal_suppliers, 20)
+        return {"messages": [AIMessage(content=_format_formal_supplier_directory(result))]}
 
     llm = build_shared_llm()
     llm_with_tools = llm.bind_tools(_get_sourcing_tools())
@@ -171,6 +227,19 @@ async def stream_sourcing_graph(
                 output = event.get("data", {}).get("output")
                 content = output.content if output and hasattr(output, "content") else ""
                 if content:
+                    full_answer = content
+                    yield _sse_event("answer_chunk", {"text": content})
+
+            elif kind == "on_chain_end" and event.get("name") in {"_sourcing_agent", "sourcing_agent"}:
+                # Deterministic read-only branches do not emit chat-model
+                # events. Extract their final AI message from the node output
+                # so the SSE client receives the same answer it would receive
+                # from an LLM-backed branch.
+                output = event.get("data", {}).get("output", {})
+                messages = output.get("messages", []) if isinstance(output, dict) else []
+                answer = messages[-1] if messages else None
+                content = answer.content if answer and hasattr(answer, "content") else ""
+                if content and not full_answer:
                     full_answer = content
                     yield _sse_event("answer_chunk", {"text": content})
 

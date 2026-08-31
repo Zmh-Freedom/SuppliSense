@@ -592,6 +592,41 @@ def list_suppliers(
     return {"items": items, "total": total}
 
 
+def list_formal_suppliers(limit: int = 20) -> dict[str, Any]:
+    """Return the current formal supplier directory from the active read model."""
+    db = get_db()
+    collection = _supplier_read_collection(db)
+    filters: dict[str, Any] = {"status": {"$in": ["active", "approved"]}}
+    if collection.name == "supplier_master_snapshots":
+        filters.update({"source": "feishu_bitable", "sync_status": "current"})
+
+    safe_limit = max(1, min(limit, 50))
+    sort_field = "synced_at" if collection.name == "supplier_master_snapshots" else "created_at"
+    items = list(collection.find(filters).sort(sort_field, -1).limit(safe_limit))
+    for item in items:
+        item["_id"] = str(item["_id"])
+    _enrich_supplier_library_items(db, items)
+
+    return {
+        "total": collection.count_documents(filters),
+        "items": [
+            {
+                "supplier_id": str(item.get("supplier_id") or item.get("_id")),
+                "supplier_code": item.get("supplier_code"),
+                "supplier_name": item.get("name"),
+                "status": item.get("status"),
+                "categories": item.get("categories", []),
+                "regions": item.get("regions", []),
+                "products": item.get("products", []),
+                "website_url": item.get("website_url"),
+                "source": item.get("source"),
+                "source_updated_at": item.get("source_updated_at"),
+            }
+            for item in items
+        ],
+    }
+
+
 def _enrich_supplier_library_items(db: Any, items: list[dict[str, Any]]) -> None:
     """Merge current capability snapshots into the supplier-library read model."""
     supplier_ids = [

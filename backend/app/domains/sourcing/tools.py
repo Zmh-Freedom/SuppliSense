@@ -3,6 +3,18 @@ from langchain_core.tools import tool
 
 
 @tool
+def list_formal_suppliers(limit: int = 20) -> dict:
+    """列出当前正式供应商目录。
+
+    当用户询问“有哪些正式供应商”“已准入供应商清单”或供应商数量时使用。
+    该工具只读取当前正式供应商主数据，不创建寻源请求，也不按品类过滤。
+    """
+    from app.domains.sourcing.supplier_repo import list_formal_suppliers as _list
+
+    return _list(limit=limit)
+
+
+@tool
 def create_sourcing_request(title: str, category: str, spec: str) -> dict:
     """创建采购寻源请求，后续可通过 search_suppliers 执行搜索。
 
