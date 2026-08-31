@@ -1,7 +1,7 @@
 """Supplier-library read-model tests."""
 
 from app.core.config import settings
-from app.domains.sourcing.supplier_repo import list_suppliers
+from app.domains.sourcing.supplier_repo import get_supplier, list_suppliers
 
 
 class FakeCursor:
@@ -41,6 +41,16 @@ class FakeCollection:
             ):
                 matched.append(document)
         return FakeCursor(matched)
+
+    def find_one(self, query: dict) -> dict | None:
+        return next(
+            (
+                dict(document)
+                for document in self.documents
+                if all(document.get(key) == value for key, value in query.items())
+            ),
+            None,
+        )
 
 
 class FakeDatabase:
@@ -90,3 +100,15 @@ def test_list_suppliers_merges_current_capability_snapshot(monkeypatch) -> None:
     assert item["products"] == ["制动卡钳", "制动", "卡钳"]
     assert item["regions"] == ["华东"]
     assert item["capabilities"][0]["product_name"] == "制动卡钳"
+
+
+def test_get_supplier_reads_current_feishu_master_by_view_or_stable_id(monkeypatch) -> None:
+    database = FakeDatabase()
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+
+    by_view_id = get_supplier("master-1")
+    by_stable_id = get_supplier("supplier:feishu:1")
+
+    assert by_view_id and by_view_id["name"] == "示例汽车零部件有限公司"
+    assert by_stable_id and by_stable_id["_id"] == "master-1"

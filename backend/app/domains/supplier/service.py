@@ -31,6 +31,7 @@ def build_supplier_profile(supplier_id: str) -> dict:
         raise ValueError(f"Supplier {supplier_id} not found")
 
     name = master["name"]
+    stable_supplier_id = str(master.get("supplier_id") or master.get("_id") or supplier_id)
     enrichment = _try_build("master_enrichment", name, _load_cached_enrichment, master) or {}
 
     # Build each section independently — failures are logged but don't block
@@ -43,7 +44,7 @@ def build_supplier_profile(supplier_id: str) -> dict:
         "esg": _try_build("esg", name, _build_esg_summary, name),
         "alerts": _try_build("alerts", name, _build_alert_list, name) or [],
         "relationships": _try_build("relationships", name, _build_relationship_summary, name),
-        "changelog": _try_build("changelog", supplier_id, get_changelog, supplier_id, 20) or [],
+        "changelog": _try_build("changelog", stable_supplier_id, get_changelog, stable_supplier_id, 20) or [],
     }
 
     return profile

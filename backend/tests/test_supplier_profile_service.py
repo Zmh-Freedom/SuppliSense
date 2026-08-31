@@ -85,9 +85,13 @@ def test_relationship_entities_include_local_supplier_link(monkeypatch):
 
 def test_build_supplier_profile_passes_context_to_all_sections(monkeypatch):
     """Each profile section receives the current company and master snapshot."""
-    master = {"_id": "supplier-1", "name": "示例供应商", "categories": []}
+    master = {"_id": "supplier-view-1", "supplier_id": "supplier-1", "name": "示例供应商", "categories": []}
     monkeypatch.setattr("app.domains.supplier.repo.get_supplier", lambda supplier_id: master)
-    monkeypatch.setattr("app.domains.supplier.repo.get_changelog", lambda supplier_id, limit: [])
+    changelog_calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        "app.domains.supplier.repo.get_changelog",
+        lambda supplier_id, limit: changelog_calls.append((supplier_id, limit)) or [],
+    )
     monkeypatch.setattr(service, "_load_cached_enrichment", lambda profile: {})
     monkeypatch.setattr(service, "_build_basic_info", lambda profile, enrichment: {"name": profile["name"]})
 
@@ -119,6 +123,7 @@ def test_build_supplier_profile_passes_context_to_all_sections(monkeypatch):
     assert calls["esg"] == ("示例供应商",)
     assert calls["alerts"] == ("示例供应商",)
     assert calls["relationships"] == ("示例供应商",)
+    assert changelog_calls == [("supplier-1", 20)]
 
 
 def test_compliance_status_handles_empty_tianyancha_result(monkeypatch):

@@ -351,8 +351,14 @@ def update_supplier(sid: str, data: dict) -> None:
 
 
 def get_supplier(sid: str) -> dict | None:
+    """Read a formal supplier by current view id or stable supplier_id."""
     db = get_db()
-    return db["suppliers"].find_one({"_id": sid})
+    collection = _supplier_read_collection(db)
+    for query in ({"_id": sid}, {"supplier_id": sid}):
+        supplier = collection.find_one(query)
+        if supplier:
+            return supplier
+    return None
 
 
 def get_supplier_by_name(name: str) -> dict | None:
