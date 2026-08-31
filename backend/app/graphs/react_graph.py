@@ -196,6 +196,10 @@ def build_react_graph(
                     input_data = {**input_data, "messages": messages}
             return await self._graph.ainvoke(input_data, **kwargs)
 
+        async def aget_state(self, config):
+            """Expose persistent state inspection to the streaming adapter."""
+            return await self._graph.aget_state(config)
+
     return ReactGraphWithSystemPrompt(compiled)
 
 

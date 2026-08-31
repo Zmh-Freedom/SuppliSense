@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from typing import Any
@@ -30,7 +31,9 @@ async def _langgraph_react_stream(
     )
     context = execution_context or load_execution_context(session_id, message)
     # 传入 config 用于 Human-in-the-Loop 恢复
-    run_config = {"configurable": {"thread_id": session_id}}
+    from app.graphs.chat_checkpoint import chat_checkpoint_config
+
+    run_config = chat_checkpoint_config(session_id, "react")
     async for event in stream_react_graph(
         graph,
         message,
@@ -116,7 +119,9 @@ async def _langgraph_agent_supervisor_stream(
     from app.graphs.agent_core.adapter import load_execution_context
 
     graph = build_agent_supervisor_graph()
-    run_config = {"configurable": {"thread_id": session_id}}
+    from app.graphs.chat_checkpoint import chat_checkpoint_config
+
+    run_config = chat_checkpoint_config(session_id, "agent-supervisor")
     try:
         context = execution_context or load_execution_context(session_id, message)
     except Exception:
@@ -188,7 +193,9 @@ async def _langgraph_react_reflection_stream(
         checkpointer=await get_sourcing_risk_checkpointer(),
     )
     context = execution_context or load_execution_context(session_id, message)
-    run_config = {"configurable": {"thread_id": session_id}}
+    from app.graphs.chat_checkpoint import chat_checkpoint_config
+
+    run_config = chat_checkpoint_config(session_id, "react-reflection")
     async for event in stream_react_graph(
         graph,
         message,
@@ -243,80 +250,99 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         # Send session_id first (before any blocking routing/classification)
         yield f"event: session\ndata: {sid}\n\n"
 
-        # Resolve conversation targets before rule preflight or intent routing.
-        # This makes ConversationState the one authority for company references.
-        execution_context = {
-            "history": [],
-            "references": [],
-            "conversation_state": {},
-            "current_task": {},
-        }
+        from app.services.agent_session_guard import (
+            acquire_agent_session_run,
+            release_agent_session_run,
+            renew_agent_session_run,
+        )
+
         try:
-            from app.graphs.agent_core.adapter import load_execution_context
-
-            execution_context = load_execution_context(sid, req.message)
-        except Exception:
-            # The execution stream retains its normal datastore error handling.
-            # The clarification preflight remains a best-effort rule fallback.
-            pass
-
-        # Programmatic clarification is only a fallback after structured state.
-        from app.services.clarification import detect_clarification_needed
-        supplier_references = list(execution_context.get("references") or [])
-        conversation_state = dict(execution_context.get("conversation_state") or {})
-        current_task = dict(execution_context.get("current_task") or {})
-        resolved_target_names = list(
-            current_task.get("target_supplier_names")
-            or conversation_state.get("selected_supplier_names")
-            or []
-        )
-        has_structured_context = bool(
-            supplier_references or conversation_state.get("active_suppliers")
-        )
-        clar = detect_clarification_needed(
-            req.message,
-            supplier_references=supplier_references,
-            resolved_target_names=resolved_target_names,
-            has_structured_context=has_structured_context,
-        )
-        if clar:
-            yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing}, ensure_ascii=False)}\n\n"
+            run_token = await asyncio.to_thread(acquire_agent_session_run, sid)
+        except RuntimeError:
+            yield f"event: error\ndata: {json.dumps({'message': '会话执行保护暂不可用，请稍后重试。'}, ensure_ascii=False)}\n\n"
+            return
+        if run_token is None:
+            yield f"event: error\ndata: {json.dumps({'message': '该会话上一轮仍在处理中，请等待完成后再发送。'}, ensure_ascii=False)}\n\n"
             return
 
-        # Resolve mode only after target resolution and fallback clarification.
-        mode = req.mode
-        if mode == "auto":
-            from app.graphs.router import router as intent_router
+        try:
+            # Resolve conversation targets before rule preflight or intent routing.
+            # This makes ConversationState the one authority for company references.
+            execution_context = {
+                "history": [],
+                "references": [],
+                "conversation_state": {},
+                "current_task": {},
+            }
+            try:
+                from app.graphs.agent_core.adapter import load_execution_context
 
-            mode = intent_router.route(req.message, execution_context).value
-        mode = _MODE_ALIASES.get(mode, mode)
+                execution_context = load_execution_context(sid, req.message)
+            except Exception:
+                # The execution stream retains its normal datastore error handling.
+                # The clarification preflight remains a best-effort rule fallback.
+                pass
 
-        # Choose execution mode
-        if mode == "langgraph-react":
-            stream_fn = _langgraph_react_stream
-        elif mode == "langgraph-plan-execute":
-            stream_fn = _langgraph_plan_execute_stream
-        elif mode == "langgraph-multi-agent":
-            stream_fn = _langgraph_supervisor_stream
-        elif mode == "langgraph-sourcing":
-            stream_fn = _langgraph_sourcing_stream
-        elif mode == "langgraph-agent-supervisor":
-            stream_fn = _langgraph_agent_supervisor_stream
-        elif mode == "langgraph-parallel":
-            stream_fn = _langgraph_parallel_stream
-        elif mode == "langgraph-react-reflection":
-            stream_fn = _langgraph_react_reflection_stream
-        else:
-            stream_fn = _langgraph_react_stream
+            # Programmatic clarification is only a fallback after structured state.
+            from app.services.clarification import detect_clarification_needed
+            supplier_references = list(execution_context.get("references") or [])
+            conversation_state = dict(execution_context.get("conversation_state") or {})
+            current_task = dict(execution_context.get("current_task") or {})
+            resolved_target_names = list(
+                current_task.get("target_supplier_names")
+                or conversation_state.get("selected_supplier_names")
+                or []
+            )
+            has_structured_context = bool(
+                supplier_references or conversation_state.get("active_suppliers")
+            )
+            clar = detect_clarification_needed(
+                req.message,
+                supplier_references=supplier_references,
+                resolved_target_names=resolved_target_names,
+                has_structured_context=has_structured_context,
+            )
+            if clar:
+                yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing}, ensure_ascii=False)}\n\n"
+                return
 
-        # Stream the chat response
-        async for event in stream_fn(
-            sid,
-            req.message,
-            pref_ctx,
-            execution_context=execution_context,
-        ):
-            yield event
+            # Resolve mode only after target resolution and fallback clarification.
+            mode = req.mode
+            if mode == "auto":
+                from app.graphs.router import router as intent_router
+
+                mode = intent_router.route(req.message, execution_context).value
+            mode = _MODE_ALIASES.get(mode, mode)
+
+            # Choose execution mode
+            if mode == "langgraph-react":
+                stream_fn = _langgraph_react_stream
+            elif mode == "langgraph-plan-execute":
+                stream_fn = _langgraph_plan_execute_stream
+            elif mode == "langgraph-multi-agent":
+                stream_fn = _langgraph_supervisor_stream
+            elif mode == "langgraph-sourcing":
+                stream_fn = _langgraph_sourcing_stream
+            elif mode == "langgraph-agent-supervisor":
+                stream_fn = _langgraph_agent_supervisor_stream
+            elif mode == "langgraph-parallel":
+                stream_fn = _langgraph_parallel_stream
+            elif mode == "langgraph-react-reflection":
+                stream_fn = _langgraph_react_reflection_stream
+            else:
+                stream_fn = _langgraph_react_stream
+
+            # Stream the chat response
+            async for event in stream_fn(
+                sid,
+                req.message,
+                pref_ctx,
+                execution_context=execution_context,
+            ):
+                await asyncio.to_thread(renew_agent_session_run, sid, run_token)
+                yield event
+        finally:
+            await asyncio.to_thread(release_agent_session_run, sid, run_token)
 
     return StreamingResponse(
         event_generator(),

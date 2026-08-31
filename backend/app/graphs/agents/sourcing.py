@@ -182,20 +182,36 @@ async def stream_sourcing_graph(
         load_execution_context,
         save_execution_turn,
     )
-    from app.graphs.streaming import _sse_event
+    from app.graphs.streaming import (
+        _checkpoint_messages,
+        _has_unresolved_tool_calls,
+        _sse_event,
+    )
     from app.graphs.context import build_input_messages
 
     context = execution_context or load_execution_context(session_id, message)
+    checkpointer = await get_sourcing_risk_checkpointer()
+    graph = build_sourcing_graph(checkpointer)
+    from app.graphs.chat_checkpoint import chat_checkpoint_config
+
+    run_config = chat_checkpoint_config(session_id, "sourcing")
+    checkpoint_messages = await _checkpoint_messages(graph, run_config)
+    if _has_unresolved_tool_calls(checkpoint_messages):
+        yield _sse_event("error", {
+            "message": "上一轮会话仍有未完成的工具执行，请等待其结束或重新打开会话后再试。"
+        })
+        return
+
+    # Like ReAct, the persisted namespace already contains completed turns.
+    # Replaying Mongo history here duplicates prior messages and can invalidate
+    # tool-call ordering on the next model request.
+    input_history = [] if checkpoint_messages else context["history"]
     msgs = await build_input_messages(
-        context["history"], message, context["references"], context
+        input_history, message, context["references"], context
     )
     if preference_context:
         msgs.insert(0, SystemMessage(content=preference_context))
     msgs.insert(0, SystemMessage(content=SOURCING_SYSTEM))
-
-    checkpointer = await get_sourcing_risk_checkpointer()
-    graph = build_sourcing_graph(checkpointer)
-    run_config = {"configurable": {"thread_id": session_id}}
     full_answer = ""
     discovered_references: list[dict] = []
 

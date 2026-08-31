@@ -102,6 +102,23 @@ def test_chat_passes_one_execution_context_snapshot_to_selected_graph(monkeypatc
     assert calls == ["context", "stream"]
 
 
+def test_chat_rejects_second_active_run_before_loading_context(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.agent_session_guard.acquire_agent_session_run",
+        lambda _session_id: None,
+    )
+    response = asyncio.run(
+        chat_api.chat_stream_endpoint(
+            chat_api.ChatRequest(message="分析风险", session_id="busy-run", mode="react"),
+            SimpleNamespace(state=SimpleNamespace(user_id="")),
+        )
+    )
+
+    events = _collect_events(response)
+
+    assert any("上一轮仍在处理中" in event for event in events)
+
+
 def test_router_uses_rules_before_llm_and_never_receives_supplier_targets(monkeypatch) -> None:
     router = IntentRouter()
     llm = object()

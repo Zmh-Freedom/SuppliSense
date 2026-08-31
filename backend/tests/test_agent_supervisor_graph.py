@@ -330,7 +330,12 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
         assert graph is compiled_graph
         assert message == "帮我找华东电机供应商并评估风险"
         assert session_id == "chat-run"
-        assert run_config == {"configurable": {"thread_id": "chat-run"}}
+        assert run_config == {
+            "configurable": {
+                "thread_id": "chat-run",
+                "checkpoint_ns": "chat:agent-supervisor",
+            }
+        }
         yield 'event: done\ndata: {"answer": "supervisor"}\n\n'
 
     async def unexpected_stream(*_args):

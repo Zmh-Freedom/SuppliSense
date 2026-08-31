@@ -26,6 +26,34 @@ _ACCESS_SUCCESS_CLAIMS = re.compile(r"已(?:完成|成功)|正式成为|同意�
 _MAX_AGENT_TOOL_CALLS = 12
 
 
+async def _checkpoint_messages(graph: Any, config: dict[str, Any]) -> list[Any]:
+    """Read persisted messages when the compiled graph exposes state access."""
+    get_state = getattr(graph, "aget_state", None)
+    if not callable(get_state):
+        return []
+    try:
+        snapshot = await get_state(config)
+    except Exception:
+        return []
+    values = getattr(snapshot, "values", {})
+    messages = values.get("messages", []) if isinstance(values, dict) else []
+    return list(messages) if isinstance(messages, list) else []
+
+
+def _has_unresolved_tool_calls(messages: list[Any]) -> bool:
+    """Return whether a persisted message sequence is awaiting tool results."""
+    pending: set[str] = set()
+    for message in messages:
+        for tool_call in getattr(message, "tool_calls", []) or []:
+            call_id = tool_call.get("id") if isinstance(tool_call, dict) else None
+            if call_id:
+                pending.add(str(call_id))
+        tool_call_id = getattr(message, "tool_call_id", None)
+        if tool_call_id:
+            pending.discard(str(tool_call_id))
+    return bool(pending)
+
+
 def _access_write_succeeded(tool_name: str, output: Any) -> bool:
     """Only a durable application id is allowed to support an access-success claim."""
     if tool_name not in _ACCESS_WRITE_TOOLS:
@@ -218,8 +246,19 @@ async def stream_react_graph(
         history=history or [],
         references=references or [],
     )
+    checkpoint_messages = await _checkpoint_messages(graph, run_config or {})
+    if _has_unresolved_tool_calls(checkpoint_messages):
+        yield _sse_event("error", {
+            "message": "上一轮会话仍有未完成的工具执行，请等待其结束或重新打开会话后再试。"
+        })
+        return
+
+    # A persisted graph already owns completed turns. Re-injecting the MongoDB
+    # history appends duplicates after that state and can violate tool-call
+    # ordering. Only seed durable history for a new checkpoint namespace.
+    input_history = [] if checkpoint_messages else (history or [])
     input_messages = await build_input_messages(
-        history or [],
+        input_history,
         user_message,
         references,
         resolved_context,
