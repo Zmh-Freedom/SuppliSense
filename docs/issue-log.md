@@ -492,4 +492,4 @@
 - 修复方案：增加复用正式供应商只读模型的目录工具；将“正式/已准入/合格供应商 + 清单类问法”收敛为寻源图入口的确定性只读目录分支，直接格式化主数据快照，不再经过模型决策或创建寻源请求；流式适配器读取该图节点输出并发出统一的 `answer_chunk`/`done` 事件。
 - 修复期间测试回归：目录工具定向夹具遗漏真实飞书快照必有的 `sync_status=current`，导致测试数据被正确的正式快照过滤排除。已补齐夹具，不放宽生产过滤条件。
 - 验证结果：供应商库、目录 Agent 与寻源风险发现定向测试共 23 项通过，且编译检查通过；本地 MongoDB、Redis、PostgreSQL、checkpoint 均 healthy。真实 `POST /api/v1/chat/stream` 验证返回 HTTP 200 与“当前共有 9 家正式（已准入）供应商”，列出 9 条飞书主数据快照，事件中不含 `create_sourcing_request`。
-- 关联提交：待提交。
+- 关联提交：`597bbd9f fix(agent): list formal suppliers directly`。
