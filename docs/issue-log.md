@@ -479,4 +479,4 @@
 - 修复方案：画像仓储复用正式供应商只读集合选择逻辑，同时兼容快照 `_id` 和内部 `supplier_id`；画像审计读取使用已解析主数据的稳定 `supplier_id`。
 - 验证期间补充发现：已运行的 Uvicorn reload 实例未重新加载仓储改动，HTTP 仍返回旧的 `Supplier <id> not found`。将以当前工作区代码重启本任务启动的 8002 后端后复验；不改变生产热更新策略。
 - 验证结果：供应商库/画像仓储定向测试 7 项、商务风险定向测试 4 项通过；真实 HTTP 调用以飞书列表实际返回的视图 ID 请求画像，返回 200，且包含风险、财务、舆情、合规、ESG、告警、关系和日志分区。`/health/ready` 的 MongoDB、Redis、PostgreSQL 与 checkpoint 均为 `ok`。
-- 关联提交：待提交。
+- 关联提交：`9870b42f fix(supplier): read Feishu master in profiles`。
