@@ -352,7 +352,7 @@
 - 根因：以脚本文件路径执行时，Python 将 `backend/scripts` 作为模块搜索根目录，项目包 `backend/app` 不在 `sys.path` 中。
 - 修复方案：脚本在按文件路径执行时自动将 `backend` 加入模块搜索路径，并在交易快照数据契约中固定运行命令；补充启动回归验证。
 - 验证结果：`python scripts/seed_feishu_transaction_snapshot.py --help` 可正常启动且不发起外部请求；飞书客户端与合成数据生成定向测试 9 项通过。
-- 关联提交：待提交。
+- 关联提交：`59578f98 feat(feishu): add transaction snapshot test seeding`。
 
 ## ISS-20260828-005 飞书交易月度快照表 ID 未进入运行时配置
 
@@ -364,7 +364,7 @@
 - 根因：用户配置和此前约定的变量名为 `FEISHU_BITABLE_TRANSACTION_TABLE_ID`，新增代码却错误读取 `FEISHU_SUPPLIER_TRANSACTION_TABLE_ID`，导致运行时取到空值。
 - 修复方案：配置类、飞书客户端、示例配置、测试和数据契约统一改用 `FEISHU_BITABLE_TRANSACTION_TABLE_ID`；不修改已填写的本地 `.env`。
 - 验证结果：配置统一后，脚本成功读取交易表字段并创建 12 条合成记录；随后回读确认表内存在 12 条 `SYN-TXN-V1` 前缀记录，且快照 ID 均唯一。
-- 关联提交：待提交。
+- 关联提交：`59578f98 feat(feishu): add transaction snapshot test seeding`。
 
 ## ISS-20260828-006 飞书交易快照批量创建字段类型不兼容
 
@@ -376,7 +376,7 @@
 - 根因：飞书从空 Excel 模板导入时，将所有交易字段创建为文本类型；脚本向数量和金额字段提交数字，导致文本字段转换失败。
 - 修复方案：测试灌入脚本根据飞书字段类型序列化合成数据；数据契约明确开发测试表可以是文本字段，但接入正式风险计算前必须将数量、金额、日期字段改为正确类型。
 - 验证结果：定向测试 10 项通过；脚本成功创建 12 条 `synthetic` 记录，回读确认 12 条记录均带 `SYN-TXN-V1` 前缀且快照 ID 唯一。
-- 关联提交：待提交。
+- 关联提交：`59578f98 feat(feishu): add transaction snapshot test seeding`。
 
 ## ISS-20260828-007 商务风险 P0 定向测试缺少时间依赖导入
 
@@ -388,7 +388,7 @@
 - 根因：测试文件原本只导入 `timezone`，新增测试引用了 `datetime` 但未同步更新导入。
 - 修复方案：补齐测试模块的 `datetime` 导入，重跑交易同步与商务风险 P0 定向测试。
 - 验证结果：补齐导入后，飞书同步与商务风险 P0 定向测试共 12 项通过；Python 编译检查与 `git diff --check` 通过。
-- 关联提交：待提交。
+- 关联提交：`d1a58c46 feat(risk): add transaction snapshot business P0`。
 
 ## ISS-20260828-008 商务风险 P0 集成验收缺少本地 MongoDB
 
@@ -400,7 +400,7 @@
 - 根因：当前开发环境的后端进程和 MongoDB 均未运行，不是同步或商务风险代码错误。
 - 修复方案：启动 MongoDB 和后端后，执行四表只读同步、检查 `supplier_transaction_snapshots`，再调用商务风险 P0 API 验证真实数据与 synthetic 隔离。
 - 验证结果：MongoDB 恢复后，`/health/ready` 返回 200，MongoDB、Redis、PostgreSQL、checkpoint 均为 `ok`；四表同步 API 返回 200，交易表读取 22 条、同步 12 条、跳过 10 条；商务风险 P0 API 返回 200。
-- 关联提交：待提交。
+- 关联提交：`d1a58c46 feat(risk): add transaction snapshot business P0`。
 
 ## ISS-20260828-009 交易结算对账异常未完全隔离出正式商务风险 P0
 
@@ -412,7 +412,7 @@
 - 根因：标准化器将“格式/必填错误”和“对账错误”分开记录，却没有在正式可用性判断中统一收敛。
 - 修复方案：只要存在 `validation_errors` 或 `data_quality_issues`，均标记为不可用于正式评估；增加对账异常隔离的定向测试。
 - 验证结果：增加结算金额不平衡快照回归后，交易同步与商务风险 P0 定向测试共 13 项通过；对账异常记录会保留质量问题但 `eligible_for_formal_assessment=false`，不会参与正式评估。
-- 关联提交：待提交。
+- 关联提交：`d1a58c46 feat(risk): add transaction snapshot business P0`。
 
 ## ISS-20260828-010 飞书交易表历史记录与月度快照契约不一致
 
@@ -424,7 +424,7 @@
 - 根因：10 条记录均为飞书交易表中的空白行（`fields={}`），不是可映射的历史交易数据。
 - 修复方案：保持适配器的安全跳过行为，不放宽快照契约或将空行补零。若需要清理，应由表维护人员在飞书界面删除空行。
 - 验证结果：同步结果为 `status=ok`，12 条字段完整的合成快照已保存；空行均被跳过，未生成本地交易快照或正式风险结论。
-- 关联提交：待提交。
+- 关联提交：`d1a58c46 feat(risk): add transaction snapshot business P0`。
 
 ## ISS-20260829-001 商务风险演示模式测试夹具遗漏同步质量字段
 
@@ -436,7 +436,7 @@
 - 根因：测试夹具没有完整模拟飞书同步标准化后的交易快照。
 - 修复方案：补齐夹具中的质量字段，保持服务对缺少质量标记记录的拒绝策略不变。
 - 验证结果：补齐同步后必有的质量字段后，商务风险与飞书同步定向测试共 14 项通过；合成快照仅在两个开发开关同时开启时返回 `assessment_data_mode=demo` 与 `decision_usable=false`。
-- 关联提交：待提交。
+- 关联提交：`d1a58c46 feat(risk): add transaction snapshot business P0`。
 
 ## ISS-20260829-002 本地后端残留实例 readiness 返回 500
 
@@ -448,7 +448,7 @@
 - 根因：监听 `8000` 的 PID `90427` 是此前由本任务启动的非热更新旧实例，已无法维持可用 readiness。
 - 修复方案：经确认后停止该旧实例，以当前代码在 `8000` 启动热更新后端；临时 `8001`、`8002` 验收实例均已退出。
 - 验证结果：新 `8000` 实例的 `/health/ready` 返回 200，MongoDB、Redis、PostgreSQL 与 checkpoint 均为 `ok`。启用临时开发演示配置的 HTTP 路由返回 `partial / demo / decision_usable=false`。
-- 关联提交：待提交。
+- 关联提交：`d1a58c46 feat(risk): add transaction snapshot business P0`。
 
 ## ISS-20260831-001 供应商画像无法按内部 supplier_id 查询商务风险 P0
 
@@ -460,7 +460,7 @@
 - 根因：新接口沿用了 Agent 的供应商名称/代码输入假设，没有覆盖供应商库、画像等以内部 ID 为主键的调用路径。
 - 修复方案：主数据解析同时支持 `supplier_id` 与 `_id`；前端以画像路由的内部 ID 调用接口，按 formal/demo/缺失数据状态呈现证据、范围和限制，并添加前后端定向回归。
 - 验证结果：后端定向测试 4 项、交易同步与商务风险定向测试共 15 项通过；前端画像定向测试 7 项、TypeScript、ESLint 与生产构建通过。真实运行的 HTTP 路由已使用内部 `supplier_id` 成功解析供应商并返回 200；当前正式模式无真实可用交易快照，正确返回 `missing_data` 而非 `missing_supplier`。本地前后端与三数据库均已启动，登录态页面验收需在浏览器登录后完成。
-- 关联提交：待提交。
+- 关联提交：`6c1e2775 feat(supplier): show business risk P0`。
 
 ### 2026-08-31 验收环境复发：本地后端未运行
 
