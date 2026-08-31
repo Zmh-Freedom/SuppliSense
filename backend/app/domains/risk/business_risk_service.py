@@ -24,6 +24,8 @@ def _as_number(value: Any) -> float | None:
 def _find_current_master(db: Any, supplier_reference: str) -> dict[str, Any] | None:
     collection = db["supplier_master_snapshots"]
     for query in (
+        {"supplier_id": supplier_reference, "sync_status": "current"},
+        {"_id": supplier_reference, "sync_status": "current"},
         {"supplier_code": supplier_reference, "sync_status": "current"},
         {"name": supplier_reference, "sync_status": "current"},
     ):

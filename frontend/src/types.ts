@@ -614,3 +614,31 @@ export interface SupplierProfile {
   relationships?: ProfileRelationshipSummary;
   changelog: ChangelogEntry[];
 }
+
+export interface BusinessRiskP0 {
+  assessment_status: 'partial' | 'missing_data' | 'needs_scope' | 'missing_supplier' | string;
+  assessment_data_mode?: 'formal' | 'demo';
+  decision_usable?: boolean;
+  period?: string;
+  coverage?: number;
+  formal_business_score?: number | null;
+  reason?: string;
+  available_category_codes?: string[];
+  enabled_dimension?: {
+    name: string;
+    model_weight: number;
+    risk_level: 'low' | 'medium' | 'high' | string;
+    supplier_spend_share: number;
+    supplier_received_amount: number;
+    category_total_received_amount: number;
+    active_supplier_count: number;
+    single_source: boolean;
+  };
+  observed_signals?: {
+    contract?: { status: string; active_rows?: number; expiring_rows?: number; expired_rows?: number; unsigned_rows?: number };
+    settlement?: { status: string; unsettled_amount?: number | null; unsettled_ratio?: number | null };
+    price?: { status: string; current_weighted_price?: number | null; change_ratio?: number | null };
+  };
+  limitations?: string[];
+  evidence?: { source: string; period?: string; claim: string; data_mode?: string; rows?: number }[];
+}

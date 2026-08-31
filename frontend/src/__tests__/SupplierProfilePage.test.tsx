@@ -33,6 +33,25 @@ const PROFILE: SupplierProfile = {
   changelog: [{ changed_at: '2026-08-20T10:00:00+00:00', changed: { industry: { old: '旧行业', new: '仪器仪表制造业' } } }],
 };
 
+const BUSINESS_RISK = {
+  assessment_status: 'partial',
+  assessment_data_mode: 'demo',
+  decision_usable: false,
+  period: '2026-08',
+  coverage: 0.3,
+  enabled_dimension: {
+    name: '供应依赖与可替代性', model_weight: 0.3, risk_level: 'medium', supplier_spend_share: 0.6385,
+    supplier_received_amount: 1008450, category_total_received_amount: 1579500, active_supplier_count: 3, single_source: false,
+  },
+  observed_signals: {
+    contract: { status: 'observed', active_rows: 1, expiring_rows: 0 },
+    settlement: { status: 'observed', unsettled_ratio: 0.1 },
+    price: { status: 'observed', change_ratio: 0.05 },
+  },
+  limitations: ['当前使用合成交易快照进行演示，不可用于正式采购决策、告警或供应商评价。'],
+  evidence: [{ source: 'feishu_transaction_snapshot', period: '2026-08', claim: '测试证据', data_mode: 'synthetic', rows: 3 }],
+};
+
 function renderProfile() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/suppliers/supplier-1']}><Routes><Route path="/suppliers/:id" element={<SupplierProfilePage />} /></Routes></MemoryRouter></QueryClientProvider>);
@@ -40,7 +59,7 @@ function renderProfile() {
 
 describe('SupplierProfilePage', () => {
   beforeEach(() => {
-    mocks.get.mockResolvedValue(PROFILE);
+    mocks.get.mockImplementation((path: string) => Promise.resolve(path.startsWith('/risk/business/') ? BUSINESS_RISK : PROFILE));
     mocks.post.mockResolvedValue({});
     mocks.put.mockResolvedValue({});
     mocks.delete.mockResolvedValue({});
@@ -96,6 +115,17 @@ describe('SupplierProfilePage', () => {
     await user.click(screen.getByRole('button', { name: '关联' }));
     expect(screen.getByTestId('relationship-graph')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '关联供应商' })).toHaveAttribute('href', '/suppliers/related-1');
+  });
+
+  it('shows a clearly marked non-decision demo business risk result', async () => {
+    const user = userEvent.setup();
+    renderProfile();
+    await screen.findByText('测试供应商有限公司');
+    await user.click(screen.getByRole('button', { name: '风险' }));
+    expect(await screen.findByText('商务风险 P0')).toBeInTheDocument();
+    expect(screen.getByText('演示数据 · 不可决策')).toBeInTheDocument();
+    expect(screen.getByText('采购占比')).toBeInTheDocument();
+    expect(mocks.get).toHaveBeenCalledWith('/risk/business/supplier-1');
   });
 
   it('uses the embedded changelog without a duplicate request', async () => {

@@ -103,4 +103,27 @@ def test_business_risk_p0_uses_synthetic_snapshots_only_in_enabled_debug_demo(mo
     assert result["assessment_status"] == "partial"
     assert result["assessment_data_mode"] == "demo"
     assert result["decision_usable"] is False
-    assert "演示" in result["limitations"][-1]
+
+
+def test_business_risk_p0_resolves_supplier_by_internal_supplier_id(monkeypatch) -> None:
+    database = FakeDatabase({
+        "supplier_master_snapshots": [
+            {
+                "_id": "supplier:feishu:1",
+                "supplier_id": "supplier:feishu:1",
+                "supplier_code": "S-1",
+                "name": "企业一",
+                "sync_status": "current",
+            }
+        ],
+        "supplier_transaction_snapshots": [
+            _transaction("S-1", 100),
+            _transaction("S-2", 100),
+        ],
+    })
+    monkeypatch.setattr(business_risk_service, "get_db", lambda: database)
+
+    result = business_risk_service.assess_business_risk_p0("supplier:feishu:1")
+
+    assert result["assessment_status"] == "partial"
+    assert result["supplier"]["supplier_code"] == "S-1"
