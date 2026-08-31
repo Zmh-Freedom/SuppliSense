@@ -528,4 +528,4 @@
 - 根因：以“重庆红旗弹簧有限公司风险情况”直接运行同一 ReAct 图复现，确认 `contagion_analysis → get_branches()` 假定 Mongo 风险文档的 `items.result` 必为字典；实际记录为 `null` 时，`items.get("result", {}).get("items", [])` 调用了 `None.get()`。该工具与其他风险工具并行执行，LangGraph `ToolNode` 默认将单工具异常向上抛出，流式层又将其笼统包装为 LLM 服务异常。
 - 修复方案：为关联企业/分支数据的嵌套结果增加字典归一化，缺失时按空列表返回；保留流式事件载荷保护与结构化异常日志，增加 `result=null` 的工具和完整 ReAct 回归。
 - 验证结果：直接 ReAct 图执行已获得完整堆栈并确认故障工具；风险关联工具的 `result=null` 定向回归、会话状态兼容、流式空事件载荷和 Agent E2E 回归共 29 项通过，Python 编译检查与 `git diff --check` 通过。重启本地 8002 后端后，以真实 Mongo 数据调用 `contagion_analysis(重庆红旗弹簧有限公司)`，正常返回 `related_count=0`，未产生异常。
-- 关联提交：待提交。
+- 关联提交：`cb6e08bc fix(agent): guard null risk payloads`。
