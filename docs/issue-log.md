@@ -504,7 +504,7 @@
 - 根因：旧风险评分模型使用数值型默认值 0 表示缺失指标，未将天眼查端点覆盖状态、响应状态和数据新鲜度纳入评分可用性门禁。适配器还将天眼查 `error_code=300000`（“经查无结果”）作为成功响应保存，未记录为需核验的提供方状态；现有缓存没有刷新时间字段，无法由评分层拒绝过期结果。
 - 修复方案：为每个司法数据端点保存 `available`、`fetched_at`、`provider_status` 和 `evidence_status`；任一关键端点缺失、失败或过期时，风险结论标记为 `needs_review`，不再输出可用于决策的低风险结论；在画像和 Agent 结果中区分“确认无记录”与“未覆盖/需刷新”。
 - 验证结果：2026-08-31 经用户授权，以生产链路参数调用 `GET /services/open/jr/lawSuit/3.0?keyword=重庆传动轴股份有限公司&pageNum=1&pageSize=20`，接口正常响应但仍返回 `error_code=300000`、`reason=经查无结果`、0 条记录；与用户在天眼查网页看到的法律诉讼冲突。尚未执行统一社会信用代码替代查询或账户套餐核验。
-- 关联提交：问题记录随 `3c7f74d0 fix(agent): isolate chat checkpoint runs` 提交；风险模型修复待排期。
+- 关联提交：问题记录随 `427b397b fix(agent): isolate chat checkpoint runs` 提交；风险模型修复待排期。
 
 ## ISS-20260831-005 同一会话并发请求污染 LangGraph 工具调用序列
 
@@ -516,4 +516,4 @@
 - 根因：会话 `d0baf948-5dc7-4aa8-a911-b93bc2c993f8` 的 checkpoint 显示，Agent 对重庆红旗弹簧有限公司发出了 10 个工具调用（风险、商务、告警、财务、制裁、ESG、舆情、预测、宏观、传染），但没有匹配的 `ToolMessage`。在该 Run 尚未完成时，同一 `thread_id` 接收下一请求；`stream_react_graph()` 又将 Mongo 的完整历史重新作为图输入追加，导致新的用户消息位于未完成 `tool_calls` 之后，违反模型工具消息协议。该 `thread_id` 还在寻源图和 ReAct 图间共用，增加跨图状态混入风险。
 - 修复方案：为每个会话增加单活跃 Run 门禁（运行中拒绝/排队/订阅现有流）；为不同图使用隔离 checkpoint namespace；已有 checkpoint 时仅追加当前 `HumanMessage`，不得重复注入持久化完整历史；调用模型前校验待处理 tool call，优先恢复工具节点或返回“上一轮仍在执行”的可恢复状态。
 - 验证结果：后端定向回归 29 项通过，覆盖 Redis 不可用时的本地门禁回退、同会话第二个 Run 的拒绝、图命名空间隔离、已有 checkpoint 时不重放 Mongo 历史，以及未完成 tool call 的前置拒绝；Python 编译检查和 `git diff --check` 通过。重启本地 8002 后端后，以同一 `session_id` 连续两次调用寻源目录接口，均返回 HTTP 200、9 家正式供应商和 `done` 事件，未出现 `tool_calls` 或 LLM 协议错误。旧的混合 checkpoint 由新的 `chat:react`、`chat:sourcing` 等命名空间隔离，不再被新 Run 消费。
-- 关联提交：`3c7f74d0 fix(agent): isolate chat checkpoint runs`。
+- 关联提交：`427b397b fix(agent): isolate chat checkpoint runs`。
