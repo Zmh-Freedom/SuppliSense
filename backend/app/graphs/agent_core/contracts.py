@@ -167,7 +167,9 @@ def migrate_conversation_state(
     ]
     selected_names = _string_items(raw.get("selected_supplier_names", raw.get("selected_suppliers", [])))
     if not selected_names:
-        selected_names = _string_items(raw.get("current_task", {}).get("target_supplier_names", []))
+        raw_current_task = raw.get("current_task")
+        current_task = raw_current_task if isinstance(raw_current_task, dict) else {}
+        selected_names = _string_items(current_task.get("target_supplier_names", []))
 
     task = _migrate_task(raw.get("current_task"), selected_names)
     return ConversationState(

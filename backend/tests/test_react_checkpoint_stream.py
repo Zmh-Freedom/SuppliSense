@@ -8,8 +8,9 @@ from app.graphs.chat_checkpoint import chat_checkpoint_config
 
 
 class _GraphWithState:
-    def __init__(self, messages: list) -> None:
+    def __init__(self, messages: list, events: list[dict] | None = None) -> None:
         self._messages = messages
+        self._events = events or []
         self.input_data = None
         self.stream_called = False
 
@@ -19,8 +20,8 @@ class _GraphWithState:
     async def astream_events(self, input_data, **_kwargs):
         self.input_data = input_data
         self.stream_called = True
-        if False:  # pragma: no cover - keeps this an async generator
-            yield None
+        for event in self._events:
+            yield event
 
 
 def _execution_context() -> dict:
@@ -86,3 +87,22 @@ def test_react_stream_refuses_unresolved_tool_calls_before_model_invocation() ->
 
     assert any("未完成的工具执行" in event for event in events)
     assert graph.stream_called is False
+
+
+def test_react_stream_tolerates_null_langgraph_event_data() -> None:
+    graph = _GraphWithState([], events=[
+        {"event": "on_tool_start", "name": "assess_risk", "data": None},
+    ])
+
+    async def collect() -> list[str]:
+        return [event async for event in stream_react_graph(
+            graph,
+            "分析供应商风险",
+            "null-event-data",
+            execution_context=_execution_context(),
+        )]
+
+    events = asyncio.run(collect())
+
+    assert any('"tool": "assess_risk"' in event for event in events)
+    assert any("event: done" in event for event in events)

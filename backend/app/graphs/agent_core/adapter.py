@@ -80,8 +80,12 @@ def build_execution_context(
 
 def build_execution_prompt(execution_context: dict[str, Any]) -> str:
     """Render state facts as a non-ambiguous system prompt for every graph."""
-    conversation_state = execution_context.get("conversation_state", {})
-    task = execution_context.get("current_task", {})
+    raw_conversation_state = execution_context.get("conversation_state")
+    conversation_state = (
+        raw_conversation_state if isinstance(raw_conversation_state, dict) else {}
+    )
+    raw_task = execution_context.get("current_task")
+    task = raw_task if isinstance(raw_task, dict) else {}
     payload = {
         "active_suppliers": conversation_state.get("active_suppliers", []),
         "selected_supplier_names": conversation_state.get("selected_supplier_names", []),

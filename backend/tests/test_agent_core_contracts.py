@@ -52,6 +52,16 @@ def test_conversation_state_is_json_serializable():
     assert payload["session_id"] == "session-1"
 
 
+def test_conversation_state_accepts_legacy_null_current_task():
+    state = migrate_conversation_state(
+        {"selected_supplier_names": [], "current_task": None},
+        session_id="session-null-task",
+    )
+
+    assert state.current_task is None
+    assert state.selected_supplier_names == []
+
+
 def test_collect_supplier_references_merges_same_supplier_evidence():
     collected = collect_supplier_references(
         [{"name": "甲公司", "candidate_id": "candidate-1"}],

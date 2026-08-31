@@ -85,9 +85,13 @@ def _forced_access_call(state: AgentState) -> AIMessage | None:
         token in str(last.content) for token in _ACCESS_REQUEST_TOKENS
     ):
         return None
+    raw_conversation_state = state.get("conversation_state")
+    conversation_state = (
+        raw_conversation_state if isinstance(raw_conversation_state, dict) else {}
+    )
     active_suppliers = [
         reference
-        for reference in state.get("conversation_state", {}).get("active_suppliers", [])
+        for reference in conversation_state.get("active_suppliers", [])
         if isinstance(reference, dict) and reference.get("name")
     ]
     explicit_candidates = [

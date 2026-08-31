@@ -4,6 +4,10 @@ import json
 import re
 from typing import Any, AsyncGenerator
 
+from app.core.logging import get_logger
+
+logger = get_logger()
+
 
 _SUPERVISOR_STAGE_MESSAGES = {
     "load_task": "正在初始化组合任务...",
@@ -19,6 +23,12 @@ _SUPERVISOR_STAGE_MESSAGES = {
 def _sse_event(event_type: str, data: dict) -> str:
     """Format data as SSE event string."""
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _event_data(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a mapping payload even when LangGraph emits ``data=None``."""
+    data = event.get("data")
+    return data if isinstance(data, dict) else {}
 
 
 _ACCESS_WRITE_TOOLS = {"select_sourcing_result", "select_external_supplier_candidate"}
@@ -287,7 +297,7 @@ async def stream_react_graph(
 
             # LLM token 级流式输出
             if kind == "on_chat_model_stream":
-                chunk = event.get("data", {}).get("chunk")
+                chunk = _event_data(event).get("chunk")
                 if chunk and chunk.content:
                     full_answer += chunk.content
                     if not buffer_access_answer:
@@ -296,7 +306,7 @@ async def stream_react_graph(
             # 工具调用开始
             elif kind == "on_tool_start":
                 tool_name = event.get("name", "")
-                tool_input = event.get("data", {}).get("input", {})
+                tool_input = _event_data(event).get("input", {})
                 yield _sse_event("tool_call", {"tool": tool_name, "args": tool_input})
                 tool_call_count += 1
                 if tool_call_count > _MAX_AGENT_TOOL_CALLS:
@@ -307,7 +317,7 @@ async def stream_react_graph(
             # 工具调用结束
             elif kind == "on_tool_end":
                 tool_name = event.get("name", "")
-                output = event.get("data", {}).get("output", "")
+                output = _event_data(event).get("output", "")
                 from app.graphs.agent_core.adapter import collect_supplier_references
 
                 discovered_references = collect_supplier_references(
@@ -332,7 +342,7 @@ async def stream_react_graph(
             # as a tool error event and then closes the graph normally.  It is
             # not propagated to the outer try/except, so convert it here.
             elif kind == "on_tool_error":
-                error = event.get("data", {}).get("error")
+                error = _event_data(event).get("error")
                 if not isinstance(error, Exception) or not _is_graph_interrupt(error):
                     continue
                 interrupt_data = _extract_interrupt_data(error)
@@ -356,7 +366,7 @@ async def stream_react_graph(
 
             # LLM 完成（非流式响应或工具调用后的回答）
             elif kind == "on_chat_model_end":
-                output = event.get("data", {}).get("output")
+                output = _event_data(event).get("output")
                 content = output.content if output and hasattr(output, "content") else ""
                 if content:
                     full_answer = content
@@ -365,7 +375,7 @@ async def stream_react_graph(
 
             # Reflector 发现问题时通知
             elif kind == "on_chain_end" and event.get("name") == "reflector":
-                output = event.get("data", {}).get("output", {})
+                output = _event_data(event).get("output", {})
                 if isinstance(output, dict):
                     feedback = output.get("reflection_feedback", "")
                     if feedback:
@@ -419,6 +429,11 @@ async def stream_react_graph(
             })
             return
 
+        logger.exception(
+            "react_graph_stream_failed",
+            session_id=session_id,
+            error=str(e),
+        )
         from app.graphs import format_llm_error
 
         yield _sse_event("error", {"message": format_llm_error(e)})

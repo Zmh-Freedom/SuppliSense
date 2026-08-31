@@ -13,6 +13,11 @@ from app.db.mongo import get_db
 from app.domains.risk.repo_company import get_baseinfo
 
 
+def _as_mapping(value: object) -> dict:
+    """Normalize provider payload fragments before reading nested fields."""
+    return value if isinstance(value, dict) else {}
+
+
 def get_branches(company_name: str) -> list[dict]:
     """获取企业的分支机构/子公司列表。"""
     db = get_db()
@@ -25,14 +30,17 @@ def get_branches(company_name: str) -> list[dict]:
     if not doc:
         return []
 
-    items = doc.get("items") or {}
+    items = _as_mapping(doc.get("items"))
+    nested_result = _as_mapping(items.get("result"))
     # Branch data stored as items.items or items.result.items depending on source
-    branch_list = items.get("items") or items.get("result", {}).get("items", [])
+    branch_list = items.get("items") or nested_result.get("items", [])
     if not isinstance(branch_list, list):
         return []
 
     branches = []
     for b in branch_list:
+        if not isinstance(b, dict):
+            continue
         branches.append({
             "name": b.get("name", b.get("companyName", "")),
             "type": b.get("type", b.get("branchType", "分支机构")),
@@ -140,7 +148,7 @@ def analyze_contagion(company_name: str) -> dict:
         # get industry from baseinfo
         base = db["baseinfo"].find_one({"name": company_name})
         if base:
-            result = (base.get("items") or {}).get("result") or {}
+            result = _as_mapping(_as_mapping(base.get("items")).get("result"))
             industry = result.get("industry", "")
 
     same_industry = []
@@ -151,7 +159,9 @@ def analyze_contagion(company_name: str) -> dict:
                 continue
             other_base = db["baseinfo"].find_one({"name": other})
             if other_base:
-                other_result = (other_base.get("items") or {}).get("result") or {}
+                other_result = _as_mapping(
+                    _as_mapping(other_base.get("items")).get("result")
+                )
                 other_industry = other_result.get("industry", "")
                 if other_industry == industry:
                     same_industry.append(other)
