@@ -8,10 +8,11 @@ from app.graphs.agent_supervisor.contracts import PlannerTask, TaskPlan
 _SOURCING_KEYWORDS = ("找供应商", "寻源", "采购", "替代")
 _ANALYSIS_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("risk", ("风险",)),
+    ("esg", ("ESG", "esg", "环境社会治理")),
     ("compliance", ("合规",)),
     ("sentiment", ("舆情",)),
 )
-_SUPPORTED_AGENTS = {"sourcing", "risk", "compliance", "sentiment"}
+_SUPPORTED_AGENTS = {"sourcing", "risk", "esg", "compliance", "sentiment"}
 
 
 def _has_sourcing_request(message: str) -> bool:
@@ -46,13 +47,18 @@ def fallback_requirement_from_query(message: str) -> dict[str, str] | None:
 
 
 def is_composite_request(message: str) -> bool:
-    """Return whether a message asks for sourcing plus one or more analyses."""
+    """Return whether a message needs coordinated sourcing or multi-risk work."""
     has_sourcing = _has_sourcing_request(message)
-    has_analysis = any(
+    requested_analysis_count = sum(
         any(keyword in message for keyword in keywords)
         for _, keywords in _ANALYSIS_KEYWORDS
     )
-    return has_sourcing and has_analysis
+    asks_for_monitoring = (
+        "监控" in message
+        and "监控清单" not in message
+        and requested_analysis_count > 0
+    )
+    return (has_sourcing and requested_analysis_count > 0) or requested_analysis_count >= 2 or asks_for_monitoring
 
 
 def plan_agent_task(user_query: str, intent: dict | None = None) -> TaskPlan:

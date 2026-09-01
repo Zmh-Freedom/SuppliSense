@@ -133,16 +133,27 @@ async def _langgraph_agent_supervisor_stream(
             "conversation_state": {},
             "current_task": {},
         }
-    if not context["conversation_state"]:
+    agent_user_id = context.get("agent_user_id")
+    if not isinstance(agent_user_id, str) or not agent_user_id:
         stream = stream_agent_supervisor_graph(graph, message, session_id, run_config)
     else:
+        from app.domains.agent_run.schemas import CreateSourcingRiskRunRequest
+        from app.domains.agent_run.service import create_sourcing_risk_run
+
+        run = await asyncio.to_thread(
+            create_sourcing_risk_run,
+            CreateSourcingRiskRunRequest(requirement_text=message),
+            agent_user_id,
+            "analyst",
+        )
+        run_id = str(run["id"])
         stream = stream_agent_supervisor_graph(
             graph,
             message,
             session_id,
             run_config,
             graph_input={
-                "run_id": session_id,
+                "run_id": run_id,
                 "user_query": message,
                 "supplier_references": context["references"],
                 "intent": {"current_task": context["current_task"]},
@@ -282,6 +293,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 # The execution stream retains its normal datastore error handling.
                 # The clarification preflight remains a best-effort rule fallback.
                 pass
+            execution_context["agent_user_id"] = user_id
 
             # Programmatic clarification is only a fallback after structured state.
             from app.services.clarification import detect_clarification_needed

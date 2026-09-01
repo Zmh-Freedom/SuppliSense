@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-AgentName = Literal["sourcing", "risk", "compliance", "sentiment"]
+AgentName = Literal["sourcing", "risk", "esg", "compliance", "sentiment"]
 AgentResultStatus = Literal["completed", "failed", "skipped", "needs_review"]
 EvidenceSourceType = Literal["official", "registry", "third_party", "news", "internal", "unknown"]
 EvidenceFreshness = Literal["fresh", "stale", "unknown"]

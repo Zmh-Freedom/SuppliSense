@@ -65,6 +65,36 @@ def _agent_results(state: AgentTaskState) -> dict[str, AgentResult]:
     }
 
 
+def _format_final_answer(
+    decision_summary: str,
+    results: dict[str, AgentResult],
+    pending_approvals: list[dict[str, Any]],
+) -> str:
+    """Render evidence-backed worker outcomes without delegating facts to an LLM."""
+    labels = {
+        "risk": "风险",
+        "esg": "ESG",
+        "sentiment": "舆情",
+        "compliance": "合规",
+        "sourcing": "寻源",
+    }
+    lines = [decision_summary]
+    for task_id, result in results.items():
+        label = labels.get(result.agent, task_id)
+        if result.evidence:
+            claims = "；".join(
+                item.claim for item in result.evidence if item.claim
+            )
+            lines.append(f"{label}：{claims or result.summary}")
+        else:
+            lines.append(f"{label}：{result.summary}")
+    if pending_approvals:
+        lines.append(
+            f"已生成 {len(pending_approvals)} 项加入监控操作，等待人工确认后才会写入监控清单。"
+        )
+    return "\n\n".join(lines)
+
+
 def _ready_task_ids(
     plan: TaskPlan, results: dict[str, AgentResult]
 ) -> list[str]:
@@ -106,6 +136,7 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
         dimensions = current_task.get("analysis_dimensions", [])
         if target_names:
             intent["company_name"] = target_names[0]
+            intent["target_supplier_names"] = list(target_names)
         if dimensions:
             intent["analysis_dimensions"] = list(dimensions)
     if (
@@ -119,6 +150,16 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
         first_reference = references[0]
         if isinstance(first_reference, dict) and first_reference.get("name"):
             intent["company_name"] = first_reference["name"]
+            intent["target_supplier_names"] = [first_reference["name"]]
+    if not intent.get("target_supplier_names"):
+        reference_names = [
+            reference.get("name")
+            for reference in references
+            if isinstance(reference, dict) and isinstance(reference.get("name"), str)
+        ]
+        if reference_names:
+            intent["target_supplier_names"] = list(dict.fromkeys(reference_names))
+    intent["request_watchlist"] = "监控" in state.get("user_query", "")
     if "requirement" not in intent:
         from app.domains.sourcing_risk.requirement_service import parse_requirement
 
@@ -198,6 +239,19 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
         for result in results.values()
         for action in result.recommended_actions
     ]
+    intent = state.get("intent", {})
+    target_names = intent.get("target_supplier_names", []) if isinstance(intent, dict) else []
+    if isinstance(intent, dict) and intent.get("request_watchlist") and isinstance(target_names, list):
+        recommendations.extend({
+            "action_type": "add_watchlist",
+            "target": {
+                "company_name": company_name,
+                "target_source": "conversation_state",
+            },
+            "reason": "用户要求对该供应商持续进行风险监控。",
+            "impact": "加入本地风险监控清单，后续定时检查风险与舆情变化。",
+            "requires_approval": True,
+        } for company_name in target_names if isinstance(company_name, str) and company_name.strip())
     return {
         "agent_results": {
             task_id: result.model_dump(mode="json")
@@ -334,6 +388,9 @@ async def build_task_decision(state: AgentTaskState) -> dict[str, Any]:
             state["run_id"],
             pending_approvals,
         )
+    final_answer = _format_final_answer(
+        serialized["summary"], _agent_results(state), pending_approvals
+    )
     task_status = (
         "WAITING_HUMAN_APPROVAL" if pending_approvals else "DECISION_READY"
     )
@@ -347,7 +404,7 @@ async def build_task_decision(state: AgentTaskState) -> dict[str, Any]:
     return {
         "recommendations": serialized["recommendations"],
         "pending_approvals": pending_approvals,
-        "final_answer": serialized["summary"],
+        "final_answer": final_answer,
         "task_status": task_status,
     }
 

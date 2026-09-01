@@ -11,6 +11,12 @@ def test_composite_sourcing_risk_message_routes_to_supervisor() -> None:
     assert router.route("帮我找华东电机供应商并评估风险") == Intent.SUPERVISOR
 
 
+def test_multi_dimension_risk_request_routes_to_supervisor() -> None:
+    router = IntentRouter()
+
+    assert router.route("对这两家供应商做风险、ESG、舆情和合规分析并加入监控") == Intent.SUPERVISOR
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [

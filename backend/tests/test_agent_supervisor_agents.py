@@ -2,7 +2,8 @@
 
 import asyncio
 
-from app.graphs.agent_supervisor.agents import AGENT_HANDLERS, run_ready_tasks
+from app.graphs.agent_supervisor import agents as supervisor_agents
+from app.graphs.agent_supervisor.agents import AGENT_HANDLERS, AgentTaskContext, run_ready_tasks
 from app.graphs.agent_supervisor.contracts import AgentResult, PlannerTask, TaskPlan
 
 
@@ -97,5 +98,47 @@ def test_retryable_timeout_is_retried_once_before_failure(monkeypatch):
         assert results["risk"].status == "failed"
         assert results["risk"].error.retryable is True
         assert results["risk"].metrics.attempts == 2
+
+    asyncio.run(exercise())
+
+
+def test_four_risk_workers_keep_all_structured_supplier_targets(monkeypatch):
+    """A multi-supplier request must not silently collapse to the first name."""
+    targets = ["供应商甲", "供应商乙"]
+    context = AgentTaskContext(
+        task=PlannerTask(task_id="risk", agent="risk"),
+        run_id="run-1",
+        user_query="对这两家做风险、ESG、舆情和合规分析",
+        intent={"target_supplier_names": targets},
+        dependency_results={},
+    )
+
+    monkeypatch.setattr(
+        "app.domains.risk.repo_company.get_risk_info",
+        lambda name: {"company_name": name, "risk_level": "低风险"},
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.sanctions_service.check_sanctions",
+        lambda name: {"company_name": name, "clean": True, "match_count": 0, "sanctions_level": "low"},
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.sentiment._get_cached_sentiment",
+        lambda name: {"company_name": name, "overall_sentiment": "neutral", "is_stale": False},
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.esg_service.assess_esg",
+        lambda name: {"company_name": name, "total_level": "低风险", "total_score": 5},
+    )
+
+    async def exercise():
+        results = await asyncio.gather(
+            supervisor_agents._run_risk(context),
+            supervisor_agents._run_esg(context),
+            supervisor_agents._run_compliance(context),
+            supervisor_agents._run_sentiment(context),
+        )
+        assert all(result.status == "completed" for result in results)
+        for result in results:
+            assert {item.company_id for item in result.evidence} == set(targets)
 
     asyncio.run(exercise())

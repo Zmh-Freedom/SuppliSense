@@ -390,7 +390,17 @@ def _bind_action_target(
             raise DomainError("AGENT_ACTION_CANDIDATE_INVALID", "候选企业快照无效", 422)
         return dict(snapshot)
 
-    if action_type in {"add_watchlist", "submit_access_application"} and candidate_id is None and payload.get("company_id") is None:
+    if action_type == "add_watchlist" and candidate_id is None:
+        company_name = payload.get("company_name")
+        if (
+            not isinstance(company_name, str)
+            or not company_name.strip()
+            or payload.get("target_source") != "conversation_state"
+        ):
+            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "加入监控必须绑定当前任务企业", 422)
+        return dict(payload)
+
+    if action_type == "submit_access_application" and candidate_id is None and payload.get("company_id") is None:
         raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "操作必须绑定当前任务企业或候选企业", 422)
 
     if candidate_id is not None:

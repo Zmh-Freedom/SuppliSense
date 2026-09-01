@@ -241,6 +241,60 @@ def test_supervisor_approves_multiple_proposals_before_ordered_execution(
     assert result["task_status"] == "DECISION_READY"
 
 
+def test_supervisor_creates_one_watchlist_proposal_per_structured_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Monitoring requests must stay approval-gated for every referenced supplier."""
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {"risk": AgentResult(agent="risk", status="completed", summary="完成")}
+
+    persisted: list[dict] = []
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks(
+            {
+                "run_id": "run-1",
+                "plan": {"tasks": [{"task_id": "risk", "agent": "risk"}]},
+                "intent": {
+                    "request_watchlist": True,
+                    "target_supplier_names": ["供应商甲", "供应商乙"],
+                },
+            }
+        )
+    )
+
+    assert [item["target"]["company_name"] for item in result["recommendations"]] == ["供应商甲", "供应商乙"]
+    assert all(item["target"]["target_source"] == "conversation_state" for item in result["recommendations"])
+
+
+def test_supervisor_final_answer_lists_worker_evidence_and_pending_monitoring() -> None:
+    """The chat result must expose each dimension instead of a generic completion sentence."""
+    answer = supervisor_graph._format_final_answer(
+        "证据完整。",
+        {
+            "risk": AgentResult(
+                agent="risk",
+                status="completed",
+                summary="已完成风险分析。",
+                evidence=[{
+                    "evidence_id": "risk:供应商甲",
+                    "source": "本地风险记录",
+                    "source_type": "internal",
+                    "company_id": "供应商甲",
+                    "dimension": "risk",
+                    "claim": "供应商甲 综合风险：低风险。",
+                }],
+            ),
+        },
+        [{"approval_id": "proposal-1"}],
+    )
+
+    assert "风险：供应商甲 综合风险：低风险。" in answer
+    assert "等待人工确认" in answer
+
+
 def test_supervisor_rejects_past_persisted_expiration_even_if_client_approves(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -371,6 +425,54 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
     events = asyncio.run(collect_events())
 
     assert events[-1] == 'event: done\ndata: {"answer": "supervisor"}\n\n'
+
+
+def test_chat_supervisor_uses_a_persistent_agent_run_for_approval_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chat session ID alone is not an auditable or executable action Run."""
+    captured: dict[str, object] = {}
+    graph = object()
+
+    monkeypatch.setattr(
+        supervisor_graph, "build_agent_supervisor_graph", lambda: graph
+    )
+    monkeypatch.setattr(
+        "app.domains.agent_run.service.create_sourcing_risk_run",
+        lambda request, user_id, user_role: captured.update(
+            request=request, user_id=user_id, user_role=user_role
+        ) or {"id": "durable-run"},
+    )
+
+    async def supervisor_stream(*args, **kwargs):
+        captured["stream_args"] = args
+        captured["graph_input"] = kwargs["graph_input"]
+        yield 'event: done\ndata: {"answer": "supervisor"}\n\n'
+
+    monkeypatch.setattr(streaming, "stream_agent_supervisor_graph", supervisor_stream)
+
+    async def exercise() -> list[str]:
+        return [event async for event in chat_api._langgraph_agent_supervisor_stream(
+            "chat-session",
+            "对供应商甲做风险和合规分析并加入监控",
+            execution_context={
+                "history": [],
+                "references": [{"name": "供应商甲"}],
+                "conversation_state": {},
+                "current_task": {},
+                "agent_user_id": "user-1",
+            },
+        )]
+
+    assert asyncio.run(exercise())[-1] == 'event: done\ndata: {"answer": "supervisor"}\n\n'
+    assert captured["user_id"] == "user-1"
+    assert captured["graph_input"] == {
+        "run_id": "durable-run",
+        "user_query": "对供应商甲做风险和合规分析并加入监控",
+        "supplier_references": [{"name": "供应商甲"}],
+        "intent": {"current_task": {}},
+        "conversation_state": {},
+    }
 
 
 def test_supervisor_stream_maps_agent_results_to_public_sse_events() -> None:
