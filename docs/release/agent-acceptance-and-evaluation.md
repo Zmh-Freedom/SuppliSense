@@ -69,3 +69,6 @@ Eval 集必须包含固定输入、期望目标、最小证据要求和可接受
 | 2026-08-18 | 集成/端到端验证前置健康检查 | 阻塞 | `http://127.0.0.1:8000/health/ready` 无法连接；未运行集成测试，待服务与 PostgreSQL/MongoDB 可用后恢复 |
 | 2026-08-20 | PostgreSQL、MongoDB、Redis 与 checkpoint 就绪检查 | 通过 | `/health/ready` 四项均为 `ok`；恢复后完成真实工作台本地候选与审批卡验证。 |
 | 2026-09-01 | Agent 自动 E2E 回归 | 通过，9 项 | 跨层工作流、审批暂停/恢复、状态生命周期和 12 条固定多轮 Eval 均纳入 `agent_e2e`；GitHub CI 单独执行 `-m agent_e2e`。 |
+| 2026-09-01 | 三表同步、寻源降级与风险历史版本定向回归 | 通过 | 后端相关回归 33 + 31 + 8 项通过；前端 9 个测试文件、50 项通过，Lint、TypeScript 检查和生产构建通过。真实浏览器验收因后端重启后登录态失效待人工登录。 |
+| 2026-09-01 | 数据库集成回归 | 通过，228 项 | `/health/ready` 显示 PostgreSQL、MongoDB、Redis 和 checkpoint 均正常；集成测试完整执行通过。 |
+| 2026-09-01 | 后端完整非集成与 Agent E2E 回归 | 通过，501 + 9 项 | 非集成回归 501 项，`agent_e2e` 9 项；Python 编译检查和 `git diff --check` 通过。 |

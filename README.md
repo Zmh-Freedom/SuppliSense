@@ -81,6 +81,12 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 
 同步接口只读取飞书，不包含任何写回操作。系统也会按 `FEISHU_SUPPLIER_SYNC_CRON` 定时同步。
 
+风险监控评估以追加快照方式保存历史版本，可通过以下只读接口查看指定企业的版本、评分体系和前一版本引用：
+
+```text
+GET /api/v1/alert/snapshots?company_name=<企业名称>&limit=20
+```
+
 如果需要把旧供应商注册 Excel 转成三张飞书导入表，可执行：
 
 ```bash
