@@ -1,4 +1,5 @@
 from unittest.mock import MagicMock
+from datetime import datetime, timezone
 
 from app.domains.alert import service as alert_service
 from app.schemas import RiskCalculateResponse
@@ -53,6 +54,42 @@ def test_save_snapshot_links_existing_supplier(monkeypatch):
     assert auto_create_values == [False]
     saved = db["alert_snapshots"].insert_one.call_args.args[0]
     assert saved["supplier_id"] == "supplier-123"
+
+
+def test_save_snapshot_appends_a_version_linked_to_previous_snapshot(monkeypatch):
+    db = MagicMock()
+    db["alert_snapshots"].find_one.return_value = {
+        "snapshot_id": "snapshot-3",
+        "snapshot_version": 3,
+    }
+    monkeypatch.setattr(alert_service, "get_db", lambda: db)
+    _capture_supplier_resolution(monkeypatch, supplier_id="supplier-123")
+
+    alert_service.save_snapshot(
+        "已有供应商有限公司",
+        RiskCalculateResponse(risk_score=42, risk_level="中风险"),
+    )
+
+    saved = db["alert_snapshots"].insert_one.call_args.args[0]
+    assert saved["snapshot_id"]
+    assert saved["snapshot_version"] == 4
+    assert saved["previous_snapshot_id"] == "snapshot-3"
+    assert saved["scoring_version"] == "v2"
+
+
+def test_snapshot_history_limits_and_orders_by_version(monkeypatch):
+    db = MagicMock()
+    cursor = db["alert_snapshots"].find.return_value
+    cursor.sort.return_value = cursor
+    cursor.limit.return_value = [{"snapshot_id": "snapshot-1", "snapshot_version": 1}]
+    monkeypatch.setattr(alert_service, "get_db", lambda: db)
+
+    result = alert_service.get_snapshot_history("供应商有限公司", limit=1000)
+
+    assert result == [{"snapshot_id": "snapshot-1", "snapshot_version": 1}]
+    db["alert_snapshots"].find.assert_called_once_with({"company_name": "供应商有限公司"})
+    cursor.sort.assert_called_once_with([("snapshot_version", -1), ("checked_at", -1)])
+    cursor.limit.assert_called_once_with(100)
 
 
 def test_add_to_watchlist_does_not_auto_create_supplier(monkeypatch):

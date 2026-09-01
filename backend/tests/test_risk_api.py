@@ -1,9 +1,11 @@
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from fastapi import BackgroundTasks
 
 from app.domains.risk import api_risk
+from app.domains.alert import api as alert_api
 from app.schemas import RiskAssessRequest, RiskCalculateResponse
 
 
@@ -41,3 +43,24 @@ def test_uncached_risk_assessment_audits_pydantic_response(monkeypatch):
         "risk_score": 37,
         "risk_level": "中风险",
     }
+
+
+def test_alert_snapshots_returns_serialized_version_history(monkeypatch):
+    monkeypatch.setattr(
+        alert_api,
+        "get_snapshot_history",
+        lambda company_name, limit: [{
+            "_id": "mongo-id",
+            "snapshot_id": "snapshot-2",
+            "snapshot_version": 2,
+            "company_name": company_name,
+            "checked_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+        }],
+    )
+
+    result = asyncio.run(alert_api.alert_snapshots("  示例企业有限公司  ", limit=20))
+
+    assert result["company_name"] == "示例企业有限公司"
+    assert result["count"] == 1
+    assert result["snapshots"][0]["_id"] == "mongo-id"
+    assert result["snapshots"][0]["checked_at"] == "2026-09-01T00:00:00+00:00"

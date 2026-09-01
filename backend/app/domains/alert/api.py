@@ -14,6 +14,7 @@ from app.domains.alert.service import (
     add_to_watchlist,
     detect_changes,
     get_latest_snapshot,
+    get_snapshot_history,
     get_watchlist,
     refresh_company,
     remove_from_watchlist,
@@ -59,6 +60,36 @@ async def alert_status(company_name: str = Query(..., description="企业名称"
         "has_snapshot": snapshot is not None,
         "last_checked": snapshot["checked_at"].isoformat() if snapshot else None,
         "changes": changes,
+    }
+
+
+@router.get(
+    "/snapshots",
+    summary="获取风险评估历史版本",
+    description="按企业返回追加保存的风险评估快照，包含快照版本、评分体系和前一版本引用。",
+    responses={
+        400: {"description": "请求参数错误"},
+        500: {"description": "服务器内部错误"},
+    },
+)
+async def alert_snapshots(
+    company_name: str = Query(..., min_length=1, description="企业名称"),
+    limit: int = Query(20, ge=1, le=100, description="最大返回数"),
+):
+    snapshots = get_snapshot_history(company_name.strip(), limit=limit)
+    serialized = []
+    for snapshot in snapshots:
+        item = dict(snapshot)
+        if "_id" in item:
+            item["_id"] = str(item["_id"])
+        for field in ("checked_at", "created_at"):
+            if hasattr(item.get(field), "isoformat"):
+                item[field] = item[field].isoformat()
+        serialized.append(item)
+    return {
+        "company_name": company_name.strip(),
+        "count": len(serialized),
+        "snapshots": serialized,
     }
 
 

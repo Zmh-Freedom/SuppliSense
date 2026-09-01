@@ -75,6 +75,10 @@ def ensure_indexes() -> None:
             [("company_name", 1), ("checked_at", -1)],
             background=True,
         )
+        db["alert_snapshots"].create_index(
+            [("company_name", 1), ("snapshot_version", -1)],
+            background=True,
+        )
         # watchlist: 按企业名查询
         db["watchlist"].create_index([("company_name", 1)], unique=True, background=True)
         # V2 approved actions: durable external side-effect idempotency

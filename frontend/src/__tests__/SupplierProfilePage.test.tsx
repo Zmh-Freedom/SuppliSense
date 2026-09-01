@@ -52,6 +52,14 @@ const BUSINESS_RISK = {
   evidence: [{ source: 'feishu_transaction_snapshot', period: '2026-08', claim: '测试证据', data_mode: 'synthetic', rows: 3 }],
 };
 
+const RISK_SNAPSHOTS = {
+  company_name: '测试供应商有限公司', count: 2,
+  snapshots: [
+    { snapshot_id: 'snapshot-2', snapshot_version: 2, checked_at: '2026-09-01T10:00:00+00:00', risk_score: 20, risk_level: '低风险', scoring_version: 'v2' },
+    { snapshot_id: 'snapshot-1', snapshot_version: 1, checked_at: '2026-08-20T10:00:00+00:00', risk_score: 35, risk_level: '中风险', scoring_version: 'v2' },
+  ],
+};
+
 function renderProfile() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/suppliers/supplier-1']}><Routes><Route path="/suppliers/:id" element={<SupplierProfilePage />} /></Routes></MemoryRouter></QueryClientProvider>);
@@ -59,7 +67,9 @@ function renderProfile() {
 
 describe('SupplierProfilePage', () => {
   beforeEach(() => {
-    mocks.get.mockImplementation((path: string) => Promise.resolve(path.startsWith('/risk/business/') ? BUSINESS_RISK : PROFILE));
+    mocks.get.mockImplementation((path: string) => Promise.resolve(
+      path.startsWith('/risk/business/') ? BUSINESS_RISK : path === '/alert/snapshots' ? RISK_SNAPSHOTS : PROFILE,
+    ));
     mocks.post.mockResolvedValue({});
     mocks.put.mockResolvedValue({});
     mocks.delete.mockResolvedValue({});
@@ -126,6 +136,17 @@ describe('SupplierProfilePage', () => {
     expect(screen.getByText('演示数据 · 不可决策')).toBeInTheDocument();
     expect(screen.getByText('采购占比')).toBeInTheDocument();
     expect(mocks.get).toHaveBeenCalledWith('/risk/business/supplier-1');
+  });
+
+  it('shows append-only risk assessment versions', async () => {
+    const user = userEvent.setup();
+    renderProfile();
+    await screen.findByText('测试供应商有限公司');
+    await user.click(screen.getByRole('button', { name: '风险' }));
+    expect(await screen.findByText('风险评估历史版本')).toBeInTheDocument();
+    expect(screen.getByText('V2')).toBeInTheDocument();
+    expect(screen.getAllByText('评分体系 v2').length).toBeGreaterThan(0);
+    expect(mocks.get).toHaveBeenCalledWith('/alert/snapshots', { company_name: '测试供应商有限公司', limit: '20' });
   });
 
   it('uses the embedded changelog without a duplicate request', async () => {

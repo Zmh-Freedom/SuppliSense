@@ -28,5 +28,6 @@ export const queryKeys = {
   accessApplications: (status?: string) => ['sourcing', 'access-applications', status] as const,
   supplierProfile: (id: string) => ['supplier', 'profile', id] as const,
   supplierBusinessRisk: (id: string) => ['supplier', 'business-risk', id] as const,
+  supplierRiskSnapshots: (name: string, limit?: number) => ['supplier', 'risk-snapshots', name, limit] as const,
   supplierChangelog: (id: string, limit?: number) => ['supplier', 'changelog', id, limit] as const,
 } as const;

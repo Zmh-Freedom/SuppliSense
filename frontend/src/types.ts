@@ -556,6 +556,22 @@ export interface ProfileRiskSummary {
   in_watchlist: boolean;
 }
 
+export interface ProfileRiskSnapshot {
+  snapshot_id: string;
+  snapshot_version: number;
+  previous_snapshot_id?: string;
+  checked_at?: string;
+  risk_score?: number;
+  risk_level?: string;
+  scoring_version?: string;
+}
+
+export interface ProfileRiskSnapshotHistory {
+  company_name: string;
+  count: number;
+  snapshots: ProfileRiskSnapshot[];
+}
+
 export interface ProfileFinancialSnapshot {
   revenue_growth?: number;
   net_profit_growth?: number;

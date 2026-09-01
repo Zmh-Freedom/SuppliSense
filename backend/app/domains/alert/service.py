@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from app.db.mongo import get_db
@@ -29,9 +30,21 @@ def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
+    supplier_id = resolve_supplier_id(company_name)
+    latest = db["alert_snapshots"].find_one(
+        {"company_name": company_name},
+        sort=[("snapshot_version", -1), ("checked_at", -1)],
+    )
+    previous_snapshot_id = latest.get("snapshot_id") if isinstance(latest, dict) else None
+    previous_version = latest.get("snapshot_version", 0) if isinstance(latest, dict) else 0
+    snapshot_version = previous_version + 1 if isinstance(previous_version, int) else 1
+    snapshot_id = str(uuid.uuid4())
     doc = {
+        "snapshot_id": snapshot_id,
+        "snapshot_version": snapshot_version,
+        "previous_snapshot_id": previous_snapshot_id,
         "company_name": company_name,
-        "supplier_id": resolve_supplier_id(company_name),
+        "supplier_id": supplier_id,
         "checked_at": datetime.now(timezone.utc),
         "risk_score": result.risk_score,
         "risk_level": result.risk_level,
@@ -41,6 +54,18 @@ def save_snapshot(company_name: str, result: RiskCalculateResponse) -> None:
         "scoring_version": SCORING_VERSION,
     }
     db["alert_snapshots"].insert_one(doc)
+
+
+def get_snapshot_history(company_name: str, limit: int = 50) -> list[dict]:
+    """Return append-only risk assessment snapshots for audit and monitoring review."""
+    bounded_limit = max(1, min(limit, 100))
+    db = get_db()
+    return list(
+        db["alert_snapshots"]
+        .find({"company_name": company_name})
+        .sort([("snapshot_version", -1), ("checked_at", -1)])
+        .limit(bounded_limit)
+    )
 
 
 def get_latest_snapshot(company_name: str) -> dict | None:
