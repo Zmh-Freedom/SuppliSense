@@ -26,15 +26,59 @@ def collect_supplier_references(
 def load_execution_context(session_id: str, user_message: str) -> dict[str, Any]:
     """Load durable conversation facts and resolve the current Agent task."""
     from app.services.agent import _load_conversation_context
+    from app.graphs.agent_core.intent_extractor import extract_conversation_intent
 
     context = _load_conversation_context(session_id)
-    return build_execution_context(
+    execution_context = build_execution_context(
         session_id=session_id,
         user_message=user_message,
         history=context.get("history", []),
         references=context.get("references", []),
         previous_state=context.get("state", {}),
     )
+    extracted = extract_conversation_intent(user_message, execution_context["references"])
+    return apply_extracted_conversation_intent(execution_context, extracted)
+
+
+def apply_extracted_conversation_intent(
+    execution_context: dict[str, Any],
+    extracted: Any,
+) -> dict[str, Any]:
+    """Overlay validated LLM intent onto the one shared execution context."""
+    if extracted is None:
+        return execution_context
+
+    target_names = list(getattr(extracted, "target_supplier_names", []) or [])
+    dimensions = list(getattr(extracted, "analysis_dimensions", []) or [])
+    requested_action = getattr(extracted, "requested_action", "none")
+    if not target_names and not dimensions and requested_action == "none":
+        return execution_context
+
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    current_task = dict(execution_context.get("current_task") or {})
+    if target_names:
+        current_task["target_supplier_names"] = target_names
+        conversation_state["selected_supplier_names"] = target_names
+        conversation_state["selected_suppliers"] = target_names
+    if dimensions:
+        current_task["analysis_dimensions"] = dimensions
+    if target_names or dimensions:
+        current_task["task_type"] = "analysis"
+    if target_names and dimensions:
+        planned = plan_supplier_analysis_task(
+            task_id=str(current_task.get("task_id") or "current-task"),
+            supplier_names=target_names,
+            dimensions=dimensions,
+        ).model_dump(mode="json")
+        planned["user_message"] = str(current_task.get("user_message") or "")
+        current_task = planned
+    conversation_state["current_task"] = current_task
+    return {
+        **execution_context,
+        "conversation_state": conversation_state,
+        "current_task": current_task,
+        "llm_intent": extracted.model_dump(mode="json"),
+    }
 
 
 def build_execution_context(
