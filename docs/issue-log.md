@@ -588,4 +588,4 @@
 - 根因：`/api/v1/chat/stream` 从未向 `request.state` 注入用户身份；即使浏览器已登录，也会走匿名 Supervisor 分支。该分支没有把共享适配器生成的 `execution_context` 传给图，导致 LLM 提取到的当前企业、维度和监控意图被静默丢弃，图只能回退到空引用。
 - 修复方案：匿名和登录分支均向 Supervisor 透传同一份 `supplier_references`、`current_task` 和 `conversation_state`；浏览器 Access Cookie 存在时解析已签名用户 ID，以创建可审计的持久化 Run。增加意图提取结构化日志，记录本轮已校验的目标和维度。
 - 验证结果：真实 DeepSeek 只读提取已返回 `四川建安工业有限责任公司` 与四个维度、`add_watchlist`；聊天入口/Supervisor/上下文定向测试 42 项通过，Python 编译检查与 `git diff --check` 通过。浏览器页面已刷新，待以新消息完成最终验收；旧历史回答不会自动重算。
-- 关联提交：待提交。
+- 关联提交：`2b12e71c fix(agent): preserve chat intent context`。
