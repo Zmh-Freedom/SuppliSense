@@ -366,6 +366,46 @@ def test_category_coverage_without_specification_coverage_uses_external_provider
     web.assert_called_once()
 
 
+def test_local_discovery_failure_degrades_to_external_without_crashing(monkeypatch):
+    external = _candidate("外部公司", source="tianyancha_search")
+    monkeypatch.setattr(
+        discovery_service,
+        "search_local_suppliers",
+        Mock(side_effect=RuntimeError("MongoDB unavailable")),
+    )
+    monkeypatch.setattr(discovery_service, "_search_tianyancha_candidates", lambda *_: [external])
+    monkeypatch.setattr(discovery_service, "_verify_web_candidates_with_tianyancha", lambda items: items)
+    monkeypatch.setattr(discovery_service, "_enrich_external_contacts", lambda _items: [])
+
+    result = discovery_service.discover_candidates(_requirement(), _policy(minimum_candidate_count=1))
+
+    assert result["local_status"] == "failed"
+    assert result["local_candidates"] == []
+    assert result["external_status"] == "staged"
+    assert len(result["external_candidates"]) == 1
+    assert result["external_failure_reasons"] == [
+        {"stage": "contact_enrichment", "reason": "阶段未返回补充数据，已保留此前候选"},
+    ]
+    assert result["external_loop"]["failed_stages"] == ["contact_enrichment"]
+
+
+def test_external_provider_failures_return_structured_status_instead_of_raising(monkeypatch):
+    monkeypatch.setattr(discovery_service, "search_local_suppliers", lambda *_: [])
+    monkeypatch.setattr(
+        discovery_service,
+        "_search_tianyancha_candidates",
+        Mock(side_effect=RuntimeError("provider unavailable")),
+    )
+    monkeypatch.setattr(discovery_service, "_search_web_candidates", Mock(return_value=[]))
+
+    result = discovery_service.discover_candidates(_requirement(), _policy())
+
+    assert result["external_status"] == "failed"
+    assert result["external_stop_reason"] == "external_sources_failed"
+    assert {item["stage"] for item in result["external_failure_reasons"]} == {"tianyancha"}
+    assert result["external_loop"]["failed_stages"] == ["tianyancha"]
+
+
 def test_local_repository_search_filters_active_category_specification_region_and_qualification(
     monkeypatch,
 ):

@@ -62,8 +62,14 @@ def search_external_provider(requirement: dict) -> list[dict]:
         web_future = executor.submit(web_search) if settings.SUPPLIER_DISCOVERY_WEB_ENABLED else None
         tyc_future = executor.submit(_search_tianyancha_candidates, category, specification, region)
         if web_future:
-            web_candidates = web_future.result()
-        tyc_candidates = tyc_future.result()
+            try:
+                web_candidates = web_future.result()
+            except Exception as exc:
+                logger.warning("supplier_web_discovery_failed", error=type(exc).__name__)
+        try:
+            tyc_candidates = tyc_future.result()
+        except Exception as exc:
+            logger.warning("supplier_tianyancha_discovery_failed", error=type(exc).__name__)
 
     logger.info(
         "supplier_external_discovery_completed",
@@ -673,14 +679,27 @@ def stage_external_candidates(run_id: str, candidates: list[dict]) -> list[dict]
 
 def discover_candidates(requirement: dict, policy: dict) -> dict:
     """Prefer sufficient local results and preserve them when external fallback is used."""
-    local_candidates = discover_local_candidates(requirement, policy)
+    local_status = "ok"
+    local_failure_reason: str | None = None
+    try:
+        local_candidates = discover_local_candidates(requirement, policy)
+        if not isinstance(local_candidates, list):
+            raise TypeError("本地供应商库返回格式无效")
+    except Exception as exc:
+        local_candidates = []
+        local_status = "failed"
+        local_failure_reason = f"{type(exc).__name__}: 本地供应商库不可用"
+        logger.warning("supplier_local_discovery_failed", error=type(exc).__name__)
     if is_candidate_supply_sufficient(local_candidates, requirement, policy):
         return {
             "source": "local",
             "local_candidates": local_candidates,
+            "local_status": local_status,
+            "local_failure_reason": local_failure_reason,
             "external_candidates": [],
             "external_status": "not_required",
             "external_stop_reason": "local_supply_sufficient",
+            "external_failure_reasons": [],
             "external_loop": _external_loop_summary(0, []),
         }
 
@@ -691,9 +710,12 @@ def discover_candidates(requirement: dict, policy: dict) -> dict:
     return {
         "source": "local_and_external" if external_candidates else "local",
         "local_candidates": local_candidates,
+        "local_status": local_status,
+        "local_failure_reason": local_failure_reason,
         "external_candidates": external_candidates,
         "external_status": external_result["status"],
         "external_stop_reason": external_result["stop_reason"],
+        "external_failure_reasons": external_result["failure_reasons"],
         "external_loop": external_result["loop"],
     }
 
@@ -710,6 +732,7 @@ def _discover_external_candidates_in_loop(
     started_at = datetime.now(timezone.utc)
     candidates: list[dict] = []
     failed_stages: list[str] = []
+    failure_reasons: list[dict[str, str]] = []
     iterations = 0
     loop_stop_reason: str | None = None
 
@@ -738,12 +761,20 @@ def _discover_external_candidates_in_loop(
             stage_candidates = action()
         except Exception as exc:
             failed_stages.append(stage)
+            failure_reasons.append({"stage": stage, "reason": f"{type(exc).__name__}: 阶段调用失败"})
             logger.warning("supplier_discovery_stage_failed", stage=stage, error=type(exc).__name__)
+            return True
+        if not isinstance(stage_candidates, list):
+            failed_stages.append(stage)
+            failure_reasons.append({"stage": stage, "reason": "阶段返回格式无效，已保留此前结果"})
             return True
         if merge_candidates:
             candidates = _merge_external_candidates([*candidates, *stage_candidates])
-        else:
+        elif stage_candidates:
             candidates = stage_candidates
+        elif candidates:
+            failed_stages.append(stage)
+            failure_reasons.append({"stage": stage, "reason": "阶段未返回补充数据，已保留此前候选"})
         return True
 
     run_stage("tianyancha", lambda: _search_tianyancha_candidates(category, specification, region))
@@ -775,17 +806,23 @@ def _discover_external_candidates_in_loop(
         "candidates": candidates,
         "status": status,
         "stop_reason": stop_reason,
-        "loop": _external_loop_summary(iterations, failed_stages),
+        "failure_reasons": failure_reasons,
+        "loop": _external_loop_summary(iterations, failed_stages, failure_reasons),
     }
 
 
-def _external_loop_summary(iterations: int, failed_stages: list[str]) -> dict[str, Any]:
+def _external_loop_summary(
+    iterations: int,
+    failed_stages: list[str],
+    failure_reasons: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     return {
         "loop_type": "sourcing",
         "iterations": iterations,
         "max_iterations": 3,
         "max_tool_calls": 3,
         "failed_stages": failed_stages,
+        "failure_reasons": failure_reasons or [],
     }
 
 
