@@ -68,6 +68,27 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   references?: SupplierReference[];
+  workflow?: AgentWorkflowSnapshot;
+}
+
+export type AgentWorkflowLifecycle =
+  | 'running'
+  | 'waiting_approval'
+  | 'completed'
+  | 'partial'
+  | 'failed'
+  | 'clarifying';
+
+export interface AgentWorkflowSnapshot {
+  status: AgentWorkflowLifecycle | string;
+  stage?: string;
+  message: string;
+  targetSuppliers: string[];
+  sources: string[];
+  toolCallCount: number;
+  completedToolCount: number;
+  evidenceStatus?: string;
+  loopExitReason?: string;
 }
 
 export interface SupplierReference {

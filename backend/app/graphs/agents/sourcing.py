@@ -186,6 +186,7 @@ async def stream_sourcing_graph(
         _checkpoint_messages,
         _has_unresolved_tool_calls,
         _sse_event,
+        _workflow_status,
     )
     from app.graphs.context import build_input_messages
 
@@ -216,6 +217,7 @@ async def stream_sourcing_graph(
     discovered_references: list[dict] = []
 
     try:
+        yield _workflow_status("running", "understand", "正在分析寻源需求...")
         async for event in graph.astream_events(
             {
                 "messages": msgs,
@@ -262,6 +264,7 @@ async def stream_sourcing_graph(
             elif kind == "on_tool_start":
                 tool_name = event["name"]
                 yield _sse_event("tool_call", {"tool": tool_name, "args": event["data"].get("input", {})})
+                yield _workflow_status("running", "executing", f"正在执行寻源工具：{tool_name}")
                 if tool_name == "search_suppliers":
                     yield _sse_event("retrieving", {"message": "正在检索候选供应商..."})
                     yield _sse_event("assessing", {"message": "正在并行评估风险..."})
@@ -270,6 +273,7 @@ async def stream_sourcing_graph(
                 output = event["data"].get("output", "")
                 result = getattr(output, "content", output)
                 yield _sse_event("tool_result", {"tool": event["name"], "result": str(result)[:500]})
+                yield _workflow_status("running", "evidence", f"已收到寻源结果：{event['name']}")
                 from app.graphs.agent_core.adapter import collect_supplier_references
 
                 discovered_references = collect_supplier_references(
@@ -283,6 +287,7 @@ async def stream_sourcing_graph(
             error=str(e),
         )
         from app.graphs import format_llm_error
+        yield _workflow_status("failed", "executing", "寻源 Agent 执行失败")
         yield _sse_event("error", {"message": format_llm_error(e)})
         return
 
@@ -297,4 +302,5 @@ async def stream_sourcing_graph(
         pass
     if discovered_references:
         yield _sse_event("references", {"items": discovered_references})
+    yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
     yield _sse_event("done", {"answer": full_answer})

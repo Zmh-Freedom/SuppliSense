@@ -26,6 +26,17 @@ function createState(overrides: Partial<AgentWorkflowState> = {}): AgentWorkflow
     approval: null,
     approvalSubmitting: false,
     done: false,
+    workflowStatus: {
+      status: 'running',
+      stage: 'evidence',
+      message: '正在汇总证据',
+      targetSuppliers: ['示例供应商'],
+      sources: ['本地快照'],
+      toolCallCount: 2,
+      completedToolCount: 1,
+      evidenceStatus: '1/2 已覆盖',
+      loopExitReason: 'evidence_sufficient',
+    },
     ...overrides,
   }
 }
@@ -37,11 +48,13 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByText('理解需求')).toBeInTheDocument()
     expect(screen.getByText('任务规划')).toBeInTheDocument()
     expect(screen.getAllByText('Agent 执行').length).toBeGreaterThan(0)
-    expect(screen.getByText('证据汇总')).toBeInTheDocument()
+    expect(screen.getAllByText('证据汇总').length).toBeGreaterThan(0)
     expect(screen.getByText('风险决策')).toBeInTheDocument()
     expect(screen.getByLabelText('寻源 Agent：已完成')).toBeInTheDocument()
     expect(screen.getByLabelText('风险 Agent：进行中')).toBeInTheDocument()
     expect(screen.getByLabelText('舆情 Agent：异常')).toBeInTheDocument()
+    expect(screen.getByText('当前状态：执行中')).toBeInTheDocument()
+    expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
   })
 
   it('shows approval details and sends approve or reject decisions', async () => {

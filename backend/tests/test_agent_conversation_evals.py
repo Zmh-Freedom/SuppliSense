@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from app.domains.sourcing_risk import discovery_service
 from app.evals.agent_conversation import run_agent_conversation_evals
 from app.graphs.agent_core.loop import evaluate_loop
@@ -16,6 +18,9 @@ from app.services.conversation_state import (
     build_conversation_state,
     resolve_supplier_target_selection,
 )
+
+
+pytestmark = pytest.mark.agent_e2e
 
 
 CASES_PATH = Path(__file__).parent / "evals" / "agent_conversation_cases.json"

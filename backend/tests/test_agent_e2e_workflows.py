@@ -76,6 +76,13 @@ def test_local_candidate_admission_pauses_then_resumes_through_api(monkeypatch) 
         execution_context=context,
     ))
 
+    lifecycle = [
+        _event_payload([event], "workflow_status")["status"]
+        for event in events if event.startswith("event: workflow_status")
+    ]
+    assert lifecycle[:2] == ["running", "running"]
+    assert "waiting_approval" in lifecycle
+
     approval = _event_payload(events, "approval_required")
     assert approval["tool"] == "select_sourcing_result"
     assert approval["args"] == {
@@ -89,6 +96,12 @@ def test_local_candidate_admission_pauses_then_resumes_through_api(monkeypatch) 
     ))
     resumed_events = _collect(response.body_iterator)
 
+    resumed_lifecycle = [
+        _event_payload([event], "workflow_status")["status"]
+        for event in resumed_events if event.startswith("event: workflow_status")
+    ]
+    assert resumed_lifecycle[-1] == "completed"
+
     assert any(
         event.startswith("event: tool_result") for event in resumed_events
     ), resumed_events
@@ -98,6 +111,28 @@ def test_local_candidate_admission_pauses_then_resumes_through_api(monkeypatch) 
     assert _event_payload(resumed_events, "done") == {"answer": ""}
     assert not exists(session_id)
     assert pop(session_id) is None
+
+
+def test_react_stream_emits_completed_workflow_status(monkeypatch) -> None:
+    monkeypatch.setattr(react_graph, "TOOLS_LIST", [])
+    monkeypatch.setattr(react_graph, "_get_llm", lambda: _FinalAnswerLLM())
+    session_id = "agent-e2e-status-completed"
+    graph = react_graph.build_react_graph(checkpointer=MemorySaver())
+
+    events = _collect(stream_react_graph(
+        graph,
+        "查看当前任务状态",
+        session_id,
+        run_config={"configurable": {"thread_id": session_id}},
+        execution_context={"conversation_state": {}, "current_task": {}},
+    ))
+
+    statuses = [
+        _event_payload([event], "workflow_status")["status"]
+        for event in events if event.startswith("event: workflow_status")
+    ]
+    assert statuses == ["running", "completed"]
+    assert any(event.startswith("event: done") for event in events)
 
 
 def test_chat_endpoint_reuses_one_context_snapshot_for_sourcing_mode(monkeypatch) -> None:

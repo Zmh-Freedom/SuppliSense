@@ -485,6 +485,9 @@ async def stream_parallel_graph(
     all_text = ""
 
     try:
+        from app.graphs.streaming import _workflow_status
+
+        yield _workflow_status("running", "understand", "正在规划并行 Agent 任务...")
         async for event in graph.astream_events(
             {
                 "messages": input_messages,
@@ -509,6 +512,7 @@ async def stream_parallel_graph(
                     else []
                 )
                 if tasks:
+                    yield _workflow_status("running", "planning", f"已选择 {len(tasks)} 个专业 Agent")
                     yield _sse_event("agent_selection", {
                         "agents": tasks,
                         "reasoning": f"并行调用 {', '.join(tasks)} Agent",
@@ -524,6 +528,7 @@ async def stream_parallel_graph(
                 "risk_agent", "sentiment_agent", "compliance_agent",
             ):
                 agent_name = node_name.replace("_agent", "")
+                yield _workflow_status("running", "executing", f"正在执行 {agent_name} Agent")
                 yield _sse_event("agent_start", {"agent": agent_name})
 
             # ---- agent 节点完成 ----
@@ -536,6 +541,7 @@ async def stream_parallel_graph(
                     "agent": agent_name,
                     "summary": answer[:200] if answer else "",
                 })
+                yield _workflow_status("running", "evidence", f"{agent_name} Agent 已返回结果")
 
             # ---- LLM token 流式 ----
             elif kind == "on_chat_model_stream":
@@ -622,9 +628,11 @@ async def stream_parallel_graph(
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})
 
+        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
         yield _sse_event("done", {"answer": all_text})
 
     except Exception as e:
         from app.graphs import format_llm_error
 
+        yield _workflow_status("failed", "decision", "Agent 工作流执行失败")
         yield _sse_event("error", {"message": format_llm_error(e)})

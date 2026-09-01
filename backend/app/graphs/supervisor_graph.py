@@ -346,6 +346,9 @@ async def stream_supervisor_graph(
     all_text = ""  # everything shown to user
 
     try:
+        from app.graphs.streaming import _workflow_status
+
+        yield _workflow_status("running", "understand", "正在分析多专业 Agent 任务...")
         async for event in graph.astream_events(
             {
                 "messages": input_messages,
@@ -369,6 +372,7 @@ async def stream_supervisor_graph(
                     })
                 else:
                     current_agent = nxt
+                    yield _workflow_status("running", "executing", f"正在执行 {nxt} Agent")
                     yield _sse_event("thinking", {"message": f"选择 {nxt} Agent..."})
                     yield _sse_event("agent_selection", {
                         "agents": [nxt],
@@ -392,6 +396,7 @@ async def stream_supervisor_graph(
                 if answer:
                     yield _sse_event("agent_complete", {"agent": agent_name, "summary": answer[:200]})
                 current_agent = None
+                yield _workflow_status("running", "evidence", f"{agent_name} Agent 已返回结果")
 
             # ---- 工具调用开始 ----
             elif kind == "on_tool_start":
@@ -439,8 +444,11 @@ async def stream_supervisor_graph(
         if all_text:
             save_execution_turn(session_id, user_message, all_text, references)
 
+        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
         yield _sse_event("done", {"answer": all_text})
 
     except Exception as e:
         from app.graphs import format_llm_error
+        from app.graphs.streaming import _workflow_status
+        yield _workflow_status("failed", "decision", "Agent 工作流执行失败")
         yield _sse_event("error", {"message": format_llm_error(e)})

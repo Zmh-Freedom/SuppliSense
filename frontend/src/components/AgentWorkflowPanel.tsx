@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ApprovalData } from '../api';
+import type { AgentWorkflowSnapshot } from '../types';
 
 export type AgentStatus = 'running' | 'complete' | 'error';
 
@@ -24,6 +25,7 @@ export interface AgentWorkflowState {
   approvalSubmitting: boolean;
   error?: string;
   done?: boolean;
+  workflowStatus?: AgentWorkflowSnapshot;
 }
 
 interface AgentWorkflowPanelProps {
@@ -49,6 +51,28 @@ function statusText(status: PhaseStatus): string {
 }
 
 function phaseStatus(state: AgentWorkflowState, index: number): PhaseStatus {
+  const lifecycle = state.workflowStatus?.status;
+  const stageIndex: Record<string, number> = {
+    understand: 0,
+    planning: 1,
+    executing: 2,
+    evidence: 3,
+    decision: 4,
+    approval: 4,
+    completed: 4,
+  };
+  const currentStage = state.workflowStatus?.stage;
+  if (lifecycle === 'completed') return 'complete';
+  if (lifecycle === 'failed') return index >= (stageIndex[currentStage || ''] ?? 2) ? 'error' : 'complete';
+  if (lifecycle === 'partial') return index >= (stageIndex[currentStage || ''] ?? 3) ? 'error' : 'complete';
+  if (lifecycle === 'waiting_approval') return index < 4 ? 'complete' : index === 4 ? 'running' : 'pending';
+  if (lifecycle === 'clarifying') return index === 0 ? 'running' : 'pending';
+  if (lifecycle === 'running' && currentStage && currentStage in stageIndex) {
+    const currentIndex = stageIndex[currentStage];
+    if (index < currentIndex) return 'complete';
+    if (index === currentIndex) return 'running';
+    return 'pending';
+  }
   if (state.error && index >= 2) return 'error';
   if (index === 0) {
     if (state.thinking || state.plan || state.agents) return 'complete';
@@ -96,6 +120,31 @@ function agentLabel(agent: string): string {
   return labels[agent] || agent;
 }
 
+function lifecycleLabel(status: string): string {
+  const labels: Record<string, string> = {
+    running: '执行中',
+    waiting_approval: '等待人工确认',
+    completed: '已完成',
+    partial: '部分完成',
+    failed: '失败',
+    clarifying: '等待澄清',
+  };
+  return labels[status] || status;
+}
+
+function stageLabel(stage?: string): string {
+  const labels: Record<string, string> = {
+    understand: '理解需求',
+    planning: '任务规划',
+    executing: 'Agent 执行',
+    evidence: '证据汇总',
+    decision: '风险决策',
+    approval: '人工确认',
+    completed: '已完成',
+  };
+  return labels[stage || ''] || stage || '执行中';
+}
+
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
   const [expanded, setExpanded] = useState(true);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -124,6 +173,17 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
 
       {expanded && (
         <div className="space-y-4 border-t border-[var(--color-border)] px-4 py-4">
+          {state.workflowStatus && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3" role="status" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-[var(--color-text)]">当前状态：{lifecycleLabel(state.workflowStatus.status)}</p>
+              <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">{stageLabel(state.workflowStatus.stage)}</span>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{state.workflowStatus.message}</p>
+            {state.workflowStatus.targetSuppliers.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">目标：{state.workflowStatus.targetSuppliers.join('、')}</p>}
+            {(state.workflowStatus.sources.length > 0 || state.workflowStatus.toolCallCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{state.workflowStatus.sources.length > 0 ? state.workflowStatus.sources.join('、') : '工具执行结果'} · 工具 {state.workflowStatus.completedToolCount}/{state.workflowStatus.toolCallCount} 已返回</p>}
+            {state.workflowStatus.evidenceStatus && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">证据：{state.workflowStatus.evidenceStatus}</p>}
+            {state.workflowStatus.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">Loop 退出：{state.workflowStatus.loopExitReason}</p>}
+          </div>}
           <ol className="grid gap-2 sm:grid-cols-5" aria-label="Agent 阶段时间线">
             {PHASES.map((phase, index) => {
               const status = phaseStatus(state, index);

@@ -113,4 +113,20 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('电话（待核验）：021-12345678')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '邮箱（待核验）：sales@steel.example.com' })).toHaveAttribute('href', 'mailto:sales@steel.example.com')
   })
+
+  it('persists the completed Agent workflow summary with the answer', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onWorkflowStatus?.({ status: 'completed', stage: 'completed', message: '本轮 Agent 工作流已完成', target_suppliers: ['华东钢材供应有限公司'], sources: ['local_snapshot'], evidence_status: '证据充分', loop_exit_reason: 'evidence_sufficient' })
+      handlers.onDone?.({ answer: '已完成分析。' })
+      return '已完成分析。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
+    expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
+  })
 })

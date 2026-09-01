@@ -25,6 +25,19 @@ def _sse_event(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _workflow_status(
+    status: str,
+    stage: str,
+    message: str,
+    **details: Any,
+) -> str:
+    """Emit one stable, display-safe Agent lifecycle update for the workbench."""
+    return _sse_event(
+        "workflow_status",
+        {"status": status, "stage": stage, "message": message, **details},
+    )
+
+
 def _event_data(event: dict[str, Any]) -> dict[str, Any]:
     """Return a mapping payload even when LangGraph emits ``data=None``."""
     data = event.get("data")
@@ -126,6 +139,7 @@ async def stream_agent_supervisor_graph(
     full_answer = ""
     discovered_references: list[dict] = []
 
+    yield _workflow_status("running", "understand", "正在分析组合寻源与风险任务...")
     yield _sse_event("thinking", {"message": "正在分析组合寻源与风险任务..."})
 
     try:
@@ -143,6 +157,7 @@ async def stream_agent_supervisor_graph(
                     mode="agent-supervisor",
                     user_message=user_message,
                 )
+                yield _workflow_status("waiting_approval", "approval", "等待人工确认后继续执行")
                 payload = {
                     "message": interrupt_data.get("message", "确认此操作？"),
                     "tool": interrupt_data.get("tool", "agent_supervisor"),
@@ -162,6 +177,16 @@ async def stream_agent_supervisor_graph(
                     continue
                 stage_message = _SUPERVISOR_STAGE_MESSAGES.get(stage)
                 if stage_message:
+                    stage_key = {
+                        "load_task": "understand",
+                        "plan_task": "planning",
+                        "execute_ready_tasks": "executing",
+                        "merge_evidence": "evidence",
+                        "build_decision": "decision",
+                        "approval_gate": "approval",
+                        "finalize": "decision",
+                    }.get(stage, "executing")
+                    yield _workflow_status("running", stage_key, stage_message)
                     yield _sse_event("thinking", {"message": stage_message})
 
                 if stage == "plan_task":
@@ -222,10 +247,12 @@ async def stream_agent_supervisor_graph(
             )
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})
+        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
         yield _sse_event("done", {"answer": full_answer})
     except Exception as exc:
         from app.graphs import format_llm_error
 
+        yield _workflow_status("failed", "decision", "Agent 工作流执行失败")
         yield _sse_event("error", {"message": format_llm_error(exc)})
 
 
@@ -281,6 +308,7 @@ async def stream_react_graph(
     buffer_access_answer = "准入" in user_message
     config = run_config or {}
 
+    yield _workflow_status("running", "understand", "正在分析您的问题...")
     yield _sse_event("thinking", {"message": "正在分析您的问题..."})
 
     try:
@@ -308,6 +336,7 @@ async def stream_react_graph(
                 tool_name = event.get("name", "")
                 tool_input = _event_data(event).get("input", {})
                 yield _sse_event("tool_call", {"tool": tool_name, "args": tool_input})
+                yield _workflow_status("running", "executing", f"正在执行工具：{tool_name}")
                 tool_call_count += 1
                 if tool_call_count > _MAX_AGENT_TOOL_CALLS:
                     raise RuntimeError(
@@ -331,6 +360,7 @@ async def stream_react_graph(
                 if len(result) > 2000:
                     result = result[:2000] + "...(截断)"
                 yield _sse_event("tool_result", {"tool": tool_name, "result": result})
+                yield _workflow_status("running", "evidence", f"已收到工具结果：{tool_name}")
 
                 # 自动注入图表事件
                 from app.graphs.chart_data import _try_auto_chart
@@ -355,6 +385,7 @@ async def stream_react_graph(
                     mode="react",
                     user_message=user_message,
                 )
+                yield _workflow_status("waiting_approval", "approval", "等待人工确认后继续执行")
                 yield _sse_event("approval_required", {
                     "message": interrupt_data.get("message", "确认此操作？"),
                     "tool": interrupt_data.get("tool", event.get("name", "")),
@@ -403,6 +434,7 @@ async def stream_react_graph(
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})
 
+        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
         yield _sse_event("done", {"answer": full_answer})
 
     except Exception as e:
@@ -421,6 +453,7 @@ async def stream_react_graph(
                 user_message=user_message,
             )
 
+            yield _workflow_status("waiting_approval", "approval", "等待人工确认后继续执行")
             yield _sse_event("approval_required", {
                 "message": interrupt_data.get("message", "确认此操作？"),
                 "tool": interrupt_data.get("tool", ""),
@@ -436,6 +469,7 @@ async def stream_react_graph(
         )
         from app.graphs import format_llm_error
 
+        yield _workflow_status("failed", "decision", "Agent 工作流执行失败")
         yield _sse_event("error", {"message": format_llm_error(e)})
 
 

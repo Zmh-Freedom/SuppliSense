@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { chatStream, resumeChat } from '../api';
 import type { ApprovalData } from '../api';
-import type { ChatMessage, ChartData, SupplierReference } from '../types';
+import type { AgentWorkflowLifecycle, AgentWorkflowSnapshot, ChatMessage, ChartData, SupplierReference } from '../types';
 import ChartRenderer from './ChartRenderer';
 import AgentWorkflowPanel from './AgentWorkflowPanel';
 import type { AgentStatus } from './AgentWorkflowPanel';
@@ -79,6 +79,19 @@ interface StreamState {
   done?: boolean;
   charts: ChartData[];
   references: SupplierReference[];
+  workflowStatus: AgentWorkflowSnapshot;
+}
+
+function createWorkflowSnapshot(): AgentWorkflowSnapshot {
+  return {
+    status: 'running',
+    stage: 'understand',
+    message: '正在分析您的问题…',
+    targetSuppliers: [],
+    sources: [],
+    toolCallCount: 0,
+    completedToolCount: 0,
+  };
 }
 
 function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierReference; onAnalyze: (name: string) => void }) {
@@ -118,6 +131,7 @@ export default function ChatView() {
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
   const referencesAccRef = useRef<SupplierReference[]>([]);
+  const workflowAccRef = useRef<AgentWorkflowSnapshot>(createWorkflowSnapshot());
 
   // Debounced localStorage save for chat input
   useEffect(() => {
@@ -164,7 +178,9 @@ export default function ChatView() {
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs, isNewSession);
     setLoading(true);
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [] });
+    const initialWorkflow = createWorkflowSnapshot();
+    workflowAccRef.current = initialWorkflow;
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], workflowStatus: initialWorkflow });
     answerAccRef.current = '';
     referencesAccRef.current = [];
 
@@ -172,6 +188,21 @@ export default function ChatView() {
       await chatStream(text, sid, {
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
+        },
+        onWorkflowStatus: (data) => {
+          const previous = workflowAccRef.current;
+          const next: AgentWorkflowSnapshot = {
+            ...previous,
+            status: data.status as AgentWorkflowLifecycle | string,
+            stage: data.stage ?? previous.stage,
+            message: data.message,
+            targetSuppliers: data.target_suppliers ?? previous.targetSuppliers,
+            sources: data.sources ?? previous.sources,
+            evidenceStatus: data.evidence_status ?? previous.evidenceStatus,
+            loopExitReason: data.loop_exit_reason ?? previous.loopExitReason,
+          };
+          workflowAccRef.current = next;
+          setStreamState(prev => prev ? { ...prev, workflowStatus: next } : null);
         },
         onPlan: (data) => {
           setStreamState(prev => prev ? { ...prev, plan: data.steps } : null);
@@ -226,7 +257,8 @@ export default function ChatView() {
                 selected: agents.selected.includes(agent) ? agents.selected : [...agents.selected, agent],
                 status: { ...agents.status, [agent]: 'running' },
               } : agents,
-              toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }]
+              toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }],
+              workflowStatus: { ...prev.workflowStatus, toolCallCount: prev.toolCalls.length + 1 },
             };
           });
         },
@@ -243,7 +275,7 @@ export default function ChatView() {
               ...prev.agents,
               status: { ...prev.agents.status, [agent]: 'complete' as AgentStatus },
             } : prev.agents;
-            return { ...prev, agents, toolCalls };
+            return { ...prev, agents, toolCalls, workflowStatus: { ...prev.workflowStatus, completedToolCount: toolCalls.filter(call => call.result !== undefined).length } };
           });
         },
         onAnswerChunk: (data) => {
@@ -256,7 +288,9 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current }];
+          const finalWorkflow = { ...workflowAccRef.current, status: 'completed' as const, stage: 'completed', message: '本轮 Agent 工作流已完成' };
+          workflowAccRef.current = finalWorkflow;
+          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, workflow: finalWorkflow }];
           answerAccRef.current = '';
           persist(sid, completedMsgs);
           setStreamState(null);
@@ -264,11 +298,14 @@ export default function ChatView() {
         },
         onError: (data) => {
           console.error('Stream error:', data.message);
-          const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: `错误：${data.message}` }];
+          const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
+          workflowAccRef.current = failedWorkflow;
+          const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: `错误：${data.message}`, workflow: failedWorkflow }];
           persist(sid, failedMsgs);
           setStreamState(prev => prev ? {
             ...prev,
             error: data.message,
+            workflowStatus: failedWorkflow,
             approvalSubmitting: false,
             agents: prev.agents ? {
               ...prev.agents,
@@ -278,13 +315,17 @@ export default function ChatView() {
           setLoading(false);
         },
         onClarification: (data) => {
-          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message }];
+          const clarificationWorkflow = { ...workflowAccRef.current, status: 'clarifying' as const, stage: 'understand', message: data.message };
+          workflowAccRef.current = clarificationWorkflow;
+          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, workflow: clarificationWorkflow }];
           persist(sid, clarifiedMsgs);
           setStreamState(null);
           setLoading(false);
         },
         onApprovalRequired: (data) => {
-          setStreamState(prev => prev ? { ...prev, approval: data } : null);
+          const waiting = { ...workflowAccRef.current, status: 'waiting_approval' as const, stage: 'approval', message: '等待人工确认后继续执行' };
+          workflowAccRef.current = waiting;
+          setStreamState(prev => prev ? { ...prev, approval: data, workflowStatus: waiting } : null);
         },
         onChartData: (data) => {
           setStreamState(prev => prev ? {
@@ -294,12 +335,21 @@ export default function ChatView() {
         },
         onReferences: (data) => {
           referencesAccRef.current = data.items;
-          setStreamState(prev => prev ? { ...prev, references: data.items } : null);
+          const next = {
+            ...workflowAccRef.current,
+            targetSuppliers: data.items.map(item => item.name),
+            sources: [...new Set(data.items.map(item => item.source || item.discovery_source).filter((item): item is string => Boolean(item)))],
+          };
+          workflowAccRef.current = next;
+          setStreamState(prev => prev ? { ...prev, references: data.items, workflowStatus: next } : null);
         },
       }, 'auto');
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-      const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试' }];
+      const failureMessage = isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试';
+      const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: isTimeout ? '工作流超时，尚未完成' : '工作流执行失败' };
+      workflowAccRef.current = failedWorkflow;
+      const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: failureMessage, workflow: failedWorkflow }];
       persist(sid, failedMsgs);
       setStreamState(null);
       setLoading(false);
@@ -336,13 +386,29 @@ export default function ChatView() {
 
     try {
       await resumeChat(approvalSid, approved, {
+        onWorkflowStatus: (data) => {
+          const previous = workflowAccRef.current;
+          const next = {
+            ...previous,
+            status: data.status as AgentWorkflowLifecycle | string,
+            stage: data.stage ?? previous.stage,
+            message: data.message,
+            targetSuppliers: data.target_suppliers ?? previous.targetSuppliers,
+            sources: data.sources ?? previous.sources,
+            evidenceStatus: data.evidence_status ?? previous.evidenceStatus,
+            loopExitReason: data.loop_exit_reason ?? previous.loopExitReason,
+          };
+          workflowAccRef.current = next;
+          setStreamState(prev => prev ? { ...prev, workflowStatus: next, approvalSubmitting: true } : null);
+        },
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message, approvalSubmitting: true } : null);
         },
         onToolCall: (data) => {
           setStreamState(prev => prev ? {
             ...prev,
-            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }]
+            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }],
+            workflowStatus: { ...prev.workflowStatus, toolCallCount: prev.workflowStatus.toolCallCount + 1 },
           } : null);
         },
         onToolResult: (data) => {
@@ -353,7 +419,7 @@ export default function ChatView() {
             if (lastTool && lastTool.tool === data.tool) {
               lastTool.result = data.result;
             }
-            return { ...prev, toolCalls };
+            return { ...prev, toolCalls, workflowStatus: { ...prev.workflowStatus, completedToolCount: prev.workflowStatus.completedToolCount + 1 } };
           });
         },
         onAnswerChunk: (data) => {
@@ -372,16 +438,20 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current }];
+          const finalWorkflow = { ...workflowAccRef.current, status: 'completed' as const, stage: 'completed', message: '本轮 Agent 工作流已完成' };
+          workflowAccRef.current = finalWorkflow;
+          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, workflow: finalWorkflow }];
           answerAccRef.current = '';
           persist(approvalSid, completedMsgs);
           setStreamState(null);
           setLoading(false);
         },
         onError: (data) => {
-          const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: `错误：${data.message}` }];
+          const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
+          workflowAccRef.current = failedWorkflow;
+          const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: `错误：${data.message}`, workflow: failedWorkflow }];
           persist(approvalSid, failedMsgs);
-          setStreamState(prev => prev ? { ...prev, error: data.message, approvalSubmitting: false } : null);
+          setStreamState(prev => prev ? { ...prev, error: data.message, workflowStatus: failedWorkflow, approvalSubmitting: false } : null);
           setLoading(false);
         },
       });
@@ -555,6 +625,7 @@ export default function ChatView() {
                   </div>
                 </div>
               )}
+              {m.role === 'assistant' && m.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: null, approvalSubmitting: false, workflowStatus: m.workflow }} onApproval={handleApproval} />}
             </div>
           </div>
         ))}

@@ -111,6 +111,15 @@ export interface ApprovalData {
 export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
   onThinking?: (data: { iteration?: number; message: string }) => void;
+  onWorkflowStatus?: (data: {
+    status: import('./types').AgentWorkflowLifecycle | string;
+    stage?: string;
+    message: string;
+    target_suppliers?: string[];
+    sources?: string[];
+    evidence_status?: string;
+    loop_exit_reason?: string;
+  }) => void;
   onPlan?: (data: { steps: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> }) => void;
   onAgentSelection?: (data: { agents: string[]; reasoning: string }) => void;
   onAgentStart?: (data: { agent: string; description: string }) => void;
@@ -160,6 +169,9 @@ async function _parseSSEStream(
               break;
             case 'thinking':
               callbacks.onThinking?.(data);
+              break;
+            case 'workflow_status':
+              callbacks.onWorkflowStatus?.(data);
               break;
             case 'plan':
               callbacks.onPlan?.(data);

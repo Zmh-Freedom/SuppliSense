@@ -570,7 +570,8 @@ def test_supervisor_stream_maps_agent_results_to_public_sse_events() -> None:
     events = [_parse_sse_event(event) for event in raw_events]
     event_types = [event_type for event_type, _ in events]
 
-    assert event_types == [
+    business_event_types = [event_type for event_type in event_types if event_type != "workflow_status"]
+    assert business_event_types == [
         "thinking",
         "thinking",
         "tool_call",
@@ -580,11 +581,13 @@ def test_supervisor_stream_maps_agent_results_to_public_sse_events() -> None:
         "answer_chunk",
         "done",
     ]
-    assert events[2][1] == {
+    tool_call_events = [payload for event_type, payload in events if event_type == "tool_call"]
+    tool_result_events = [payload for event_type, payload in events if event_type == "tool_result"]
+    assert tool_call_events[0] == {
         "tool": "sourcing_agent",
         "args": {"task_id": "sourcing", "depends_on": []},
     }
-    assert events[4][1] == {"tool": "sourcing_agent", "result": agent_result}
+    assert tool_result_events[0] == {"tool": "sourcing_agent", "result": agent_result}
     assert events[-1][1] == {"answer": "已完成供应商风险分析。"}
 
 
@@ -632,7 +635,8 @@ def test_supervisor_pause_uses_existing_approval_event_with_pause_flag(
 
     events = asyncio.run(collect_events())
 
-    assert [event_type for event_type, _ in events] == [
+    business_event_types = [event_type for event_type, _ in events if event_type != "workflow_status"]
+    assert business_event_types == [
         "thinking",
         "approval_required",
     ]
@@ -684,11 +688,14 @@ def test_supervisor_resume_maps_final_answer_through_public_sse_schema(
 
     events = asyncio.run(collect_events())
 
-    assert [event_type for event_type, _ in events] == [
+    business_event_types = [event_type for event_type, _ in events if event_type != "workflow_status"]
+    assert business_event_types == [
         "thinking",
         "thinking",
         "answer_chunk",
         "done",
     ]
-    assert events[-2][1] == {"text": "审批完成，已生成最终分析。"}
-    assert events[-1][1] == {"answer": "审批完成，已生成最终分析。"}
+    answer_events = [payload for event_type, payload in events if event_type == "answer_chunk"]
+    done_events = [payload for event_type, payload in events if event_type == "done"]
+    assert answer_events[-1] == {"text": "审批完成，已生成最终分析。"}
+    assert done_events[-1] == {"answer": "审批完成，已生成最终分析。"}

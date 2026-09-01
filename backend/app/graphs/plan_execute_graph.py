@@ -329,6 +329,9 @@ async def stream_plan_execute_graph(
     input_text = f"{build_execution_prompt(resolved_context)}\n\n当前问题：{input_text}"
 
     try:
+        from app.graphs.streaming import _workflow_status
+
+        yield _workflow_status("running", "understand", "正在分析问题并制定执行计划...")
         yield _sse_event("thinking", {"message": "正在分析问题并制定执行计划..."})
 
         async for event in graph.astream_events(
@@ -354,6 +357,7 @@ async def stream_plan_execute_graph(
                 if node_name == "planner" and isinstance(output, dict):
                     plan = output.get("plan", [])
                     if plan:
+                        yield _workflow_status("running", "planning", f"已生成 {len(plan)} 项执行计划")
                         yield _sse_event("plan", {"steps": plan})
 
                 # executor 节点完成 - 输出工具调用结果
@@ -361,6 +365,7 @@ async def stream_plan_execute_graph(
                     past_steps = output.get("past_steps", [])
                     if past_steps:
                         last_step, last_result = past_steps[-1]
+                        yield _workflow_status("running", "evidence", "已完成一项工具执行，正在汇总结果")
                         yield _sse_event("tool_result", {
                             "tool": last_step,
                             "result": last_result,
@@ -371,6 +376,7 @@ async def stream_plan_execute_graph(
                     resp = output.get("response")
                     if resp:
                         full_answer = resp
+                        yield _workflow_status("running", "decision", "正在形成最终结论")
                         # replanner 的最终答案是 JSON {"response": "..."}，
                         # 不能直接流式 on_chat_model_stream（会下发原始 JSON），
                         # 这里一次性下发解析后的纯文本
@@ -383,8 +389,11 @@ async def stream_plan_execute_graph(
         if full_answer:
             save_execution_turn(session_id, user_message, full_answer, references)
 
+        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
         yield _sse_event("done", {"answer": full_answer})
 
     except Exception as e:
         from app.graphs import format_llm_error
+        from app.graphs.streaming import _workflow_status
+        yield _workflow_status("failed", "decision", "Agent 工作流执行失败")
         yield _sse_event("error", {"message": format_llm_error(e)})

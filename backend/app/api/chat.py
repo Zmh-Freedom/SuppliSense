@@ -452,6 +452,8 @@ async def resume_endpoint(req: ResumeRequest):
                     yield event
                 return
 
+            from app.graphs.streaming import _workflow_status
+            yield _workflow_status("running", "executing", "正在恢复并执行已确认的操作")
             async for event in graph.astream_events(cmd, config=config, version="v2"):
                 kind = event.get("event", "")
 
@@ -480,11 +482,13 @@ async def resume_endpoint(req: ResumeRequest):
                     if content:
                         yield f"event: answer_chunk\ndata: {json.dumps({'text': content}, ensure_ascii=False)}\n\n"
 
+            yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
             yield f"event: done\ndata: {json.dumps({'answer': ''}, ensure_ascii=False)}\n\n"
 
         except Exception as e:
             from app.graphs import format_llm_error
             msg = format_llm_error(e)
+            yield _workflow_status("failed", "decision", "恢复执行失败")
             yield f"event: error\ndata: {json.dumps({'message': msg}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
