@@ -766,7 +766,7 @@
 - 验证结果：后端非集成回归 500 项、前端 Vitest 48 项、Lint、TypeScript、生产构建和 PostgreSQL/MongoDB/Redis 集成 228 项通过；应用导入冒烟通过；Compose 配置检查通过；知识库和通用文档上传路由已从应用路由表移除，Agent 工具目录不再暴露 `knowledge_search`。供应商/预警 Excel 业务导入保持可用。
 - 关联提交：`9ed77f1b refactor(knowledge): remove local document ingestion`。
 
-## ISS-20260901-008 CI 后端知识库路由回归测试不兼容 FastAPI 包装路由
+## ISS-20260901-025 CI 后端知识库路由回归测试不兼容 FastAPI 包装路由
 
 - 发现日期：2026-09-01
 - 状态：已修复
@@ -777,3 +777,75 @@
 - 修复方案：测试只从应用路由对象中读取存在的 `.path`，继续断言三个已废弃路径不存在；不改变 API 路由和运行时行为。
 - 验证结果：`tests/test_knowledge_removed.py` 定向测试 2 项通过；后端 CI 同筛选条件的非集成回归 504 项通过；`git diff --check` 通过。GitHub Actions 将在推送后重新执行覆盖率参数校验和完整门禁。
 - 关联提交：`98943065 fix(ci): make knowledge route test FastAPI compatible`。
+
+## ISS-20260901-020 Agent 存在多套并行执行内核与状态模型
+
+- 发现日期：2026-09-01
+- 状态：已纳入 Harness Task 1、Task 5 和 Task 9，待实施
+- 优先级：P0
+- 现象：聊天 `auto` 模式可路由到 ReAct、Plan-Execute、旧 Supervisor、Sourcing、Parallel、Reflection 和 Agent Supervisor；项目中还存在独立的 Sourcing Risk V2 Run 图。各图拥有不同 `TypedDict` 状态、流式适配和恢复路径。
+- 影响：同一用户意图因路由不同会获得不同的实体解析、工具、证据校验、审批、持久化和错误语义；修复一条路径不能保证其他路径同步修复，形成长期的偶发回归源。
+- 根因：功能按阶段逐图叠加，虽然已增加共享 `execution_context`，但尚未收敛为唯一运行时内核和统一节点协议。
+- 修复方案：建立单一 Agent Harness Runtime；聊天入口只创建一种 `AgentRunContext`，路由只生成能力计划，不再切换整套执行引擎；旧图降级为兼容适配器并逐步退出活动路径。
+- 验证结果：静态审计确认聊天入口存在 7 类模式分支，`backend/app/graphs` 下存在多套独立 StateGraph 状态定义；现有 360 项 Agent/V2 定向测试通过，但未证明跨执行内核的一致性。
+- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+
+## ISS-20260901-019 Harness 审计问题记录复用了已有问题编号
+
+- 发现日期：2026-09-01
+- 状态：已修复
+- 优先级：P2
+- 现象：新增 Harness 审计问题时使用了 `ISS-20260901-009` 至 `ISS-20260901-013`，但问题日志前部已经存在同一组编号；全量检查还发现两个历史问题同时使用了 `ISS-20260901-008`。
+- 影响：问题、计划 Task 和后续提交无法通过编号唯一关联，可能造成状态回填到错误条目。
+- 根因：新增问题前只检查了日志末尾编号，没有对完整文件执行编号唯一性检查。
+- 修复方案：将新增 Harness 问题顺延为未使用的连续编号 `ISS-20260901-020` 至 `ISS-20260901-024`，将后出现的 CI 兼容问题改为 `ISS-20260901-025`，同步更新活动计划，并增加完整问题编号重复检查。
+- 验证结果：已完成编号替换；全仓未发现旧 CI 编号的外部引用；对全部 `ISS-*` 标题执行唯一性检查，无重复编号。
+- 关联提交：待本轮文档提交。
+
+## ISS-20260901-021 会话实体记忆缺少稳定身份与作用域模型
+
+- 发现日期：2026-09-01
+- 状态：已纳入 Harness Task 1 和 Task 2，待实施
+- 优先级：P0
+- 现象：供应商引用主要按名称去重，加载会话时会以最近一条助手消息的引用覆盖会话累计引用；实体没有统一的 canonical identity、提及轮次、焦点状态、来源证据和失效策略。
+- 影响：多轮对话中“这两家/上述企业/分别评估”等指代可能因最近一次回答、自然语言提取或名称变体而丢失、串线或错误扩展；同名企业和外部待核验候选尤其不稳定。
+- 根因：当前 `SupplierReference` 同时承担展示卡片、会话焦点和业务身份载体，Mongo 会话文档也同时保存累计引用与最近引用，但缺少明确的实体记忆分层和归并规则。
+- 修复方案：引入 `EntityMemory` 契约，区分 canonical entity、mention、focus set、candidate identity 与 display snapshot；所有解析输出必须绑定实体 ID 或明确标记 `pending_verification`，并采用版本化状态更新而非最近回答覆盖。
+- 验证结果：静态审计确认 `_load_conversation_context()` 在存在最近助手引用时替换累计引用；现有多轮 Eval 仅覆盖固定名称和少量代词规则，没有覆盖同名、别名漂移、焦点切换、跨任务恢复和外部候选转正等场景。
+- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+
+## ISS-20260901-022 Agent 工具缺少统一结果信封与写操作执行策略
+
+- 发现日期：2026-09-01
+- 状态：已纳入 Harness Task 3 和 Task 6，待实施
+- 优先级：P0
+- 现象：工具统一声明返回 `dict`，但成功、未找到、数据缺失、提供方失败、部分完成和业务拒绝使用不同字段表达；缺少统一的证据引用、数据时间、可重试性、幂等键和副作用声明。`add_to_watchlist`、`remove_from_watchlist` 在脱离图审批上下文时捕获 `RuntimeError` 后默认放行。
+- 影响：模型和流式层需要猜测工具结果含义，容易把“无数据”描述成“低风险”、把“已生成建议”描述成“已执行”；写工具存在绕开人工确认边界的路径。
+- 根因：LangChain `@tool` 只统一了输入调用接口，未在工具注册层建立强制的 `ToolSpec`、`ToolOutcome` 和集中执行中间件。
+- 修复方案：所有工具通过唯一 `ToolExecutor` 执行；注册时声明输入/输出 schema、read/write、权限、审批、幂等、超时、重试和证据要求；统一返回版本化 `ToolOutcome`，任何写操作在无有效审批令牌时 fail closed。
+- 验证结果：静态审计确认工具返回形态不一致，监控清单增删工具存在审批上下文缺失时默认通过的分支；现有审批测试主要覆盖 V2 提案链路，没有对全部注册工具执行策略做自动矩阵校验。
+- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+
+## ISS-20260901-023 真实性与证据校验只覆盖部分执行路径
+
+- 发现日期：2026-09-01
+- 状态：已纳入 Harness Task 4 和 Task 5，待实施
+- 优先级：P0
+- 现象：Agent Supervisor 已有 `EvidenceItem`、冲突合并和覆盖度门禁，但普通 ReAct、Sourcing、Plan-Execute、旧 Supervisor 和 Parallel 仍可直接由模型基于原始工具结果生成答案；部分 Supervisor 证据的 `source_type`、`freshness` 和 `confidence` 为适配器硬编码，未由真实提供方回执推导。
+- 影响：用户从默认 `auto` 入口获得的回答不一定经过同一真实性门禁；形式上存在 evidence ID 也不能证明来源、新鲜度和结论之间真实一致。
+- 根因：证据契约是在 V2/Supervisor 中后置建设，尚未下沉为所有工具和最终回答必须经过的统一 Claim-Evidence Ledger。
+- 修复方案：将原始工具结果先标准化为带来源、采集时间、数据模式、覆盖状态和校验状态的 Evidence；结论必须形成 Claim 并引用 Evidence；最终回答只由已验证的 `AnswerContract` 渲染，缺失、冲突和过期证据不得输出确定性结论。
+- 验证结果：静态审计确认真实性校验仅在 Agent Supervisor/V2 节点强制执行；ReAct 流式路径只对历史准入成功措辞设置了专项文本保护，不具备通用事实声明校验。
+- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+
+## ISS-20260901-024 Agent E2E 与 Eval 尚不能充当 Harness 发布门槛
+
+- 发现日期：2026-09-01
+- 状态：已纳入 Harness Task 8，待实施
+- 优先级：P1
+- 现象：`agent_e2e` 标记当前仅执行 9 项测试；多轮评测使用确定性 Runner 分别调用纯函数或直接返回预设恢复/审批结果，聊天入口测试也大量替换执行图和 LLM，未贯穿真实工具执行与持久化。
+- 影响：局部契约测试全部通过时，真实浏览器仍可能出现状态丢失、工具协议中断、错误成功声明和恢复失败；CI 不能用统一指标阻止此类回归。
+- 根因：现有测试更接近模块级契约测试，缺少可重放的完整 Agent Harness、受控提供方替身、故障注入和结果语义断言。
+- 修复方案：建立 scenario-driven Harness，统一启动 HTTP/SSE、真实图、工具执行器和临时持久化；提供可编程 LLM/Provider doubles，覆盖多轮、并发、超时、空数据、矛盾证据、审批、重启恢复与幂等重放；CI 输出任务成功率、实体正确率、证据支持率、错误成功率和恢复率。
+- 验证结果：`python -m pytest -q -m agent_e2e` 为 9 项通过；Agent/V2 定向测试共 360 项通过。通过结果证明现有模块质量较好，但不能证明唯一执行链的端到端稳定性。
+- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。

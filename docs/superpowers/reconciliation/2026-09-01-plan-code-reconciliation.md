@@ -1,8 +1,8 @@
-# 当前计划与实际代码对账
+# 历史计划与实际代码对账
 
 日期：2026-09-01  
 对账对象：`docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md`  
-结论：该计划仍是唯一有效计划；以下记录以当前分支代码、测试和 CI 配置为准。
+结论：该计划在本次对账时仍是唯一有效计划，现已完成并由 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md` 替代；以下内容保留为当时的代码、测试和 CI 对账记录。
 
 ## 状态定义
 
