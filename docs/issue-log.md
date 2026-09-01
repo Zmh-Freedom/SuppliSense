@@ -765,3 +765,15 @@
 - 补充修复方案：清理设置页无用导入；按当前调度器注册契约更新测试期望，确保知识库下线不会影响现有飞书同步调度。
 - 验证结果：后端非集成回归 500 项、前端 Vitest 48 项、Lint、TypeScript、生产构建和 PostgreSQL/MongoDB/Redis 集成 228 项通过；应用导入冒烟通过；Compose 配置检查通过；知识库和通用文档上传路由已从应用路由表移除，Agent 工具目录不再暴露 `knowledge_search`。供应商/预警 Excel 业务导入保持可用。
 - 关联提交：`9ed77f1b refactor(knowledge): remove local document ingestion`。
+
+## ISS-20260901-008 CI 后端知识库路由回归测试不兼容 FastAPI 包装路由
+
+- 发现日期：2026-09-01
+- 状态：已修复
+- 优先级：P1
+- 现象：GitHub Actions 的 `backend` job 在 504 个非集成测试中仅 `tests/test_knowledge_removed.py::test_knowledge_and_generic_document_upload_routes_are_removed` 失败，报错 `AttributeError: '_IncludedRouter' object has no attribute 'path'`。
+- 影响：后端 CI 检查失败，包含当前分支的 Pull Request 无法通过；知识库路由实际已移除，但测试无法完成路由集合断言。
+- 根因：测试直接假设 `app.routes` 中每个对象都有 `.path` 属性。当前 FastAPI 在组合嵌套路由时会保留内部 `_IncludedRouter` 包装对象，该对象不是最终 HTTP 路由且没有 `.path`。
+- 修复方案：测试只从应用路由对象中读取存在的 `.path`，继续断言三个已废弃路径不存在；不改变 API 路由和运行时行为。
+- 验证结果：`tests/test_knowledge_removed.py` 定向测试 2 项通过；后端 CI 同筛选条件的非集成回归 504 项通过；`git diff --check` 通过。GitHub Actions 将在推送后重新执行覆盖率参数校验和完整门禁。
+- 关联提交：待补充。
