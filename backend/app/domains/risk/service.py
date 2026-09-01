@@ -1,6 +1,11 @@
 from fastapi import HTTPException
 
-from app.domains.risk.repo_company import get_risk_info, get_risk_indicators, get_recent_lawsuits
+from app.domains.risk.repo_company import (
+    get_baseinfo,
+    get_risk_indicators,
+    get_recent_lawsuits,
+    get_risk_info,
+)
 from app.domains.risk.repo_financial import get_financial_metrics
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.domains.alert.service import save_snapshot
@@ -82,6 +87,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
 
     ensure_court_register_evidence(name)
 
+    response = _calculate_company_risk(profile, include_soft_risk=True)
     risk = get_risk_info(name)
     indicators = get_risk_indicators(name)
     financial = get_financial_metrics(name)
@@ -104,7 +110,55 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     from app.domains.alert.service import get_watchlist
     in_watchlist = name in get_watchlist()
 
-    req = RiskCalculateRequest(
+    # add watchlist status
+    if response.risk_detail is not None:
+        response.risk_detail["in_watchlist"] = in_watchlist
+
+    # MongoDB snapshot (实时查询用)
+    save_snapshot(name, response)
+
+    # PostgreSQL history (长期趋势分析用)
+    try:
+        from app.domains.risk.repo_assessment import save_assessment
+        save_assessment(
+            company_name=name,
+            risk_score=response.risk_score,
+            risk_level=response.risk_level,
+            score_breakdown=response.score_breakdown or {},
+            financial_data=financial.model_dump() if financial else None,
+            risk_detail=response.risk_detail or {},
+            scoring_version=SCORING_VERSION,
+        )
+    except Exception:
+        pass  # PG 不可用时不影响主流程
+
+    return response
+
+
+def calculate_company_risk_preview(company_name: str) -> RiskCalculateResponse | None:
+    """Calculate the V2 risk score from cached evidence without side effects.
+
+    This boundary is used by the Agent Supervisor.  Unlike ``assess_risk``, it
+    never calls Tianyancha, creates an assessment snapshot, or persists an
+    audit/history record.  A missing source is carried in ``risk_detail`` so a
+    caller cannot mistake a partial score for a complete assessment.
+    """
+    profile = get_baseinfo(company_name)
+    if profile is None:
+        return None
+    return _calculate_company_risk(profile, include_soft_risk=False)
+
+
+def _calculate_company_risk(profile, *, include_soft_risk: bool) -> RiskCalculateResponse:
+    """Build an explainable V2 score from already available company evidence."""
+    name = profile.company_name
+    risk = get_risk_info(name)
+    if risk is None:
+        raise ValueError(f"企业 '{name}' 缺少风险基础记录")
+    indicators = get_risk_indicators(name)
+    financial = get_financial_metrics(name)
+    industry_category = _classify_industry(profile.industry)
+    request = RiskCalculateRequest(
         company=profile,
         risk=risk,
         financial=financial,
@@ -118,9 +172,12 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         bankruptcy_count=indicators["bankruptcy_count"],
         env_penalty_count=indicators["env_penalty_count"],
     )
-    score, breakdown = _calc_score(req, industry_category)
-    level = _score_to_level(score)
-
+    score, breakdown = _calc_score(
+        request,
+        industry_category,
+        include_soft_risk=include_soft_risk,
+    )
+    coverage = _risk_data_coverage(risk, indicators, financial, include_soft_risk)
     risk_detail = {
         "lawsuit_count": risk.lawsuit_count,
         "recent_lawsuits": get_recent_lawsuits(name, years=3),
@@ -134,38 +191,43 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
         "pledge_count": indicators["pledge_count"],
         "bankruptcy_count": indicators["bankruptcy_count"],
         "env_penalty_count": indicators["env_penalty_count"],
+        "data_coverage": coverage,
     }
-
-    response = RiskCalculateResponse(
+    return RiskCalculateResponse(
         risk_score=score,
-        risk_level=level,
+        risk_level=_score_to_level(score),
         financial=financial,
         risk_detail=risk_detail,
         score_breakdown=breakdown,
         is_listed=profile.is_listed,
     )
-    # add watchlist status
-    response.risk_detail["in_watchlist"] = in_watchlist
 
-    # MongoDB snapshot (实时查询用)
-    save_snapshot(name, response)
 
-    # PostgreSQL history (长期趋势分析用)
-    try:
-        from app.domains.risk.repo_assessment import save_assessment
-        save_assessment(
-            company_name=name,
-            risk_score=score,
-            risk_level=level,
-            score_breakdown=breakdown,
-            financial_data=financial.model_dump() if financial else None,
-            risk_detail=risk_detail,
-            scoring_version=SCORING_VERSION,
-        )
-    except Exception:
-        pass  # PG 不可用时不影响主流程
-
-    return response
+def _risk_data_coverage(risk, indicators: dict, financial, include_soft_risk: bool) -> dict:
+    """Describe score inputs instead of treating unavailable inputs as zero risk."""
+    available = {
+        "financial": financial is not None,
+        "judicial": any((
+            risk.lawsuit_count,
+            risk.executed_count,
+            indicators.get("dishonesty_count", 0),
+            indicators.get("major_lawsuit", False),
+        )),
+        "operational": any((
+            risk.abnormal_operation_count,
+            risk.administrative_penalty_count,
+            indicators.get("bankruptcy_count", 0),
+            indicators.get("env_penalty_count", 0),
+        )),
+        "soft": include_soft_risk,
+    }
+    available_count = sum(available.values())
+    return {
+        "available_dimensions": [name for name, present in available.items() if present],
+        "missing_dimensions": [name for name, present in available.items() if not present],
+        "coverage_ratio": round(available_count / len(available), 2),
+        "assessment_status": "complete" if available_count == len(available) else "partial",
+    }
 
 
 def calculate_risk(request: RiskCalculateRequest) -> RiskCalculateResponse:
@@ -184,7 +246,12 @@ def _normalize(raw: float, norm_base: float) -> float:
     return round(min(raw / norm_base * 25, 25), 1)
 
 
-def _calc_score(req: RiskCalculateRequest, industry: str = "制造业") -> tuple[int, dict]:
+def _calc_score(
+    req: RiskCalculateRequest,
+    industry: str = "制造业",
+    *,
+    include_soft_risk: bool = True,
+) -> tuple[int, dict]:
     risk = req.risk
     fin = req.financial
 
@@ -313,9 +380,12 @@ def _calc_score(req: RiskCalculateRequest, industry: str = "制造业") -> tuple
     breakdown["经营风险"] = {"原始分": round(op_raw, 1), "归一化": op_norm, "明细": op_items}
 
     # ==================== 软指标 (0-25) ====================
-    from app.domains.risk.soft_risk import score_soft_risks
+    if include_soft_risk:
+        from app.domains.risk.soft_risk import score_soft_risks
 
-    soft = score_soft_risks(req.company.company_name)
+        soft = score_soft_risks(req.company.company_name)
+    else:
+        soft = {"dimensions": {}, "summary": "软指标未在只读预览中刷新"}
     soft_items = {}
     soft_raw = 0
     for dim in ["舆情风险", "ESG风险", "宏观风险", "管理风险"]:
@@ -328,7 +398,12 @@ def _calc_score(req: RiskCalculateRequest, industry: str = "制造业") -> tuple
         soft_items["总结"] = soft["summary"]
 
     soft_norm = _normalize(soft_raw, SOFT_NORM)
-    breakdown["软指标"] = {"原始分": soft_raw, "归一化": soft_norm, "明细": soft_items}
+    breakdown["软指标"] = {
+        "原始分": soft_raw,
+        "归一化": soft_norm,
+        "明细": soft_items,
+        "数据状态": "已纳入" if include_soft_risk else "未纳入只读预览",
+    }
 
     # ==================== 总分 ====================
     total = round(fin_norm + jud_norm + op_norm + soft_norm)

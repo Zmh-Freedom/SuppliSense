@@ -275,7 +275,13 @@ def _get_cached_sentiment(company_name: str) -> dict | None:
 _analyzing_locks: set[str] = set()
 
 
-def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | None:
+def analyze_sentiment(
+    company_name: str,
+    force_refresh: bool = False,
+    *,
+    max_results: int = 12,
+    emit_alerts: bool = True,
+) -> dict | None:
     """搜索公司新闻并用 LLM 分析舆情情感。缓存 6 小时。"""
     db = get_db()
 
@@ -286,17 +292,24 @@ def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | 
             return cached
 
     # search news
-    news_articles = _search_news(company_name)
+    news_articles = _search_news(company_name, max_results=max_results)
 
     # Fallback: Tianyancha news collection
     if not news_articles:
         db = get_db()
         tianyancha_news = db["news"].find_one({"name": company_name})
+        if not tianyancha_news:
+            # Only cache-provider data is written; this must not create alerts
+            # or change a supplier/monitoring business state.
+            from app.services.tianyancha_client import fetch_news
+
+            fetch_news(company_name)
+            tianyancha_news = db["news"].find_one({"name": company_name})
         if tianyancha_news:
             items_wrapper = tianyancha_news.get("items") or {}
             result_wrapper = items_wrapper.get("result") or {}
             news_list = result_wrapper.get("items") or result_wrapper.get("list") or []
-            for item in news_list[:15]:
+            for item in news_list[:max_results]:
                 title = item.get("title", "") or item.get("newsTitle", "")
                 body = item.get("content", "") or item.get("summary", "") or item.get("newsContent", "")
                 if title:
@@ -400,7 +413,8 @@ def analyze_sentiment(company_name: str, force_refresh: bool = False) -> dict | 
     }
 
     _save_sentiment(company_name, result)
-    _check_negative_alert(company_name, result)
+    if emit_alerts:
+        _check_negative_alert(company_name, result)
 
     return result
 

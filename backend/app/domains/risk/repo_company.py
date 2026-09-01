@@ -38,8 +38,14 @@ def get_risk_info(company_name: str) -> RiskInfo | None:
         if not doc:
             return 0
         items = doc.get("items") or {}
-        r = items.get(field) or {}
-        return r.get("total", 0) if isinstance(r, dict) else 0
+        result = items.get(field) or {}
+        if isinstance(result, dict) and isinstance(result.get("total"), (int, float)):
+            return int(result["total"])
+        # Tianyancha lawSuit 3.0 uses items.total, while most endpoints use
+        # items.result.total.  Keep the reader compatible with both snapshots.
+        if isinstance(items.get("total"), (int, float)):
+            return int(items["total"])
+        return 0
 
     # Always read individual collections as ground-truth supplement
     lawsuit = db["lawSuit"].find_one({"name": company_name})
@@ -101,7 +107,11 @@ def get_risk_indicators(company_name: str) -> dict:
             return 0
         items = doc.get("items") or {}
         r = items.get("result") or {}
-        return r.get("total", 0) if isinstance(r, dict) else 0
+        if isinstance(r, dict) and isinstance(r.get("total"), (int, float)):
+            return int(r["total"])
+        if isinstance(items.get("total"), (int, float)):
+            return int(items["total"])
+        return 0
 
     indicators = _empty_indicators()
 

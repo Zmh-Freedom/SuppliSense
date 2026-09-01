@@ -81,19 +81,32 @@ def _sourcing_evidence(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     ]
 
 
-def _risk_evidence(company_name: str, risk_info: Any) -> list[dict[str, Any]]:
-    if risk_info is None:
+def _risk_evidence(company_name: str, assessment: Any) -> list[dict[str, Any]]:
+    if assessment is None:
         return []
-    payload = risk_info.model_dump() if hasattr(risk_info, "model_dump") else dict(risk_info)
+    payload = assessment.model_dump() if hasattr(assessment, "model_dump") else dict(assessment)
+    coverage = (payload.get("risk_detail") or {}).get("data_coverage") or {}
+    scope = "完整" if coverage.get("assessment_status") == "complete" else "初步"
+    coverage_ratio = float(coverage.get("coverage_ratio") or 0)
+    claim = (
+        f"{company_name} 综合风险评分：{payload.get('risk_score', '-')} / 100，"
+        f"等级：{payload.get('risk_level', '未知')}。"
+        if scope == "完整"
+        else (
+            f"{company_name} 初步风险评分：{payload.get('risk_score', '-')} / 100，"
+            f"数据覆盖度 {coverage_ratio:.0%}，不足以形成综合风险结论"
+            f"（模型原始等级：{payload.get('risk_level', '未知')}）。"
+        )
+    )
     return [{
         "evidence_id": f"risk:{company_name}",
-        "source": "本地企业风险记录",
+        "source": "V2 可解释风险评分",
         "source_type": "internal",
         "freshness": "fresh",
-        "confidence": 0.85,
+        "confidence": 0.85 if scope == "完整" else 0.65,
         "company_id": company_name,
         "dimension": "risk",
-        "claim": f"{company_name} 综合风险：{payload.get('risk_level', '未知')}。",
+        "claim": claim,
         "metadata": {"risk": payload},
     }]
 
@@ -158,14 +171,14 @@ async def _run_sourcing(context: AgentTaskContext) -> AgentResult:
 
 
 async def _run_risk(context: AgentTaskContext) -> AgentResult:
-    """Read existing risk records without invoking snapshot-producing assessment."""
-    from app.domains.risk.repo_company import get_risk_info
+    """Calculate a read-only V2 risk preview without creating snapshots."""
+    from app.domains.risk.service import calculate_company_risk_preview
 
     company_names = _company_names(context)
     if not company_names:
         return AgentResult(agent="risk", status="needs_review", summary="缺少待评估供应商名称。")
     risk_records = [
-        (name, await asyncio.to_thread(get_risk_info, name))
+        (name, await asyncio.to_thread(calculate_company_risk_preview, name))
         for name in company_names
     ]
     evidence = [
@@ -174,18 +187,40 @@ async def _run_risk(context: AgentTaskContext) -> AgentResult:
     findings = [
         {
             "type": "risk",
-            "level": _risk_level(getattr(risk_info, "risk_level", None) if risk_info else None),
+            "level": (
+                _risk_level(getattr(risk_info, "risk_level", None))
+                if (getattr(risk_info, "risk_detail", None) or {}).get("data_coverage", {}).get("assessment_status")
+                == "complete"
+                else "unknown"
+            ),
             "title": f"{name} 综合风险",
-            "description": f"当前风险等级：{getattr(risk_info, 'risk_level', '未知')}",
-            "confidence": 0.85,
+            "description": f"V2 评分 {getattr(risk_info, 'risk_score', '-')} / 100，" + (
+                f"当前等级：{getattr(risk_info, 'risk_level', '未知')}"
+                if (getattr(risk_info, "risk_detail", None) or {}).get("data_coverage", {}).get("assessment_status")
+                == "complete"
+                else "数据覆盖不足，不能形成综合风险结论"
+            ),
+            "confidence": 0.85 if (
+                (getattr(risk_info, "risk_detail", None) or {}).get("data_coverage", {}).get("assessment_status")
+                == "complete"
+            ) else 0.65,
             "evidence_ids": [f"risk:{name}"],
         }
         for name, risk_info in risk_records if risk_info is not None
     ]
     return AgentResult(
         agent="risk",
-        status="completed" if len(evidence) == len(company_names) else "needs_review",
-        summary=f"已读取 {len(evidence)}/{len(company_names)} 家供应商的本地风险记录。",
+        status=(
+            "completed"
+            if len(evidence) == len(company_names)
+            and all(
+                (getattr(result, "risk_detail", None) or {}).get("data_coverage", {}).get("assessment_status")
+                == "complete"
+                for _, result in risk_records if result is not None
+            )
+            else "needs_review"
+        ),
+        summary=f"已按 V2 评分模型完成 {len(evidence)}/{len(company_names)} 家供应商的风险预览。",
         evidence=evidence,
         findings=findings,
         metrics=AgentMetrics(evidence_count=len(evidence)),
@@ -227,23 +262,43 @@ async def _run_compliance(context: AgentTaskContext) -> AgentResult:
 
 
 async def _run_sentiment(context: AgentTaskContext) -> AgentResult:
-    """Read cached sentiment only; never refresh news or create an alert."""
+    """Use a cache first, then perform one bounded cache-only acquisition."""
     company_names = _company_names(context)
     if not company_names:
         return AgentResult(agent="sentiment", status="needs_review", summary="缺少待分析供应商名称。")
 
-    from app.domains.risk.sentiment import _get_cached_sentiment
+    from app.domains.risk.sentiment import _get_cached_sentiment, analyze_sentiment
 
-    results = [(name, await asyncio.to_thread(_get_cached_sentiment, name)) for name in company_names]
+    async def get_or_refresh(name: str) -> tuple[str, dict[str, Any] | None, bool]:
+        cached = await asyncio.to_thread(_get_cached_sentiment, name)
+        if cached is not None and not cached.get("is_stale", False):
+            return name, cached, False
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    analyze_sentiment,
+                    name,
+                    force_refresh=cached is not None,
+                    max_results=6,
+                    emit_alerts=False,
+                ),
+                timeout=35,
+            )
+            return name, result, True
+        except TimeoutError:
+            return name, cached, True
+
+    results = [await get_or_refresh(name) for name in company_names]
     evidence = [
         _evidence(
-            name, "sentiment", "已缓存舆情分析",
+            name, "sentiment", "联网/天眼查舆情补采" if refreshed else "已缓存舆情分析",
             f"舆情倾向：{result.get('overall_sentiment', 'unknown')}。",
             {"sentiment": result},
             freshness="stale" if result.get("is_stale") else "fresh",
             confidence=0.65 if result.get("is_stale") else 0.8,
         )
-        for name, result in results if result is not None
+        for name, result, refreshed in results
+        if result is not None and result.get("has_data") is not False
     ]
     findings = [
         {
@@ -254,12 +309,15 @@ async def _run_sentiment(context: AgentTaskContext) -> AgentResult:
             "confidence": 0.8,
             "evidence_ids": [f"sentiment:{name}"],
         }
-        for name, result in results
+        for name, result, _ in results
         if result is not None and str(result.get("overall_sentiment")) == "negative"
     ]
     return AgentResult(
         agent="sentiment", status="completed" if len(evidence) == len(company_names) else "needs_review",
-        summary=f"已读取 {len(evidence)}/{len(company_names)} 家供应商的缓存舆情结果。",
+        summary=(
+            f"已获得 {len(evidence)}/{len(company_names)} 家供应商的舆情结果；"
+            f"其中 {sum(1 for _, _, refreshed in results if refreshed)} 家触发了受限补采。"
+        ),
         evidence=evidence, findings=findings, metrics=AgentMetrics(evidence_count=len(evidence)),
     )
 
@@ -276,7 +334,11 @@ async def _run_esg(context: AgentTaskContext) -> AgentResult:
     evidence = [
         _evidence(
             name, "esg", "ESG 风险指标",
-            f"ESG 总体等级：{result.get('total_level', '未知')}。",
+            (
+                f"ESG 总体等级：{result.get('total_level', '未知')}。"
+                if result.get("assessment_status") == "sufficient"
+                else f"ESG 数据不足（覆盖度 {result.get('data_coverage', {}).get('coverage_ratio', 0):.0%}），不能判定为低风险。"
+            ),
             {"esg": result}, confidence=0.75,
         )
         for name, result in results if result is not None
@@ -286,15 +348,25 @@ async def _run_esg(context: AgentTaskContext) -> AgentResult:
             "type": "esg",
             "level": _risk_level(result.get("total_level")),
             "title": f"{name} ESG 风险",
-            "description": f"ESG 风险分 {result.get('total_score', '-')}。",
-            "confidence": 0.75,
+            "description": (
+                f"ESG 风险分 {result.get('total_score', '-')}。"
+                if result.get("assessment_status") == "sufficient"
+                else "关键 E/S/G 维度数据不足，结果仅供补数前参考。"
+            ),
+            "confidence": 0.75 if result.get("assessment_status") == "sufficient" else 0.35,
             "evidence_ids": [f"esg:{name}"],
         }
         for name, result in results if result is not None
     ]
     return AgentResult(
-        agent="esg", status="completed" if len(evidence) == len(company_names) else "needs_review",
-        summary=f"已完成 {len(evidence)}/{len(company_names)} 家供应商的 ESG 评估。",
+        agent="esg",
+        status=(
+            "completed"
+            if len(evidence) == len(company_names)
+            and all(result.get("assessment_status") == "sufficient" for _, result in results if result is not None)
+            else "needs_review"
+        ),
+        summary=f"已完成 {len(evidence)}/{len(company_names)} 家供应商的 ESG 评估与覆盖度检查。",
         evidence=evidence, findings=findings, metrics=AgentMetrics(evidence_count=len(evidence)),
     )
 

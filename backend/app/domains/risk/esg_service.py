@@ -24,6 +24,7 @@ def assess_esg(company_name: str) -> dict | None:
 
     indicators = get_risk_indicators(company_name)
     fin = get_financial_metrics(company_name)
+    data_coverage = _data_coverage(company_name, fin)
 
     # ---- Environmental (E) ----
     e_score = 0.0
@@ -124,16 +125,55 @@ def assess_esg(company_name: str) -> dict | None:
 
     # ---- total ----
     total_score = round(e_score + s_score + g_score, 1)
-    total_level = _level(total_score, 60, 120)
+    calculated_level = _level(total_score, 60, 120)
+    assessment_status = (
+        "sufficient" if data_coverage["is_sufficient"] else "insufficient_data"
+    )
+    total_level = calculated_level if assessment_status == "sufficient" else "数据不足"
 
     return {
         "company_name": company_name,
         "assessed_at": datetime.now(timezone.utc).isoformat(),
         "total_score": min(total_score, 100),
         "total_level": total_level,
+        "calculated_level": calculated_level,
+        "assessment_status": assessment_status,
+        "data_coverage": data_coverage,
         "environmental": {"score": round(e_score, 1), "level": e_level, "detail": e_detail},
         "social": {"score": round(s_score, 1), "level": s_level, "detail": s_detail},
         "governance": {"score": round(g_score, 1), "level": g_level, "detail": g_detail},
+    }
+
+
+def _data_coverage(company_name: str, fin) -> dict:
+    """Measure whether E/S/G conclusions are supported, including zero-result evidence."""
+    db = get_db()
+
+    def has_snapshot(collection: str) -> bool:
+        return db[collection].find_one({"name": company_name}) is not None
+
+    risk_doc = db["riskInfo"].find_one({"name": company_name}) or {}
+    risk_wrapper = risk_doc.get("item") or risk_doc.get("items") or {}
+    risk_list = (risk_wrapper.get("result") or {}).get("riskList") or []
+    titles = {
+        str(item.get("title") or "")
+        for category in risk_list
+        for item in (category.get("list") or [])
+    }
+    available = {
+        "environmental": "环保处罚" in titles,
+        "social": has_snapshot("lawSuit") or has_snapshot("punishmentInfo"),
+        "governance": bool(titles & {"被执行人", "失信被执行人", "股权质押", "破产案件", "清算信息"}),
+        "financial": fin is not None,
+    }
+    available_count = sum(available.values())
+    # ESG 的 E/S/G 三个核心维度均须有可审计来源；财务仅作为辅助信号。
+    is_sufficient = all(available[name] for name in ("environmental", "social", "governance"))
+    return {
+        "available_dimensions": [name for name, present in available.items() if present],
+        "missing_dimensions": [name for name, present in available.items() if not present],
+        "coverage_ratio": round(available_count / len(available), 2),
+        "is_sufficient": is_sufficient,
     }
 
 

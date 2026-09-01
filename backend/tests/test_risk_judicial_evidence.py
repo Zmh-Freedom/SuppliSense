@@ -53,3 +53,25 @@ def test_risk_indicators_supplement_lawsuits_with_court_register(monkeypatch) ->
     indicators = repo_company.get_risk_indicators("示例供应商")
 
     assert indicators["lawsuit_count"] == 5
+
+
+def test_risk_readers_support_tianyancha_lawsuit_items_total(monkeypatch) -> None:
+    database = _Database({
+        "baseinfo": {"name": "示例供应商", "items": {"result": {}}},
+        "lawSuit": {"items": {"total": 6, "items": []}},
+        "courtRegister": None,
+        "abnormal": None,
+        "punishmentInfo": None,
+        "executedPerson": None,
+        "riskInfo": None,
+        "dishonesty": None,
+        "equityPledge": None,
+    })
+    monkeypatch.setattr(repo_company, "get_db", lambda: database)
+
+    risk = repo_company.get_risk_info("示例供应商")
+    indicators = repo_company.get_risk_indicators("示例供应商")
+
+    assert risk is not None
+    assert risk.lawsuit_count == 6
+    assert indicators["lawsuit_count"] == 6

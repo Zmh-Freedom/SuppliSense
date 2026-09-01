@@ -1,6 +1,7 @@
 """Execution behavior for bounded Agent Supervisor sub-agent adapters."""
 
 import asyncio
+from types import SimpleNamespace
 
 from app.graphs.agent_supervisor import agents as supervisor_agents
 from app.graphs.agent_supervisor.agents import AGENT_HANDLERS, AgentTaskContext, run_ready_tasks
@@ -113,9 +114,22 @@ def test_four_risk_workers_keep_all_structured_supplier_targets(monkeypatch):
         dependency_results={},
     )
 
+    def risk_preview(name):
+        return SimpleNamespace(
+            risk_score=18,
+            risk_level="低风险",
+            risk_detail={"data_coverage": {"assessment_status": "complete"}},
+            model_dump=lambda: {
+                "company_name": name,
+                "risk_score": 18,
+                "risk_level": "低风险",
+                "risk_detail": {"data_coverage": {"assessment_status": "complete"}},
+            },
+        )
+
     monkeypatch.setattr(
-        "app.domains.risk.repo_company.get_risk_info",
-        lambda name: {"company_name": name, "risk_level": "低风险"},
+        "app.domains.risk.service.calculate_company_risk_preview",
+        risk_preview,
     )
     monkeypatch.setattr(
         "app.domains.risk.sanctions_service.check_sanctions",
@@ -123,11 +137,21 @@ def test_four_risk_workers_keep_all_structured_supplier_targets(monkeypatch):
     )
     monkeypatch.setattr(
         "app.domains.risk.sentiment._get_cached_sentiment",
-        lambda name: {"company_name": name, "overall_sentiment": "neutral", "is_stale": False},
+        lambda name: {
+            "company_name": name,
+            "overall_sentiment": "neutral",
+            "is_stale": False,
+            "has_data": True,
+        },
     )
     monkeypatch.setattr(
         "app.domains.risk.esg_service.assess_esg",
-        lambda name: {"company_name": name, "total_level": "低风险", "total_score": 5},
+        lambda name: {
+            "company_name": name,
+            "total_level": "低风险",
+            "total_score": 5,
+            "assessment_status": "sufficient",
+        },
     )
 
     async def exercise():
@@ -142,3 +166,91 @@ def test_four_risk_workers_keep_all_structured_supplier_targets(monkeypatch):
             assert {item.company_id for item in result.evidence} == set(targets)
 
     asyncio.run(exercise())
+
+
+def test_risk_worker_uses_read_only_v2_score_and_marks_partial_coverage(monkeypatch):
+    context = AgentTaskContext(
+        task=PlannerTask(task_id="risk", agent="risk"),
+        run_id="run-1",
+        user_query="评估供应商风险",
+        intent={"target_supplier_names": ["供应商甲"]},
+        dependency_results={},
+    )
+    preview = SimpleNamespace(
+        risk_score=12,
+        risk_level="低风险",
+        risk_detail={"data_coverage": {"assessment_status": "partial", "coverage_ratio": 0.25}},
+        model_dump=lambda: {
+            "risk_score": 12,
+            "risk_level": "低风险",
+            "risk_detail": {"data_coverage": {"assessment_status": "partial", "coverage_ratio": 0.25}},
+        },
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.service.calculate_company_risk_preview",
+        lambda name: preview,
+    )
+
+    result = asyncio.run(supervisor_agents._run_risk(context))
+
+    assert result.status == "needs_review"
+    assert "评分：12 / 100" in result.evidence[0].claim
+    assert "不足以形成综合风险结论" in result.evidence[0].claim
+    assert result.findings[0].level == "unknown"
+    assert result.evidence[0].metadata["risk"]["risk_detail"]["data_coverage"]["assessment_status"] == "partial"
+
+
+def test_esg_worker_never_labels_insufficient_data_as_low_risk(monkeypatch):
+    context = AgentTaskContext(
+        task=PlannerTask(task_id="esg", agent="esg"),
+        run_id="run-1",
+        user_query="做 ESG 分析",
+        intent={"target_supplier_names": ["供应商甲"]},
+        dependency_results={},
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.esg_service.assess_esg",
+        lambda name: {
+            "company_name": name,
+            "total_score": 5,
+            "total_level": "数据不足",
+            "assessment_status": "insufficient_data",
+            "data_coverage": {"coverage_ratio": 0.25},
+        },
+    )
+
+    result = asyncio.run(supervisor_agents._run_esg(context))
+
+    assert result.status == "needs_review"
+    assert "不能判定为低风险" in result.evidence[0].claim
+    assert result.findings[0].level == "unknown"
+
+
+def test_sentiment_worker_refreshes_missing_cache_without_alert_side_effect(monkeypatch):
+    context = AgentTaskContext(
+        task=PlannerTask(task_id="sentiment", agent="sentiment"),
+        run_id="run-1",
+        user_query="做舆情分析",
+        intent={"target_supplier_names": ["供应商甲"]},
+        dependency_results={},
+    )
+    calls: list[dict] = []
+    monkeypatch.setattr("app.domains.risk.sentiment._get_cached_sentiment", lambda name: None)
+
+    def analyze(name, **kwargs):
+        calls.append(kwargs)
+        return {
+            "company_name": name,
+            "has_data": True,
+            "overall_sentiment": "neutral",
+            "is_stale": False,
+            "articles_count": 1,
+        }
+
+    monkeypatch.setattr("app.domains.risk.sentiment.analyze_sentiment", analyze)
+
+    result = asyncio.run(supervisor_agents._run_sentiment(context))
+
+    assert result.status == "completed"
+    assert result.evidence[0].source == "联网/天眼查舆情补采"
+    assert calls == [{"force_refresh": False, "max_results": 6, "emit_alerts": False}]
