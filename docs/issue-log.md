@@ -576,4 +576,4 @@
 - 根因：LLM 仅用于路由、需求解析或最终回答，未在共享 `ConversationState` 建立阶段负责结构化提取本轮企业、分析维度和监控动作。
 - 修复方案：在图层的共享执行上下文入口增加受 Pydantic 契约约束的 LLM 意图提取；将提取到的目标用已知全称/别名校验并回写同一 `ConversationState`，模型失败或无效输出才回退确定性规则；所有写操作仍只接受审批后的已校验目标。
 - 验证结果：新增“当前显式企业覆盖历史推荐”LLM 提取回归，覆盖中文维度标签归一化、监控意图和共享任务矩阵覆盖；上下文/Supervisor 定向测试 45 项、聊天流与 checkpoint 定向测试 26 项、`agent_e2e` 2 项通过；Python 编译检查与 `git diff --check` 通过。
-- 关联提交：待提交。
+- 关联提交：`bbab899e feat(agent): extract conversation intent with llm`。
