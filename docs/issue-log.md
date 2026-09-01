@@ -628,4 +628,4 @@
 - 修复期间新增验证问题：移除设置页知识库组件后遗留 `AnimatePresence`/`motion` 未使用导入，前端 lint 失败；全量非集成测试暴露调度器断言未包含当前已注册的飞书同步任务。
 - 补充修复方案：清理设置页无用导入；按当前调度器注册契约更新测试期望，确保知识库下线不会影响现有飞书同步调度。
 - 验证结果：后端非集成回归 500 项、前端 Vitest 48 项、Lint、TypeScript、生产构建和 PostgreSQL/MongoDB/Redis 集成 228 项通过；应用导入冒烟通过；Compose 配置检查通过；知识库和通用文档上传路由已从应用路由表移除，Agent 工具目录不再暴露 `knowledge_search`。供应商/预警 Excel 业务导入保持可用。
-- 关联提交：待提交。
+- 关联提交：`9ed77f1b refactor(knowledge): remove local document ingestion`。
