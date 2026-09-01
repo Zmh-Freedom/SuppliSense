@@ -347,7 +347,10 @@ def get_supplier(sid: str) -> dict | None:
 
 def get_supplier_by_name(name: str) -> dict | None:
     db = get_db()
-    return db["suppliers"].find_one({"name": name})
+    # Relationship links must resolve against the same formal read model as
+    # the supplier list/profile. Otherwise a stale auto-created legacy record
+    # can produce a link that the Feishu snapshot-backed profile cannot open.
+    return _supplier_read_collection(db).find_one({"name": name})
 
 
 def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:

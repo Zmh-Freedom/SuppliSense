@@ -94,18 +94,11 @@ describe('SupplierProfilePage', () => {
     await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/alert/watch', { company_name: '测试供应商有限公司' }));
   });
 
-  it('confirms an edit before updating supplier master data', async () => {
-    const user = userEvent.setup();
+  it('keeps the Feishu supplier master view read-only', async () => {
     renderProfile();
     await screen.findByText('测试供应商有限公司');
-    await user.click(screen.getByRole('button', { name: '编辑主数据' }));
-    const industryInput = screen.getByRole('textbox', { name: '行业' });
-    await user.clear(industryInput);
-    await user.type(industryInput, '新行业');
-    await user.click(screen.getByRole('button', { name: '保存并确认' }));
+    expect(screen.queryByRole('button', { name: '编辑主数据' })).not.toBeInTheDocument();
     expect(mocks.put).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: '确认执行' }));
-    await waitFor(() => expect(mocks.put).toHaveBeenCalledWith('/suppliers/supplier-1', expect.objectContaining({ industry: '新行业' })));
   });
 
   it('confirms reassessment before submitting a risk refresh', async () => {
@@ -147,6 +140,23 @@ describe('SupplierProfilePage', () => {
     expect(screen.getByText('V2')).toBeInTheDocument();
     expect(screen.getAllByText('评分体系 v2').length).toBeGreaterThan(0);
     expect(mocks.get).toHaveBeenCalledWith('/alert/snapshots', { company_name: '测试供应商有限公司', limit: '20' });
+  });
+
+  it('renders a safe key when a risk snapshot id is missing', async () => {
+    const user = userEvent.setup();
+    mocks.get.mockImplementation((path: string) => Promise.resolve(
+      path.startsWith('/risk/business/') ? BUSINESS_RISK : path === '/alert/snapshots' ? {
+        ...RISK_SNAPSHOTS,
+        snapshots: [{ ...RISK_SNAPSHOTS.snapshots[0], snapshot_id: '' }],
+      } : PROFILE,
+    ));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    renderProfile();
+    await screen.findByText('测试供应商有限公司');
+    await user.click(screen.getByRole('button', { name: '风险' }));
+    expect(await screen.findByText('V2')).toBeInTheDocument();
+    expect(consoleError).not.toHaveBeenCalledWith(expect.stringContaining('Each child in a list should have a unique'), expect.anything(), expect.anything());
+    consoleError.mockRestore();
   });
 
   it('uses the embedded changelog without a duplicate request', async () => {

@@ -1,7 +1,12 @@
 """Supplier-library read-model tests."""
 
 from app.core.config import settings
-from app.domains.sourcing.supplier_repo import get_supplier, list_formal_suppliers, list_suppliers
+from app.domains.sourcing.supplier_repo import (
+    get_supplier,
+    get_supplier_by_name,
+    list_formal_suppliers,
+    list_suppliers,
+)
 
 
 class FakeCursor:
@@ -113,6 +118,16 @@ def test_get_supplier_reads_current_feishu_master_by_view_or_stable_id(monkeypat
 
     assert by_view_id and by_view_id["name"] == "示例汽车零部件有限公司"
     assert by_stable_id and by_stable_id["_id"] == "master-1"
+
+
+def test_get_supplier_by_name_uses_current_feishu_read_model(monkeypatch) -> None:
+    database = FakeDatabase()
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+
+    supplier = get_supplier_by_name("示例汽车零部件有限公司")
+
+    assert supplier and supplier["_id"] == "master-1"
 
 
 def test_list_formal_suppliers_reads_active_feishu_directory(monkeypatch) -> None:
