@@ -91,11 +91,19 @@ def extract_conversation_intent(
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
         return None
 
-    return extracted.model_copy(update={
+    validated = extracted.model_copy(update={
         "target_supplier_names": validate_extracted_targets(
             extracted.target_supplier_names, supplier_references
         )
     })
+    logger.info(
+        "conversation_intent_extracted",
+        target_supplier_names=validated.target_supplier_names,
+        analysis_dimensions=validated.analysis_dimensions,
+        requested_action=validated.requested_action,
+        confidence=validated.confidence,
+    )
+    return validated
 
 
 def validate_extracted_targets(

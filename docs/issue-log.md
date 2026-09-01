@@ -577,3 +577,15 @@
 - 修复方案：在图层的共享执行上下文入口增加受 Pydantic 契约约束的 LLM 意图提取；将提取到的目标用已知全称/别名校验并回写同一 `ConversationState`，模型失败或无效输出才回退确定性规则；所有写操作仍只接受审批后的已校验目标。
 - 验证结果：新增“当前显式企业覆盖历史推荐”LLM 提取回归，覆盖中文维度标签归一化、监控意图和共享任务矩阵覆盖；上下文/Supervisor 定向测试 45 项、聊天流与 checkpoint 定向测试 26 项、`agent_e2e` 2 项通过；Python 编译检查与 `git diff --check` 通过。
 - 关联提交：`bbab899e feat(agent): extract conversation intent with llm`。
+
+## ISS-20260901-004 LLM 意图解析上线后未在真实聊天链路体现
+
+- 发现日期：2026-09-01
+- 状态：待用户验收
+- 优先级：P0
+- 现象：完成 LLM 优先企业目标解析并重启本地后端后，用户在前端实际对话中仍观察到原有的企业名称/上下文解析行为，没有体现当前消息优先。
+- 影响：单元测试覆盖的共享执行上下文与真实 SSE 聊天入口可能存在图模式、请求参数或运行实例不一致，核心交互无法确认已修复。
+- 根因：`/api/v1/chat/stream` 从未向 `request.state` 注入用户身份；即使浏览器已登录，也会走匿名 Supervisor 分支。该分支没有把共享适配器生成的 `execution_context` 传给图，导致 LLM 提取到的当前企业、维度和监控意图被静默丢弃，图只能回退到空引用。
+- 修复方案：匿名和登录分支均向 Supervisor 透传同一份 `supplier_references`、`current_task` 和 `conversation_state`；浏览器 Access Cookie 存在时解析已签名用户 ID，以创建可审计的持久化 Run。增加意图提取结构化日志，记录本轮已校验的目标和维度。
+- 验证结果：真实 DeepSeek 只读提取已返回 `四川建安工业有限责任公司` 与四个维度、`add_watchlist`；聊天入口/Supervisor/上下文定向测试 42 项通过，Python 编译检查与 `git diff --check` 通过。浏览器页面已刷新，待以新消息完成最终验收；旧历史回答不会自动重算。
+- 关联提交：待提交。

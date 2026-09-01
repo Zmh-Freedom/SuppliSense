@@ -380,7 +380,7 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
     """Removing the Supervisor mode branch would send composite chat back to ReAct."""
     compiled_graph = object()
 
-    async def supervisor_stream(graph, message, session_id, run_config):
+    async def supervisor_stream(graph, message, session_id, run_config, **kwargs):
         assert graph is compiled_graph
         assert message == "帮我找华东电机供应商并评估风险"
         assert session_id == "chat-run"
@@ -389,6 +389,18 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
                 "thread_id": "chat-run",
                 "checkpoint_ns": "chat:agent-supervisor",
             }
+        }
+        assert kwargs["graph_input"] == {
+            "run_id": "chat-run",
+            "user_query": "帮我找华东电机供应商并评估风险",
+            "supplier_references": [{"name": "华东电机有限公司"}],
+            "intent": {
+                "current_task": {
+                    "target_supplier_names": ["华东电机有限公司"],
+                    "analysis_dimensions": ["risk"],
+                }
+            },
+            "conversation_state": {"selected_supplier_names": ["华东电机有限公司"]},
         }
         yield 'event: done\ndata: {"answer": "supervisor"}\n\n'
 
@@ -408,9 +420,12 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
         "app.graphs.agent_core.adapter.load_execution_context",
         lambda *_args: {
             "history": [],
-            "references": [],
-            "conversation_state": {},
-            "current_task": {},
+            "references": [{"name": "华东电机有限公司"}],
+            "conversation_state": {"selected_supplier_names": ["华东电机有限公司"]},
+            "current_task": {
+                "target_supplier_names": ["华东电机有限公司"],
+                "analysis_dimensions": ["risk"],
+            },
         },
     )
     async def collect_events() -> list[str]:
@@ -473,6 +488,22 @@ def test_chat_supervisor_uses_a_persistent_agent_run_for_approval_actions(
         "intent": {"current_task": {}},
         "conversation_state": {},
     }
+
+
+def test_chat_recovers_agent_user_from_access_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chat must create a durable run for a browser-authenticated user."""
+    monkeypatch.setattr(
+        "app.core.security.decode_token",
+        lambda token: {"type": "access", "sub": "browser-user"} if token == "signed" else None,
+    )
+
+    user_id = chat_api._optional_agent_user_id(
+        SimpleNamespace(cookies={"access_token": "signed"}, headers={})
+    )
+
+    assert user_id == "browser-user"
 
 
 def test_supervisor_stream_maps_agent_results_to_public_sse_events() -> None:

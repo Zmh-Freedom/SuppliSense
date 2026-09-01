@@ -135,7 +135,23 @@ async def _langgraph_agent_supervisor_stream(
         }
     agent_user_id = context.get("agent_user_id")
     if not isinstance(agent_user_id, str) or not agent_user_id:
-        stream = stream_agent_supervisor_graph(graph, message, session_id, run_config)
+        # Anonymous/read-only chat still has to receive the context resolved by
+        # the shared adapter.  Otherwise current-turn LLM extraction is silently
+        # discarded for this branch and the graph falls back to stale references.
+        stream = stream_agent_supervisor_graph(
+            graph,
+            message,
+            session_id,
+            run_config,
+            graph_input={
+                "run_id": session_id,
+                "user_query": message,
+                "supplier_references": context["references"],
+                "intent": {"current_task": context["current_task"]},
+                "conversation_state": context["conversation_state"],
+            },
+            execution_context=context,
+        )
     else:
         from app.domains.agent_run.schemas import CreateSourcingRiskRunRequest
         from app.domains.agent_run.service import create_sourcing_risk_run
@@ -230,6 +246,22 @@ class ResumeRequest(BaseModel):
     approved: bool = True
 
 
+def _optional_agent_user_id(request: Request) -> str:
+    """Return the signed access-token subject without making read-only chat private."""
+    from app.core.security import decode_token
+
+    cookies = getattr(request, "cookies", {})
+    headers = getattr(request, "headers", {})
+    token = cookies.get("access_token")
+    if not token:
+        token = headers.get("Authorization", "").removeprefix("Bearer ")
+    payload = decode_token(token) if token else None
+    if not isinstance(payload, dict) or payload.get("type") != "access":
+        return ""
+    user_id = payload.get("sub")
+    return user_id if isinstance(user_id, str) else ""
+
+
 @router.post(
     "/stream",
     summary="AI 智能对话（流式 SSE）",
@@ -242,7 +274,7 @@ class ResumeRequest(BaseModel):
 async def chat_stream_endpoint(req: ChatRequest, request: Request):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
-    user_id = getattr(request.state, "user_id", "")
+    user_id = getattr(request.state, "user_id", "") or _optional_agent_user_id(request)
     from app.domains.auth.preferences import build_preference_context
     pref_ctx = build_preference_context(user_id) if user_id else ""
 
