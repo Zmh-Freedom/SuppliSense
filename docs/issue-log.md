@@ -564,4 +564,4 @@
 - 根因：`ConversationState` 的目标解析只会在已有供应商引用中匹配名称、别名或代词；空引用会直接返回空目标，没有从当前消息提取带企业后缀的显式全称。
 - 修复方案：在共享目标解析器中增加确定性企业全称提取，并保持已有引用的规范名称优先；所有图继续消费同一 `ConversationState`。
 - 验证结果：以用户原句构建 `ConversationState`，已解析出 `四川建安工业有限责任公司`，并生成 `risk`、`esg`、`sentiment`、`compliance` 四个分析维度。会话目标解析、Supervisor Worker/图和路由定向测试共 45 项通过；Python 编译检查与 `git diff --check` 通过。
-- 关联提交：待提交。
+- 关联提交：`7b4de857 fix(agent): resolve explicit analysis targets`。
