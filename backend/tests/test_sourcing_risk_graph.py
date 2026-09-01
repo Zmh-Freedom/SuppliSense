@@ -271,7 +271,7 @@ def test_ready_requirement_keeps_checkpoint_status_at_durable_created_until_poli
 def test_external_provider_failure_keeps_checkpoint_and_durable_status_aligned(monkeypatch: pytest.MonkeyPatch) -> None:
     """Checkpointing PARTIAL before its terminal event would expose a status the run row never had."""
     transitions: list[tuple[str, str, str, dict]] = []
-    monkeypatch.setattr(nodes, "search_external_provider", lambda *_: (_ for _ in ()).throw(ConnectionError("offline")))
+    monkeypatch.setattr(nodes, "discover_external_provider", lambda *_: (_ for _ in ()).throw(ConnectionError("offline")))
     monkeypatch.setattr(nodes, "_sleep", lambda *_: None)
     monkeypatch.setattr(
         nodes,
@@ -281,11 +281,11 @@ def test_external_provider_failure_keeps_checkpoint_and_durable_status_aligned(m
 
     update = asyncio.run(nodes.external_discovery({"run_id": "run-id", "requirement": _requirement(), "candidates": [_candidate()]}))
 
-    assert update == {
-        "status": "LOCAL_SEARCHING",
-        "external_candidates": [],
-        "provider_failures": ["external_discovery"],
-    }
+    assert update["status"] == "LOCAL_SEARCHING"
+    assert update["external_candidates"] == []
+    assert update["provider_failures"] == ["external_discovery"]
+    assert update["external_status"] == "failed"
+    assert update["external_failure_reasons"][0]["stage"] == "external_discovery"
     assert transitions == [("run-id", "LOCAL_SEARCHING", "provider_failed", {"provider": "external_discovery", "error": "ConnectionError"})]
 
 
@@ -383,7 +383,7 @@ def test_complete_local_flow_reaches_review_without_external_provider(monkeypatc
     async def investigate(*_args):
         return ({candidate["company_id"]: [{"dimension": "sanctions", "claim_code": "clear", "freshness_status": "fresh", "conflict_status": "none", "evidence_id": "s-1"}]}, [])
 
-    monkeypatch.setattr(nodes, "search_external_provider", external)
+    monkeypatch.setattr(nodes, "discover_external_provider", lambda *_: {"candidates": external(None), "status": "staged", "failure_reasons": []})
     monkeypatch.setattr(nodes, "investigate_candidates", investigate)
     monkeypatch.setattr(nodes, "validate_evidence_set", lambda *_: {"status": "clear", "reason_codes": [], "score_eligible": True})
     monkeypatch.setattr(nodes, "decide_candidates", lambda *_: [{"company_id": candidate["company_id"], "group": "recommended", "final_score": 88.0}])
@@ -464,7 +464,7 @@ def test_external_provider_failure_keeps_local_candidates_partial(monkeypatch: p
     monkeypatch.setattr(nodes, "freeze_policy_snapshot", lambda *_: policy)
     monkeypatch.setattr(nodes, "discover_local_candidates", lambda *_: [candidate])
     monkeypatch.setattr(nodes, "is_candidate_supply_sufficient", lambda *_: False)
-    monkeypatch.setattr(nodes, "search_external_provider", lambda *_: (_ for _ in ()).throw(ConnectionError("offline")))
+    monkeypatch.setattr(nodes, "discover_external_provider", lambda *_: (_ for _ in ()).throw(ConnectionError("offline")))
     monkeypatch.setattr(nodes, "_sleep", lambda *_: None)
     monkeypatch.setattr(nodes, "resolve_candidate_identity", lambda _: {"identity_status": "exact", "company_id": candidate["company_id"], "score_eligible": True})
 

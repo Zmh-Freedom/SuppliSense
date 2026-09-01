@@ -22,6 +22,10 @@ class SourcingRiskGraphState(TypedDict, total=False):
     policy_snapshot: dict[str, Any]
     candidates: list[dict[str, Any]]
     external_candidates: list[dict[str, Any]]
+    local_status: str
+    local_failure_reason: str | None
+    external_status: str
+    external_failure_reasons: list[dict[str, str]]
     evidence_by_company_id: dict[str, list[dict[str, Any]]]
     provider_failures: list[str]
     evidence_reviews: dict[str, dict[str, Any]]

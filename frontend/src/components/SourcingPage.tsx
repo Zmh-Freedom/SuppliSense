@@ -3,8 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { getRiskColor } from '../riskColors';
-import type { SourcingResultItem, SourcingRequestDetail } from '../types';
+import type { SourcingRequestDetail, SourcingResultItem, SourcingRiskCandidate } from '../types';
 import SourcingRiskWorkbench from './SourcingRiskWorkbench';
+import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
 
 type Step = { label: string; done: boolean };
 
@@ -13,6 +14,9 @@ export default function SourcingPage() {
   const [form, setForm] = useState({ title: '', category: '', spec: '', region: '', quantity: '' });
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SourcingResultItem[]>([]);
+  const [externalCandidates, setExternalCandidates] = useState<SourcingRiskCandidate[]>([]);
+  const [externalStatus, setExternalStatus] = useState('not_required');
+  const [externalFailures, setExternalFailures] = useState<Array<{ stage?: string; reason?: string }>>([]);
   const [error, setError] = useState('');
   const [currentRequestId, setCurrentRequestId] = useState('');
   const [steps, setSteps] = useState<Step[]>([]);
@@ -44,6 +48,9 @@ export default function SourcingPage() {
     setSearching(true);
     setError('');
     setResults([]);
+    setExternalCandidates([]);
+    setExternalStatus('not_required');
+    setExternalFailures([]);
     setSteps([{ label: '检索中', done: false }, { label: '评估中', done: false }, { label: '排序中', done: false }]);
 
     const token = localStorage.getItem('token') || '';
@@ -80,8 +87,11 @@ export default function SourcingPage() {
                 setSteps(prev => prev.map((s, i) => i <= 1 ? { ...s, done: true } : s));
               } else if (eventType === 'ranking') {
                 setSteps(prev => prev.map(s => ({ ...s, done: true })));
-              } else if (eventType === 'sourcing_result' && data.results) {
-                setResults(data.results);
+              } else if (eventType === 'sourcing_result') {
+                setResults(Array.isArray(data.results) ? data.results : []);
+                setExternalCandidates(Array.isArray(data.external_candidates) ? data.external_candidates : []);
+                setExternalStatus(String(data.external_status || 'not_required'));
+                setExternalFailures(Array.isArray(data.external_failure_reasons) ? data.external_failure_reasons : []);
               } else if (eventType === 'done') {
                 setSteps(prev => prev.map(s => ({ ...s, done: true })));
               } else if (eventType === 'error') {
@@ -114,8 +124,9 @@ export default function SourcingPage() {
 
   const canSubmit = form.category && form.spec;
   const hasResults = results.length > 0;
+  const hasExternalCandidates = externalCandidates.length > 0;
   const hasHistory = historyQuery.data && historyQuery.data.items.length > 0;
-  const showEmpty = !searching && !error && currentRequestId && !hasResults;
+  const showEmpty = !searching && !error && currentRequestId && !hasResults && !hasExternalCandidates;
 
   return (
     <div className="h-full py-6 px-6 overflow-auto">
@@ -225,6 +236,22 @@ export default function SourcingPage() {
                 onWatch={() => selectMutation.mutate({ resultId: r.result_id, action: 'watchlist' })}
               />
             ))}
+          </div>
+        )}
+
+        {hasExternalCandidates && (
+          <div className="space-y-3">
+            <div>
+              <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">外部待核验候选 ({externalCandidates.length})</h3>
+              <p className="text-xs text-amber-700 mt-1">来自天眼查和公开网络，仅用于供应商推荐；尚未进入正式供应商主数据。</p>
+            </div>
+            {externalCandidates.map(candidate => <SourcingRiskCandidateCard key={candidate.candidate_id ?? candidate.supplier_name} candidate={candidate} />)}
+          </div>
+        )}
+
+        {!searching && externalStatus === 'failed' && externalFailures.length > 0 && (
+          <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+            外部发现未完成：{externalFailures.map(item => `${item.stage || '外部阶段'}：${item.reason || '调用失败'}`).join('；')}
           </div>
         )}
 

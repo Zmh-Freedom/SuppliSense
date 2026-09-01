@@ -14,7 +14,7 @@ from app.domains.sourcing_risk.decision_service import decide_candidates
 from app.domains.sourcing_risk.discovery_service import (
     discover_local_candidates,
     is_candidate_supply_sufficient,
-    search_external_provider,
+    discover_external_provider,
     stage_external_candidates,
 )
 from app.domains.sourcing_risk.evidence_service import (
@@ -108,13 +108,23 @@ async def lock_policy(state: SourcingRiskGraphState) -> dict[str, Any]:
 async def local_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Keep locally found candidates even when a provider fallback is required."""
     candidates = state.get("candidates")
+    local_status = "ok"
+    local_failure_reason: str | None = None
     if candidates is None:
-        candidates = await asyncio.to_thread(discover_local_candidates, state["requirement"], state["policy_snapshot"])
+        try:
+            candidates = await asyncio.to_thread(discover_local_candidates, state["requirement"], state["policy_snapshot"])
+            if not isinstance(candidates, list):
+                raise TypeError("本地供应商库返回格式无效")
+        except Exception as exc:
+            candidates = []
+            local_status = "failed"
+            local_failure_reason = f"{type(exc).__name__}: 本地供应商库不可用"
+            await _event(state["run_id"], "provider_failed", {"provider": "local_supplier_library", "error": type(exc).__name__}, "LOCAL_SEARCHING")
     candidates = _with_candidate_keys(candidates)
     sufficient = is_candidate_supply_sufficient(candidates, state["requirement"], state["policy_snapshot"])
     await _snapshot_event(
         state["run_id"], "LOCAL_SEARCHING", "discovery",
-        {"source": "local", "count": len(candidates), "sufficient": sufficient},
+        {"source": "local", "source_stage": "local_history_or_feishu_formal", "count": len(candidates), "sufficient": sufficient, "local_status": local_status, "failure_reason": local_failure_reason},
         candidates=candidates,
     )
     return {
@@ -122,6 +132,8 @@ async def local_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
         "candidates": candidates,
         "candidate_ids": _candidate_ids(candidates),
         "next_action": "external_discovery_required" if not sufficient else None,
+        "local_status": local_status,
+        "local_failure_reason": local_failure_reason,
     }
 
 
@@ -129,7 +141,7 @@ async def external_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Run only the external discovery adapter under the provider safety policy."""
     local_candidates = list(state.get("candidates", []))
     try:
-        found = await _call_provider("external_discovery", search_external_provider, state["requirement"])
+        discovery = await _call_provider("external_discovery", discover_external_provider, state["requirement"])
     except Exception as exc:
         await _event(
             state["run_id"],
@@ -137,18 +149,27 @@ async def external_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
             {"provider": "external_discovery", "error": type(exc).__name__},
             "LOCAL_SEARCHING",
         )
-        return {"status": "LOCAL_SEARCHING", "external_candidates": [], "provider_failures": ["external_discovery"]}
+        return {"status": "LOCAL_SEARCHING", "external_candidates": [], "external_status": "failed", "external_failure_reasons": [{"stage": "external_discovery", "reason": f"{type(exc).__name__}: 阶段调用失败"}], "provider_failures": ["external_discovery"]}
+    if not isinstance(discovery, Mapping):
+        await _event(state["run_id"], "provider_failed", {"provider": "external_discovery", "error": "invalid_result"}, "LOCAL_SEARCHING")
+        return {"status": "LOCAL_SEARCHING", "external_candidates": [], "external_status": "failed", "external_failure_reasons": [{"stage": "external_discovery", "reason": "阶段返回格式无效"}], "provider_failures": ["external_discovery"]}
+    found = discovery.get("candidates", [])
+    if not isinstance(found, list):
+        await _event(state["run_id"], "provider_failed", {"provider": "external_discovery", "error": "invalid_candidates"}, "LOCAL_SEARCHING")
+        return {"status": "LOCAL_SEARCHING", "external_candidates": [], "external_status": "failed", "external_failure_reasons": [{"stage": "external_discovery", "reason": "候选列表格式无效"}], "provider_failures": ["external_discovery"]}
     staged = stage_external_candidates(state["run_id"], found)
     candidates = _with_candidate_keys([*local_candidates, *staged])
     await _snapshot_event(
         state["run_id"], "EXTERNAL_REVIEW", "discovery",
-        {"source": "external_staged", "count": len(staged)}, candidates=candidates,
+        {"source": "external_staged", "source_stage": "tianyancha_and_public_web", "count": len(staged), "status": "staged" if staged else "not_found"}, candidates=candidates,
     )
     return {
         "status": "EXTERNAL_REVIEW",
         "candidates": candidates,
         "external_candidates": staged,
         "candidate_ids": _candidate_ids(candidates),
+        "external_status": str(discovery.get("status") or ("staged" if staged else "not_found")),
+        "external_failure_reasons": list(discovery.get("failure_reasons") or []),
     }
 
 

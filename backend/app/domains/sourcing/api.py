@@ -63,10 +63,13 @@ async def search_stream(request_id: str):
 
             yield _sse_event("ranking", {"message": f"找到 {len(result.get('results', []))} 个候选"})
 
-            if result.get("results"):
+            if result.get("results") or result.get("external_candidates"):
                 yield _sse_event("sourcing_result", {
                     "request_id": request_id,
                     "results": result["results"],
+                    "external_candidates": result.get("external_candidates", []),
+                    "external_status": result.get("external_status", "not_required"),
+                    "external_failure_reasons": result.get("external_failure_reasons", []),
                 })
 
             yield _sse_event("done", {"message": "寻源完成", "count": len(result.get("results", []))})

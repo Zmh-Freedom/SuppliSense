@@ -65,20 +65,34 @@ def _company_names(context: AgentTaskContext) -> list[str]:
 
 
 def _sourcing_evidence(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "evidence_id": f"supplier:{candidate.get('supplier_id') or index}",
-            "source": "本地供应商主数据",
-            "source_type": "internal",
+    evidence = []
+    for index, candidate in enumerate(candidates):
+        candidate_type = candidate.get("candidate_type")
+        source_stage = candidate.get("source_stage")
+        if candidate_type == "external" or source_stage == "external":
+            source = "外部联网/天眼查待核验候选"
+            source_type = "third_party"
+            confidence = 0.65
+        elif source_stage == "feishu_formal":
+            source = "飞书正式供应商快照"
+            source_type = "internal"
+            confidence = 0.9
+        else:
+            source = "本地供应商历史数据"
+            source_type = "internal"
+            confidence = 0.85
+        evidence.append({
+            "evidence_id": f"supplier:{candidate.get('candidate_id') or candidate.get('supplier_id') or index}",
+            "source": source,
+            "source_type": source_type,
             "freshness": "fresh",
-            "confidence": 0.9,
+            "confidence": confidence,
             "company_id": str(candidate.get("supplier_id") or "") or None,
             "dimension": "sourcing",
             "claim": f"匹配供应商：{candidate.get('supplier_name') or '未命名供应商'}",
             "metadata": {"supplier": candidate},
-        }
-        for index, candidate in enumerate(candidates)
-    ]
+        })
+    return evidence
 
 
 def _risk_evidence(company_name: str, assessment: Any) -> list[dict[str, Any]]:
@@ -157,14 +171,30 @@ async def _run_sourcing(context: AgentTaskContext) -> AgentResult:
             summary="缺少可执行的采购需求，等待补充结构化条件。",
         )
 
-    from app.domains.sourcing_risk.discovery_service import discover_local_candidates
+    from app.domains.sourcing_risk.discovery_service import discover_candidates
 
-    candidates = await asyncio.to_thread(discover_local_candidates, requirement, {})
+    discovery = await asyncio.to_thread(
+        discover_candidates, requirement, {"minimum_candidate_count": 3}
+    )
+    if not isinstance(discovery, dict):
+        return AgentResult(
+            agent="sourcing",
+            status="failed",
+            summary="寻源发现服务返回格式无效，无法生成可追溯推荐。",
+        )
+    candidates = [*discovery.get("local_candidates", []), *discovery.get("external_candidates", [])]
     evidence = _sourcing_evidence(candidates)
+    source = discovery.get("source")
+    if source == "local_and_external":
+        summary = f"已检索本地/飞书正式供应商，并补充 {len(discovery.get('external_candidates', []))} 个外部待核验候选。"
+    elif source == "local":
+        summary = f"已从本地/飞书正式供应商快照检索到 {len(candidates)} 个候选供应商。"
+    else:
+        summary = f"寻源阶段未形成可用候选，共返回 {len(candidates)} 个结果。"
     return AgentResult(
         agent="sourcing",
         status="completed" if evidence else "needs_review",
-        summary=f"已从本地供应商库检索到 {len(candidates)} 个候选供应商。",
+        summary=summary,
         evidence=evidence,
         metrics=AgentMetrics(evidence_count=len(evidence)),
     )

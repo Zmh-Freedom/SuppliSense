@@ -224,10 +224,10 @@ def test_external_candidate_requires_exact_identity_before_access(monkeypatch) -
         select_external_candidate("candidate-1", "apply_access", "agent")
         assert False, "未唯一核验的候选不应创建准入申请"
     except ValueError as exc:
-        assert "唯一身份核验" in str(exc)
+        assert "不执行供应商准入" in str(exc)
 
 
-def test_external_candidate_creates_idempotent_access_application_after_exact_identity(monkeypatch) -> None:
+def test_external_candidate_rejects_access_application_even_after_exact_identity(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.domains.sourcing.service.get_external_candidate",
         lambda _candidate_id: {
@@ -238,27 +238,11 @@ def test_external_candidate_creates_idempotent_access_application_after_exact_id
             "status": "staged_candidate",
         },
     )
-    monkeypatch.setattr(
-        "app.domains.sourcing.service.get_access_application_by_candidate",
-        lambda _candidate_id: None,
-    )
-    monkeypatch.setattr(
-        "app.domains.sourcing.service.create_access_application",
-        lambda **kwargs: (assert_candidate_payload(kwargs) or "application-1"),
-    )
-    monkeypatch.setattr(
-        "app.db.mongo.get_db",
-        lambda: {"external_supplier_candidates": FakeCollection()},
-    )
-
-    result = select_external_candidate("candidate-1", "apply_access", "agent")
-
-    assert result == {
-        "success": True,
-        "action": "apply_access",
-        "application_id": "application-1",
-        "candidate_id": "candidate-1",
-    }
+    try:
+        select_external_candidate("candidate-1", "apply_access", "agent")
+        assert False, "当前范围不应创建准入申请"
+    except ValueError as exc:
+        assert "不执行供应商准入" in str(exc)
 
 
 class FakeCollection:

@@ -51,10 +51,10 @@ def _event_payload(events: list[str], event_name: str) -> dict:
     return json.loads(event.split("data: ", 1)[1])
 
 
-def test_local_candidate_admission_pauses_then_resumes_through_api(monkeypatch) -> None:
-    monkeypatch.setattr(react_graph, "TOOLS_LIST", [select_sourcing_result])
+def test_admission_scope_is_reported_without_write_or_approval(monkeypatch) -> None:
+    monkeypatch.setattr(react_graph, "TOOLS_LIST", [])
     monkeypatch.setattr(react_graph, "_get_llm", lambda: _FinalAnswerLLM())
-    session_id = "agent-e2e-local-admission"
+    session_id = "agent-e2e-admission-scope"
     graph = react_graph.build_react_graph(checkpointer=MemorySaver())
     context = {
         "conversation_state": {
@@ -80,35 +80,11 @@ def test_local_candidate_admission_pauses_then_resumes_through_api(monkeypatch) 
         _event_payload([event], "workflow_status")["status"]
         for event in events if event.startswith("event: workflow_status")
     ]
-    assert lifecycle[:2] == ["running", "running"]
-    assert "waiting_approval" in lifecycle
-
-    approval = _event_payload(events, "approval_required")
-    assert approval["tool"] == "select_sourcing_result"
-    assert approval["args"] == {
-        "result_id": "local-result-e2e-1",
-        "action": "apply_access",
-    }
-    assert exists(session_id)
-
-    response = asyncio.run(chat_api.resume_endpoint(
-        chat_api.ResumeRequest(session_id=session_id, approved=True)
-    ))
-    resumed_events = _collect(response.body_iterator)
-
-    resumed_lifecycle = [
-        _event_payload([event], "workflow_status")["status"]
-        for event in resumed_events if event.startswith("event: workflow_status")
-    ]
-    assert resumed_lifecycle[-1] == "completed"
-
-    assert any(
-        event.startswith("event: tool_result") for event in resumed_events
-    ), resumed_events
-    tool_result = _event_payload(resumed_events, "tool_result")
-    assert tool_result["tool"] == "select_sourcing_result"
-    assert "application-e2e-1" in tool_result["result"]
-    assert _event_payload(resumed_events, "done") == {"answer": ""}
+    assert lifecycle == ["running", "completed"]
+    assert not any(event.startswith("event: approval_required") for event in events)
+    answer = _event_payload(events, "done")["answer"]
+    assert "仅支持供应商推荐和加入风险监控" in answer
+    assert "供应商管理系统" in answer
     assert not exists(session_id)
     assert pop(session_id) is None
 

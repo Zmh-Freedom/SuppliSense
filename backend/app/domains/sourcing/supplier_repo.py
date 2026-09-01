@@ -72,6 +72,15 @@ _INDUSTRY_CODES: dict[str, str] = {
     "97": "国际组织",
 }
 
+# 采购人员常用叫法与主数据行业/能力字段不是一一对应关系；这里只做
+# 可解释的同族匹配，不把任意相近词当成同一品类。
+_SOURCING_CATEGORY_FAMILIES: dict[str, tuple[str, ...]] = {
+    "钢材": ("钢材", "钢板", "钢卷", "型钢", "不锈钢", "合金钢", "碳钢", "钢管", "钢筋", "线材", "棒材"),
+    "工业相机": ("工业相机", "相机", "摄像头", "机器视觉", "视觉模组"),
+    "电机": ("电机", "马达", "伺服电机", "步进电机"),
+    "电子元器件": ("电子元器件", "电子器件", "芯片", "连接器", "pcb", "电阻", "电容"),
+}
+
 
 def _resolve_category(result: dict) -> str | None:
     """从天眼查 baseinfo result 中提取行业信息，映射为 GB/T 品类名称。"""
@@ -443,14 +452,53 @@ def _normalise_sourcing_candidate(
         "updated_at": supplier.get("updated_at"),
         "source_updated_at": supplier.get("source_updated_at") or supplier.get("synced_at"),
         "source": supplier.get("source", "local"),
+        "source_stage": "feishu_formal" if supplier.get("source") == "feishu_bitable" else "local_history",
+        "source_reference": supplier.get("source_record_id") or supplier.get("record_id") or supplier.get("source_reference"),
         "website_url": supplier.get("website_url"),
         "contact_person": supplier.get("contact_person") or primary_contact.get("contact_name"),
         "contact_phone": supplier.get("contact_phone") or primary_contact.get("phone"),
         "contact_email": supplier.get("contact_email") or primary_contact.get("email"),
         "capabilities": capability_items,
         "contacts": contact_items,
+        "evidence": _sourcing_evidence(supplier, capability_items, contact_items),
         "match_reasons": [],
     }
+
+
+def _sourcing_evidence(
+    supplier: dict[str, Any],
+    capabilities: list[dict[str, Any]],
+    contacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expose source-traceable facts without leaking raw provider payloads."""
+    evidence: list[dict[str, Any]] = []
+    source = supplier.get("source", "local")
+    source_reference = supplier.get("source_record_id") or supplier.get("record_id") or supplier.get("source_reference")
+    evidence.append({
+        "evidence_id": f"{source}:supplier:{source_reference or supplier.get('supplier_id') or supplier.get('_id')}",
+        "dimension": "sourcing",
+        "source": source,
+        "source_reference": source_reference,
+        "observed_at": supplier.get("source_updated_at") or supplier.get("synced_at") or supplier.get("updated_at"),
+        "claim": "正式供应商主数据身份与状态",
+    })
+    for index, capability in enumerate(capabilities):
+        evidence.append({
+            "evidence_id": f"{source}:capability:{supplier.get('supplier_id') or supplier.get('_id')}:{index}",
+            "dimension": "capability",
+            "source": source,
+            "observed_at": capability.get("source_updated_at"),
+            "claim": capability.get("product_name") or capability.get("category") or "供应能力快照",
+        })
+    for index, contact in enumerate(contacts):
+        evidence.append({
+            "evidence_id": f"{source}:contact:{supplier.get('supplier_id') or supplier.get('_id')}:{index}",
+            "dimension": "contact",
+            "source": source,
+            "observed_at": contact.get("verified_at"),
+            "claim": contact.get("contact_name") or "供应商联系人快照",
+        })
+    return evidence
 
 
 def _public_capability_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -495,7 +543,7 @@ def _sourcing_match_reasons(candidate: dict, requirement: dict[str, Any]) -> lis
     reasons: list[str] = []
     for field, values in constraints:
         requested = _requirement_values(requirement.get(field))
-        if requested and not all(_contains_value(values, value) for value in requested):
+        if requested and not all(matches_sourcing_value(values, value) for value in requested):
             return None
         reasons.extend(f"{field}:{value}" for value in requested)
     return reasons
@@ -530,9 +578,29 @@ def _requirement_values(value: Any) -> list[str]:
     return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
 
 
-def _contains_value(values: list[str], requested: str) -> bool:
-    normalized = requested.casefold()
-    return any(normalized in value.casefold() for value in values)
+def matches_sourcing_value(values: list[str], requested: str) -> bool:
+    """Match a sourcing constraint using exact text or a known category family."""
+    requested_normalized = _normalise_match_text(requested)
+    if not requested_normalized:
+        return True
+    requested_family = _sourcing_family(requested_normalized)
+    return any(
+        requested_normalized in _normalise_match_text(value)
+        or requested_family == _sourcing_family(_normalise_match_text(value))
+        for value in values
+        if isinstance(value, str)
+    )
+
+
+def _sourcing_family(value: str) -> str:
+    for family, aliases in _SOURCING_CATEGORY_FAMILIES.items():
+        if any(_normalise_match_text(alias) in value or value in _normalise_match_text(alias) for alias in aliases):
+            return family
+    return value
+
+
+def _normalise_match_text(value: str) -> str:
+    return "".join(str(value or "").casefold().split())
 
 
 def list_suppliers(

@@ -79,6 +79,43 @@ def test_one_optional_agent_failure_isolated(monkeypatch):
     asyncio.run(exercise())
 
 
+def test_sourcing_worker_preserves_formal_and_external_evidence_sources(monkeypatch):
+    context = AgentTaskContext(
+        task=PlannerTask(task_id="sourcing", agent="sourcing"),
+        run_id="run-1",
+        user_query="推荐摄像头供应商",
+        intent={"requirement": {"category": "摄像头"}},
+        dependency_results={},
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing_risk.discovery_service.discover_candidates",
+        lambda *_: {
+            "source": "local_and_external",
+            "local_candidates": [{
+                "supplier_id": "formal-1",
+                "supplier_name": "正式供应商",
+                "source_stage": "feishu_formal",
+            }],
+            "external_candidates": [{
+                "candidate_id": "candidate-1",
+                "supplier_name": "外部候选",
+                "candidate_type": "external",
+                "source_stage": "external",
+            }],
+        },
+    )
+
+    result = asyncio.run(supervisor_agents._run_sourcing(context))
+
+    assert result.status == "completed"
+    assert [item.source for item in result.evidence] == [
+        "飞书正式供应商快照",
+        "外部联网/天眼查待核验候选",
+    ]
+    assert result.evidence[1].evidence_id == "supplier:candidate-1"
+    assert "外部待核验候选" in result.summary
+
+
 def test_retryable_timeout_is_retried_once_before_failure(monkeypatch):
     """A retryable provider timeout gets exactly one bounded retry."""
     async def exercise():

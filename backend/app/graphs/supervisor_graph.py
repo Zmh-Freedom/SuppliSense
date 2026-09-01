@@ -29,7 +29,7 @@ SUPERVISOR_SYSTEM_PROMPT = (
 _RISK_TOOLS = [t for t in TOOLS_LIST if t.name in (
     "search_company", "assess_risk", "esg_assessment", "predict_risk", "macro_risk",
     "create_sourcing_request", "search_suppliers", "select_sourcing_result",
-    "find_alternatives", "expand_supplier_library",
+    "find_alternatives",
     "discover_web_suppliers",
     "select_external_supplier_candidate",
     "analyze_trend", "analyze_watchlist_trend", "compare_companies",
@@ -52,7 +52,7 @@ RISK_PROMPT = """你是风险评估与寻源专家。
 3. 上市公司要分析财报，debt_ratio=0 表示数据缺失不要解读为低负债
 4. 用户需要找供应商时，用 create_sourcing_request 创建需求，再调用 search_suppliers 搜索
 5. 本地库找不到或结果太少时，优先用 discover_web_suppliers 联网发现待核验候选；不得自动写入供应商主库
-6. 用户确认联网候选准入时，必须使用 select_external_supplier_candidate(candidate_id, action="apply_access")；不得只用文字承诺，也不得把 candidate_id 当作 result_id
+6. 当前产品范围不执行供应商准入或自动扩库；用户询问准入时说明需在供应商管理系统完成。仅当用户要求加入风险监控时，才使用对应工具并等待人工确认
    如果上下文中没有 candidate_id，可传入供应商全称 supplier_name，由工具解析候选
 7. 监控清单相关：趋势分析调用 analyze_watchlist_trend，查看清单调用 get_watchlist
 8. 回答简洁，300 字以内，中文

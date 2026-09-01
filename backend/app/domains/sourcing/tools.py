@@ -45,12 +45,18 @@ def search_suppliers(request_id: str) -> dict:
 
 @tool
 def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
-    """勾选寻源结果执行动作：加入监控列表或申请准入。
+    """将正式供应商候选加入风险监控列表。
 
     Args:
         result_id: 寻源结果 ID
-        action: 动作类型，可选值: watchlist(加入监控), apply_access(申请准入，需确认)
+        action: 当前仅支持 watchlist（加入监控，需人工确认）。
     """
+    if action != "watchlist":
+        return {
+            "success": False,
+            "error": "scope_restricted",
+            "message": "当前阶段不执行供应商准入，请在供应商管理系统中完成；本 Agent 仅支持推荐和加入风险监控。",
+        }
     from app.graphs.approval import needs_approval, request_approval
 
     if needs_approval("select_sourcing_result", {"result_id": result_id, "action": action}):
@@ -73,12 +79,12 @@ def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
 def select_external_supplier_candidate(
     candidate_id: str = "",
     supplier_name: str = "",
-    action: str = "apply_access",
+    action: str = "watchlist",
 ) -> dict:
-    """对联网待核验候选执行人工确认后的动作。
+    """对联网待核验候选执行人工确认后的监控动作。
 
     可使用 discover_web_suppliers 返回的 candidate_id，或使用候选展示的供应商全称。
-    只有天眼查唯一身份核验为 exact 的候选，且用户确认审批后，才会创建准入申请。
+    外部候选不会被导入正式供应商主数据；用户确认后仅可加入风险监控。
     """
     from app.domains.sourcing.repo import get_external_candidate, get_external_candidate_by_name
     from app.graphs.approval import needs_approval, request_approval
@@ -95,6 +101,12 @@ def select_external_supplier_candidate(
         "supplier_name": candidate.get("supplier_name", supplier_name),
         "action": action,
     }
+    if action != "watchlist":
+        return {
+            "success": False,
+            "error": "scope_restricted",
+            "message": "当前阶段不执行供应商准入，请在供应商管理系统中完成；本 Agent 仅支持推荐和加入风险监控。",
+        }
     if needs_approval("select_external_supplier_candidate", args):
         try:
             approved = request_approval("select_external_supplier_candidate", args)
@@ -113,15 +125,19 @@ def select_external_supplier_candidate(
 
 @tool
 def expand_supplier_library(keyword: str = "", industry: str = "", region: str = "") -> dict:
-    """从天眼查搜索企业并自动导入供应商主库。当用户要寻找某类供应商但本地库找不到时使用。
+    """当前范围禁用自动扩充供应商主库。
 
     Args:
         keyword: 搜索关键词，如 "电机制造"、"伺服电机"、"包装印刷"
         industry: 行业分类，如 "电气机械和器材制造业"、"软件和信息技术服务业"
         region: 地域，如 "浙江"、"广东"、"华东"
     """
-    from app.domains.sourcing.import_service import import_from_tianyancha_search
-    return import_from_tianyancha_search(keyword=keyword, industry=industry, region=region, max_results=50)
+    del keyword, industry, region
+    return {
+        "success": False,
+        "error": "scope_restricted",
+        "message": "当前 Agent 只支持供应商推荐和加入风险监控，不自动写入供应商主数据；请在供应商管理系统完成扩库。",
+    }
 
 
 @tool
@@ -133,17 +149,19 @@ def discover_web_suppliers(category: str, specification: str = "", region: str =
         specification: 规格或产品关键词。
         region: 期望供应商地区。
     """
-    from app.domains.sourcing_risk.discovery_service import search_external_provider, stage_external_candidates
+    from app.domains.sourcing_risk.discovery_service import discover_external_provider, stage_external_candidates
 
     requirement = {"category": category, "specification": specification, "region": region}
-    candidates = search_external_provider(requirement)
-    staged = stage_external_candidates("", candidates)
+    discovery = discover_external_provider(requirement)
+    staged = stage_external_candidates("", discovery.get("candidates", []))
     from app.domains.sourcing.repo import save_external_candidate
     for candidate in staged:
         save_external_candidate(candidate)
     return {
         "source": "public_web_search",
-        "status": "staged_external",
+        "status": discovery.get("status", "not_found"),
         "candidates": staged,
+        "failed_stages": discovery.get("failed_stages", []),
+        "failure_reasons": discovery.get("failure_reasons", []),
         "message": "联网结果仅为待核验候选，确认前不会写入供应商主库。",
     }

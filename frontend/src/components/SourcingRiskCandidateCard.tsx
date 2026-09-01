@@ -32,11 +32,13 @@ export default function SourcingRiskCandidateCard({ candidate, evidence }: { can
           ) : null}
         </div>
       )}
+      {Array.isArray(candidate.match_reasons) && candidate.match_reasons.length > 0 && <p className="text-xs text-[var(--color-text-secondary)]">匹配依据：{candidate.match_reasons.map(item => String(item)).join('、')}</p>}
       <div className="grid gap-1 text-xs text-[var(--color-text-secondary)]">
         {candidate.website_url ? <a href={candidate.website_url} target="_blank" rel="noreferrer" className="w-fit text-[var(--color-primary-bg)] hover:underline">官网（待核验）</a> : <span>官网：未找到</span>}
         {candidate.contact_phone ? <span>电话（待核验）：{candidate.contact_phone}</span> : <span>电话：未找到</span>}
         {candidate.contact_email ? <a href={`mailto:${candidate.contact_email}`} className="w-fit text-[var(--color-primary-bg)] hover:underline">邮箱（待核验）：{candidate.contact_email}</a> : <span>邮箱：未找到</span>}
       </div>
+      {Array.isArray(candidate.verification_reasons) && candidate.verification_reasons.length > 0 && <p className="text-xs text-amber-700">核验状态：{candidate.verification_reasons.map(item => String(item)).join('；')}</p>}
       {candidate.source_updated_at && <p className="text-[10px] text-[var(--color-text-secondary)]">数据更新时间：{String(candidate.source_updated_at).slice(0, 10)}</p>}
       <EvidenceLabels evidence={candidateEvidence} />
     </article>

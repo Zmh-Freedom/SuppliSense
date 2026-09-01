@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.domains.sourcing.supplier_repo import search_for_sourcing_v2
+from app.domains.sourcing.supplier_repo import matches_sourcing_value, search_for_sourcing_v2
 from app.graphs.agent_core.contracts import LoopState
 from app.graphs.agent_core.loop import build_tool_fingerprint, evaluate_loop
 
@@ -38,22 +38,26 @@ def search_local_suppliers(requirement: dict, policy: dict) -> list[dict]:
 
 
 def search_external_provider(requirement: dict) -> list[dict]:
+    """Backward-compatible list-only wrapper for external discovery."""
+    return discover_external_provider(requirement)["candidates"]
+
+
+def discover_external_provider(requirement: dict) -> dict[str, Any]:
     """Discover unverified supplier leads from Tianyancha and public web search.
 
     Both providers are read-only and queried after local discovery is
     insufficient. Results are staged and must pass identity and human review
     before import.
     """
-    if not settings.SUPPLIER_DISCOVERY_WEB_ENABLED:
-        web_candidates: list[dict] = []
-    else:
-        web_candidates = []
+    web_candidates: list[dict] = []
+    tyc_candidates: list[dict] = []
+    failure_reasons: list[dict[str, str]] = []
 
     category = _first_requirement_value(requirement.get("category"))
     specification = _first_requirement_value(requirement.get("specification") or requirement.get("spec"))
     region = _first_requirement_value(requirement.get("region") or requirement.get("region_required"))
     if not category and not specification:
-        return []
+        return {"candidates": [], "status": "not_found", "failed_stages": [], "failure_reasons": []}
 
     def web_search() -> list[dict]:
         return _search_web_candidates(category, specification, region)
@@ -65,10 +69,12 @@ def search_external_provider(requirement: dict) -> list[dict]:
             try:
                 web_candidates = web_future.result()
             except Exception as exc:
+                failure_reasons.append({"stage": "web_search", "reason": f"{type(exc).__name__}: 阶段调用失败"})
                 logger.warning("supplier_web_discovery_failed", error=type(exc).__name__)
         try:
             tyc_candidates = tyc_future.result()
         except Exception as exc:
+            failure_reasons.append({"stage": "tianyancha", "reason": f"{type(exc).__name__}: 阶段调用失败"})
             logger.warning("supplier_tianyancha_discovery_failed", error=type(exc).__name__)
 
     logger.info(
@@ -81,7 +87,19 @@ def search_external_provider(requirement: dict) -> list[dict]:
     merged = _merge_external_candidates([*tyc_candidates, *web_candidates])
     merged = _verify_web_candidates_with_tianyancha(merged)
     limited = merged[: settings.SUPPLIER_DISCOVERY_WEB_MAX_RESULTS]
-    return _enrich_external_contacts(limited)
+    try:
+        enriched = _enrich_external_contacts(limited)
+    except Exception as exc:
+        failure_reasons.append({"stage": "contact_enrichment", "reason": f"{type(exc).__name__}: 阶段调用失败"})
+        enriched = limited
+    failed_stages = [item["stage"] for item in failure_reasons]
+    status = "staged" if enriched and not failure_reasons else "partial" if enriched else "failed" if failure_reasons else "not_found"
+    return {
+        "candidates": enriched,
+        "status": status,
+        "failed_stages": failed_stages,
+        "failure_reasons": failure_reasons,
+    }
 
 
 def _search_web_candidates(category: str, specification: str, region: str) -> list[dict]:
@@ -124,6 +142,7 @@ def _search_web_candidates(category: str, specification: str, region: str) -> li
             "source_title": title,
             "source_snippet": snippet[:500],
             "verification_status": "unverified",
+            "discovery_stage": "public_web",
             "match_reasons": [f"web_search:{query}"],
         })
         if len(candidates) >= settings.SUPPLIER_DISCOVERY_WEB_MAX_RESULTS:
@@ -173,6 +192,7 @@ def _search_duckduckgo_candidates(category: str, specification: str, region: str
             "source_title": title,
             "source_snippet": snippet[:500],
             "verification_status": "unverified",
+            "discovery_stage": "public_web",
             "match_reasons": [f"web_search:{query}"],
         })
         if len(candidates) >= settings.SUPPLIER_DISCOVERY_WEB_MAX_RESULTS:
@@ -242,6 +262,7 @@ def _search_tianyancha_candidates(category: str, specification: str, region: str
                 "source_title": "天眼查企业搜索",
                 "source_snippet": str(item.get("base") or item.get("regLocation") or "")[:500],
                 "verification_status": "unverified",
+                "discovery_stage": "tianyancha",
                 "match_reasons": [
                     f"tianyancha:{category or specification}",
                     f"industry_code:{industry_code}" if industry_code else "keyword_only",
@@ -652,19 +673,24 @@ def is_candidate_supply_sufficient(
         ("qualifications", "qualifications"),
     ):
         for value in _requirement_values(requirement.get(field)):
-            if not any(_contains_value(candidate.get(candidate_field), value) for candidate in candidates):
+            if not any(
+                matches_sourcing_value(_string_values(candidate.get(candidate_field)), value)
+                for candidate in candidates
+            ):
                 return False
     return True
 
 
 def stage_external_candidates(run_id: str, candidates: list[dict]) -> list[dict]:
     """Mark provider findings as review-only without resolving or creating identities."""
-    return [
-        {
+    staged: list[dict] = []
+    for candidate in candidates:
+        source_reference = candidate.get("source_reference") or candidate.get("tianyancha_source_reference")
+        staged.append({
             **candidate,
             "candidate_id": str(uuid.uuid5(
                 uuid.NAMESPACE_URL,
-                f"supplisense:external:{candidate.get('source', 'unknown')}:{candidate.get('supplier_name', '')}",
+                f"supplisense:external:{candidate.get('source', 'unknown')}:{source_reference or ''}:{candidate.get('supplier_name', '')}",
             )),
             **({"run_id": run_id} if run_id else {}),
             "status": "staged_candidate",
@@ -672,9 +698,37 @@ def stage_external_candidates(run_id: str, candidates: list[dict]) -> list[dict]
             "verification_status": candidate.get("verification_status", "unverified"),
             "supplier_id": None,
             "company_id": None,
-        }
-        for candidate in candidates
-    ]
+            "source_stage": "external",
+            "source_updated_at": candidate.get("source_updated_at") or candidate.get("discovered_at") or datetime.now(timezone.utc).isoformat(),
+        })
+    for candidate in staged:
+        candidate["evidence"] = _external_candidate_evidence(candidate)
+    return staged
+
+
+def _external_candidate_evidence(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build review-only evidence for a staged external candidate."""
+    evidence: list[dict[str, Any]] = []
+    references = candidate.get("source_references") or [candidate.get("source_reference")]
+    for index, reference in enumerate(dict.fromkeys(str(item) for item in references if item)):
+        evidence.append({
+            "evidence_id": f"external:{candidate.get('candidate_id', 'candidate')}:{index}",
+            "dimension": "sourcing",
+            "source": candidate.get("source", "external"),
+            "source_reference": reference,
+            "claim": candidate.get("source_title") or "外部供应商发现结果",
+            "verification_status": candidate.get("verification_status", "unverified"),
+        })
+    if candidate.get("tianyancha_verified") or candidate.get("tianyancha_source_reference"):
+        evidence.append({
+            "evidence_id": f"external:identity:{candidate.get('supplier_name', 'candidate')}",
+            "dimension": "identity",
+            "source": "tianyancha",
+            "source_reference": candidate.get("tianyancha_source_reference"),
+            "claim": "天眼查企业身份核验",
+            "verification_status": candidate.get("identity_status", "unavailable"),
+        })
+    return evidence
 
 
 def discover_candidates(requirement: dict, policy: dict) -> dict:
@@ -832,10 +886,9 @@ def _requirement_values(value: Any) -> list[str]:
     return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
 
 
-def _contains_value(values: Any, requested: str) -> bool:
+def _string_values(values: Any) -> list[str]:
     if isinstance(values, str):
-        values = [values]
-    if not isinstance(values, (list, tuple)):
-        return False
-    normalized = requested.casefold()
-    return any(isinstance(value, str) and normalized in value.casefold() for value in values)
+        return [values]
+    if isinstance(values, (list, tuple)):
+        return [value for value in values if isinstance(value, str)]
+    return []

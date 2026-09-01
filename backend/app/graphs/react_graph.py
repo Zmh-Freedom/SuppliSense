@@ -46,10 +46,8 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 定时报告：用 manage_scheduled_report
 - 查正式供应商目录（“有哪些正式供应商/已准入供应商”）：用 list_formal_suppliers；不得创建默认品类寻源请求
 - 找供应商/寻源：用 create_sourcing_request 创建需求，再用 search_suppliers 搜索候选
-- 供应商不足时：优先用 discover_web_suppliers 联网发现待核验候选；只有用户明确确认并允许入库时，才考虑 expand_supplier_library
-- 本地寻源候选准入：必须用 select_sourcing_result(result_id, action="apply_access")
-- 联网候选准入：只有 identity_status=exact 时用 select_external_supplier_candidate(candidate_id, action="apply_access")，不得把 candidate_id 当作 result_id
-- 用户说“执行/确认/同意准入”时，必须按结构化候选类型立即调用对应工具；不得只回复“同意准入”或再次建议确认
+- 供应商不足时：优先用 discover_web_suppliers 联网发现待核验候选；不得调用 expand_supplier_library 自动写入正式供应商主数据
+- 当前产品范围不执行供应商准入；用户询问准入时，应说明需在供应商管理系统完成。Agent 仅支持推荐和加入风险监控
 
 业务规则：
 - assess_risk 已含财报数据，上市公司要分析财报
@@ -77,56 +75,14 @@ _ACCESS_REQUEST_TOKENS = ("准入", "申请入库", "成为合格供应商")
 
 
 def _forced_access_call(state: AgentState) -> AIMessage | None:
-    """Hard-route one unambiguous admission request to its typed selection tool."""
+    """Stop admission requests at the current product boundary."""
     messages = state.get("messages", [])
     last = messages[-1] if messages else None
     if not isinstance(last, HumanMessage) or not any(
         token in str(last.content) for token in _ACCESS_REQUEST_TOKENS
     ):
         return None
-    raw_conversation_state = state.get("conversation_state")
-    conversation_state = (
-        raw_conversation_state if isinstance(raw_conversation_state, dict) else {}
-    )
-    active_suppliers = [
-        reference
-        for reference in conversation_state.get("active_suppliers", [])
-        if isinstance(reference, dict) and reference.get("name")
-    ]
-    explicit_candidates = [
-        candidate for candidate in active_suppliers
-        if str(candidate["name"]) in str(last.content)
-    ]
-    candidates = explicit_candidates or active_suppliers
-    if len(candidates) != 1:
-        return None
-    candidate = candidates[0]
-    if candidate.get("candidate_type") == "local" and candidate.get("result_id"):
-        return AIMessage(content="", tool_calls=[{
-            "name": "select_sourcing_result",
-            "args": {
-                "result_id": candidate["result_id"],
-                "action": "apply_access",
-            },
-            "id": "forced-local-access",
-            "type": "tool_call",
-        }])
-    if not (
-        candidate.get("candidate_id")
-        and candidate.get("candidate_type") == "external"
-        and candidate.get("identity_status") == "exact"
-    ):
-        return None
-    return AIMessage(content="", tool_calls=[{
-        "name": "select_external_supplier_candidate",
-        "args": {
-            "candidate_id": candidate["candidate_id"],
-            "supplier_name": candidate.get("name", ""),
-            "action": "apply_access",
-        },
-        "id": "forced-external-access",
-        "type": "tool_call",
-    }])
+    return AIMessage(content="当前 Agent 仅支持供应商推荐和加入风险监控；供应商准入请在供应商管理系统中完成。")
 
 
 def _forced_external_access_call(state: AgentState) -> AIMessage | None:

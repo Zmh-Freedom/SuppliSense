@@ -404,6 +404,21 @@ async def stream_react_graph(
                     if not buffer_access_answer:
                         yield _sse_event("answer_chunk", {"text": content})
 
+            # Some guardrail nodes return an AIMessage directly instead of
+            # invoking the LLM (for example, the current admission boundary).
+            # Such messages do not produce ``on_chat_model_end`` and must still
+            # become the public answer. Normal LLM turns already populated
+            # ``full_answer`` above, so only use this fallback when needed.
+            elif kind == "on_chain_end" and event.get("name") == "agent" and not full_answer:
+                output = _event_data(event).get("output")
+                messages = output.get("messages", []) if isinstance(output, dict) else []
+                message = messages[-1] if messages else None
+                content = getattr(message, "content", "") if message else ""
+                if isinstance(content, str) and content:
+                    full_answer = content
+                    if not buffer_access_answer:
+                        yield _sse_event("answer_chunk", {"text": content})
+
             # Reflector 发现问题时通知
             elif kind == "on_chain_end" and event.get("name") == "reflector":
                 output = _event_data(event).get("output", {})

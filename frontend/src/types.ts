@@ -192,6 +192,7 @@ export interface SourcingRequestInput {
 
 export interface SourcingResultItem {
   result_id: string;
+  candidate_type?: 'local' | 'external' | string;
   supplier_id?: string | null;
   supplier_code?: string | null;
   supplier_name: string;
@@ -210,6 +211,9 @@ export interface SourcingResultItem {
   contact_phone?: string | null;
   contact_email?: string | null;
   source?: string | null;
+  source_stage?: string | null;
+  source_reference?: string | null;
+  evidence?: SourcingRiskEvidence[];
   source_updated_at?: string | null;
   selected: boolean;
   action: string | null;
@@ -219,6 +223,9 @@ export interface SourcingSearchResponse {
   request_id: string;
   status: string;
   results: SourcingResultItem[];
+  external_candidates?: SourcingRiskCandidate[];
+  external_status?: string;
+  external_failure_reasons?: Array<{ stage?: string; reason?: string }>;
 }
 
 export interface SourcingRequestDetail {

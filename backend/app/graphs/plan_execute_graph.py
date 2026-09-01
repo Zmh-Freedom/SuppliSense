@@ -76,8 +76,8 @@ PLANNER_PROMPT = """你是采购风险分析的规划专家。根据用户问题
 - manage_scheduled_report: 管理定时报告任务
 - create_sourcing_request: 创建采购寻源请求
 - search_suppliers: 执行供应商搜索
-- select_sourcing_result: 勾选寻源结果
-- expand_supplier_library: 从天眼查扩充供应商库
+- select_sourcing_result: 将正式供应商候选加入风险监控（需人工确认）
+- expand_supplier_library: 当前禁用，不得自动扩充供应商主库
 
 规则：
 1. 如果用户问的是某企业风险，先搜索确认全称，再评估风险
@@ -100,7 +100,8 @@ EXECUTOR_PROMPT = """你是一个工具执行助手。根据步骤描述、用�
 2. 如果步骤描述中已显式包含企业名，直接使用
 3. 如果用户原始问题中含企业全称，直接使用
 4. 必须输出有效参数，不允许 company_name 等必填字段为空
-5. 工具不存在时输出 {{"tool": "skip", "args": {{}}}}
+5. 当前产品范围不执行供应商准入、不自动扩充供应商主库；涉及这些动作时返回 skip，并在最终回答中说明需在供应商管理系统完成
+6. 工具不存在时输出 {{"tool": "skip", "args": {{}}}}
 
 请输出纯 JSON 格式: {{"tool": "工具名", "args": {{"参数名": "参数值"}}}}"""
 

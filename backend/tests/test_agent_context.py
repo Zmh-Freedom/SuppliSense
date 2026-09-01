@@ -158,8 +158,7 @@ def test_build_input_messages_routes_access_to_external_candidate_tool():
     )
 
     assert "candidate-cloud-key" in messages[0].content
-    assert "必须立即调用 select_external_supplier_candidate" in messages[0].content
-    assert "不得调用 select_sourcing_result" in messages[0].content
+    assert "当前产品范围不执行供应商准入" in messages[0].content
 
 
 def test_build_input_messages_routes_access_to_local_result_tool():
@@ -176,7 +175,7 @@ def test_build_input_messages_routes_access_to_local_result_tool():
     )
 
     assert "local-result-1" in messages[0].content
-    assert "必须立即调用 select_sourcing_result" in messages[0].content
+    assert "当前产品范围不执行供应商准入" in messages[0].content
 
 
 def test_react_graph_hard_routes_unambiguous_external_access_request():
@@ -191,8 +190,8 @@ def test_react_graph_hard_routes_unambiguous_external_access_request():
     })
 
     assert forced_call is not None
-    assert forced_call.tool_calls[0]["name"] == "select_external_supplier_candidate"
-    assert forced_call.tool_calls[0]["args"]["candidate_id"] == "candidate-cloud-key"
+    assert forced_call.tool_calls == []
+    assert "仅支持供应商推荐和加入风险监控" in forced_call.content
 
 
 def test_react_graph_hard_routes_unambiguous_local_access_request():
@@ -206,10 +205,8 @@ def test_react_graph_hard_routes_unambiguous_local_access_request():
     })
 
     assert forced_call is not None
-    assert forced_call.tool_calls[0]["name"] == "select_sourcing_result"
-    assert forced_call.tool_calls[0]["args"] == {
-        "result_id": "local-result-1", "action": "apply_access",
-    }
+    assert forced_call.tool_calls == []
+    assert "仅支持供应商推荐和加入风险监控" in forced_call.content
 
 
 def test_load_conversation_context_prefers_latest_structured_references(monkeypatch):

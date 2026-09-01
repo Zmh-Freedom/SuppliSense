@@ -80,17 +80,22 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
     candidates = snapshot_candidates if snapshot_candidates is not None else _vector_search(query_text, top_k=10)
     candidates = _filter_category_candidates(candidates, req_doc.get("category", ""))
     external_candidates: list[dict] = []
+    external_status = "not_required"
+    external_failure_reasons: list[dict[str, str]] = []
     if len(candidates) < 3:
-        from app.domains.sourcing_risk.discovery_service import search_external_provider, stage_external_candidates
+        from app.domains.sourcing_risk.discovery_service import discover_external_provider, stage_external_candidates
 
+        external_discovery = discover_external_provider({
+            "category": req_doc.get("category", ""),
+            "specification": req_doc.get("spec", ""),
+            "region": req_doc.get("region_required", ""),
+        })
         external_candidates = stage_external_candidates(
             request_id,
-            search_external_provider({
-                "category": req_doc.get("category", ""),
-                "specification": req_doc.get("spec", ""),
-                "region": req_doc.get("region_required", ""),
-            }),
+            external_discovery.get("candidates", []),
         )
+        external_status = external_discovery.get("status", "not_found")
+        external_failure_reasons = list(external_discovery.get("failure_reasons", []))
         for candidate in external_candidates:
             save_external_candidate(candidate)
     if not candidates and not external_candidates:
@@ -100,7 +105,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
             "status": "done",
             "results": [],
             "external_candidates": [],
-            "message": f"本地供应商库未找到品类“{req_doc.get('category', '')}”的匹配结果",
+            "external_status": external_status,
+            "external_failure_reasons": external_failure_reasons,
+            "message": f"未找到品类“{req_doc.get('category', '')}”的可用供应商；已完成正式供应商和外部发现检索。",
         }
 
     # 3. 快速风险查分（MongoDB 快照，不调外部 API）
@@ -144,6 +151,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
             "contact_phone": supp.get("contact_phone"),
             "contact_email": supp.get("contact_email"),
             "source": supp.get("source"),
+            "source_stage": supp.get("source_stage", "local_history"),
+            "source_reference": supp.get("source_reference"),
+            "evidence": supp.get("evidence", []),
             "source_updated_at": supp.get("source_updated_at"),
             "selected": False,
             "action": None,
@@ -186,7 +196,8 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         "request_id": request_id,
         "status": "done",
         "external_candidates": external_candidates,
-        "external_status": "staged" if external_candidates else "not_required",
+        "external_status": external_status,
+        "external_failure_reasons": external_failure_reasons,
         "message": (
             f"本地暂无“{req_doc.get('category', '')}”匹配，以下为天眼查和联网搜索的待核验候选。"
             if external_candidates and not candidates
@@ -215,6 +226,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
             "contact_phone": r["contact_phone"],
             "contact_email": r["contact_email"],
             "source": r["source"],
+            "source_stage": r["source_stage"],
+            "source_reference": r["source_reference"],
+            "evidence": r["evidence"],
             "source_updated_at": r["source_updated_at"],
         } for r in top10],
     }
@@ -247,7 +261,7 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
 
 def select_external_candidate(
     candidate_id: str = "",
-    action: str = "apply_access",
+    action: str = "watchlist",
     user_id: str = "agent",
     supplier_name: str = "",
 ) -> dict:
@@ -260,10 +274,18 @@ def select_external_candidate(
         raise ValueError(f"外部候选不存在或已过期: {supplier_name or candidate_id}")
     if candidate.get("status") not in {"staged_candidate", "access_pending"}:
         raise ValueError(f"外部候选当前状态不可执行: {candidate.get('status', 'unknown')}")
-    if action != "apply_access":
-        raise ValueError(f"外部候选暂不支持动作: {action}")
-    if candidate.get("identity_status") != "exact":
-        raise ValueError("外部候选尚未完成天眼查唯一身份核验，不能申请准入")
+    if action == "watchlist":
+        from app.domains.alert.service import add_to_watchlist
+
+        supplier_name = candidate.get("tianyancha_company_name") or candidate.get("supplier_name", "")
+        add_to_watchlist(supplier_name)
+        return {
+            "success": True,
+            "action": action,
+            "candidate_id": candidate_id,
+            "message": f"已将外部候选 {supplier_name} 加入风险监控，未写入正式供应商主数据。",
+        }
+    raise ValueError("当前阶段不执行供应商准入，请在供应商管理系统中完成")
 
     existing = get_access_application_by_candidate(candidate_id)
     if existing:

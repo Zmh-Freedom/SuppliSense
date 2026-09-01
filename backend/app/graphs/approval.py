@@ -20,14 +20,14 @@ _APPROVAL_TOOLS: dict[str, str] = {
     "add_to_watchlist": "将 {company_name} 加入监控清单",
     "remove_from_watchlist": "将 {company_name} 移出监控清单",
     "select_sourcing_result": "确认寻源结果操作: {action}",
-    "select_external_supplier_candidate": "确认外部候选 {candidate_id} 的准入申请",
+    "select_external_supplier_candidate": "确认将外部候选 {candidate_id} 加入风险监控",
 }
 
 # manage_scheduled_report 中需要审批的 action
 _APPROVAL_SCHEDULED_ACTIONS = {"create", "delete"}
 
 # select_sourcing_result 中需要审批的 action
-_APPROVAL_SOURCING_ACTIONS = {"apply_access"}
+_APPROVAL_SOURCING_ACTIONS = {"watchlist"}
 
 
 def needs_approval(tool_name: str, tool_args: dict[str, Any]) -> bool:
@@ -49,7 +49,7 @@ def needs_approval(tool_name: str, tool_args: dict[str, Any]) -> bool:
         return action in _APPROVAL_SOURCING_ACTIONS
 
     if tool_name == "select_external_supplier_candidate":
-        return tool_args.get("action", "") == "apply_access"
+        return tool_args.get("action", "") == "watchlist"
 
     return tool_name in _APPROVAL_TOOLS
 
