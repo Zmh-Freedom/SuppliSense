@@ -552,4 +552,4 @@
 - 根因：早期 Supervisor 仅作为“寻源 + 分析”的实验性组合图，未与统一 ConversationState 的多目标任务矩阵和 V2 Agent Run 生命周期完全接通。
 - 修复方案：将多目标供应商列表贯穿全部 Worker，增加 ESG Worker 与四维结构化证据；将多维分析/监控诉求稳定路由至 Supervisor；聊天态 Supervisor 创建持久化 Agent Run，并在用户确认后复用既有审批、Outbox 和监控执行边界。
 - 验证结果：新增两家供应商的风险、ESG、舆情、合规四维 Worker 回归，验证每个维度均保留两家企业的独立证据；新增多目标监控提案、持久化聊天 Agent Run 和面向用户的分维结果汇总回归。Supervisor/审批/路由定向测试 64 项通过，`agent_e2e` 2 项通过，Python 编译检查与 `git diff --check` 通过。
-- 关联提交：待提交。
+- 关联提交：`50d2fa23 feat(agent): complete risk monitoring workflow`。
