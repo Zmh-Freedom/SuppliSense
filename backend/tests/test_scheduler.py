@@ -47,6 +47,7 @@ def test_scheduler_registers_one_stable_interval_outbox_job_when_enabled(
     monkeypatch.setattr(scheduler, "_scheduler_leadership", _Leader())
     monkeypatch.setattr(settings, "OUTBOX_WORKER_ENABLED", True)
     monkeypatch.setattr(settings, "OUTBOX_POLL_SECONDS", 7)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", False)
 
     scheduler.start_scheduler()
     scheduler.start_scheduler()

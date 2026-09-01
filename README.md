@@ -23,7 +23,7 @@ FastAPI ──→ LangGraph Agent 编排层
          │
          ├── DeepSeek LLM (langchain-openai, 3 次重试, 60s 超时)
          ├── MongoDB (企业数据 / 快照 / 告警 / 对话历史)
-         ├── PostgreSQL + pgvector (用户 / 知识库 / 向量检索 / 评估历史)
+         ├── PostgreSQL (用户 / 审计 / Agent 状态 / 评估历史)
          ├── Redis (缓存 / 限流)
          ├── 天眼查 API (工商 / 司法 / 经营)
          ├── AkShare (A股 / 港股财报)
@@ -92,7 +92,7 @@ python backend/scripts/convert_supplier_workbook.py \
 
 详细映射规则见 `docs/integration/feishu-import-converter.md`。脚本只生成 CSV，不会修改源文件或写入飞书。
 
-CI 还会在 PostgreSQL（pgvector）、MongoDB 和 Redis 服务容器中执行数据库集成回归：
+CI 还会在 PostgreSQL、MongoDB 和 Redis 服务容器中执行数据库集成回归：
 
 ```bash
 cd backend
@@ -143,7 +143,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 | **智能寻源** | `/sourcing` | 采购需求 → 多源候选 → 风险评估 → Top-N 推荐 → 人工确认加入监控 |
 | **风险监控** | `/assess` | 单供应商风险评估、趋势、证据和监控联动 |
 | **供应商库** | `/suppliers` | 正式供应商主数据只读视图 + `/suppliers/:id` 供应商画像 |
-| **设置** | `/settings` | 用户偏好 + 监控清单管理 + 告警规则 + 知识库 |
+| **设置** | `/settings` | 用户偏好 + 通知中心 |
 
 ---
 
@@ -154,7 +154,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 | 后端框架 | FastAPI + Pydantic v2 |
 | AI 编排 | LangGraph StateGraph（6 种图模式） |
 | LLM | DeepSeek Chat（langchain-openai, OpenAI 兼容 API） |
-| 数据库 | MongoDB (pymongo + motor) + PostgreSQL pgvector + Redis |
+| 数据库 | MongoDB (pymongo + motor) + PostgreSQL + Redis |
 | 认证 | JWT (HttpOnly Cookie + Refresh Token) + BCrypt |
 | 调度 | APScheduler（风险、舆情、告警、主动 Agent、Outbox、飞书同步） |
 | 实时通信 | WebSocket（指数退避重连）+ SSE（对话流式） |
@@ -199,7 +199,6 @@ app/
 │   ├── supplier/  # 供应商主数据 / 供应商画像
 │   ├── alert/     # 预警监控 / 通知
 │   ├── auth/      # 用户认证 / 权限管理
-│   └── knowledge/ # 知识库 RAG
 ├── services/      # 跨领域服务（agent / proactive_agent / scheduler / ws_manager）
 ├── repositories/  # 数据访问层（旧）
 ├── schemas/       # Pydantic 模型
@@ -216,7 +215,6 @@ app/
 |------|------|
 | `search_company` | 模糊搜索企业全称 |
 | `query_financials` | 查询财报指标（15 项） |
-| `knowledge_search` | 知识库 RAG 检索 |
 
 ### 风险评估
 | 工具 | 说明 |
@@ -393,12 +391,7 @@ app/
 | GET | `/report/excel/{company}` | 下载 Excel 报告 |
 | GET | `/report/html/{company}` | HTML 报告（可打印 PDF） |
 
-### 知识库 `/api/v1/knowledge`
-| Method | Path | 说明 |
-|--------|------|------|
-| GET | `/knowledge/stats` | 知识库统计 |
-| GET | `/knowledge/search` | 向量检索 |
-| POST | `/knowledge/upload` | 上传文档 |
+知识库文档上传、文件解析和本地向量检索已从当前开发范围移除。供应商推荐使用飞书快照、Mongo 历史数据和受限联网发现；供应商/预警业务 Excel 导入仍保留。
 
 ### WebSocket `/ws`
 服务端主动推送事件：
@@ -466,7 +459,6 @@ SuppliSense/
 │   │   │   ├── supplier/     # 供应商主数据 / 供应商画像
 │   │   │   ├── alert/        # 预警监控 / 通知
 │   │   │   ├── auth/         # 认证 / 权限
-│   │   │   └── knowledge/    # 知识库 RAG
 │   │   ├── services/         # 跨领域服务（agent, scheduler, ws_manager）
 │   │   ├── schemas/          # Pydantic 模型（按业务拆分）
 │   │   ├── db/               # MongoDB / PostgreSQL 连接管理

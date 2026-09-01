@@ -15,11 +15,11 @@ cd ../frontend && npm run lint && npm run build && npm test -- --run
 cd .. && docker compose --env-file .env.docker config --quiet
 ```
 
-CLI 输出 JSON。`PASS` 表示门禁已验证，`FAIL` 表示代码/配置门禁失败，`BLOCKED` 表示外部环境没有执行或不可达。只要存在 `FAIL` 或 `BLOCKED`，`ready_for_release` 就是 `false`，退出码为 2。特别是 `migration_schema` 的 `BLOCKED` 不能被解释为 PostgreSQL、pgvector 或 MongoDB 已通过集成验证。
+CLI 输出 JSON。`PASS` 表示门禁已验证，`FAIL` 表示代码/配置门禁失败，`BLOCKED` 表示外部环境没有执行或不可达。只要存在 `FAIL` 或 `BLOCKED`，`ready_for_release` 就是 `false`，退出码为 2。特别是 `migration_schema` 的 `BLOCKED` 不能被解释为 PostgreSQL 或 MongoDB 已通过集成验证。
 
 ## 上线前门槛
 
-- migration/schema：在可访问的 PostgreSQL（含 pgvector）和 MongoDB 环境执行真实 schema/index/migration 测试，并保存输出。
+- migration/schema：在可访问的 PostgreSQL 和 MongoDB 环境执行真实 schema/index/migration 测试，并保存输出。
 - API auth：执行 `test_auth.py::test_protected_endpoints_require_auth` 与 `test_agent_run_api.py::test_agent_run_endpoints_require_authentication`。
 - 人工审批与 Outbox：执行未审批 proposal 与 approved-only transactional Outbox 的对应 pytest；失败不得被源码契约检查掩盖。
 - recovery：执行 evidence service 与 agent run service 的 unknown/fail-closed pytest；PG/Mongo 不可用时立即停止后续后端 pytest 集成门禁。

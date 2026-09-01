@@ -1,5 +1,5 @@
 """
-Seed typical supplier data into MongoDB + PG vector table.
+Seed typical supplier data into MongoDB.
 Run: cd backend && python3 scripts/seed_suppliers.py
 """
 
@@ -8,9 +8,6 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db.mongo import get_db
-from app.db.postgres import get_cursor
-from app.db.init_pg import ensure_pg_schema
-from app.services.embedding import encode_single
 from datetime import datetime
 import uuid
 
@@ -163,35 +160,11 @@ SUPPLIERS = [
 
 
 def seed():
-    print("Ensuring PG schema...")
-    ensure_pg_schema()
-
     db = get_db()
 
     for s in SUPPLIERS:
         name = s["name"]
-        # Build content string for embedding
-        content_parts = [name]
-        content_parts.extend(s["categories"])
-        content_parts.extend(s["regions"])
-        content_parts.append(s.get("description", ""))
-        content = " ".join(content_parts)
-
-        # Generate embedding
-        embedding = encode_single(content)
-        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
         sid = str(uuid.uuid4())
-
-        # Upsert into PG supplier_profiles
-        with get_cursor() as (conn, cur):
-            cur.execute(
-                """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
-                   VALUES (%s, %s, %s, %s::vector, %s)
-                   ON CONFLICT (id) DO UPDATE SET
-                   content = EXCLUDED.content,
-                   embedding = EXCLUDED.embedding""",
-                (sid, name, content, vec_str, "{}"),
-            )
 
         # Upsert into MongoDB suppliers
         existing = db["suppliers"].find_one({"name": name})
@@ -203,7 +176,6 @@ def seed():
                     "regions": s["regions"],
                     "scale": s["scale"],
                     "description": s.get("description", ""),
-                    "embedding_dirty": False,
                     "updated_at": datetime.now(),
                 }}
             )
@@ -218,7 +190,6 @@ def seed():
                 "description": s.get("description", ""),
                 "status": "prospective",
                 "source": "seed",
-                "embedding_dirty": False,
                 "created_at": datetime.now(),
             })
             print(f"  [inserted] {name}")

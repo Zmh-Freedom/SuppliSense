@@ -304,7 +304,7 @@ function SourcingResultCard({ result, watched, onWatch }: {
             {watched && <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">已监控</span>}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-muted)]">
-            <span title="向量语义匹配度">
+            <span title="本地供应商关键词匹配度">
               匹配 {matchPct}%
             </span>
             <span title="综合风险评分" style={{ color }}>

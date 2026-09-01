@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 DDL_STATEMENTS = [
     # Extensions
-    "CREATE EXTENSION IF NOT EXISTS vector",
     "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"",
 
     # Users
@@ -31,18 +30,6 @@ DDL_STATEMENTS = [
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-    """,
-
-    # Documents (replaces ChromaDB)
-    """
-    CREATE TABLE IF NOT EXISTS documents (
-        id VARCHAR(64) PRIMARY KEY,
-        source VARCHAR(512) NOT NULL,
-        content TEXT NOT NULL,
-        embedding VECTOR(384) NOT NULL,
-        metadata JSONB NOT NULL DEFAULT '{}',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
 
@@ -159,18 +146,6 @@ DDL_STATEMENTS = [
         consumer_name VARCHAR(128) NOT NULL,
         processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (event_id, consumer_name)
-    )
-    """,
-
-    # Supplier profiles (vector search for sourcing)
-    """
-    CREATE TABLE IF NOT EXISTS supplier_profiles (
-        id UUID PRIMARY KEY,
-        supplier_name VARCHAR(255) NOT NULL,
-        content TEXT NOT NULL,
-        embedding VECTOR(384) NOT NULL,
-        metadata JSONB DEFAULT '{}',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
 
@@ -492,7 +467,6 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_username ON users (username)",
     "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
     "CREATE INDEX IF NOT EXISTS idx_users_is_active ON users (is_active)",
-    "CREATE INDEX IF NOT EXISTS idx_documents_source ON documents (source)",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name ON companies (normalized_name)",
@@ -505,8 +479,6 @@ INDEX_STATEMENTS = [
     "WHERE published_at IS NULL AND dead_lettered_at IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_company ON assessment_history (company_name, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_user ON assessment_history (user_id, created_at DESC)",
-    "CREATE INDEX IF NOT EXISTS idx_supplier_embedding ON supplier_profiles USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)",
-    "CREATE INDEX IF NOT EXISTS idx_supplier_name ON supplier_profiles (supplier_name)",
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_event ON agent_run_events (run_id, event_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_run_candidates_run_status ON agent_run_candidates (run_id, status)",
@@ -529,11 +501,6 @@ def ensure_pg_schema() -> None:
             _ensure_agent_run_constraints(cur)
             for stmt in INDEX_STATEMENTS:
                 cur.execute(stmt)
-            # Create ivfflat index for vector search (after data exists)
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_documents_embedding "
-                "ON documents USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)"
-            )
         logger.info("pg_schema_ready")
     except Exception as e:
         logger.exception("PostgreSQL schema initialization failed: %s", e)

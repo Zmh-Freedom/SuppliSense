@@ -69,7 +69,6 @@ PLANNER_PROMPT = """你是采购风险分析的规划专家。根据用户问题
 - find_alternatives: 推荐替代供应商
 - scenario_simulate: 模拟情景影响
 - check_sanctions: 筛查制裁/黑名单
-- knowledge_search: 知识库检索
 - generate_report: 生成风险评估报告（Excel/HTML）
 - analyze_trend: 分析风险评分历史趋势
 - compare_companies: 对比多家企业风险状况

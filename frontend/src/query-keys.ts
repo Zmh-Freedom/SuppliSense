@@ -18,8 +18,6 @@ export const queryKeys = {
   scenarioDetail: (name: string, scenario: string) =>
     ['analysis', 'scenario', name, scenario] as const,
   sanctionsDetail: (name: string) => ['analysis', 'sanctions', name] as const,
-  knowledgeStats: ['knowledge', 'stats'] as const,
-  knowledgeSearch: (query: string) => ['knowledge', 'search', query] as const,
   notifications: (limit?: number, read?: boolean) =>
     ['notifications', { limit, read }] as const,
   unreadCount: ['notifications', 'unread'] as const,

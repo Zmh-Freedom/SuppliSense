@@ -157,7 +157,7 @@ async def sync_supplier_master():
 @router.put(
     "/suppliers/{supplier_id}",
     summary="编辑供应商",
-    description="编辑供应商资料，若 name/categories/regions 变更则自动重建向量。",
+    description="编辑供应商资料，变更后将按最新主数据参与本地关键词匹配。",
 )
 async def update_supplier(supplier_id: str, body: SupplierUpdateInput):
     from app.domains.sourcing.service import update_supplier_in_library

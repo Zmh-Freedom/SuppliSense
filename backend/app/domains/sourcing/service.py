@@ -10,7 +10,6 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.db.postgres import get_cursor
 from app.domains.sourcing.repo import (
     approve_access_application,
     create_access_application,
@@ -30,11 +29,10 @@ from app.domains.sourcing.repo import (
     update_result_action,
 )
 from app.schemas.sourcing import SourcingRequestInput
-from app.domains.knowledge.embedding import encode_single
 
 logger = get_logger(__name__)
 
-# 向量相似度只能负责召回，不能替代采购品类约束。
+# 关键词匹配只负责候选召回，不能替代采购品类约束。
 _CATEGORY_ALIASES: dict[str, tuple[str, ...]] = {
     "钢材": (
         "钢材", "钢板", "钢卷", "型钢", "不锈钢", "合金钢", "碳钢", "钢管",
@@ -62,7 +60,7 @@ def create_sourcing_request(req: SourcingRequestInput, user_id: str) -> str:
 def search_suppliers(request_id: str) -> dict[str, Any]:
     """
     核心寻源流程：
-    1. 读取需求 → 2. 向量检索 Top-20 → 3. 并发风险评估 → 4. 加权排序 → 5. 持久化结果
+    1. 读取需求 → 2. 关键词匹配 Top-20 → 3. 并发风险评估 → 4. 加权排序 → 5. 持久化结果
     """
     req_doc = get_request(request_id)
     if not req_doc:
@@ -77,7 +75,7 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         query_parts.append(req_doc["region_required"])
     query_text = " ".join(p for p in query_parts if p)
 
-    # 2. 正式供应商优先使用飞书三表快照；未启用时保持 PG 向量检索兼容路径。
+    # 2. 正式供应商优先使用飞书三表快照；不可用时使用 Mongo 本地库的轻量匹配。
     snapshot_candidates = _search_feishu_snapshot_suppliers(req_doc)
     candidates = snapshot_candidates if snapshot_candidates is not None else _vector_search(query_text, top_k=10)
     candidates = _filter_category_candidates(candidates, req_doc.get("category", ""))
@@ -316,9 +314,7 @@ def list_sourcing_requests(user_id: str | None, page: int = 1, page_size: int = 
 
 def add_supplier_to_library(data: dict) -> str:
     from app.domains.sourcing.supplier_repo import add_supplier
-    sid = add_supplier(data)
-    _rebuild_supplier_vector(sid, data["name"], data)
-    return sid
+    return add_supplier(data)
 
 
 # ---- access applications ----
@@ -365,12 +361,6 @@ def update_supplier_in_library(sid: str, data: dict) -> dict:
 
     update_supplier(sid, update_data)
 
-    # Rebuild vector if embedding-relevant fields changed
-    if any(k in update_data for k in ("name", "categories", "regions")):
-        current = get_supplier(sid)
-        if current:
-            _rebuild_supplier_vector(sid, current.get("name", ""), current)
-
     updated = get_supplier(sid)
     if updated:
         updated["_id"] = str(updated.get("_id", sid))
@@ -379,8 +369,11 @@ def update_supplier_in_library(sid: str, data: dict) -> dict:
 
 def get_top_alternatives(company_name: str, top_k: int = 3) -> list[dict]:
     """Find Top-K alternatives without creating a sourcing request."""
-    query_text = company_name
-    candidates = _vector_search(query_text, top_k=15)
+    from app.domains.sourcing.supplier_repo import search_for_sourcing_v2
+
+    candidates = search_for_sourcing_v2({})
+    if not candidates:
+        candidates = _vector_search(company_name, top_k=15)
     if not candidates:
         return []
 
@@ -407,24 +400,64 @@ def get_top_alternatives(company_name: str, top_k: int = 3) -> list[dict]:
 # ---- internal helpers ----
 
 def _vector_search(query_text: str, top_k: int = 20) -> list[dict[str, Any]]:
-    """PG vector cosine search in supplier_profiles."""
-    embedding = encode_single(query_text)
-    vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+    """Compatibility entry point using Mongo keyword matching instead of embeddings.
 
-    with get_cursor() as (conn, cur):
-        cur.execute(
-            """SELECT supplier_name, content, metadata,
-                      1 - (embedding <=> %s::vector) AS similarity
-               FROM supplier_profiles
-               ORDER BY embedding <=> %s::vector
-               LIMIT %s""",
-            (vec_str, vec_str, top_k),
-        )
-        rows = cur.fetchall()
-        return [
-            {"supplier_name": row[0], "content": row[1], "metadata": row[2], "match_score": float(row[3])}
-            for row in rows
+    The name is retained so older callers and test doubles do not need a
+    breaking change. New code should treat the result as lexical recall only.
+    """
+    from app.db.mongo import get_db
+
+    terms = _search_terms(query_text)
+    if not terms:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    for supplier in get_db()["suppliers"].find({"status": "active"}):
+        content_parts = [
+            supplier.get("name", ""),
+            supplier.get("industry", ""),
+            supplier.get("description", ""),
+            *_string_values(supplier.get("categories")),
+            *_string_values(supplier.get("regions")),
         ]
+        content = " ".join(part for part in content_parts if part)
+        normalized_content = content.casefold()
+        matched_terms = [term for term in terms if term.casefold() in normalized_content]
+        if not matched_terms:
+            continue
+        match_score = min(1.0, len(matched_terms) / len(terms))
+        candidates.append({
+            "supplier_name": supplier.get("name", ""),
+            "content": content,
+            "metadata": {
+                "supplier_id": supplier.get("_id"),
+                "categories": supplier.get("categories", []),
+                "regions": supplier.get("regions", []),
+                "source": supplier.get("source", "local"),
+            },
+            "match_score": round(match_score, 3),
+        })
+
+    candidates.sort(key=lambda item: item["match_score"], reverse=True)
+    return candidates[:top_k]
+
+
+def _search_terms(query_text: str) -> list[str]:
+    """Extract meaningful terms for transparent local fallback matching."""
+    separators = "，,。；;、/\\|+-_()（）[]【】 "
+    terms: list[str] = []
+    for term in query_text.translate(str.maketrans({char: " " for char in separators})).split():
+        if term and term not in terms:
+            terms.append(term)
+    return terms
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [item for item in value if isinstance(item, str)]
+    return []
 
 
 def _search_feishu_snapshot_suppliers(req_doc: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -587,27 +620,6 @@ def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
         if name not in out:
             out[name] = {"risk_score": 50, "risk_level": "unknown", "summary": "未评估"}
     return out
-
-
-def _rebuild_supplier_vector(sid: str, name: str, data: dict) -> None:
-    """构建供应商向量并写入 PG。"""
-    parts = [name]
-    parts.extend(data.get("categories", []))
-    parts.extend(data.get("regions", []))
-    content = " ".join(parts)
-    embedding = encode_single(content)
-    vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
-
-    with get_cursor() as (conn, cur):
-        cur.execute(
-            """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
-               VALUES (%s, %s, %s, %s::vector, %s)
-               ON CONFLICT (id) DO UPDATE SET
-               content = EXCLUDED.content,
-               embedding = EXCLUDED.embedding,
-               metadata = EXCLUDED.metadata""",
-            (sid, name, content, vec_str, "{}"),
-        )
 
 
 def _iso(dt) -> str:

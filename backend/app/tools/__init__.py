@@ -14,7 +14,6 @@ from app.domains.risk.tools_analysis import (
 )
 from app.domains.risk.tools_report import generate_report, manage_scheduled_report
 from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist, analyze_watchlist_trend
-from app.domains.knowledge.tools import knowledge_search
 from app.domains.sourcing.tools import (
     list_formal_suppliers,
     create_sourcing_request,
@@ -42,7 +41,6 @@ TOOLS_LIST = [
     find_alternatives,
     scenario_simulate,
     check_sanctions,
-    knowledge_search,
     generate_report,
     analyze_trend,
     compare_companies,

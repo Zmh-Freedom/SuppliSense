@@ -37,7 +37,6 @@ class SupplierDocument(BaseModel):
     # 状态
     status: str = "prospective"
     source: str = "manual"
-    embedding_dirty: bool = True
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

@@ -4,12 +4,12 @@
 
 ## 项目概述
 
-供应商风险分析平台，采购分析师通过自然语言查询供应商风险数据。后端 FastAPI + MongoDB + PostgreSQL(pgvector)，LLM 使用 DeepSeek（OpenAI 兼容 API），前端 React。
+供应商风险分析平台，采购分析师通过自然语言查询供应商风险数据。后端 FastAPI + MongoDB + PostgreSQL，LLM 使用 DeepSeek（OpenAI 兼容 API），前端 React。
 
 ## 技术栈
 
 - **Web:** FastAPI, Uvicorn, Pydantic v2
-- **数据库:** MongoDB (PyMongo 同步驱动), PostgreSQL + pgvector (用户/知识库/审计), Redis (缓存)
+- **数据库:** MongoDB (PyMongo 同步驱动), PostgreSQL (用户/审计/Agent 状态), Redis (缓存)
 - **LLM:** DeepSeek API (openai SDK), LangGraph + langchain-openai
 - **调度:** APScheduler (定时任务)
 - **实时:** WebSocket (预警推送), SSE (对话流式)

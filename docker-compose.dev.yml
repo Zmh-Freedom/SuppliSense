@@ -26,7 +26,7 @@ services:
           cpus: '0.25'
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     pull_policy: missing
     container_name: sra-postgres
     restart: unless-stopped

@@ -24,4 +24,4 @@
 
 ## 数据库与集成限制
 
-回滚门禁本身可以通过离线单测验证，但真实 PostgreSQL/pgvector、MongoDB、Outbox 和 checkpoint 集成必须在可访问依赖的环境重跑。若 checklist 输出 `BLOCKED`，状态是环境阻塞，不是成功，也不是失败已被证明；在阻塞解除前不得宣称上线验收完成。
+回滚门禁本身可以通过离线单测验证，但真实 PostgreSQL、MongoDB、Outbox 和 checkpoint 集成必须在可访问依赖的环境重跑。若 checklist 输出 `BLOCKED`，状态是环境阻塞，不是成功，也不是失败已被证明；在阻塞解除前不得宣称上线验收完成。

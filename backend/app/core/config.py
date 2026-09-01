@@ -115,11 +115,6 @@ class Settings(BaseSettings):
 
     # PG 用户存储（默认启用，MongoDB 路径已废弃）
     USE_PG_USERS: bool = os.getenv("USE_PG_USERS", "true").lower() == "true"
-    USE_PGVECTOR: bool = os.getenv("USE_PGVECTOR", "true").lower() == "true"
-
-    # ChromaDB (deprecated, kept for migration period)
-    CHROMA_PATH: str = os.getenv("CHROMA_PATH", "./data/chroma")
-
     # Redis
     REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")

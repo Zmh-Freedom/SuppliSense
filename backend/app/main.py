@@ -21,13 +21,11 @@ from app.api.async_tasks import router as async_tasks_router
 from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.p2 import router as p2_router
-from app.api.upload import router as upload_router
 from app.domains.alert.api import router as alert_router
 from app.domains.alert.api_notifications import router as notifications_router
 from app.domains.auth.api import router as auth_router
 from app.domains.company.api import router as company_identity_router
 from app.domains.outbox.api import router as outbox_router
-from app.domains.knowledge.api import router as knowledge_router
 from app.domains.risk.api_risk import router as risk_router
 from app.domains.risk.api_business_risk import router as business_risk_router
 from app.domains.risk.api_company import router as company_router
@@ -43,7 +41,6 @@ from app.domains.supplier.api import router as supplier_router
 from app.domains.sourcing.api_access import router as access_router
 from app.domains.agent_run.api import router as agent_run_router
 from app.domains.agent_run.rollout_api import router as agent_rollout_router
-from app.api.upload import router as upload_router
 from app.core.config import settings
 from app.core.errors import (
     DomainError,
@@ -161,9 +158,6 @@ async def lifespan(app: FastAPI):
     create_default_admin()
     if settings.AGENT_RUN_V2_ENABLED:
         await get_sourcing_risk_checkpointer()
-    # 预热 embedding 模型，避免首次调用阻塞 30s+
-    from app.domains.knowledge.embedding import warmup as warmup_embedding
-    warmup_embedding()
     start_scheduler()
     logger.info("application_started")
     yield
@@ -194,8 +188,6 @@ app = FastAPI(
         {"name": "p2", "description": "P2 高级功能 (ESG/风险传染/供应链依赖)"},
         {"name": "analysis", "description": "宏观风险与场景模拟分析"},
         {"name": "report", "description": "报告导出 (Excel/HTML)"},
-        {"name": "upload", "description": "文件上传与解析"},
-        {"name": "knowledge", "description": "知识库 RAG 检索"},
         {"name": "trend", "description": "风险评分趋势与告警频率统计"},
         {"name": "compare", "description": "多企业横向对比"},
         {"name": "notifications", "description": "用户通知中心"},
@@ -283,14 +275,12 @@ api_v1.include_router(company_router, prefix="/company", tags=["company"])
 api_v1.include_router(company_identity_router)
 api_v1.include_router(outbox_router)
 api_v1.include_router(financial_router, prefix="/financial", tags=["financial"])
-api_v1.include_router(knowledge_router, prefix="/knowledge", tags=["knowledge"])
 api_v1.include_router(risk_router, prefix="/risk", tags=["risk"])
 api_v1.include_router(business_risk_router, prefix="/risk", tags=["risk"])
 api_v1.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 api_v1.include_router(p2_router, prefix="/p2", tags=["p2"])
 api_v1.include_router(macro_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
-api_v1.include_router(upload_router, prefix="/upload", tags=["upload"])
 api_v1.include_router(report_router, prefix="/report", tags=["report"])
 api_v1.include_router(sourcing_router)
 api_v1.include_router(supplier_router)

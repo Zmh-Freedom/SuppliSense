@@ -32,7 +32,7 @@ services:
         max-file: "3"
 
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16
     pull_policy: missing
     container_name: sra-postgres
     restart: unless-stopped
@@ -121,8 +121,6 @@ services:
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
       - PG_POOL_MIN=4
       - PG_POOL_MAX=20
-    volumes:
-      - uploads_data:/app/uploads
     tmpfs:
       - /tmp/prometheus
     networks:
@@ -169,7 +167,6 @@ services:
 volumes:
   mongo_data:
   redis_data:
-  uploads_data:
   pg_data:
 
 networks:

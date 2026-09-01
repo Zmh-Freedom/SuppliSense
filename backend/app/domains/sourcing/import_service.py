@@ -72,8 +72,6 @@ import openpyxl
 
 from app.core.logging import get_logger
 from app.db.mongo import get_db
-from app.db.postgres import get_cursor
-from app.domains.knowledge.embedding import encode_single
 
 logger = get_logger()
 
@@ -158,7 +156,6 @@ def import_suppliers_from_excel(file_content: bytes, filename: str) -> dict:
                             "unified_code": unified_code,
                             "status": status,
                             "source": "excel_import",
-                            "embedding_dirty": False,
                         }},
                     )
                     skipped += 1
@@ -173,19 +170,7 @@ def import_suppliers_from_excel(file_content: bytes, filename: str) -> dict:
                     "regions": regions,
                     "status": status,
                     "source": "excel_import",
-                    "embedding_dirty": False,
                 })
-
-                # Build PG vector
-                content_parts = [name] + categories + regions
-                embedding = encode_single(" ".join(content_parts))
-                vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
-                with get_cursor() as (conn, cur):
-                    cur.execute(
-                        """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
-                           VALUES (%s, %s, %s, %s::vector, %s)""",
-                        (sid, name, " ".join(content_parts), vec_str, "{}"),
-                    )
 
                 imported += 1
 
@@ -210,7 +195,7 @@ def import_from_tianyancha_search(
 ) -> dict:
     """从天眼查搜索企业并批量导入供应商库。
 
-    自动翻页拉取搜索结果，逐个写入 MongoDB + PG 向量表。
+    自动翻页拉取搜索结果，逐个写入 MongoDB 供应商库。
     已存在的企业（同名）自动跳过。
     """
     from app.services.tianyancha_client import search_companies
@@ -253,21 +238,6 @@ def import_from_tianyancha_search(
                 categories = [_INDUSTRY_CODES.get(industry, industry)] if industry else []
                 region_str = item.get("base", "") or item.get("regLocation", "")
 
-                # PG vector
-                content_parts = [name]
-                if categories:
-                    content_parts.extend(categories)
-                if region_str:
-                    content_parts.append(region_str)
-                embedding = encode_single(" ".join(content_parts))
-                vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
-                with get_cursor() as (conn, cur):
-                    cur.execute(
-                        """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
-                           VALUES (%s, %s, %s, %s::vector, %s)""",
-                        (sid, name, " ".join(content_parts), vec_str, "{}"),
-                    )
-
                 # MongoDB
                 db["suppliers"].insert_one({
                     "_id": sid,
@@ -277,7 +247,6 @@ def import_from_tianyancha_search(
                     "regions": [region] if region else [],
                     "status": "prospective",
                     "source": "tianyancha_search",
-                    "embedding_dirty": False,
                 })
 
                 imported += 1

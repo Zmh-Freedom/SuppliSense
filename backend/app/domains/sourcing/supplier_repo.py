@@ -205,14 +205,12 @@ def resolve_supplier_id(name: str, auto_create: bool = False) -> str | None:
         "name": verified_name,
         "status": "prospective",
         "source": "auto",
-        "embedding_dirty": True,
         "created_at": now,
         "updated_at": now,
     }
     if enriched:
         doc_data.update(enriched)
     db["suppliers"].insert_one(doc_data)
-    _rebuild_vector(sid, doc_data)
     return sid
 
 
@@ -291,28 +289,6 @@ def _extract_enrich_fields(data: dict) -> dict:
     return enriched
 
 
-def _rebuild_vector(sid: str, data: dict) -> None:
-    """为新创建的供应商构建 PG 向量。"""
-    try:
-        from app.domains.knowledge.embedding import encode_single
-        from app.db.postgres import get_cursor
-        parts = [data.get("name", "")]
-        parts.extend(data.get("categories", []))
-        parts.extend(data.get("regions", []))
-        embedding = encode_single(" ".join(p for p in parts if p))
-        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
-        with get_cursor() as (conn, cur):
-            cur.execute(
-                """INSERT INTO supplier_profiles (id, supplier_name, content, embedding, metadata)
-                   VALUES (%s, %s, %s, %s::vector, %s)
-                   ON CONFLICT (id) DO UPDATE SET
-                   content = EXCLUDED.content, embedding = EXCLUDED.embedding""",
-                (sid, data.get("name", ""), " ".join(parts), vec_str, "{}"),
-            )
-    except Exception:
-        pass  # 向量写入失败不阻塞主流程
-
-
 def add_supplier(data: dict) -> str:
     validated = _validate_doc(data)
     db = get_db()
@@ -332,15 +308,14 @@ def update_supplier(sid: str, data: dict) -> None:
     validated = _validate_doc({**data, "name": data.get("name", "") or ""})
     db = get_db()
     old = db["suppliers"].find_one({"_id": sid})
-    update_data = {**validated, "updated_at": datetime.now(timezone.utc), "embedding_dirty": True}
+    update_data = {**validated, "updated_at": datetime.now(timezone.utc)}
     # 只更新传入的字段
     update_set = {k: v for k, v in update_data.items() if k in data}
     update_set["updated_at"] = update_data["updated_at"]
-    update_set["embedding_dirty"] = True
     db["suppliers"].update_one({"_id": sid}, {"$set": update_set})
     if old:
         changed = {k: {"old": old.get(k), "new": v} for k, v in update_set.items()
-                   if k not in ("updated_at", "embedding_dirty") and old.get(k) != v}
+                   if k != "updated_at" and old.get(k) != v}
         if changed:
             db["supplier_changelog"].insert_one({
                 "supplier_id": sid,
@@ -684,14 +659,6 @@ def has_current_feishu_supplier_snapshot(db: Any | None = None) -> bool:
         return False
 
 
-def list_embedding_dirty() -> list[dict]:
-    db = get_db()
-    return list(db["suppliers"].find({"embedding_dirty": True}))
-
-
-def mark_embedding_clean(sid: str) -> None:
-    db = get_db()
-    db["suppliers"].update_one({"_id": sid}, {"$set": {"embedding_dirty": False}})
 
 
 def ensure_indexes() -> None:

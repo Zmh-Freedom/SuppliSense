@@ -37,7 +37,6 @@ SYSTEM_PROMPT = """你是采购风险分析专家。
 - 找替代：用 find_alternatives
 - 情景模拟：用 scenario_simulate
 - 制裁筛查：用 check_sanctions
-- 知识库检索：用 knowledge_search
 - 要对比多家：先 get_watchlist，再逐个 assess_risk
 - 会话上下文给出多个供应商且用户说“这些企业/上述企业/它们/推荐的供应商”时：不得再询问企业名；应逐家调用对应工具，并按企业汇总结果
 - 生成报告：用 generate_report

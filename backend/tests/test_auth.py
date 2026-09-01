@@ -66,7 +66,6 @@ def test_me_unauthenticated(client):
     "/api/v1/company/profile",
     "/api/v1/alert/status",
     "/api/v1/chat/stream",
-    "/api/v1/knowledge/search",
     "/api/v1/sentiment/test-company",
 ])
 def test_protected_endpoints_require_auth(client, endpoint):
@@ -75,8 +74,6 @@ def test_protected_endpoints_require_auth(client, endpoint):
         resp = client.post(endpoint, json={"message": "hello"})
     elif endpoint == "/api/v1/risk/assess" or endpoint == "/api/v1/risk/calculate":
         resp = client.post(endpoint, json={"company_name": "test"})
-    elif endpoint == "/api/v1/knowledge/search":
-        resp = client.post(endpoint, json={"query": "test"})
     else:
         resp = client.get(endpoint)
     assert resp.status_code == 401, f"{endpoint} should require auth, got {resp.status_code}"

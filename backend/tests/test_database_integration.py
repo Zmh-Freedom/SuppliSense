@@ -13,20 +13,18 @@ from app.db.postgres import get_cursor
 pytestmark = pytest.mark.integration
 
 
-def test_postgres_schema_and_pgvector_are_available() -> None:
-    """The CI PostgreSQL service must expose the application schema and vector extension."""
+def test_postgres_schema_is_available() -> None:
+    """The CI PostgreSQL service must expose the application schema without vector extensions."""
     ensure_pg_schema()
 
     with get_cursor() as (_, cursor):
         cursor.execute(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = %s), "
-            "EXISTS (SELECT 1 FROM pg_extension WHERE extname = %s)",
-            ("companies", "vector"),
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
+            ("companies",),
         )
-        has_companies, has_vector = cursor.fetchone()
+        has_companies = cursor.fetchone()[0]
 
     assert has_companies is True
-    assert has_vector is True
 
 
 def test_mongodb_round_trip_and_index() -> None:
