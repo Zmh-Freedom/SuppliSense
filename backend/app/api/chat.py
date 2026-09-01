@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import get_current_user
+from app.core.logging import get_logger
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+logger = get_logger()
 
 
 async def _langgraph_react_stream(
@@ -116,7 +118,11 @@ async def _langgraph_agent_supervisor_stream(
 
     from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
     from app.graphs.streaming import stream_agent_supervisor_graph
-    from app.graphs.agent_core.adapter import load_execution_context
+    from app.graphs.agent_core.adapter import (
+        build_agent_supervisor_graph_input,
+        load_execution_context,
+        validate_execution_context,
+    )
 
     graph = build_agent_supervisor_graph()
     from app.graphs.chat_checkpoint import chat_checkpoint_config
@@ -133,6 +139,9 @@ async def _langgraph_agent_supervisor_stream(
             "conversation_state": {},
             "current_task": {},
         }
+    context = validate_execution_context(
+        context, source="langgraph_agent_supervisor_stream"
+    )
     agent_user_id = context.get("agent_user_id")
     if not isinstance(agent_user_id, str) or not agent_user_id:
         # Anonymous/read-only chat still has to receive the context resolved by
@@ -143,13 +152,9 @@ async def _langgraph_agent_supervisor_stream(
             message,
             session_id,
             run_config,
-            graph_input={
-                "run_id": session_id,
-                "user_query": message,
-                "supplier_references": context["references"],
-                "intent": {"current_task": context["current_task"]},
-                "conversation_state": context["conversation_state"],
-            },
+            graph_input=build_agent_supervisor_graph_input(
+                context, run_id=session_id, user_message=message
+            ),
             execution_context=context,
         )
     else:
@@ -168,13 +173,9 @@ async def _langgraph_agent_supervisor_stream(
             message,
             session_id,
             run_config,
-            graph_input={
-                "run_id": run_id,
-                "user_query": message,
-                "supplier_references": context["references"],
-                "intent": {"current_task": context["current_task"]},
-                "conversation_state": context["conversation_state"],
-            },
+            graph_input=build_agent_supervisor_graph_input(
+                context, run_id=run_id, user_message=message
+            ),
             execution_context=context,
         )
     async for event in stream:
@@ -318,13 +319,24 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 "current_task": {},
             }
             try:
-                from app.graphs.agent_core.adapter import load_execution_context
+                from app.graphs.agent_core.adapter import (
+                    ExecutionContextContractViolation,
+                    load_execution_context,
+                    validate_execution_context,
+                )
 
                 execution_context = load_execution_context(sid, req.message)
-            except Exception:
-                # The execution stream retains its normal datastore error handling.
-                # The clarification preflight remains a best-effort rule fallback.
-                pass
+                validate_execution_context(
+                    execution_context, source="chat_stream_endpoint"
+                )
+            except ExecutionContextContractViolation as exc:
+                yield f"event: error\ndata: {json.dumps({'message': '会话上下文校验失败，已停止执行。请重试或联系开发人员。'}, ensure_ascii=False)}\n\n"
+                logger.error("chat_context_contract_rejected", error=str(exc))
+                return
+            except Exception as exc:
+                logger.warning("chat_context_load_failed", error=str(exc))
+                yield f"event: error\ndata: {json.dumps({'message': '会话上下文暂不可用，已停止执行，请稍后重试。'}, ensure_ascii=False)}\n\n"
+                return
             execution_context["agent_user_id"] = user_id
 
             # Programmatic clarification is only a fallback after structured state.

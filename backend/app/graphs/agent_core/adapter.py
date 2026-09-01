@@ -5,8 +5,109 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from app.core.logging import get_logger
 from app.graphs.agent_core.planner import plan_supplier_analysis_task
 from app.services.conversation_state import build_conversation_state
+
+logger = get_logger()
+
+
+class ExecutionContextContractViolation(RuntimeError):
+    """Raised when a chat graph would lose the shared execution context."""
+
+
+class ExecutionContextContract(BaseModel):
+    """Minimal, version-tolerant shape required by every chat execution graph."""
+
+    model_config = ConfigDict(extra="allow")
+
+    session_id: str = ""
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    references: list[dict[str, Any]] = Field(default_factory=list)
+    conversation_state: dict[str, Any] = Field(default_factory=dict)
+    current_task: dict[str, Any] = Field(default_factory=dict)
+
+
+def validate_execution_context(
+    execution_context: dict[str, Any], *, source: str
+) -> dict[str, Any]:
+    """Fail closed when a graph input drops LLM-resolved task facts."""
+    try:
+        contract = ExecutionContextContract.model_validate(execution_context)
+    except ValidationError as exc:
+        _raise_context_contract_violation(source, "invalid_execution_context", str(exc))
+
+    current_task = contract.current_task
+    llm_intent = execution_context.get("llm_intent")
+    llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
+    expected_targets = _text_list(llm_intent.get("target_supplier_names"))
+    expected_dimensions = _text_list(llm_intent.get("analysis_dimensions"))
+    actual_targets = _text_list(current_task.get("target_supplier_names"))
+    actual_dimensions = _text_list(current_task.get("analysis_dimensions"))
+    if expected_targets and actual_targets != expected_targets:
+        _raise_context_contract_violation(
+            source,
+            "llm_targets_not_preserved",
+            "LLM 解析目标未完整进入 current_task",
+            expected_targets=expected_targets,
+            actual_targets=actual_targets,
+        )
+    if expected_dimensions and actual_dimensions != expected_dimensions:
+        _raise_context_contract_violation(
+            source,
+            "llm_dimensions_not_preserved",
+            "LLM 解析维度未完整进入 current_task",
+            expected_dimensions=expected_dimensions,
+            actual_dimensions=actual_dimensions,
+        )
+    logger.info(
+        "execution_context_contract_bound",
+        source=source,
+        target_supplier_names=actual_targets,
+        analysis_dimensions=actual_dimensions,
+        reference_count=len(contract.references),
+    )
+    return execution_context
+
+
+def build_agent_supervisor_graph_input(
+    execution_context: dict[str, Any],
+    *,
+    run_id: str,
+    user_message: str,
+) -> dict[str, Any]:
+    """Build the only permitted Supervisor graph input from shared context."""
+    context = validate_execution_context(
+        execution_context, source="agent_supervisor_graph_input"
+    )
+    return {
+        "run_id": run_id,
+        "user_query": user_message,
+        "supplier_references": context["references"],
+        "intent": {"current_task": context["current_task"]},
+        "conversation_state": context["conversation_state"],
+    }
+
+
+def _raise_context_contract_violation(
+    source: str,
+    reason: str,
+    message: str,
+    **details: Any,
+) -> None:
+    logger.error(
+        "context_contract_violation",
+        source=source,
+        reason=reason,
+        **details,
+    )
+    raise ExecutionContextContractViolation(message)
+
+
+def _text_list(value: Any) -> list[str]:
+    return [str(item).strip() for item in value if str(item).strip()] if isinstance(value, list) else []
 
 
 def collect_supplier_references(
@@ -37,7 +138,10 @@ def load_execution_context(session_id: str, user_message: str) -> dict[str, Any]
         previous_state=context.get("state", {}),
     )
     extracted = extract_conversation_intent(user_message, execution_context["references"])
-    return apply_extracted_conversation_intent(execution_context, extracted)
+    return validate_execution_context(
+        apply_extracted_conversation_intent(execution_context, extracted),
+        source="load_execution_context",
+    )
 
 
 def apply_extracted_conversation_intent(
