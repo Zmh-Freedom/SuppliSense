@@ -262,6 +262,17 @@ def test_resolve_supplier_targets_honors_explicit_and_ordinal_references():
     assert resolve_supplier_targets("评估前两家", references) == ["甲电机有限公司", "乙电机有限公司"]
 
 
+def test_target_resolver_extracts_explicit_full_company_name_without_history():
+    state = build_conversation_state(
+        "对四川建安工业有限责任公司做风险、ESG、舆情和合规分析，并加入监控",
+        [],
+    )
+
+    assert state["selected_suppliers"] == ["四川建安工业有限责任公司"]
+    assert state["current_task"]["target_supplier_names"] == ["四川建安工业有限责任公司"]
+    assert state["current_task"]["analysis_dimensions"] == ["risk", "esg", "sentiment", "compliance"]
+
+
 def test_target_resolver_supports_aliases_exclusion_and_rank_filtering():
     references = [
         {"name": "甲电机有限公司", "aliases": ["甲电机"], "risk_level": "low"},

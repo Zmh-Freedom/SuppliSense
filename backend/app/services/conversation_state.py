@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +27,13 @@ _ORDINAL_TARGETS = (
 )
 _EXCLUSION_TOKENS = ("除了", "除去", "排除")
 _LOW_RISK_TOKENS = ("低风险", "风险较低")
+_COMPANY_NAME_PATTERN = re.compile(
+    r"([\u4e00-\u9fffA-Za-z0-9（）()·&-]{2,80}?"
+    r"(?:有限责任公司|股份有限公司|集团有限公司|有限公司))"
+)
+_COMPANY_NAME_PREFIXES = (
+    "请对", "对", "将", "把", "分析", "评估", "查询", "查看", "监控", "请", "帮我",
+)
 
 
 @dataclass(frozen=True)
@@ -61,7 +69,10 @@ def resolve_supplier_target_selection(
 ) -> TargetResolution:
     """Resolve names, aliases and contextual expressions without LLM guessing."""
     references = _normalized_references(supplier_references)
+    explicit_company_names = _explicit_company_names(message)
     if not references:
+        if explicit_company_names:
+            return TargetResolution(explicit_company_names, 1.0, False, "explicit_full_name")
         needs_clarification = _has_contextual_target_reference(message)
         return TargetResolution([], 0.0, needs_clarification, "missing_context")
 
@@ -72,6 +83,8 @@ def resolve_supplier_target_selection(
         return TargetResolution(remaining, 0.95, False, "exclusion")
     if explicit:
         return TargetResolution(explicit, 1.0, False, "explicit_name_or_alias")
+    if explicit_company_names:
+        return TargetResolution(explicit_company_names, 1.0, False, "explicit_full_name")
 
     names = [reference["name"] for reference in references]
     for token, limit in _ORDINAL_TARGETS:
@@ -159,6 +172,20 @@ def _explicit_target_names(message: str, references: list[dict[str, Any]]) -> li
         if any(candidate and candidate in message for candidate in candidates):
             targets.append(reference["name"])
     return targets
+
+
+def _explicit_company_names(message: str) -> list[str]:
+    """Extract full legal entity names from the current message without LLM guessing."""
+    names: list[str] = []
+    for match in _COMPANY_NAME_PATTERN.finditer(message):
+        name = match.group(1).strip()
+        for prefix in _COMPANY_NAME_PREFIXES:
+            if name.startswith(prefix):
+                name = name[len(prefix):].strip()
+                break
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
 def _excluded_target_names(message: str, references: list[dict[str, Any]]) -> list[str]:

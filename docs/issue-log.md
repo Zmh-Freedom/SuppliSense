@@ -553,3 +553,15 @@
 - 修复方案：将多目标供应商列表贯穿全部 Worker，增加 ESG Worker 与四维结构化证据；将多维分析/监控诉求稳定路由至 Supervisor；聊天态 Supervisor 创建持久化 Agent Run，并在用户确认后复用既有审批、Outbox 和监控执行边界。
 - 验证结果：新增两家供应商的风险、ESG、舆情、合规四维 Worker 回归，验证每个维度均保留两家企业的独立证据；新增多目标监控提案、持久化聊天 Agent Run 和面向用户的分维结果汇总回归。Supervisor/审批/路由定向测试 64 项通过，`agent_e2e` 2 项通过，Python 编译检查与 `git diff --check` 通过。
 - 关联提交：`50d2fa23 feat(agent): complete risk monitoring workflow`。
+
+## ISS-20260901-002 显式企业名称未进入 Supervisor 多维分析目标
+
+- 发现日期：2026-09-01
+- 状态：已修复
+- 优先级：P0
+- 现象：用户输入“对四川建安工业有限责任公司做风险、ESG、舆情和合规分析，并加入监控”后，四个 Worker 均返回“缺少待评估供应商名称”。
+- 影响：不依赖前序寻源会话、直接指定企业全称的多维风险分析无法执行，也不会生成监控审批。
+- 根因：`ConversationState` 的目标解析只会在已有供应商引用中匹配名称、别名或代词；空引用会直接返回空目标，没有从当前消息提取带企业后缀的显式全称。
+- 修复方案：在共享目标解析器中增加确定性企业全称提取，并保持已有引用的规范名称优先；所有图继续消费同一 `ConversationState`。
+- 验证结果：以用户原句构建 `ConversationState`，已解析出 `四川建安工业有限责任公司`，并生成 `risk`、`esg`、`sentiment`、`compliance` 四个分析维度。会话目标解析、Supervisor Worker/图和路由定向测试共 45 项通过；Python 编译检查与 `git diff --check` 通过。
+- 关联提交：待提交。
