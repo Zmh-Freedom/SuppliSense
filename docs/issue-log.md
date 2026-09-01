@@ -776,4 +776,4 @@
 - 根因：测试直接假设 `app.routes` 中每个对象都有 `.path` 属性。当前 FastAPI 在组合嵌套路由时会保留内部 `_IncludedRouter` 包装对象，该对象不是最终 HTTP 路由且没有 `.path`。
 - 修复方案：测试只从应用路由对象中读取存在的 `.path`，继续断言三个已废弃路径不存在；不改变 API 路由和运行时行为。
 - 验证结果：`tests/test_knowledge_removed.py` 定向测试 2 项通过；后端 CI 同筛选条件的非集成回归 504 项通过；`git diff --check` 通过。GitHub Actions 将在推送后重新执行覆盖率参数校验和完整门禁。
-- 关联提交：待补充。
+- 关联提交：`98943065 fix(ci): make knowledge route test FastAPI compatible`。
