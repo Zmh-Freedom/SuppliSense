@@ -674,6 +674,7 @@ def sync_supplier_master(client: FeishuBitableClient | None = None) -> dict[str,
         "synced": synced,
         "skipped": skipped,
         "status": "ok",
+        "batch_id": batch_id,
         "synced_at": synced_at.isoformat(),
     }
 
@@ -763,6 +764,18 @@ def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> st
     return None
 
 
+def _sync_error(
+    batch_id: str,
+    table_name: str,
+    reason: str,
+    source_record_id: str | None = None,
+) -> dict[str, str]:
+    error = {"table": table_name, "batch_id": batch_id, "reason": reason}
+    if source_record_id:
+        error["source_record_id"] = source_record_id
+    return error
+
+
 def sync_supplier_tables() -> dict[str, Any]:
     """Synchronize configured supplier tables into local read-only snapshots."""
     if not settings.FEISHU_BITABLE_ENABLED:
@@ -791,17 +804,37 @@ def sync_supplier_tables() -> dict[str, Any]:
             "skipped": 0,
         }
         if error:
-            errors.append({"table": table_name, "reason": error})
+            errors.append(_sync_error(batch_id, table_name, error))
         elif records is not None:
             schema_error = _validate_table_schema(table_name, records)
             if schema_error:
                 table_results[table_name]["status"] = "invalid_schema"
-                errors.append({"table": table_name, "reason": schema_error})
+                errors.append(_sync_error(batch_id, table_name, schema_error))
 
     db = get_db()
     supplier_ids: dict[str, str] = {}
     master_records = table_records["supplier_master"]
-    if master_records is not None:
+    master_is_usable = (
+        master_records is not None
+        and table_results["supplier_master"]["status"] == "ok"
+    )
+    if master_is_usable and master_records is not None:
+        code_counts: dict[str, int] = {}
+        for record in master_records:
+            code = _supplier_code(record)
+            if code:
+                code_counts[code] = code_counts.get(code, 0) + 1
+        duplicate_codes = {code for code, count in code_counts.items() if count > 1}
+        if duplicate_codes:
+            master_is_usable = False
+            table_results["supplier_master"]["status"] = "invalid_data"
+            errors.append(_sync_error(
+                batch_id,
+                "supplier_master",
+                "供应商代码重复，已阻止本批次主数据提交: " + ", ".join(sorted(duplicate_codes)),
+            ))
+
+    if master_is_usable and master_records is not None:
         master_collection = db["supplier_master_snapshots"]
         seen_codes: set[str] = set()
         for record in master_records:
@@ -809,22 +842,24 @@ def sync_supplier_tables() -> dict[str, Any]:
             record_id = _source_record_id(record)
             if not code or not record_id or code in seen_codes:
                 table_results["supplier_master"]["skipped"] += 1
-                errors.append({
-                    "table": "supplier_master",
-                    "source_record_id": record_id or "",
-                    "reason": "缺少供应商代码/来源记录 ID或供应商代码重复",
-                })
+                errors.append(_sync_error(
+                    batch_id,
+                    "supplier_master",
+                    "缺少供应商代码/来源记录 ID或供应商代码重复",
+                    record_id,
+                ))
                 continue
             seen_codes.add(code)
             supplier_id = _resolve_supplier_id(db, code, record_id)
             normalized = normalize_supplier_record(record, synced_at=synced_at, supplier_id=supplier_id)
             if normalized is None:
                 table_results["supplier_master"]["skipped"] += 1
-                errors.append({
-                    "table": "supplier_master",
-                    "source_record_id": record_id,
-                    "reason": "缺少供应商代码、供应商名称或字段格式无效",
-                })
+                errors.append(_sync_error(
+                    batch_id,
+                    "supplier_master",
+                    "缺少供应商代码、供应商名称或字段格式无效",
+                    record_id,
+                ))
                 continue
             normalized["sync_batch_id"] = batch_id
             _upsert_snapshot(
@@ -847,7 +882,11 @@ def sync_supplier_tables() -> dict[str, Any]:
         if table_name not in table_records:
             continue
         records = table_records[table_name]
-        if records is None or master_records is None or table_results[table_name]["status"] != "ok":
+        if (
+            records is None
+            or not master_is_usable
+            or table_results[table_name]["status"] != "ok"
+        ):
             continue
         collection = db[collection_name]
         for record in records:
@@ -856,11 +895,12 @@ def sync_supplier_tables() -> dict[str, Any]:
             supplier_id = supplier_ids.get(code or "")
             if not code or not record_id or not supplier_id:
                 table_results[table_name]["skipped"] += 1
-                errors.append({
-                    "table": table_name,
-                    "source_record_id": record_id or "",
-                    "reason": "供应商代码缺失或无法关联主数据",
-                })
+                errors.append(_sync_error(
+                    batch_id,
+                    table_name,
+                    "供应商代码缺失或无法关联主数据",
+                    record_id,
+                ))
                 continue
             normalized = normalizer(
                 record,
@@ -870,11 +910,12 @@ def sync_supplier_tables() -> dict[str, Any]:
             )
             if normalized is None:
                 table_results[table_name]["skipped"] += 1
-                errors.append({
-                    "table": table_name,
-                    "source_record_id": record_id,
-                    "reason": "必填字段缺失或字段格式无效",
-                })
+                errors.append(_sync_error(
+                    batch_id,
+                    table_name,
+                    "必填字段缺失或字段格式无效",
+                    record_id,
+                ))
                 continue
             normalized["sync_batch_id"] = batch_id
             _upsert_snapshot(

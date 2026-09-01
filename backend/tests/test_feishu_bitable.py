@@ -312,6 +312,7 @@ def test_sync_supplier_tables_links_three_snapshots_by_supplier_code(monkeypatch
     assert database.collections["supplier_capability_snapshots"].documents[0]["supplier_id"] == supplier_id
     assert database.collections["supplier_contact_snapshots"].documents[0]["supplier_id"] == supplier_id
     assert result["errors"][0]["reason"] == "供应商代码缺失或无法关联主数据"
+    assert result["errors"][0]["batch_id"] == result["batch_id"]
 
 
 def test_sync_supplier_tables_persists_transaction_snapshot_when_configured(monkeypatch) -> None:
@@ -371,6 +372,7 @@ def test_sync_supplier_tables_reports_partial_failure_without_marking_failed_tab
     assert result["tables"]["supplier_capability"]["status"] == "failed"
     assert database.collections["supplier_capability_snapshots"].update_many_calls == []
     assert result["errors"][0]["table"] == "supplier_capability"
+    assert result["errors"][0]["batch_id"] == result["batch_id"]
 
 
 def test_sync_supplier_tables_rejects_swapped_table_schema(monkeypatch) -> None:
@@ -394,3 +396,47 @@ def test_sync_supplier_tables_rejects_swapped_table_schema(monkeypatch) -> None:
     assert result["tables"]["supplier_capability"]["status"] == "invalid_schema"
     assert result["tables"]["supplier_contact"]["status"] == "invalid_schema"
     assert result["tables"]["supplier_capability"]["synced"] == 0
+
+
+def test_sync_supplier_tables_does_not_write_master_when_master_schema_is_invalid(monkeypatch) -> None:
+    database = MultiFakeDatabase()
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "")
+    monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
+        {"record_id": "master-1", "fields": {"供应商代码": "S-1"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_capability_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_contact_client", lambda: RecordsClient([]))
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result["status"] == "partial_failed"
+    assert result["tables"]["supplier_master"]["status"] == "invalid_schema"
+    assert database.collections["supplier_master_snapshots"].documents == []
+    assert database.collections["supplier_master_snapshots"].update_many_calls == []
+    assert all(error["batch_id"] == result["batch_id"] for error in result["errors"])
+
+
+def test_sync_supplier_tables_blocks_duplicate_master_codes_as_invalid_batch(monkeypatch) -> None:
+    database = MultiFakeDatabase()
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "")
+    monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
+        {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一"}},
+        {"record_id": "master-2", "fields": {"供应商代码": "S-1", "供应商名称": "企业一（重复）"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_capability_client", lambda: RecordsClient([
+        {"record_id": "cap-1", "fields": {"供应商代码": "S-1", "品类": "摄像头", "产品名称": "模组"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_contact_client", lambda: RecordsClient([]))
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result["status"] == "partial_failed"
+    assert result["tables"]["supplier_master"]["status"] == "invalid_data"
+    assert result["tables"]["supplier_master"]["synced"] == 0
+    assert database.collections["supplier_master_snapshots"].documents == []
+    assert database.collections["supplier_capability_snapshots"].documents == []
+    assert result["errors"][0]["batch_id"] == result["batch_id"]
