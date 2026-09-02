@@ -182,6 +182,32 @@ async def _langgraph_agent_supervisor_stream(
         yield event
 
 
+async def _langgraph_harness_stream(
+    session_id: str,
+    message: str,
+    preference_context: str = "",
+    execution_context: dict[str, Any] | None = None,
+):
+    """Unified Harness Runtime stream; legacy graphs remain explicit fallbacks."""
+    del preference_context
+
+    from app.graphs.agent_core.adapter import load_execution_context
+    from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
+    from app.graphs.chat_checkpoint import chat_checkpoint_config
+    from app.graphs.streaming import stream_harness_graph
+
+    context = execution_context or load_execution_context(session_id, message)
+    async for event in stream_harness_graph(
+        message,
+        session_id,
+        context,
+        user_id=str(context.get("agent_user_id") or ""),
+        run_config=chat_checkpoint_config(session_id, "harness"),
+        checkpointer=await get_sourcing_risk_checkpointer(),
+    ):
+        yield event
+
+
 async def _langgraph_parallel_stream(
     session_id: str,
     message: str,
@@ -239,7 +265,7 @@ async def _langgraph_react_reflection_stream(
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "auto"  # "auto" | "react" | "plan-execute" | "multi-agent" | "parallel" | "react-reflection" | "sourcing" | "agent-supervisor"
+    mode: str = "auto"  # auto/harness use Harness; other modes are explicit compatibility fallbacks
 
 
 class ResumeRequest(BaseModel):
@@ -319,6 +345,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
     # Map legacy mode names to LangGraph equivalents
     _MODE_ALIASES = {
+        "harness": "langgraph-harness",
         "react": "langgraph-react",
         "plan-execute": "langgraph-plan-execute",
         "multi-agent": "langgraph-multi-agent",
@@ -403,13 +430,22 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # Resolve mode only after target resolution and fallback clarification.
             mode = req.mode
             if mode == "auto":
-                from app.graphs.router import router as intent_router
+                # Read-only conversations use the single Harness runtime. A
+                # requested side effect still uses the explicit legacy action
+                # path until Task9 migrates its proposal interrupt end-to-end.
+                requested_action = (execution_context.get("llm_intent") or {}).get("requested_action")
+                if requested_action and requested_action != "none":
+                    from app.graphs.router import router as intent_router
 
-                mode = intent_router.route(req.message, execution_context).value
+                    mode = intent_router.route(req.message, execution_context).value
+                else:
+                    mode = "langgraph-harness"
             mode = _MODE_ALIASES.get(mode, mode)
 
             # Choose execution mode
-            if mode == "langgraph-react":
+            if mode == "langgraph-harness":
+                stream_fn = _langgraph_harness_stream
+            elif mode == "langgraph-react":
                 stream_fn = _langgraph_react_stream
             elif mode == "langgraph-plan-execute":
                 stream_fn = _langgraph_plan_execute_stream

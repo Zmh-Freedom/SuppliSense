@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { chatStream, resumeChat } from '../api';
 import type { ApprovalData } from '../api';
-import type { AgentWorkflowLifecycle, AgentWorkflowSnapshot, ChatMessage, ChartData, SupplierReference } from '../types';
+import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowLifecycle, AgentWorkflowSnapshot, ChatMessage, ChartData, SupplierReference } from '../types';
 import ChartRenderer from './ChartRenderer';
 import AgentWorkflowPanel from './AgentWorkflowPanel';
 import type { AgentStatus } from './AgentWorkflowPanel';
@@ -79,6 +79,8 @@ interface StreamState {
   done?: boolean;
   charts: ChartData[];
   references: SupplierReference[];
+  agentAnswer: AgentAnswer | null;
+  evidence: AgentEvidenceRecord[];
   workflowStatus: AgentWorkflowSnapshot;
 }
 
@@ -103,6 +105,26 @@ function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierRe
       {reference.contact_email ? <a href={`mailto:${reference.contact_email}`} className="w-fit hover:underline">邮箱（待核验）：{reference.contact_email}</a> : <span>邮箱：未找到</span>}
     </div>
   </article>;
+}
+
+function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }) {
+  if (!answer && (!evidence || evidence.length === 0)) return null;
+  const statusLabel: Record<string, string> = { completed: '证据充分', partial: '部分覆盖', needs_review: '需人工复核', failed: '执行失败' };
+  return <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)]/50 p-3 text-xs">
+    {answer && <>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">结构化结论</span>
+        <span className="text-[var(--color-text-secondary)]">{statusLabel[answer.status] || answer.status}</span>
+      </div>
+      <div className="mt-2 grid gap-1 text-[var(--color-text-secondary)]">
+        <span>有效 Claim：{answer.claims.length} 条</span>
+        <span>引用证据：{answer.evidence_refs.length} 条</span>
+        {answer.action_receipts.length > 0 && <span>副作用回执：{answer.action_receipts.length} 条</span>}
+      </div>
+      {answer.limitations.length > 0 && <p className="mt-2 text-amber-700">限制：{answer.limitations.join('；')}</p>}
+    </>}
+    {evidence && evidence.length > 0 && <p className="mt-2 text-[var(--color-text-secondary)]">本轮已加载 {evidence.length} 条证据记录。</p>}
+  </div>;
 }
 
 export default function ChatView() {
@@ -131,6 +153,8 @@ export default function ChatView() {
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
   const referencesAccRef = useRef<SupplierReference[]>([]);
+  const agentAnswerAccRef = useRef<AgentAnswer | undefined>(undefined);
+  const evidenceAccRef = useRef<AgentEvidenceRecord[]>([]);
   const workflowAccRef = useRef<AgentWorkflowSnapshot>(createWorkflowSnapshot());
 
   // Debounced localStorage save for chat input
@@ -180,9 +204,11 @@ export default function ChatView() {
     setLoading(true);
     const initialWorkflow = createWorkflowSnapshot();
     workflowAccRef.current = initialWorkflow;
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], workflowStatus: initialWorkflow });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], agentAnswer: null, evidence: [], workflowStatus: initialWorkflow });
     answerAccRef.current = '';
     referencesAccRef.current = [];
+    agentAnswerAccRef.current = undefined;
+    evidenceAccRef.current = [];
 
     try {
       await chatStream(text, sid, {
@@ -288,13 +314,27 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          const finalWorkflow = { ...workflowAccRef.current, status: 'completed' as const, stage: 'completed', message: '本轮 Agent 工作流已完成' };
+          const contractStatus = agentAnswerAccRef.current?.status;
+          const finalWorkflow = {
+            ...workflowAccRef.current,
+            status: (contractStatus || 'completed') as AgentWorkflowLifecycle | string,
+            stage: contractStatus === 'needs_review' ? 'decision' : 'completed',
+            message: contractStatus === 'needs_review' ? '结果需要人工复核' : '本轮 Agent 工作流已完成',
+          };
           workflowAccRef.current = finalWorkflow;
-          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, workflow: finalWorkflow }];
+          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow }];
           answerAccRef.current = '';
           persist(sid, completedMsgs);
           setStreamState(null);
           setLoading(false);
+        },
+        onAgentAnswer: (data) => {
+          agentAnswerAccRef.current = data;
+          setStreamState(prev => prev ? { ...prev, agentAnswer: data } : null);
+        },
+        onEvidence: (data) => {
+          evidenceAccRef.current = data.records;
+          setStreamState(prev => prev ? { ...prev, evidence: data.records } : null);
         },
         onError: (data) => {
           console.error('Stream error:', data.message);
@@ -379,8 +419,12 @@ export default function ChatView() {
       answerChunks: [],
       charts: [],
       references: [],
+      agentAnswer: null,
+      evidence: [],
     } : null);
     answerAccRef.current = '';
+    agentAnswerAccRef.current = undefined;
+    evidenceAccRef.current = [];
 
     const resumeMsgs: ChatMessage[] = [...updatedMsgs];
 
@@ -438,13 +482,27 @@ export default function ChatView() {
         },
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
-          const finalWorkflow = { ...workflowAccRef.current, status: 'completed' as const, stage: 'completed', message: '本轮 Agent 工作流已完成' };
+          const contractStatus = agentAnswerAccRef.current?.status;
+          const finalWorkflow = {
+            ...workflowAccRef.current,
+            status: (contractStatus || 'completed') as AgentWorkflowLifecycle | string,
+            stage: contractStatus === 'needs_review' ? 'decision' : 'completed',
+            message: contractStatus === 'needs_review' ? '结果需要人工复核' : '本轮 Agent 工作流已完成',
+          };
           workflowAccRef.current = finalWorkflow;
-          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, workflow: finalWorkflow }];
+          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow }];
           answerAccRef.current = '';
           persist(approvalSid, completedMsgs);
           setStreamState(null);
           setLoading(false);
+        },
+        onAgentAnswer: (data) => {
+          agentAnswerAccRef.current = data;
+          setStreamState(prev => prev ? { ...prev, agentAnswer: data } : null);
+        },
+        onEvidence: (data) => {
+          evidenceAccRef.current = data.records;
+          setStreamState(prev => prev ? { ...prev, evidence: data.records } : null);
         },
         onError: (data) => {
           const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
@@ -625,6 +683,7 @@ export default function ChatView() {
                   </div>
                 </div>
               )}
+              {m.role === 'assistant' && <StructuredAgentResult answer={m.agentAnswer} evidence={m.evidence} />}
               {m.role === 'assistant' && m.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: null, approvalSubmitting: false, workflowStatus: m.workflow }} onApproval={handleApproval} />}
             </div>
           </div>
@@ -650,6 +709,7 @@ export default function ChatView() {
                       识别到：{streamState.references.map(reference => reference.name).join('、')}
                     </div>
                   )}
+                  <StructuredAgentResult answer={streamState.agentAnswer ?? undefined} evidence={streamState.evidence} />
                 </div>
               )}
             </div>

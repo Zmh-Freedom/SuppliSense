@@ -128,6 +128,8 @@ export interface StreamCallbacks {
   onToolResult?: (data: { tool: string; result: unknown }) => void;
   onAnswerChunk?: (data: { text: string }) => void;
   onDone?: (data: { answer: string }) => void;
+  onAgentAnswer?: (data: import('./types').AgentAnswer) => void;
+  onEvidence?: (data: { records: import('./types').AgentEvidenceRecord[]; coverage?: Record<string, unknown> }) => void;
   onError?: (data: { message: string }) => void;
   onClarification?: (data: { message: string; missing: string[] }) => void;
   onApprovalRequired?: (data: ApprovalData) => void;
@@ -197,6 +199,12 @@ async function _parseSSEStream(
               break;
             case 'done':
               callbacks.onDone?.(data);
+              break;
+            case 'agent_answer':
+              callbacks.onAgentAnswer?.(data);
+              break;
+            case 'evidence':
+              callbacks.onEvidence?.(data);
               break;
             case 'error':
               callbacks.onError?.(data);

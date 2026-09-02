@@ -129,4 +129,28 @@ describe('ChatView session lifecycle', () => {
     expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
     expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
   })
+
+  it('keeps a Harness needs_review answer visible as a review state', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'needs_review',
+        summary: '证据不足',
+        claims: [],
+        limitations: ['缺少 risk 维度的正式证据'],
+        action_proposals: [],
+        action_receipts: [],
+        evidence_refs: [],
+      })
+      handlers.onDone?.({ answer: '证据不足' })
+      return '证据不足'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
+    expect(screen.getByText('结构化结论')).toBeInTheDocument()
+  })
 })

@@ -126,6 +126,7 @@ function lifecycleLabel(status: string): string {
     waiting_approval: '等待人工确认',
     completed: '已完成',
     partial: '部分完成',
+    needs_review: '需人工复核',
     failed: '失败',
     clarifying: '等待澄清',
   };

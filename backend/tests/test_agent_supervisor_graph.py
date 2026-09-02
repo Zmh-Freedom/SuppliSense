@@ -374,44 +374,22 @@ def _parse_sse_event(event: str) -> tuple[str, dict]:
     )
 
 
-def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
+def test_composite_chat_auto_mode_invokes_harness_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Removing the Supervisor mode branch would send composite chat back to ReAct."""
-    compiled_graph = object()
+    """Read-only auto mode must enter the unified Harness Runtime."""
 
-    async def supervisor_stream(graph, message, session_id, run_config, **kwargs):
-        assert graph is compiled_graph
+    async def harness_stream(session_id, message, _preference_context="", execution_context=None):
         assert message == "帮我找华东电机供应商并评估风险"
         assert session_id == "chat-run"
-        assert run_config == {
-            "configurable": {
-                "thread_id": "chat-run",
-                "checkpoint_ns": "chat:agent-supervisor",
-            }
-        }
-        assert kwargs["graph_input"] == {
-            "run_id": "chat-run",
-            "user_query": "帮我找华东电机供应商并评估风险",
-            "supplier_references": [{"name": "华东电机有限公司"}],
-            "intent": {
-                "current_task": {
-                    "target_supplier_names": ["华东电机有限公司"],
-                    "analysis_dimensions": ["risk"],
-                }
-            },
-            "conversation_state": {"selected_supplier_names": ["华东电机有限公司"]},
-        }
-        yield 'event: done\ndata: {"answer": "supervisor"}\n\n'
+        assert execution_context["current_task"]["target_supplier_names"] == ["华东电机有限公司"]
+        yield 'event: done\ndata: {"answer": "harness"}\n\n'
 
     async def unexpected_stream(*_args):
         raise AssertionError("composite request used a legacy stream")
         yield  # pragma: no cover
 
-    monkeypatch.setattr(
-        supervisor_graph, "build_agent_supervisor_graph", lambda: compiled_graph
-    )
-    monkeypatch.setattr(streaming, "stream_agent_supervisor_graph", supervisor_stream)
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", harness_stream)
     monkeypatch.setattr(chat_api, "_langgraph_react_stream", unexpected_stream)
     monkeypatch.setattr(
         "app.services.clarification.detect_clarification_needed", lambda *_args, **_kwargs: None
@@ -439,7 +417,7 @@ def test_composite_chat_auto_mode_invokes_agent_supervisor_stream(
 
     events = asyncio.run(collect_events())
 
-    assert events[-1] == 'event: done\ndata: {"answer": "supervisor"}\n\n'
+    assert events[-1] == 'event: done\ndata: {"answer": "harness"}\n\n'
 
 
 def test_chat_supervisor_uses_a_persistent_agent_run_for_approval_actions(

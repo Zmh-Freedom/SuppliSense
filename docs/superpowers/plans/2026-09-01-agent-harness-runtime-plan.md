@@ -523,12 +523,12 @@ Scenario
 
 ### Task 7：统一 Chat API、SSE 与前端工作台（P1）
 
-- [ ] `/chat/stream` 默认只进入 Harness Runtime。
-- [ ] 统一 SSE 事件和 Run 恢复接口。
-- [ ] 前端直接展示 AgentAnswer、Evidence、状态和回执。
-- [ ] 保留旧入口为短期显式回退，不在 `auto` 中继续路由。
+- [x] `/chat/stream` 默认只进入 Harness Runtime；涉及写动作时暂保留显式兼容路径。
+- [x] 统一 SSE 事件和恢复消费协议，新增 `agent_answer`、`evidence` 事件并兼容现有 `/resume`。
+- [x] 前端直接展示 AgentAnswer、Evidence、状态和回执摘要。
+- [x] 保留旧入口为短期显式回退，普通 `auto` 不再按意图路由到旧图。
 
-验收：浏览器可完成多轮寻源、风险、证据查看和监控审批闭环。
+当前验收：后端全量 781 项、前端 51 项测试通过，Harness SSE 契约、结构化答案、证据事件和旧模式回退均已覆盖；真实浏览器多轮寻源、风险、证据查看和监控审批闭环待 Task10 验收。
 
 ### Task 8：建立真实 E2E Harness 与故障注入（P1）
 

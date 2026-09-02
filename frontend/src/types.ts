@@ -69,6 +69,42 @@ export interface ChatMessage {
   content: string;
   references?: SupplierReference[];
   workflow?: AgentWorkflowSnapshot;
+  agentAnswer?: AgentAnswer;
+  evidence?: AgentEvidenceRecord[];
+}
+
+export interface AgentClaim {
+  claim_id: string;
+  entity_id: string;
+  dimension: string;
+  statement: string;
+  value?: string | number | boolean | null;
+  evidence_refs: string[];
+  confidence: number;
+  validation_status: 'supported' | 'partial' | 'conflicting' | 'unsupported';
+  validation_reasons: string[];
+}
+
+export interface AgentAnswer {
+  status: 'completed' | 'partial' | 'needs_review' | 'failed';
+  summary: string;
+  claims: AgentClaim[];
+  limitations: string[];
+  action_proposals: Record<string, unknown>[];
+  action_receipts: Record<string, unknown>[];
+  evidence_refs: string[];
+}
+
+export interface AgentEvidenceRecord {
+  evidence_id: string;
+  entity_id: string;
+  dimension: string;
+  provider: string;
+  source_type: string;
+  status: string;
+  data_mode: 'formal' | 'synthetic';
+  collected_at: string;
+  facts?: Record<string, unknown>;
 }
 
 export type AgentWorkflowLifecycle =

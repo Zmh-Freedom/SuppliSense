@@ -2,6 +2,7 @@
 
 import json
 import re
+import uuid
 from typing import Any, AsyncGenerator
 
 from app.core.logging import get_logger
@@ -36,6 +37,127 @@ def _workflow_status(
         "workflow_status",
         {"status": status, "stage": stage, "message": message, **details},
     )
+
+
+def _render_harness_answer(answer: dict[str, Any]) -> str:
+    """Render the structured answer without allowing unsupported text claims."""
+    lines = [str(answer.get("summary") or "Agent 未形成可展示的确定性结论。")]
+    for claim in answer.get("claims", []):
+        if not isinstance(claim, dict):
+            continue
+        statement = str(claim.get("statement") or "").strip()
+        evidence_refs = [str(item) for item in claim.get("evidence_refs", []) if str(item).strip()]
+        if not statement:
+            continue
+        suffix = f"（证据：{'、'.join(evidence_refs)}）" if evidence_refs else "（无有效证据引用）"
+        lines.append(f"- {statement}{suffix}")
+    limitations = [str(item).strip() for item in answer.get("limitations", []) if str(item).strip()]
+    if limitations:
+        lines.append(f"\n限制：{'；'.join(dict.fromkeys(limitations))}")
+    return "\n".join(lines)
+
+
+async def stream_harness_graph(
+    user_message: str,
+    session_id: str,
+    execution_context: dict[str, Any],
+    *,
+    user_id: str = "",
+    run_config: dict[str, Any] | None = None,
+    checkpointer: Any = None,
+) -> AsyncGenerator[str, None]:
+    """Run the unified Harness and map its contract to the public SSE protocol."""
+    from app.graphs.harness import run_harness
+
+    config = dict(run_config or {})
+    configurable = dict(config.get("configurable") or {})
+    configurable.setdefault("thread_id", session_id)
+    configurable.setdefault("checkpoint_ns", "chat:harness")
+    config["configurable"] = configurable
+    run_id = str(uuid.uuid4())
+    state = {
+        "session_id": session_id,
+        "turn_id": str(uuid.uuid4()),
+        "run_id": run_id,
+        "user_id": user_id or None,
+        "user_message": user_message,
+        "execution_context": execution_context,
+        "current_task": execution_context.get("current_task") or {},
+    }
+
+    yield _workflow_status("running", "understand", "正在解析结构化任务上下文")
+    yield _workflow_status("running", "planning", "正在生成受预算约束的任务计划")
+    try:
+        result = await run_harness(state, checkpointer=checkpointer, config=config)
+        task_specs = result.get("task_specs", [])
+        if isinstance(task_specs, list):
+            yield _sse_event(
+                "plan",
+                {
+                    "steps": [
+                        {
+                            "tool": item.get("tool_name", ""),
+                            "args": item.get("arguments", {}),
+                        }
+                        for item in task_specs
+                        if isinstance(item, dict)
+                    ]
+                },
+            )
+        yield _workflow_status("running", "executing", "正在通过统一 ToolExecutor 执行任务")
+        outcomes = result.get("tool_outcomes", [])
+        if isinstance(outcomes, list):
+            for outcome in outcomes:
+                if not isinstance(outcome, dict):
+                    continue
+                tool_name = str(outcome.get("tool_name") or "unknown")
+                yield _sse_event("tool_call", {"tool": tool_name, "args": outcome.get("input", {})})
+                yield _sse_event("tool_result", {"tool": tool_name, "result": outcome})
+
+        coverage = result.get("evidence_coverage") or {}
+        yield _workflow_status(
+            "running",
+            "evidence",
+            "正在校验证据覆盖度与 Claim 引用",
+            evidence_status=(
+                f"{len(coverage.get('covered_dimensions', []))}/"
+                f"{len(coverage.get('required_dimensions', []))} 已覆盖"
+            ),
+            loop_exit_reason="evidence_sufficient" if not coverage.get("missing_dimensions") else "evidence_incomplete",
+        )
+        answer = result.get("answer") or {
+            "status": "failed",
+            "summary": "Harness 未生成结构化回答。",
+            "claims": [],
+            "limitations": ["缺少 AgentAnswer"],
+            "evidence_refs": [],
+        }
+        answer_text = _render_harness_answer(answer)
+        yield _sse_event("agent_answer", answer)
+        yield _sse_event(
+            "evidence",
+            {"records": result.get("evidence_records", []), "coverage": coverage},
+        )
+        yield _sse_event("answer_chunk", {"text": answer_text})
+
+        from app.graphs.agent_core.adapter import collect_supplier_references, save_execution_turn
+
+        references: list[dict[str, Any]] = []
+        for outcome in outcomes if isinstance(outcomes, list) else []:
+            if isinstance(outcome, dict):
+                references = collect_supplier_references(references, outcome.get("data", {}), "Harness 工具结果")
+        save_execution_turn(session_id, user_message, answer_text, references)
+        if references:
+            yield _sse_event("references", {"items": references})
+        final_status = str(answer.get("status") or "failed")
+        final_stage = "completed" if final_status in {"completed", "partial"} else "decision"
+        yield _workflow_status(final_status, final_stage, "本轮 Harness 工作流已完成")
+        yield _sse_event("done", {"answer": answer_text})
+    except Exception as exc:
+        from app.graphs import format_llm_error
+
+        yield _workflow_status("failed", "decision", "Harness 工作流执行失败")
+        yield _sse_event("error", {"message": format_llm_error(exc)})
 
 
 def _event_data(event: dict[str, Any]) -> dict[str, Any]:
