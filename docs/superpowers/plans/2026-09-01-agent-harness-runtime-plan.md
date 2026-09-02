@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1-6 已完成，Task 7 待开始
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1-7 代码实现已完成，Task 7 浏览器验收待 Task 10，Task 8 待开始
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 

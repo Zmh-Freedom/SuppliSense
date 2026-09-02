@@ -877,14 +877,14 @@
 ## ISS-20260902-025 Task 5 审计发现聊天入口仍按模式分发到多套执行图
 
 - 发现日期：2026-09-02
-- 状态：Task 6 提案/审批持久化已完成，旧恢复路径迁移进行中
+- 状态：Task 7 代码实现已完成，真实浏览器验收待 Task 10
 - 优先级：P0
 - 现象：`POST /api/v1/chat/stream` 在 `auto` 或显式模式下仍会分发到 ReAct、Plan-Execute、Supervisor、Parallel、Sourcing 等多个完整图；这些图各自拥有状态、规划、工具调用和答案输出逻辑，尚未由唯一 Harness Runtime 统一收敛。
 - 影响：相同会话可能因路由结果进入不同执行语义；ToolExecutor、Evidence Ledger、AgentAnswer 和有限 Loop 无法保证覆盖所有活动路径，容易复现历史上的上下文丢失、工具协议异常和“无回执却宣称完成”等问题。
 - 根因：Task 1-4 已建立控制面、实体记忆、工具执行策略和证据答案契约，但聊天 API 尚未建立统一 LangGraph 状态图作为唯一活动入口。
 - 修复方案：新增统一 Harness Runtime，以一次性执行上下文为输入，按 `load_session -> resolve_turn -> build_plan -> execute_ready_tasks -> validate_evidence -> render_answer -> persist_turn` 的节点状态机运行；任务执行统一委托 ToolExecutor，结论统一经 Evidence Ledger/AgentAnswer；保留旧图作为兼容实现，先通过 Runtime 的结构化任务矩阵验证，再在后续 Task 7 切换 SSE/API 活动入口。
-- 验证结果：统一 Runtime 已通过单企业风险、多企业风险矩阵、只读寻源计划、证据缺失复核、有限补证 Loop 和 LangGraph `thread_id` 检查点共 6 项测试；跨阶段定向回归共 97 项通过，编译检查和 `git diff --check` 通过。聊天 API 的活动入口切换留待 Task 7。
-- 关联提交：`81a004da`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+- 验证结果：统一 Runtime 已通过单企业风险、多企业风险矩阵、只读寻源计划、证据缺失复核、有限补证 Loop 和 LangGraph `thread_id` 检查点共 6 项测试；Task7 已完成 `auto -> Harness`、结构化 SSE、前端状态展示和显式旧模式回退，后端全量 781 项、前端 52 项通过，编译检查和 `git diff --check` 通过。真实浏览器闭环留待 Task10。
+- 关联提交：`81a004da`、`d29fa0e0`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260902-026 Task 5 Harness 异步测试依赖未纳入当前测试环境
 
