@@ -1,6 +1,5 @@
 """LangGraph Plan-Execute agent graph — 替代 agent.py 中的手写 Plan-Execute 循环。"""
 
-import asyncio
 import json
 from typing import Any, TypedDict
 
@@ -9,11 +8,8 @@ from langgraph.graph import END, StateGraph
 from app.graphs import build_shared_llm
 
 from app.core.config import settings
-from app.tools import TOOLS_LIST
-
-# 工具名称到工具函数的映射
-_TOOLS_MAP = {t.name: t for t in TOOLS_LIST}
-
+from app.tools import TOOLS_LIST, build_default_tool_registry
+from app.tools.executor import ToolContext, ToolExecutor
 
 class PlanExecuteState(TypedDict):
     """Plan-Execute 图的状态定义。"""
@@ -193,15 +189,16 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
         }
 
     # 执行工具
-    tool_fn = _TOOLS_MAP.get(tool_name)
-    if tool_fn is None:
+    tool_registry = build_default_tool_registry(TOOLS_LIST)
+    if tool_registry.get(tool_name) is None:
         result = f"未找到工具: {tool_name}"
     else:
-        try:
-            raw_result = await asyncio.to_thread(tool_fn.invoke, tool_args)
-            result = json.dumps(raw_result, ensure_ascii=False, default=str)
-        except Exception as e:
-            result = f"工具执行错误: {str(e)}"
+        outcome = await ToolExecutor(tool_registry).execute(
+            tool_name,
+            tool_args,
+            ToolContext(),
+        )
+        result = json.dumps(outcome.model_dump(mode="json"), ensure_ascii=False, default=str)
 
     return {
         "plan": remaining_plan,

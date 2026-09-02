@@ -834,14 +834,17 @@
 ## ISS-20260901-022 Agent 工具缺少统一结果信封与写操作执行策略
 
 - 发现日期：2026-09-01
-- 状态：已纳入 Harness Task 3 和 Task 6，待实施
+- 状态：Task 3 已验证，已提交
 - 优先级：P0
 - 现象：工具统一声明返回 `dict`，但成功、未找到、数据缺失、提供方失败、部分完成和业务拒绝使用不同字段表达；缺少统一的证据引用、数据时间、可重试性、幂等键和副作用声明。`add_to_watchlist`、`remove_from_watchlist` 在脱离图审批上下文时捕获 `RuntimeError` 后默认放行。
 - 影响：模型和流式层需要猜测工具结果含义，容易把“无数据”描述成“低风险”、把“已生成建议”描述成“已执行”；写工具存在绕开人工确认边界的路径。
 - 根因：LangChain `@tool` 只统一了输入调用接口，未在工具注册层建立强制的 `ToolSpec`、`ToolOutcome` 和集中执行中间件。
 - 修复方案：所有工具通过唯一 `ToolExecutor` 执行；注册时声明输入/输出 schema、read/write、权限、审批、幂等、超时、重试和证据要求；统一返回版本化 `ToolOutcome`，任何写操作在无有效审批令牌时 fail closed。
 - 验证结果：静态审计确认工具返回形态不一致，监控清单增删工具存在审批上下文缺失时默认通过的分支；现有审批测试主要覆盖 V2 提案链路，没有对全部注册工具执行策略做自动矩阵校验。
-- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+- 实施前补充发现：`TOOLS_LIST` 仅提供 LangChain 入口，ReAct `ToolNode` 和 Plan-Execute 执行器均绕过统一策略直接调用；现有写工具在无图审批上下文时仍有默认放行路径，缺少全注册工具的输入/输出契约矩阵。
+- 修复结果：新增统一 `ToolRegistry`、`ToolSpec`、`ToolContext`、`ToolOutcome`、`ToolError` 和 `ToolMetrics`；ReAct `ToolNode`、Plan-Execute 均通过 `ToolExecutor`；所有注册工具绑定 Pydantic 输入/输出契约；写工具缺少审批令牌或幂等键时 fail closed；移除监控和定时报告工具的审批异常默认放行路径。
+- 验证结果：ToolExecutor、ReAct、寻源、审批、Supervisor、上下文和 Agent Run/API 共 71 项定向测试通过；Python 编译检查和 `git diff --check` 通过。ToolCall 持久化回调已预留，统一 Runtime 接入时绑定 PostgreSQL 控制面。
+- 关联提交：`127c94b6`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260901-023 真实性与证据校验只覆盖部分执行路径
 

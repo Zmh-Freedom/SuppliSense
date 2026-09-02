@@ -8,7 +8,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from app.graphs import build_shared_llm
-from app.tools import TOOLS_LIST
+from app.tools import TOOLS_LIST, build_default_tool_registry
 
 SYSTEM_PROMPT = """你是采购风险分析专家。
 
@@ -110,7 +110,8 @@ def build_react_graph(
         prompt = preference_context + "\n\n" + SYSTEM_PROMPT
 
     llm = _get_llm()
-    tool_node = ToolNode(TOOLS_LIST)
+    tool_registry = build_default_tool_registry(TOOLS_LIST)
+    tool_node = ToolNode(tool_registry.langchain_tools())
 
     async def agent(state: AgentState):
         forced_call = _forced_access_call(state)
@@ -189,7 +190,8 @@ def build_react_graph_with_reflection(
         current_task: dict
 
     llm = _get_llm()
-    tool_node = ToolNode(TOOLS_LIST)
+    tool_registry = build_default_tool_registry(TOOLS_LIST)
+    tool_node = ToolNode(tool_registry.langchain_tools())
     reflector_fn = build_reflector_node()
 
     async def agent(state: ReactReflectionState):

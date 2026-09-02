@@ -54,3 +54,13 @@ TOOLS_LIST = [
     discover_web_suppliers,
     select_external_supplier_candidate,
 ]
+
+from app.tools.registry import ToolRegistry, build_default_tool_registry
+from app.tools.executor import ToolContext, ToolError, ToolExecutor, ToolMetrics, ToolOutcome
+
+TOOL_REGISTRY: ToolRegistry = build_default_tool_registry(TOOLS_LIST)
+
+__all__ = [
+    "TOOLS_LIST", "TOOL_REGISTRY", "ToolContext", "ToolError", "ToolExecutor",
+    "ToolMetrics", "ToolOutcome", "ToolRegistry", "build_default_tool_registry",
+]

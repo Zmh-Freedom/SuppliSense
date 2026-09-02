@@ -88,7 +88,7 @@ def add_to_watchlist(company_name: str) -> dict:
         try:
             approved = request_approval("add_to_watchlist", {"company_name": company_name})
         except RuntimeError:
-            approved = True  # 不在图上下文中（如直接 API 调用），默认通过
+            return {"success": False, "error": "approval_context_required", "message": "加入监控必须在支持人工审批的 Agent 会话中执行"}
         if not approved:
             return {"cancelled": True, "message": f"用户取消了将 {company_name} 加入监控清单的操作"}
 
@@ -109,7 +109,7 @@ def remove_from_watchlist(company_name: str) -> dict:
         try:
             approved = request_approval("remove_from_watchlist", {"company_name": company_name})
         except RuntimeError:
-            approved = True
+            return {"success": False, "error": "approval_context_required", "message": "移出监控必须在支持人工审批的 Agent 会话中执行"}
         if not approved:
             return {"cancelled": True, "message": f"用户取消了将 {company_name} 移出监控清单的操作"}
 

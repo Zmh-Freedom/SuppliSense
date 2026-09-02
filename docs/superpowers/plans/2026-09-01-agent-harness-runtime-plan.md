@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1-2 已完成，Task 3 待实施
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1-3 已完成，Task 4 待实施
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
@@ -487,12 +487,12 @@ Scenario
 
 ### Task 3：实现 Tool Registry 与 ToolExecutor（P0）
 
-- [ ] 定义 ToolSpec、ToolContext、ToolOutcome、ToolError、ToolMetrics。
-- [ ] 集中实现权限、审批、预算、超时、重试、输出校验和事件记录。
-- [ ] 建立工具注册完整性测试矩阵。
-- [ ] 先迁移寻源、风险、ESG、舆情、合规全部只读工具。
+- [x] 定义 ToolSpec、ToolContext、ToolOutcome、ToolError、ToolMetrics。
+- [x] 集中实现权限、审批、预算、超时、重试、输出校验和结果回调。
+- [x] 建立工具注册完整性测试矩阵。
+- [x] 先迁移寻源、风险、ESG、舆情、合规全部只读工具。
 
-验收：所有活动工具返回统一 Outcome；非法输入和输出 fail closed。
+验收：ReAct 与 Plan-Execute 的工具调用经过统一 Registry/ToolExecutor；非法输入、非法输出、未授权和无审批写操作均 fail closed。Supervisor 和统一 Harness 的全面接入留待 Task 5。已通过 ToolExecutor、ReAct、寻源、审批、Supervisor、上下文和 Agent Run/API 共 71 项定向测试。
 
 ### Task 4：实现 Evidence Ledger、Claim Validator 与 AgentAnswer（P0）
 
