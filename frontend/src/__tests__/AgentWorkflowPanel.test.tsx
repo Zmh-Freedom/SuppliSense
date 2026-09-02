@@ -57,6 +57,24 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
   })
 
+  it('marks every phase complete when the final answer needs review', () => {
+    const state = createState()
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'needs_review',
+      stage: 'decision',
+      message: '结果需要人工复核',
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.getByLabelText('理解需求：已完成')).toBeInTheDocument()
+    expect(screen.getByLabelText('任务规划：已完成')).toBeInTheDocument()
+    expect(screen.getByLabelText('Agent 执行：已完成')).toBeInTheDocument()
+    expect(screen.getByLabelText('证据汇总：已完成')).toBeInTheDocument()
+    expect(screen.getByLabelText('风险决策：已完成')).toBeInTheDocument()
+  })
+
   it('shows approval details and sends approve or reject decisions', async () => {
     const onApproval = vi.fn()
     const user = userEvent.setup()

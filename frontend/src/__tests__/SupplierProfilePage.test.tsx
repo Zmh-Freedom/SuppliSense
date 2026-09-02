@@ -22,7 +22,7 @@ vi.mock('recharts', () => {
 
 const PROFILE: SupplierProfile = {
   basic_info: {
-    name: '测试供应商有限公司', industry: '仪器仪表制造业', categories: ['仪器仪表制造业'], regions: ['深圳'],
+    name: '测试供应商有限公司', industry: '仪器仪表制造业', categories: ['仪器仪表制造业'], regions: ['深圳'], establish_time: '777052800000',
     contact_person: '王工', contact_phone: '400-000-0000', contact_email: 'sales@example.com', website_url: 'https://example.com',
     industry_source: 'tianyancha_baseinfo_cache', website_url_source: 'company_website', contact_phone_source: 'tianyancha_baseinfo', contact_email_source: 'company_website', source: 'manual', updated_at: '2026-08-20T10:00:00+00:00', status: 'active',
   },
@@ -82,6 +82,7 @@ describe('SupplierProfilePage', () => {
     expect(screen.getByRole('link', { name: 'https://example.com' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.getAllByText('来源：company_website').length).toBeGreaterThan(0);
     expect(screen.getByText('诉讼：0 → 1')).toBeInTheDocument();
+    expect(screen.getByText('1994-08-16')).toBeInTheDocument();
   });
 
   it('does not write until the user explicitly confirms the action', async () => {

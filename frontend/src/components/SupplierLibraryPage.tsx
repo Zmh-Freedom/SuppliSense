@@ -13,6 +13,15 @@ function formatEstablishTime(value: string): string {
   return value.slice(0, 10);
 }
 
+function uniqueDisplayValues(values?: string[]): string[] {
+  return [...new Set(
+    (values ?? [])
+      .flatMap(value => value.split(/[，,、]/))
+      .map(value => value.trim())
+      .filter(Boolean),
+  )];
+}
+
 const STATUS_LABELS: Record<string, string> = {
   approved: '正式供应商',
   active: '正式供应商',
@@ -124,13 +133,13 @@ export default function SupplierLibraryPage() {
                       </span>
                     </div>
                     <div className="text-[var(--color-text-muted)] text-xs mt-1 space-x-3">
-                      <span>{supplier.categories?.join(', ') || '未分类'}</span>
+                      <span>{uniqueDisplayValues(supplier.categories).join(', ') || '未分类'}</span>
                       {supplier.industry && <span>{supplier.industry}</span>}
-                      {supplier.regions?.length > 0 && <span>{supplier.regions.join(', ')}</span>}
+                      {uniqueDisplayValues(supplier.regions).length > 0 && <span>{uniqueDisplayValues(supplier.regions).join(', ')}</span>}
                     </div>
-                    {supplier.products?.length ? (
+                    {uniqueDisplayValues(supplier.products).length ? (
                       <div className="text-[var(--color-text-muted)] text-xs mt-1">
-                        <span className="text-gray-400">供货产品：</span>{supplier.products.join(', ')}
+                        <span className="text-gray-400">供货产品：</span>{uniqueDisplayValues(supplier.products).join(', ')}
                       </div>
                     ) : null}
                     <div className="text-gray-400 text-[10px] mt-1 space-x-3">

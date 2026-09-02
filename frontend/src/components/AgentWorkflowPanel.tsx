@@ -62,7 +62,8 @@ function phaseStatus(state: AgentWorkflowState, index: number): PhaseStatus {
     completed: 4,
   };
   const currentStage = state.workflowStatus?.stage;
-  if (lifecycle === 'completed') return 'complete';
+  if (lifecycle === 'completed' || lifecycle === 'needs_review') return 'complete';
+  if (currentStage === 'decision' && lifecycle !== 'running') return 'complete';
   if (lifecycle === 'failed') return index >= (stageIndex[currentStage || ''] ?? 2) ? 'error' : 'complete';
   if (lifecycle === 'partial') return index >= (stageIndex[currentStage || ''] ?? 3) ? 'error' : 'complete';
   if (lifecycle === 'waiting_approval') return index < 4 ? 'complete' : index === 4 ? 'running' : 'pending';

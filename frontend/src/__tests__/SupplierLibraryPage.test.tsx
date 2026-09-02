@@ -28,7 +28,7 @@ describe('SupplierLibraryPage', () => {
         _id: 'supplier-1',
         name: '示例汽车零部件有限公司',
         categories: ['汽车零部件'],
-        products: ['制动卡钳', '制动'],
+        products: ['制动卡钳、制动', '制动', '制动卡钳'],
         regions: ['华东'],
         status: 'active',
         source: 'feishu_bitable',
@@ -43,6 +43,7 @@ describe('SupplierLibraryPage', () => {
     expect(screen.getByText('华东')).toBeInTheDocument();
     expect(screen.getByText('供货产品：')).toBeInTheDocument();
     expect(screen.getByText('制动卡钳, 制动')).toBeInTheDocument();
+    expect(screen.queryByText('制动卡钳、制动, 制动, 制动卡钳')).not.toBeInTheDocument();
     expect(screen.getByText('来源：飞书')).toBeInTheDocument();
     expect(screen.getByText(/已启用飞书同步时以飞书正式供应商数据为准/)).toBeInTheDocument();
   });

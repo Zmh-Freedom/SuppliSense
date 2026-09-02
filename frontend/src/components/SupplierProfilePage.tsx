@@ -81,7 +81,7 @@ export default function SupplierProfilePage() {
     <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm mb-5">
       <div className="flex items-start justify-between flex-wrap gap-4"><div className="flex-1 min-w-0"><h1 className="text-xl font-bold" style={{ color: '#333' }}>{basicInfo.name}</h1><div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs" style={{ color: '#555' }}>{basicInfo.unified_code && <span>统一社会信用代码：{basicInfo.unified_code}</span>}{basicInfo.legal_person && <span>法定代表人：{basicInfo.legal_person}</span>}{basicInfo.reg_status && <span>经营状态：{basicInfo.reg_status}</span>}</div><div className="flex flex-wrap gap-2 mt-2"><StatusBadge status={basicInfo.status} />{basicInfo.scale && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{basicInfo.scale}</span>}{risk?.in_watchlist && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">监控中</span>}</div></div><div className="flex flex-col items-center shrink-0"><div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md" style={{ background: getRiskColor(riskScore) }}>{riskScore}</div><span className="text-xs mt-1 font-semibold" style={{ color: getRiskColor(riskScore) }}>{riskLevel}</span></div></div>
       <div className="flex flex-wrap gap-2 mt-4"><button onClick={() => setPendingAction('assess')} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-gray-50">重新评估</button><button onClick={() => setPendingAction(risk?.in_watchlist ? 'unwatch' : 'watch')} className="text-xs px-3 py-1.5 rounded-lg bg-[var(--color-primary-bg)] text-white hover:opacity-90">{risk?.in_watchlist ? '移出监控' : '加入监控'}</button></div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-[var(--color-border)]"><InfoCard label="注册资本" value={basicInfo.registered_capital ?? '-'} /><InfoCard label="成立时间" value={basicInfo.establish_time ?? '-'} /><InfoCard label="行业" value={basicInfo.industry ?? basicInfo.categories?.[0] ?? '-'} meta={formatSource(basicInfo.industry_source, basicInfo.industry_updated_at)} /><InfoCard label="地区" value={basicInfo.regions?.[0] ?? '-'} /></div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-[var(--color-border)]"><InfoCard label="注册资本" value={basicInfo.registered_capital ?? '-'} /><InfoCard label="成立时间" value={formatEstablishTime(basicInfo.establish_time)} /><InfoCard label="行业" value={basicInfo.industry ?? basicInfo.categories?.[0] ?? '-'} meta={formatSource(basicInfo.industry_source, basicInfo.industry_updated_at)} /><InfoCard label="地区" value={basicInfo.regions?.[0] ?? '-'} /></div>
     </section>
     <ContactAndSourceCard basicInfo={basicInfo} />
     {pendingAction && <ConfirmationCard message={confirmationCopy[pendingAction]} busy={isBusy} onConfirm={confirmAction} onCancel={() => setPendingAction(null)} />}
@@ -112,5 +112,16 @@ function SummaryCard({ label, value, color }: { label: string; value: string; co
 function Metric({ label, value, warn }: { label: string; value: string; warn?: boolean }) { return <div><div className="text-xs text-gray-400">{label}</div><div className={`text-sm font-semibold mt-0.5 ${warn ? 'text-red-500' : ''}`} style={warn ? undefined : { color: '#333' }}>{value}</div></div>; }
 function ESGMetric({ title, score, level }: { title: string; score: number; level: string }) { return <div className="text-center p-3 rounded-xl bg-gray-50"><div className="text-xs text-gray-400">{title}</div><div className="text-xl font-bold mt-1" style={{ color: getRiskColor(score) }}>{score}</div><div className="text-xs mt-0.5" style={{ color: getRiskColor(score) }}>{level}</div></div>; }
 function formatSource(source?: string, updatedAt?: string) { return [source ? `来源：${source}` : '', updatedAt ? `更新：${updatedAt}` : ''].filter(Boolean).join(' · '); }
+function formatEstablishTime(value?: string) {
+  if (!value) return '-';
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const milliseconds = numeric < 100_000_000_000 ? numeric * 1000 : numeric;
+    const date = new Date(milliseconds);
+    if (!Number.isNaN(date.getTime())) return date.toISOString().slice(0, 10);
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString().slice(0, 10);
+}
 function formatAlertChanges(changes: SupplierProfile['alerts'][number]['changes']) { if (!changes.length) return '未提供变更明细'; return changes.map((change) => `${change.field || '字段'}：${String(change.old ?? '-')} → ${String(change.new ?? '-')}`).join('；'); }
 function percent(value?: number) { return value != null ? `${value.toFixed(1)}%` : '-'; }
