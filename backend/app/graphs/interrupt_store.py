@@ -1,20 +1,19 @@
-"""审批恢复兼容层。
+"""审批恢复的 PostgreSQL 兼容适配层。
 
-PostgreSQL 保存可序列化的恢复元数据；进程内仅缓存编译后的图对象，
-用于同进程的快速恢复。重启后的恢复由调用方按 mode 重建图。
+只保存和消费可序列化恢复元数据；编译后的图对象不进入进程内状态。
+后端重启后由调用方按 mode 重建图，PostgreSQL 是唯一事实源。
 """
 
 from typing import Any
 
 from app.core.logging import get_logger
 
-# {session_id: {"graph": compiled_graph, "config": runnable_config, "mode": str, ...}}
-_paused: dict[str, dict[str, Any]] = {}
 logger = get_logger()
 
 
 def store(session_id: str, graph, config: dict, mode: str, user_message: str) -> None:
-    """保存可恢复元数据，并缓存图对象作为兼容优化。"""
+    """保存可恢复元数据；graph 参数仅为旧调用方兼容，不会被缓存。"""
+    del graph
     from app.domains.agent_run.chat_interrupt_repo import save_chat_interrupt
 
     try:
@@ -23,17 +22,8 @@ def store(session_id: str, graph, config: dict, mode: str, user_message: str) ->
         # Keep legacy installations without the control plane usable. The
         # durable Agent Run V2 path never depends on this compatibility layer.
         logger.warning("chat_interrupt_durable_save_failed", session_id=session_id, error=str(exc))
-    _paused[session_id] = {
-        "graph": graph,
-        "config": config,
-        "mode": mode,
-        "user_message": user_message,
-    }
-
-
 def pop(session_id: str) -> dict[str, Any] | None:
-    """优先取进程缓存，同时消费 PostgreSQL 中的恢复元数据。"""
-    cached = _paused.pop(session_id, None)
+    """消费 PostgreSQL 中的恢复元数据。"""
     from app.domains.agent_run.chat_interrupt_repo import take_chat_interrupt
 
     try:
@@ -41,13 +31,15 @@ def pop(session_id: str) -> dict[str, Any] | None:
     except Exception as exc:
         logger.warning("chat_interrupt_durable_take_failed", session_id=session_id, error=str(exc))
         durable = None
-    if cached is not None:
-        if durable:
-            cached.update({key: value for key, value in durable.items() if key != "session_id"})
-        return cached
     return durable
 
 
 def exists(session_id: str) -> bool:
-    """检查是否存在暂停的图。"""
-    return session_id in _paused
+    """从 PostgreSQL 检查待恢复元数据，不读取进程内状态。"""
+    from app.domains.agent_run.chat_interrupt_repo import has_chat_interrupt
+
+    try:
+        return has_chat_interrupt(session_id)
+    except Exception as exc:
+        logger.warning("chat_interrupt_exists_failed", session_id=session_id, error=str(exc))
+        return False

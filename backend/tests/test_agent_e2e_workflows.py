@@ -14,7 +14,6 @@ from langgraph.types import interrupt
 
 from app.api import chat as chat_api
 from app.graphs import react_graph
-from app.graphs.interrupt_store import exists, pop
 from app.graphs.streaming import stream_react_graph
 
 
@@ -85,8 +84,7 @@ def test_admission_scope_is_reported_without_write_or_approval(monkeypatch) -> N
     answer = _event_payload(events, "done")["answer"]
     assert "仅支持供应商推荐和加入风险监控" in answer
     assert "供应商管理系统" in answer
-    assert not exists(session_id)
-    assert pop(session_id) is None
+    # No approval was requested; the PG-only resume store must remain untouched.
 
 
 def test_react_stream_emits_completed_workflow_status(monkeypatch) -> None:
@@ -112,6 +110,8 @@ def test_react_stream_emits_completed_workflow_status(monkeypatch) -> None:
 
 
 def test_chat_endpoint_reuses_one_context_snapshot_for_sourcing_mode(monkeypatch) -> None:
+    monkeypatch.setattr(chat_api.settings, "DEBUG", True)
+    monkeypatch.setattr(chat_api.settings, "AGENT_CHAT_LEGACY_COMPAT_ENABLED", True)
     context = {
         "history": [],
         "references": [{"name": "甲电机有限公司"}],

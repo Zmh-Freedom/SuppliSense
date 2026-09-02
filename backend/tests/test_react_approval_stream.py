@@ -14,7 +14,6 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langgraph.types import interrupt
 
-from app.graphs.interrupt_store import exists, pop
 from app.graphs.streaming import stream_react_graph
 
 
@@ -56,8 +55,15 @@ def _build_interrupt_graph():
     return graph.compile(checkpointer=MemorySaver())
 
 
-def test_react_stream_maps_tool_interrupt_to_approval_required_sse() -> None:
+def test_react_stream_maps_tool_interrupt_to_approval_required_sse(monkeypatch) -> None:
     session_id = "react-interrupt-sse-test"
+    stored: dict = {}
+    monkeypatch.setattr(
+        "app.domains.agent_run.chat_interrupt_repo.save_chat_interrupt",
+        lambda session, config, mode, user_message: stored.update(
+            session=session, config=config, mode=mode, user_message=user_message
+        ),
+    )
 
     async def collect() -> list[str]:
         return [
@@ -76,5 +82,5 @@ def test_react_stream_maps_tool_interrupt_to_approval_required_sse() -> None:
     assert payload["tool"] == "select_sourcing_result"
     assert payload["args"]["result_id"] == "local-result-1"
     assert payload["requires_human_approval"] is True
-    assert exists(session_id)
-    pop(session_id)
+    assert stored["session"] == session_id
+    assert stored["mode"] == "react"

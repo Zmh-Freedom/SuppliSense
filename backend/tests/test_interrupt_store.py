@@ -3,7 +3,7 @@
 from app.graphs import interrupt_store
 
 
-def test_interrupt_store_merges_durable_metadata_with_in_process_graph(monkeypatch):
+def test_interrupt_store_reads_only_durable_metadata(monkeypatch):
     durable = {
         "session_id": "session-1",
         "config": {"configurable": {"thread_id": "run-1"}},
@@ -21,6 +21,8 @@ def test_interrupt_store_merges_durable_metadata_with_in_process_graph(monkeypat
     )
     graph = object()
 
+    assert not hasattr(interrupt_store, "_paused")
+
     interrupt_store.store(
         "session-1",
         graph,
@@ -31,6 +33,6 @@ def test_interrupt_store_merges_durable_metadata_with_in_process_graph(monkeypat
     restored = interrupt_store.pop("session-1")
 
     assert restored is not None
-    assert restored["graph"] is graph
+    assert "graph" not in restored
     assert restored["config"] == durable["config"]
     assert interrupt_store.pop("session-1") is None

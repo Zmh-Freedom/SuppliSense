@@ -15,7 +15,7 @@ def save_chat_interrupt(
     mode: str,
     user_message: str,
 ) -> None:
-    """Persist only serializable resume metadata; compiled graphs stay in memory."""
+    """Persist only serializable resume metadata; compiled graphs are never persisted."""
     with get_cursor() as (_, cur):
         cur.execute(
             """
@@ -53,4 +53,14 @@ def take_chat_interrupt(session_id: str) -> dict[str, Any] | None:
     }
 
 
-__all__ = ["save_chat_interrupt", "take_chat_interrupt"]
+def has_chat_interrupt(session_id: str) -> bool:
+    """Check durable resume metadata without creating process-local state."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            "SELECT 1 FROM agent_chat_interrupts WHERE session_id = %s LIMIT 1",
+            (session_id,),
+        )
+        return cur.fetchone() is not None
+
+
+__all__ = ["has_chat_interrupt", "save_chat_interrupt", "take_chat_interrupt"]

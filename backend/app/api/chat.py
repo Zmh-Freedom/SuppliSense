@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.logging import get_logger
 
@@ -265,7 +266,7 @@ async def _langgraph_react_reflection_stream(
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "auto"  # auto/harness use Harness; other modes are explicit compatibility fallbacks
+    mode: str = "auto"  # auto/harness use Harness; old modes require the development compatibility switch
 
 
 class ResumeRequest(BaseModel):
@@ -311,6 +312,59 @@ async def _rebuild_paused_graph(paused: dict[str, Any]):
     raise ValueError(f"无法重建审批恢复图: {mode or 'unknown'}")
 
 
+_CHAT_MODE_ALIASES = {
+    "harness": "langgraph-harness",
+    "react": "langgraph-react",
+    "plan-execute": "langgraph-plan-execute",
+    "multi-agent": "langgraph-multi-agent",
+    "sourcing": "langgraph-sourcing",
+    "parallel": "langgraph-parallel",
+    "react-reflection": "langgraph-react-reflection",
+    "agent-supervisor": "langgraph-agent-supervisor",
+}
+_LEGACY_CHAT_MODES = {
+    "langgraph-react",
+    "langgraph-plan-execute",
+    "langgraph-multi-agent",
+    "langgraph-sourcing",
+    "langgraph-parallel",
+    "langgraph-react-reflection",
+}
+
+
+def _legacy_chat_compat_enabled() -> bool:
+    """Allow old graph comparison only in an explicitly enabled dev process."""
+    return settings.DEBUG and settings.AGENT_CHAT_LEGACY_COMPAT_ENABLED
+
+
+def _select_chat_stream(mode: str, *, requested_action: str) -> Any:
+    """Resolve one chat stream entrypoint with Harness as the safe default."""
+    normalized_mode = _CHAT_MODE_ALIASES.get(mode, mode)
+    if normalized_mode in {"", "auto", "langgraph-harness"}:
+        if requested_action != "none":
+            return _langgraph_agent_supervisor_stream
+        return _langgraph_harness_stream
+    if normalized_mode == "langgraph-agent-supervisor":
+        return _langgraph_agent_supervisor_stream
+    legacy_streams = {
+        "langgraph-react": _langgraph_react_stream,
+        "langgraph-plan-execute": _langgraph_plan_execute_stream,
+        "langgraph-multi-agent": _langgraph_supervisor_stream,
+        "langgraph-sourcing": _langgraph_sourcing_stream,
+        "langgraph-parallel": _langgraph_parallel_stream,
+        "langgraph-react-reflection": _langgraph_react_reflection_stream,
+    }
+    if normalized_mode in _LEGACY_CHAT_MODES and _legacy_chat_compat_enabled():
+        return legacy_streams[normalized_mode]
+    if normalized_mode in _LEGACY_CHAT_MODES:
+        logger.info(
+            "chat_legacy_mode_normalized_to_harness",
+            requested_mode=mode,
+            compatibility_enabled=False,
+        )
+    return _langgraph_harness_stream
+
+
 def _optional_agent_user_id(request: Request) -> str:
     """Return the signed access-token subject without making read-only chat private."""
     from app.core.security import decode_token
@@ -342,18 +396,6 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
     user_id = getattr(request.state, "user_id", "") or _optional_agent_user_id(request)
     from app.domains.auth.preferences import build_preference_context
     pref_ctx = build_preference_context(user_id) if user_id else ""
-
-    # Map legacy mode names to LangGraph equivalents
-    _MODE_ALIASES = {
-        "harness": "langgraph-harness",
-        "react": "langgraph-react",
-        "plan-execute": "langgraph-plan-execute",
-        "multi-agent": "langgraph-multi-agent",
-        "sourcing": "langgraph-sourcing",
-        "parallel": "langgraph-parallel",
-        "react-reflection": "langgraph-react-reflection",
-        "agent-supervisor": "langgraph-agent-supervisor",
-    }
 
     async def event_generator():
         # Send session_id first (before any blocking routing/classification)
@@ -430,37 +472,11 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # Resolve mode only after target resolution and fallback clarification.
             mode = req.mode
             if mode == "auto":
-                # Read-only conversations use the single Harness runtime. A
-                # requested side effect still uses the explicit legacy action
-                # path until Task9 migrates its proposal interrupt end-to-end.
-                requested_action = (execution_context.get("llm_intent") or {}).get("requested_action")
-                if requested_action and requested_action != "none":
-                    from app.graphs.router import router as intent_router
-
-                    mode = intent_router.route(req.message, execution_context).value
-                else:
-                    mode = "langgraph-harness"
-            mode = _MODE_ALIASES.get(mode, mode)
-
-            # Choose execution mode
-            if mode == "langgraph-harness":
-                stream_fn = _langgraph_harness_stream
-            elif mode == "langgraph-react":
-                stream_fn = _langgraph_react_stream
-            elif mode == "langgraph-plan-execute":
-                stream_fn = _langgraph_plan_execute_stream
-            elif mode == "langgraph-multi-agent":
-                stream_fn = _langgraph_supervisor_stream
-            elif mode == "langgraph-sourcing":
-                stream_fn = _langgraph_sourcing_stream
-            elif mode == "langgraph-agent-supervisor":
-                stream_fn = _langgraph_agent_supervisor_stream
-            elif mode == "langgraph-parallel":
-                stream_fn = _langgraph_parallel_stream
-            elif mode == "langgraph-react-reflection":
-                stream_fn = _langgraph_react_reflection_stream
-            else:
-                stream_fn = _langgraph_react_stream
+                mode = "langgraph-harness"
+            requested_action = str(
+                (execution_context.get("llm_intent") or {}).get("requested_action") or "none"
+            )
+            stream_fn = _select_chat_stream(mode, requested_action=requested_action)
 
             # Stream the chat response
             async for event in stream_fn(
@@ -495,9 +511,9 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 )
 async def resume_endpoint(req: ResumeRequest):
     """Resume a paused graph after user approval/denial."""
-    from app.graphs.interrupt_store import pop
+    from app.domains.agent_run.chat_interrupt_repo import take_chat_interrupt
 
-    paused = pop(req.session_id)
+    paused = take_chat_interrupt(req.session_id)
     if not paused:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")

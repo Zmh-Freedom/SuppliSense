@@ -647,14 +647,17 @@ def test_supervisor_resume_maps_final_answer_through_public_sse_schema(
             }
 
     monkeypatch.setattr(
-        "app.graphs.interrupt_store.pop",
+        "app.domains.agent_run.chat_interrupt_repo.take_chat_interrupt",
         lambda _session_id: {
-            "graph": FakeGraph(),
             "config": {"configurable": {"thread_id": "resume-run"}},
             "mode": "agent-supervisor",
             "user_message": "找供应商并评估风险",
         },
     )
+    async def rebuild_paused_graph(_paused):
+        return FakeGraph()
+
+    monkeypatch.setattr(chat_api, "_rebuild_paused_graph", rebuild_paused_graph)
 
     async def collect_events() -> list[tuple[str, dict]]:
         response = await chat_api.resume_endpoint(

@@ -541,12 +541,12 @@ Scenario
 
 ### Task 9：切换默认入口并清理重复路径（P1）
 
-- [ ] 使用开发开关对照旧入口和新 Harness。
-- [ ] P0 Harness 通过后将 `auto` 切换为唯一 Runtime。
+- [x] 使用 `DEBUG=true` + `AGENT_CHAT_LEGACY_COMPAT_ENABLED=true` 对照旧入口和新 Harness；默认关闭兼容开关。
+- [x] P0 Harness 通过后将 `auto` 及未授权旧 mode 收敛到唯一 Harness Runtime；涉及人工写操作的 `agent-supervisor` 保留为持久化审批兼容入口。
 - [ ] 完成短期回退验证后删除旧 ReAct/Plan-Execute/Parallel/旧 Supervisor 活动图。
-- [ ] 删除重复状态、重复流式适配和进程内审批存储。
+- [x] 删除进程内审批图缓存；恢复入口直接消费 PostgreSQL 元数据并按 mode 重建图。
 
-验收：活动聊天只有一套状态、工具、证据和恢复协议；旧路径测试迁移或归档。
+当前验收：默认聊天路由只有 Harness；旧图仅在开发开关打开时可用于对照，写操作继续走持久化 Supervisor 审批路径；`interrupt_store` 不再缓存编译图。旧图文件及其专用流式适配仍待短期兼容观察结束后删除，避免在审批兼容入口完成迁移前造成回归。
 
 ### Task 10：浏览器验收、问题回填与文档收口（P2）
 

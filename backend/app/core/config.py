@@ -105,6 +105,10 @@ class Settings(BaseSettings):
         default=int(os.getenv("AGENT_RUN_V2_CANARY_PERCENT", "0")), ge=0, le=100
     )
     AGENT_RUN_CHECKPOINT_SCHEMA: str = os.getenv("AGENT_RUN_CHECKPOINT_SCHEMA", "agent_checkpoint")
+    # 仅开发对照旧聊天图；默认所有聊天请求收敛到 Harness Runtime。
+    AGENT_CHAT_LEGACY_COMPAT_ENABLED: bool = os.getenv(
+        "AGENT_CHAT_LEGACY_COMPAT_ENABLED", "false"
+    ).lower() == "true"
 
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
