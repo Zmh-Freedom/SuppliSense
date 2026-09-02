@@ -29,24 +29,23 @@ app/
 └── core/          # 配置、认证、缓存、依赖注入
 ```
 
-## 当前状态：LangGraph 架构
+## 当前状态：LangGraph Harness 架构
 
-编排层已全部迁移到 LangGraph，旧手写编排代码已清理。
+聊天只读请求已统一进入唯一的 LangGraph Harness Runtime；历史 ReAct、Plan-Execute、Parallel、旧 Supervisor、Sourcing 和 Reflection 图仅供历史定向回归，不由 Chat API 活动选择。涉及加入/移出监控等写操作时，保留持久化 Agent Supervisor 作为人工审批兼容入口。
 
-| mode | 架构 | 状态 |
-|------|------|------|
-| `"react"` / `"langgraph-react"` | LangGraph ReAct 图 | 生产默认 |
-| `"plan-execute"` / `"langgraph-plan-execute"` | LangGraph Plan-Execute 图 | 已迁移 |
-| `"multi-agent"` / `"langgraph-multi-agent"` | LangGraph Supervisor 图 | 已迁移 |
-| `"auto"` | IntentRouter → LangGraph | 自动选择 |
+| mode | 当前行为 | 状态 |
+|------|----------|------|
+| `"auto"` / `"harness"` / 只读旧 mode | LangGraph Harness Runtime | 聊天默认入口 |
+| `"agent-supervisor"` | 持久化 Supervisor + ActionProposal + 人工确认 | 仅写操作 |
+| 历史 ReAct / Plan-Execute / Multi-Agent 等 | 仅历史定向测试 | 不属于活动聊天路径 |
 
-- 旧 `react`/`plan-execute`/`multi-agent` 模式名自动归一化到 LangGraph 对应图
-- `agent.py` 中的 `chat()` 作为同步端点回退保留
-- `agent.py` 中的 `_load_history`/`_save_turn`/`TOOLS` 由 LangGraph 图共享
+- 普通聊天和只读旧 mode 名称统一归一化到 Harness；不得新增按 mode 切换执行内核的活动分支
+- `agent.py` 中的 `chat()` 仅作为同步端点回退保留，不得绕过 Harness 的会话、工具、证据和答案契约
+- Harness 的 Session/Turn/Run/Task/Entity/ToolCall/Proposal 状态以 PostgreSQL 为唯一事实源；MongoDB 仅保存业务数据、证据和对话展示记录
 - 聊天 API 在每次请求中只加载一次 `execution_context`；路由、澄清和所有图必须消费该同一快照，不得在图内再次加载会话状态
 - 供应商引用只能通过 `graphs/agent_core/adapter.py` 的共享收集器合并；不得在各图复制提取、去重或自然语言回填逻辑
 - ReAct 审批恢复必须原样透传 LangGraph `Command`，不得将恢复命令当作普通消息输入
-- **新功能优先在 LangGraph 架构上开发**（`graphs/` + `tools/`）
+- **新功能优先在 Harness LangGraph 架构上开发**（`graphs/harness/`、`graphs/agent_core/` + `tools/`）
 - **service 层不改** — 保持框架无关
 
 ## 后端代码约定
@@ -96,11 +95,11 @@ app/
 
 ### 工具注册
 
-新增工具在 `app/tools/__init__.py` 用 `@tool` 装饰器定义，加入 `TOOLS_LIST`。同时需要在 `app/services/agent.py` 中用 `@_register` 注册（供同步端点回退使用）。
+新增工具在 `app/tools/__init__.py` 用 `@tool` 装饰器定义并加入 `TOOLS_LIST`，同时注册统一 `ToolRegistry`/`ToolExecutor` 的输入输出契约；不得在图或 service 内直接调用工具实现。同步端点回退也必须消费同一执行策略。
 
 ### SSE 事件格式
 
-流式输出统一使用 `_sse_event(event_type, data)` 格式，事件类型：`thinking`, `tool_call`, `tool_result`, `answer_chunk`, `done`, `error`。修改事件格式需同步 `graphs/streaming.py`。
+流式输出统一使用 `_sse_event(event_type, data)` 格式，事件类型：`thinking`, `tool_call`, `tool_result`, `answer_chunk`, `agent_answer`, `evidence`, `workflow_status`, `approval_required`, `done`, `error`。修改事件格式需同步 `graphs/streaming.py` 和前端 `StreamCallbacks`。
 
 ### Service 函数约定
 

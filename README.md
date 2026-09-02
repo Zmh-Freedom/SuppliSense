@@ -13,13 +13,11 @@
               ├── /ws          → WebSocket (实时推送)
               └── /health      → 健康检查
 
-FastAPI ──→ LangGraph Agent 编排层
-         │     ├── ReAct (单步查询，灵活调用 25 工具)
-         │     ├── Plan-Execute (多步骤任务，动态重规划)
-         │     ├── Multi-Agent (Supervisor + 3 专业 Agent 协作)
-         │     ├── Parallel (Map-Reduce 并行分析)
-         │     ├── ReAct+Reflection (自反思纠错)
-         │     └── Sourcing (寻源专属子图)
+FastAPI ──→ LangGraph Agent Harness Runtime（聊天唯一活动入口）
+         │     ├── load_session → resolve_turn → build_plan
+         │     ├── ToolExecutor（统一工具契约、预算、超时和审批）
+         │     ├── Evidence Ledger → Claim Validator → AgentAnswer
+         │     └── Agent Supervisor（仅人工审批写操作的兼容入口）
          │
          ├── DeepSeek LLM (langchain-openai, 3 次重试, 60s 超时)
          ├── MongoDB (企业数据 / 快照 / 告警 / 对话历史)
@@ -185,11 +183,10 @@ app/
 ├── api/           # 跨领域 API 路由（chat / upload / async_tasks）
 ├── tools/         # 25 个 LangGraph @tool 工具定义
 ├── graphs/        # LangGraph 编排层
-│   ├── react_graph.py          # ReAct + ReAct-Reflection
-│   ├── plan_execute_graph.py   # Plan-Execute
-│   ├── supervisor_graph.py     # Multi-Agent Supervisor
-│   ├── parallel_graph.py       # Map-Reduce 并行
-│   ├── router.py               # IntentRouter 自动分流
+│   ├── harness/                # 唯一聊天 Harness Runtime
+│   ├── agent_core/             # 会话、实体、证据、答案和 Loop 契约
+│   ├── agent_supervisor/       # 仅人工审批写操作
+│   ├── router.py               # 历史兼容路由与入口归一化
 │   ├── streaming.py            # SSE 流式适配
 │   ├── approval.py             # Human-in-the-Loop 审批
 │   ├── context.py              # 长对话摘要压缩
@@ -265,27 +262,25 @@ app/
 |------|------|
 | `create_sourcing_request` | 创建采购寻源需求 |
 | `search_suppliers` | 供应商搜索 + 排序 |
-| `select_sourcing_result` | 选择寻源结果（加入监控/申请准入） |
-| `expand_supplier_library` | 扩充供应商库 |
+| `select_sourcing_result` | 选择寻源结果并生成加入监控提案（不执行供应商准入） |
+| `expand_supplier_library` | 历史兼容能力；当前聊天活动入口不自动扩充供应商主数据 |
 
 ---
 
-## Agent 编排模式（6 种）
+## Agent 运行时边界
 
-| 模式 | 架构 | 适用场景 |
-|------|------|----------|
-| **ReAct** | LangGraph StateGraph | 单步查询，灵活调用 25 工具 |
-| **ReAct+Reflection** | ReAct + Self-Reflection 节点 | 需要答案质量校验的复杂问题 |
-| **Plan-Execute** | Planner → Executor → Replanner | 多步骤任务，支持动态重规划 |
-| **Multi-Agent** | Supervisor + 3 专业 Agent（风险/舆情/合规） | 多角度协作分析 |
-| **Parallel** | Map-Reduce 并行分析 | 多企业批量评估 |
-| **Sourcing** | LangGraph 独立子图 | 采购寻源专属流程 |
+| 入口 | 当前行为 | 适用范围 |
+|------|----------|----------|
+| **Harness Runtime** | 所有普通聊天和只读旧 mode 统一进入同一运行时 | 供应商推荐、风险/ESG/舆情/合规分析、证据汇总 |
+| **Agent Supervisor** | 只用于需要人工确认的写操作，并持久化提案、审批和回执 | 加入/移出监控等允许的本地动作 |
+| **历史图模块** | 保留给历史定向回归，不由 Chat API 活动选择 | 兼容测试与迁移追溯 |
 
-- **IntentRouter 自动分流**：路由关键词优先（零延迟）→ LLM 分类兜底
+- **统一会话状态**：PostgreSQL 是 Session/Turn/Run/Task/Entity/ToolCall/Proposal 的唯一事实源；MongoDB 仅保存业务数据、证据和展示记录。
+- **统一执行边界**：所有工具经过 ToolExecutor；写操作先生成提案并等待人工确认；确定性结论必须引用有效 Evidence，最终回答由 AgentAnswer 生成。
 - **SSE 流式输出**：支持 `thinking`, `tool_call`, `tool_result`, `answer_chunk`, `approval_required`, `done`, `error` 事件
-- **Human-in-the-Loop**：高风险操作（移除监控/申请准入）触发审批中断，可恢复执行
+- **Human-in-the-Loop**：加入/移出监控等允许的写操作触发审批中断，可恢复执行；供应商准入由外部供应商管理系统负责
 - **长对话摘要**：超过 8 轮自动压缩上下文，避免 token 超限
-- **统一会话状态**：供应商引用、任务矩阵、Loop 状态和审批上下文由同一 `ConversationState` 持久化，避免跨模式丢失目标企业
+- **有限 Loop**：仅在补证和受控重试等可验证场景运行，达到预算或证据门槛后退出并展示原因。
 
 ---
 
