@@ -829,7 +829,7 @@
 - 首轮复核补充发现：Task 2 初版正则会把“对”带入公司名；别名和供应商代码未完整并入同一目标集合；未知 LLM 候选的 Mention 类型可能误标为显式名称；持久化实现引用了尚未加入内存契约的 `focus_rank` 字段。
 - 修复结果：新增 `EntityMemory`、`EntityMention`、`FocusSet` 和确定性 `resolve_turn`；显式当前企业、别名、供应商代码优先，单复数/序数引用只读取上一轮焦点；未知 LLM 名称保持 `pending_verification`；累计助手引用改为合并；实体记忆可通过 PostgreSQL `agent_entities` 和会话版本原子持久化。
 - 验证结果：实体记忆、上下文、适配器、控制面和 Agent Run/API/Service/Model 共 131 项定向测试通过；PostgreSQL 实体记忆集成测试、Python 编译检查和 `git diff --check` 通过。
-- 关联提交：`72f367b1`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+- 关联提交：`cb7b71a1`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260901-022 Agent 工具缺少统一结果信封与写操作执行策略
 
@@ -844,7 +844,7 @@
 - 实施前补充发现：`TOOLS_LIST` 仅提供 LangChain 入口，ReAct `ToolNode` 和 Plan-Execute 执行器均绕过统一策略直接调用；现有写工具在无图审批上下文时仍有默认放行路径，缺少全注册工具的输入/输出契约矩阵。
 - 修复结果：新增统一 `ToolRegistry`、`ToolSpec`、`ToolContext`、`ToolOutcome`、`ToolError` 和 `ToolMetrics`；ReAct `ToolNode`、Plan-Execute 均通过 `ToolExecutor`；所有注册工具绑定 Pydantic 输入/输出契约；写工具缺少审批令牌或幂等键时 fail closed；移除监控和定时报告工具的审批异常默认放行路径。
 - 验证结果：ToolExecutor、ReAct、寻源、审批、Supervisor、上下文和 Agent Run/API 共 71 项定向测试通过；Python 编译检查和 `git diff --check` 通过。ToolCall 持久化回调已预留，统一 Runtime 接入时绑定 PostgreSQL 控制面。
-- 关联提交：`127c94b6`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+- 关联提交：`c31206d2`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260901-023 真实性与证据校验只覆盖部分执行路径
 
@@ -860,7 +860,7 @@
 - 首轮复核补充发现：Task 4 测试夹具让支持 Claim 与缺失证据 Claim 复用了同一 `claim_id`，导致断言错误期待被过滤的 Claim 仍进入最终答案；实际过滤行为符合契约。
 - 修复结果：新增 `EvidenceRecord`、`EvidenceLedger`、`Claim`、`ValidatedClaim` 和 `AgentAnswer`；统一区分可用、确认为空、缺失、不可用、过期、冲突和合成数据；Claim 必须匹配实体、维度和有效 Evidence；unsupported Claim 不进入最终事实列表，缺失/冲突/合成数据不产生确定性完成结论。
 - 验证结果：证据、答案、上下文、工具和 Agent Run/API 共 91 项定向测试通过；Python 编译检查和 `git diff --check` 通过。统一 Harness 活动路径接入留待 Task 5。
-- 关联提交：`7edb24b8`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+- 关联提交：`c82cfc77`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260901-024 Agent E2E 与 Eval 尚不能充当 Harness 发布门槛
 
@@ -873,3 +873,39 @@
 - 修复方案：建立 scenario-driven Harness，统一启动 HTTP/SSE、真实图、工具执行器和临时持久化；提供可编程 LLM/Provider doubles，覆盖多轮、并发、超时、空数据、矛盾证据、审批、重启恢复与幂等重放；CI 输出任务成功率、实体正确率、证据支持率、错误成功率和恢复率。
 - 验证结果：`python -m pytest -q -m agent_e2e` 为 9 项通过；Agent/V2 定向测试共 360 项通过。通过结果证明现有模块质量较好，但不能证明唯一执行链的端到端稳定性。
 - 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+
+## ISS-20260902-025 Task 5 审计发现聊天入口仍按模式分发到多套执行图
+
+- 发现日期：2026-09-02
+- 状态：Task 5 核心 Runtime 已完成，活动入口切换纳入 Task 7
+- 优先级：P0
+- 现象：`POST /api/v1/chat/stream` 在 `auto` 或显式模式下仍会分发到 ReAct、Plan-Execute、Supervisor、Parallel、Sourcing 等多个完整图；这些图各自拥有状态、规划、工具调用和答案输出逻辑，尚未由唯一 Harness Runtime 统一收敛。
+- 影响：相同会话可能因路由结果进入不同执行语义；ToolExecutor、Evidence Ledger、AgentAnswer 和有限 Loop 无法保证覆盖所有活动路径，容易复现历史上的上下文丢失、工具协议异常和“无回执却宣称完成”等问题。
+- 根因：Task 1-4 已建立控制面、实体记忆、工具执行策略和证据答案契约，但聊天 API 尚未建立统一 LangGraph 状态图作为唯一活动入口。
+- 修复方案：新增统一 Harness Runtime，以一次性执行上下文为输入，按 `load_session -> resolve_turn -> build_plan -> execute_ready_tasks -> validate_evidence -> render_answer -> persist_turn` 的节点状态机运行；任务执行统一委托 ToolExecutor，结论统一经 Evidence Ledger/AgentAnswer；保留旧图作为兼容实现，先通过 Runtime 的结构化任务矩阵验证，再在后续 Task 7 切换 SSE/API 活动入口。
+- 验证结果：统一 Runtime 已通过单企业风险、多企业风险矩阵、只读寻源计划、证据缺失复核、有限补证 Loop 和 LangGraph `thread_id` 检查点共 6 项测试；跨阶段定向回归共 97 项通过，编译检查和 `git diff --check` 通过。聊天 API 的活动入口切换留待 Task 7。
+- 关联提交：Task 5 代码尚未提交；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+
+## ISS-20260902-026 Task 5 Harness 异步测试依赖未纳入当前测试环境
+
+- 发现日期：2026-09-02
+- 状态：已关闭
+- 优先级：P1
+- 现象：新增 Harness Runtime 测试使用 `pytest.mark.asyncio`，当前 backend 测试环境未安装 `pytest-asyncio`，pytest 报告 `async def functions are not natively supported`，4 项测试均未执行。
+- 影响：Task 5 的核心运行时、检查点线程标识和证据门禁无法在当前环境完成自动验证；若直接加入依赖，会扩大开发环境安装范围。
+- 根因：项目现有异步测试约定未使用 pytest-asyncio，新测试误用了未配置的插件标记。
+- 修复方案：采用标准库 `asyncio.run()` 包装异步测试，移除 `pytest.mark.asyncio`，不新增测试依赖。
+- 验证结果：移除 `pytest.mark.asyncio`，改用标准库 `asyncio.run()`；当前环境无需新增依赖，Harness 测试可实际执行并通过。
+- 关联提交：Task 5 代码尚未提交；修复包含在 Task 5 工作区变更中。
+
+## ISS-20260902-027 Task 5 缺失证据场景断言未匹配实际限制文案
+
+- 发现日期：2026-09-02
+- 状态：已关闭
+- 优先级：P2
+- 现象：Harness 缺失证据测试期望限制列表直接包含 `risk`，实际答案契约返回的是完整可读文案 `缺少 risk 维度的正式证据`。
+- 影响：测试误报失败，无法准确区分答案契约的文案格式与真实状态。
+- 根因：测试断言未按当前 AgentAnswer 的结构化限制语义进行匹配。
+- 修复方案：将断言改为检查限制项中包含 `risk`，保持答案契约的可读完整文案不变。
+- 验证结果：断言改为检查限制项中包含 `risk`，Harness 全量 6 项测试通过。
+- 关联提交：Task 5 代码尚未提交；修复包含在 Task 5 工作区变更中。

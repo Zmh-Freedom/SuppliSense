@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1-4 已完成，Task 5 待实施
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1-5 已完成，Task 6 待实施
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
@@ -505,12 +505,12 @@ Scenario
 
 ### Task 5：实现唯一 LangGraph Harness Runtime（P0）
 
-- [ ] 建立统一状态图和节点状态机。
-- [ ] Planner 只生成任务计划，不切换执行引擎。
-- [ ] 接入 ToolExecutor、Evidence、Claim、有限 Loop 和预算。
-- [ ] 每个关键节点先持久化再推进。
+- [x] 建立统一状态图和节点状态机。
+- [x] Planner 只生成任务计划，不切换执行引擎。
+- [x] 接入 ToolExecutor、Evidence、Claim、有限 Loop 和预算。
+- [x] 每个关键节点先持久化再推进。
 
-验收：单一 Runtime 完成寻源、单/多企业风险和多维组合分析。
+验收：单一 Runtime 已完成只读寻源计划、单/多企业风险和多维组合分析；通过 6 项 Harness 场景测试及 97 项跨阶段定向回归。聊天 API 活动入口切换与旧图清理纳入 Task 7/Task 9。
 
 ### Task 6：迁移写操作提案、审批和恢复（P0）
 
