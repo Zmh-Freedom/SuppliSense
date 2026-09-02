@@ -908,7 +908,7 @@
 - 根因：Task 3 只完成了工具执行策略的结构化入口，Task 6 所需的密码学绑定令牌和统一 Proposal Gate 尚未落地。
 - 修复方案：新增 Harness `ActionProposal`、签名 `ApprovalToken` 和 `ActionGate`；提案使用稳定动作摘要和幂等键，审批令牌绑定提案、Session、Run、动作摘要、审批人和有效期；执行前验证签名和上下文，写工具成功必须返回 `SideEffectReceipt`。复用 PostgreSQL Proposal/Outbox 保存动作状态，并将旧 `interrupt_store` 改为 PostgreSQL 元数据优先、进程内图对象兼容缓存。
 - 验证结果：5 项审批安全测试、4 项持久化适配测试、1 项中断恢复测试及 143 项跨阶段定向回归通过；编译检查和 `git diff --check` 通过。未带有效绑定、错误审批人、动作被篡改、过期提案和缺失副作用回执均 fail closed。统一 Chat API 的活动入口和旧图清理已明确转入 Task 7/Task 9。
-- 关联提交：待 Task 6 提交后补充提交号；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+- 关联提交：`fe229a38`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260902-030 Task 6 审批令牌篡改测试修改了 Base64 非有效位
 
