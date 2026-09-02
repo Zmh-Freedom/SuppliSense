@@ -247,6 +247,44 @@ class ResumeRequest(BaseModel):
     approved: bool = True
 
 
+async def _rebuild_paused_graph(paused: dict[str, Any]):
+    """Recreate a graph from durable resume metadata after a process restart."""
+    mode = str(paused.get("mode") or "")
+    from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
+
+    if mode == "agent-supervisor":
+        from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
+
+        return build_agent_supervisor_graph(await get_sourcing_risk_checkpointer())
+    if mode == "react":
+        from app.graphs.react_graph import build_react_graph
+
+        return build_react_graph(checkpointer=await get_sourcing_risk_checkpointer())
+    if mode == "react-reflection":
+        from app.graphs.react_graph import build_react_graph_with_reflection
+
+        return build_react_graph_with_reflection(
+            checkpointer=await get_sourcing_risk_checkpointer()
+        )
+    if mode == "sourcing":
+        from app.graphs.agents.sourcing import build_sourcing_graph
+
+        return build_sourcing_graph(await get_sourcing_risk_checkpointer())
+    if mode == "plan-execute":
+        from app.graphs.plan_execute_graph import build_plan_execute_graph
+
+        return build_plan_execute_graph()
+    if mode == "supervisor":
+        from app.graphs.supervisor_graph import build_supervisor_graph
+
+        return build_supervisor_graph()
+    if mode == "parallel":
+        from app.graphs.parallel_graph import build_parallel_graph
+
+        return build_parallel_graph(enable_reflection=True)
+    raise ValueError(f"无法重建审批恢复图: {mode or 'unknown'}")
+
+
 def _optional_agent_user_id(request: Request) -> str:
     """Return the signed access-token subject without making read-only chat private."""
     from app.core.security import decode_token
@@ -428,10 +466,17 @@ async def resume_endpoint(req: ResumeRequest):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")
 
-    graph = paused["graph"]
-    config = paused["config"]
-    mode = paused["mode"]
-    user_message = paused["user_message"]
+    graph = paused.get("graph")
+    if graph is None:
+        try:
+            graph = await _rebuild_paused_graph(paused)
+        except Exception as exc:
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=503, detail="审批恢复图不可用，请重新发起任务") from exc
+    config = paused.get("config") or {"configurable": {"thread_id": req.session_id}}
+    mode = str(paused.get("mode") or "")
+    user_message = str(paused.get("user_message") or "")
 
     async def resume_generator():
         from langgraph.types import Command

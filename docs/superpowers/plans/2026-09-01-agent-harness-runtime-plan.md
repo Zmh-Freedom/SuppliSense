@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1-5 已完成，Task 6 待实施
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1-6 已完成，Task 7 进行中
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
@@ -514,12 +514,12 @@ Scenario
 
 ### Task 6：迁移写操作提案、审批和恢复（P0）
 
-- [ ] 监控增删只生成 ActionProposal。
-- [ ] 审批令牌绑定 Run、动作哈希、用户和有效期。
-- [ ] 复用 Outbox 和幂等机制生成 SideEffectReceipt。
-- [ ] 移除进程内 `interrupt_store` 活动依赖和审批异常默认放行。
+- [x] 建立 Harness ActionProposal 与统一 ActionGate，监控增删等写工具先生成提案。
+- [x] 审批令牌绑定 Session、Run、Proposal、动作哈希、审批人和有效期。
+- [x] 复用现有 PostgreSQL Proposal/Outbox 和幂等机制生成可追踪的副作用状态。
+- [x] 将 `interrupt_store` 降为兼容缓存，恢复元数据和消费以 PostgreSQL 为准；旧图活动入口清理归入 Task 7/Task 9。
 
-验收：未审批写入为 0；刷新、重启和重复确认均安全。
+当前验收：ActionGate 和 PostgreSQL Proposal/Outbox 适配已通过审批、持久化重建、幂等和回执安全测试；未带有效签名令牌、错误审批人、动作被篡改、过期提案和缺失副作用回执均 fail closed。旧聊天恢复路径已改为 PostgreSQL 元数据优先、进程内图对象仅作兼容缓存；统一 Chat API 的活动入口切换与旧图清理仍归 Task 7/Task 9。
 
 ### Task 7：统一 Chat API、SSE 与前端工作台（P1）
 

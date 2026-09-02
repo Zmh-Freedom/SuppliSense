@@ -110,6 +110,7 @@ def decide_action_proposal(
         if run["status"] != "ACTION_PENDING":
             raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许审批操作", 409)
         if request.decision == "approved":
+            _verify_harness_approval(proposal, run, request.approval_token, user_id)
             _require_non_self_approval_for_high_risk_import(proposal, user_id, run)
 
         target_status = "ACTION_EXECUTING" if request.decision == "approved" else "READY_FOR_REVIEW"
@@ -186,6 +187,7 @@ def decide_action_proposals(
             if proposal["status"] != "pending":
                 raise DomainError("AGENT_ACTION_ALREADY_DECIDED", "操作提案已处理", 409)
             if request.decision == "approved":
+                _verify_harness_approval(proposal, locked_run, request.approval_token, user_id)
                 _require_non_self_approval_for_high_risk_import(proposal, user_id, locked_run)
             proposals.append(proposal)
         if locked_run["status"] != "ACTION_PENDING":
@@ -563,6 +565,46 @@ def _require_non_self_approval_for_high_risk_import(
     high_risk = payload.get("risk_level") == "high" or int(payload.get("risk_score") or 0) >= 70
     if proposal["action_type"] == "import_external_supplier" and high_risk and run.get("user_id") == user_id:
         raise DomainError("AGENT_ACTION_SELF_APPROVAL_FORBIDDEN", "高风险导入不能由发起人审批", 403)
+
+
+def _verify_harness_approval(
+    proposal: dict[str, Any],
+    run: dict[str, Any],
+    approval_token: str | None,
+    approver_id: str,
+) -> None:
+    """Verify Harness-bound approval metadata before the durable state transition."""
+    metadata = dict((proposal.get("payload") or {}).get("_harness_action") or {})
+    if not metadata:
+        return
+    from app.graphs.harness.actions import issue_approval_token, verify_approval_token
+    from app.graphs.harness.durable_actions import proposal_from_durable_row
+
+    requester_id = str(run.get("user_id") or "")
+    session_id = str(run.get("session_id") or metadata.get("session_id") or "")
+    if not requester_id or not session_id:
+        raise DomainError("AGENT_ACTION_APPROVAL_CONTEXT_INVALID", "审批上下文缺少用户或会话绑定", 409)
+    try:
+        harness_proposal = proposal_from_durable_row(
+            proposal,
+            session_id=session_id,
+            user_id=requester_id,
+        )
+        # The server may issue the short-lived token at the moment the
+        # authenticated human approves. A client-provided token is still
+        # accepted for reconnect/recovery, but is always verified here.
+        token = approval_token or issue_approval_token(
+            harness_proposal,
+            approver_id,
+        )
+        verify_approval_token(
+            token,
+            harness_proposal,
+            approver_id=approver_id,
+            secret_key=settings.SECRET_KEY,
+        )
+    except ValueError as exc:
+        raise DomainError("AGENT_ACTION_APPROVAL_TOKEN_INVALID", str(exc), 409) from exc
 
 
 def _require_action_type(action_type: str) -> None:

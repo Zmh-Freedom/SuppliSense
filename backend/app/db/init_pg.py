@@ -177,6 +177,16 @@ DDL_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_chat_interrupts (
+        session_id UUID PRIMARY KEY,
+        config JSONB NOT NULL DEFAULT '{}',
+        mode VARCHAR(64) NOT NULL,
+        user_message TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
 
     # Agent run V2 / Harness run
     """

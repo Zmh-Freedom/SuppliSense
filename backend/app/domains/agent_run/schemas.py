@@ -77,6 +77,7 @@ class ApprovalDecisionRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
     decision: Literal["approved", "rejected"]
     comment: str | None = Field(default=None, max_length=2000)
+    approval_token: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
 class CancelRunRequest(_ImmutableModel):

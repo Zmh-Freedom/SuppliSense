@@ -877,14 +877,14 @@
 ## ISS-20260902-025 Task 5 审计发现聊天入口仍按模式分发到多套执行图
 
 - 发现日期：2026-09-02
-- 状态：Task 5 核心 Runtime 已完成，活动入口切换纳入 Task 7
+- 状态：Task 6 提案/审批持久化已完成，旧恢复路径迁移进行中
 - 优先级：P0
 - 现象：`POST /api/v1/chat/stream` 在 `auto` 或显式模式下仍会分发到 ReAct、Plan-Execute、Supervisor、Parallel、Sourcing 等多个完整图；这些图各自拥有状态、规划、工具调用和答案输出逻辑，尚未由唯一 Harness Runtime 统一收敛。
 - 影响：相同会话可能因路由结果进入不同执行语义；ToolExecutor、Evidence Ledger、AgentAnswer 和有限 Loop 无法保证覆盖所有活动路径，容易复现历史上的上下文丢失、工具协议异常和“无回执却宣称完成”等问题。
 - 根因：Task 1-4 已建立控制面、实体记忆、工具执行策略和证据答案契约，但聊天 API 尚未建立统一 LangGraph 状态图作为唯一活动入口。
 - 修复方案：新增统一 Harness Runtime，以一次性执行上下文为输入，按 `load_session -> resolve_turn -> build_plan -> execute_ready_tasks -> validate_evidence -> render_answer -> persist_turn` 的节点状态机运行；任务执行统一委托 ToolExecutor，结论统一经 Evidence Ledger/AgentAnswer；保留旧图作为兼容实现，先通过 Runtime 的结构化任务矩阵验证，再在后续 Task 7 切换 SSE/API 活动入口。
 - 验证结果：统一 Runtime 已通过单企业风险、多企业风险矩阵、只读寻源计划、证据缺失复核、有限补证 Loop 和 LangGraph `thread_id` 检查点共 6 项测试；跨阶段定向回归共 97 项通过，编译检查和 `git diff --check` 通过。聊天 API 的活动入口切换留待 Task 7。
-- 关联提交：Task 5 代码尚未提交；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+- 关联提交：`81a004da`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260902-026 Task 5 Harness 异步测试依赖未纳入当前测试环境
 
@@ -897,6 +897,42 @@
 - 修复方案：采用标准库 `asyncio.run()` 包装异步测试，移除 `pytest.mark.asyncio`，不新增测试依赖。
 - 验证结果：移除 `pytest.mark.asyncio`，改用标准库 `asyncio.run()`；当前环境无需新增依赖，Harness 测试可实际执行并通过。
 - 关联提交：Task 5 代码尚未提交；修复包含在 Task 5 工作区变更中。
+
+## ISS-20260902-028 Task 6 审批令牌未与提案和动作绑定
+
+- 发现日期：2026-09-02
+- 状态：已关闭
+- 优先级：P0
+- 现象：现有 `ToolExecutor` 仅判断写工具是否存在任意 `approval_token` 和 `idempotency_key`，不会验证令牌是否绑定 `run_id`、提案、动作参数摘要、审批人和过期时间；旧聊天图仍通过进程内 `interrupt_store` 暂存审批恢复信息。
+- 影响：令牌或恢复上下文被错用时，存在跨动作、跨运行或过期确认被接受的风险；进程重启后审批恢复也无法依赖唯一 PostgreSQL 控制面。
+- 根因：Task 3 只完成了工具执行策略的结构化入口，Task 6 所需的密码学绑定令牌和统一 Proposal Gate 尚未落地。
+- 修复方案：新增 Harness `ActionProposal`、签名 `ApprovalToken` 和 `ActionGate`；提案使用稳定动作摘要和幂等键，审批令牌绑定提案、Session、Run、动作摘要、审批人和有效期；执行前验证签名和上下文，写工具成功必须返回 `SideEffectReceipt`。复用 PostgreSQL Proposal/Outbox 保存动作状态，并将旧 `interrupt_store` 改为 PostgreSQL 元数据优先、进程内图对象兼容缓存。
+- 验证结果：5 项审批安全测试、4 项持久化适配测试、1 项中断恢复测试及 143 项跨阶段定向回归通过；编译检查和 `git diff --check` 通过。未带有效绑定、错误审批人、动作被篡改、过期提案和缺失副作用回执均 fail closed。统一 Chat API 的活动入口和旧图清理已明确转入 Task 7/Task 9。
+- 关联提交：待 Task 6 提交后补充提交号；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+
+## ISS-20260902-030 Task 6 审批令牌篡改测试修改了 Base64 非有效位
+
+- 发现日期：2026-09-02
+- 状态：已关闭
+- 优先级：P2
+- 现象：篡改签名测试只替换 Base64 字符串最后一位，该位置在无填充 Base64 解码后不影响实际签名字节，因此未触发签名校验失败。
+- 影响：测试无法有效证明审批令牌被篡改时会被拒绝，造成审批专项回归误报。
+- 根因：测试夹具没有修改签名的有效编码位。
+- 修复方案：替换签名首字符，确保解码后的签名字节发生变化；不调整 HMAC 校验实现。
+- 验证结果：审批专项测试改为断言稳定幂等身份字段，保留动态过期时间；审批门禁测试通过。
+- 关联提交：包含在 Task 6 提交中。
+
+## ISS-20260902-029 Task 6 幂等提案测试错误比较动态过期时间
+
+- 发现日期：2026-09-02
+- 状态：已关闭
+- 优先级：P2
+- 现象：审批门禁测试直接比较两次生成的完整 `ActionProposal`，因 `expires_at` 按生成时刻动态变化而失败。
+- 影响：测试误报提案不幂等，掩盖了实际稳定的动作身份字段。
+- 根因：测试未区分稳定幂等字段和动态安全字段。
+- 修复方案：仅断言 `proposal_id`、`action_hash`、`idempotency_key` 和动作内容稳定；保留每次提案有效期独立计算。
+- 验证结果：篡改测试修改签名首个有效 Base64 字符，HMAC 签名校验测试通过；审批专项 5 项及跨阶段 102 项测试通过。
+- 关联提交：包含在 Task 6 提交中。
 
 ## ISS-20260902-027 Task 5 缺失证据场景断言未匹配实际限制文案
 
