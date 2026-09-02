@@ -66,6 +66,54 @@
 - 验证结果：重启本地 Vite 前端后，服务返回最新模块；登录态 Chrome 重新打开供应商库和画像页，页面与工作区源码一致。
 - 关联提交：`10c4e888`。
 
+## ISS-20260902-034 Task 8 P0 Harness 临时工具缺少描述导致测试收集后执行失败
+
+- 发现日期：2026-09-02
+- 状态：已修复
+- 优先级：P1
+- 现象：执行新增的固定 P0 Agent Harness 场景时，LangChain `@tool` 无法构造临时监控工具，报错 `Function must have a docstring if description not provided`。
+- 影响：人工审批和幂等写操作场景无法执行，Task 8 的 P0 质量门槛无法完成验证。
+- 根因：测试夹具中的临时工具函数仅声明了参数和返回值，没有提供 LangChain 所需的函数描述。
+- 修复方案：为所有测试内临时工具补充明确 docstring，并重新运行 P0 Harness、Agent E2E 和后端相关回归；若发现新的根因，继续补充本条或新增问题。
+- 验证结果：P0 定向回归 4 项通过；完整 Agent E2E 13 项通过；非集成后端回归 539 项通过；Python 编译检查和 `git diff --check` 通过。
+- 关联提交：Task 8 实现提交（待提交后回填）。
+
+## ISS-20260902-035 Task 8 严格工具输出场景漏传空参数
+
+- 发现日期：2026-09-02
+- 状态：已修复
+- 优先级：P1
+- 现象：P0 严格工具输出场景调用 `ToolExecutor.execute` 时未传入必需的 `arguments` 参数，测试在执行前报 `missing 1 required positional argument: 'arguments'`。
+- 影响：非法工具输出契约校验场景无法进入 ToolExecutor，P0 质量门槛验证被测试夹具自身阻断。
+- 根因：测试夹具将无参工具误写成省略参数的执行调用；ToolExecutor 的统一接口要求所有工具调用显式传入参数字典。
+- 修复方案：为无参工具传入 `{}`，并重新运行 P0 Harness 及相关 Agent E2E 回归。
+- 验证结果：P0 定向回归 4 项通过；完整 Agent E2E 13 项通过；非集成后端回归 539 项通过；Python 编译检查和 `git diff --check` 通过。
+- 关联提交：Task 8 实现提交（待提交后回填）。
+
+## ISS-20260902-036 Task 8 超时场景误将 ToolContext 作为工具参数
+
+- 发现日期：2026-09-02
+- 状态：已修复
+- 优先级：P1
+- 现象：P0 超时重试场景执行结果为 `invalid_input`，工具调用次数为 0，而不是预期的两次超时重试。
+- 影响：无法验证 ToolExecutor 对超时的有限重试和 `unavailable` 收口。
+- 根因：测试夹具调用 `execute(tool_name, ToolContext(...))`，将上下文对象传到了第二个参数；统一接口实际要求第二个参数为 arguments，第三个参数才是 context。
+- 修复方案：显式传入 `{}` 并将 `ToolContext` 作为第三个参数，重新运行 P0 Harness 和 Agent E2E 回归。
+- 验证结果：P0 定向回归 4 项通过；完整 Agent E2E 13 项通过；非集成后端回归 539 项通过；Python 编译检查和 `git diff --check` 通过。
+- 关联提交：Task 8 实现提交（待提交后回填）。
+
+## ISS-20260902-037 Task 8 真实 SSE Harness 场景错误收集异步生成器
+
+- 发现日期：2026-09-02
+- 状态：已修复
+- 优先级：P1
+- 现象：真实 Harness SSE 适配器回归在收集事件时报 `async_generator object is not iterable`。
+- 影响：无法验证统一 Runtime 经 SSE 适配器发出 `agent_answer`、`evidence` 和终态 `done` 事件。
+- 根因：测试夹具使用普通列表推导遍历异步生成器，没有在异步函数内使用 `async for`。
+- 修复方案：改为异步收集事件后再执行同步断言，重新运行 P0 Harness 和完整 Agent E2E 回归。
+- 验证结果：P0 定向回归 4 项通过；完整 Agent E2E 13 项通过；非集成后端回归 539 项通过；Python 编译检查和 `git diff --check` 通过。
+- 关联提交：Task 8 实现提交（待提交后回填）。
+
 ## ISS-20260901-016 风险历史版本列表存在 React key 告警
 
 - 发现日期：2026-09-01

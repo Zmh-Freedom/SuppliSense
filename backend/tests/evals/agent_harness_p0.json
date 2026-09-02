@@ -1,0 +1,20 @@
+{
+  "version": "agent-harness-p0-v1",
+  "scenarios": [
+    {"id": "recommendation-then-plural-risk", "description": "推荐供应商后对这两家进行风险分析"},
+    {"id": "plural-then-esg-sentiment", "description": "对上述供应商进行 ESG 和舆情分析"},
+    {"id": "explicit-new-entity", "description": "当前消息新出现企业时优先当前消息"},
+    {"id": "ambiguous-identity", "description": "同名或身份不明确时要求人工选择"},
+    {"id": "discovery-provider-order", "description": "本地不足后依次进入天眼查和联网发现"},
+    {"id": "missing-risk-not-low", "description": "缺少风险数据时不得输出低风险"},
+    {"id": "conflicting-evidence-review", "description": "多来源冲突时转人工复核"},
+    {"id": "provider-timeout-one-retry", "description": "提供方超时后只重试一次"},
+    {"id": "watchlist-human-approval", "description": "加入监控必须等待人工确认"},
+    {"id": "restart-approval-recovery", "description": "后端重启后继续审批恢复"},
+    {"id": "approval-idempotency", "description": "重复确认只产生一次业务写入"},
+    {"id": "session-concurrency-isolation", "description": "同会话并发请求不污染工具消息"},
+    {"id": "postgres-commit-failure", "description": "PostgreSQL 提交失败时不得返回完成"},
+    {"id": "invalid-tool-output", "description": "工具非法输出被 schema 拒绝"},
+    {"id": "unsupported-llm-claim", "description": "LLM 无证据企业、数字或结论被拒绝"}
+  ]
+}
