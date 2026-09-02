@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1-3 已完成，Task 4 待实施
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1-4 已完成，Task 5 待实施
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
@@ -496,12 +496,12 @@ Scenario
 
 ### Task 4：实现 Evidence Ledger、Claim Validator 与 AgentAnswer（P0）
 
-- [ ] 标准化 Evidence 状态、来源、时间、数据模式和原始引用。
-- [ ] 建立 Claim-Evidence 绑定、冲突和覆盖度校验。
-- [ ] 实现 AgentAnswer 渲染和模型摘要约束。
-- [ ] 禁止缺失数据按零风险处理，隔离 synthetic 结论。
+- [x] 标准化 Evidence 状态、来源、时间、数据模式和原始引用。
+- [x] 建立 Claim-Evidence 绑定、冲突和覆盖度校验。
+- [x] 实现 AgentAnswer 渲染和模型摘要约束。
+- [x] 禁止缺失数据按零风险处理，隔离 synthetic 结论。
 
-验收：所有确定性数字、等级和事实均可追溯；无依据结论率为 0。
+验收：所有确定性数字、等级和事实均可追溯；无依据结论率为 0。已通过 91 项证据、答案、上下文、工具和 Agent Run/API 定向测试。统一 Harness 的活动路径接入留待 Task 5。
 
 ### Task 5：实现唯一 LangGraph Harness Runtime（P0）
 

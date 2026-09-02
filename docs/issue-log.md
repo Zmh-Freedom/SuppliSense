@@ -849,14 +849,18 @@
 ## ISS-20260901-023 真实性与证据校验只覆盖部分执行路径
 
 - 发现日期：2026-09-01
-- 状态：已纳入 Harness Task 4 和 Task 5，待实施
+- 状态：Task 4 已验证，已提交
 - 优先级：P0
 - 现象：Agent Supervisor 已有 `EvidenceItem`、冲突合并和覆盖度门禁，但普通 ReAct、Sourcing、Plan-Execute、旧 Supervisor 和 Parallel 仍可直接由模型基于原始工具结果生成答案；部分 Supervisor 证据的 `source_type`、`freshness` 和 `confidence` 为适配器硬编码，未由真实提供方回执推导。
 - 影响：用户从默认 `auto` 入口获得的回答不一定经过同一真实性门禁；形式上存在 evidence ID 也不能证明来源、新鲜度和结论之间真实一致。
 - 根因：证据契约是在 V2/Supervisor 中后置建设，尚未下沉为所有工具和最终回答必须经过的统一 Claim-Evidence Ledger。
 - 修复方案：将原始工具结果先标准化为带来源、采集时间、数据模式、覆盖状态和校验状态的 Evidence；结论必须形成 Claim 并引用 Evidence；最终回答只由已验证的 `AnswerContract` 渲染，缺失、冲突和过期证据不得输出确定性结论。
 - 验证结果：静态审计确认真实性校验仅在 Agent Supervisor/V2 节点强制执行；ReAct 流式路径只对历史准入成功措辞设置了专项文本保护，不具备通用事实声明校验。
-- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+- 实施前补充发现：现有 `EvidenceItem` 仅覆盖 Supervisor/V2 的局部流程，ReAct、Plan-Execute 和兼容路径没有统一 Claim-Evidence Ledger；`missing`、`unavailable`、`confirmed_empty`、`stale`、`conflicting` 和 `synthetic` 尚未形成统一判定契约。
+- 首轮复核补充发现：Task 4 测试夹具让支持 Claim 与缺失证据 Claim 复用了同一 `claim_id`，导致断言错误期待被过滤的 Claim 仍进入最终答案；实际过滤行为符合契约。
+- 修复结果：新增 `EvidenceRecord`、`EvidenceLedger`、`Claim`、`ValidatedClaim` 和 `AgentAnswer`；统一区分可用、确认为空、缺失、不可用、过期、冲突和合成数据；Claim 必须匹配实体、维度和有效 Evidence；unsupported Claim 不进入最终事实列表，缺失/冲突/合成数据不产生确定性完成结论。
+- 验证结果：证据、答案、上下文、工具和 Agent Run/API 共 91 项定向测试通过；Python 编译检查和 `git diff --check` 通过。统一 Harness 活动路径接入留待 Task 5。
+- 关联提交：`7edb24b8`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260901-024 Agent E2E 与 Eval 尚不能充当 Harness 发布门槛
 
