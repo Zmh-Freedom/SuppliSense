@@ -18,18 +18,13 @@ def _collect_events(response) -> list[str]:
     return asyncio.run(collect())
 
 
-def _enable_legacy_chat_compat(monkeypatch) -> None:
-    monkeypatch.setattr(chat_api.settings, "DEBUG", True)
-    monkeypatch.setattr(chat_api.settings, "AGENT_CHAT_LEGACY_COMPAT_ENABLED", True)
+def test_all_read_only_chat_modes_use_harness() -> None:
+    for mode in ("auto", "harness", "react", "plan-execute", "multi-agent", "sourcing", "parallel"):
+        assert chat_api._select_chat_stream(mode, requested_action="none") is chat_api._langgraph_harness_stream
 
 
-def test_legacy_chat_mode_requires_dev_compatibility_switch(monkeypatch) -> None:
-    monkeypatch.setattr(chat_api.settings, "DEBUG", False)
-    monkeypatch.setattr(chat_api.settings, "AGENT_CHAT_LEGACY_COMPAT_ENABLED", False)
-    assert chat_api._select_chat_stream("react", requested_action="none") is chat_api._langgraph_harness_stream
-
-    _enable_legacy_chat_compat(monkeypatch)
-    assert chat_api._select_chat_stream("react", requested_action="none") is chat_api._langgraph_react_stream
+def test_write_action_keeps_durable_approval_entry() -> None:
+    assert chat_api._select_chat_stream("auto", requested_action="add_watchlist") is chat_api._langgraph_agent_supervisor_stream
 
 
 def test_structured_context_suppresses_company_clarification() -> None:
@@ -50,7 +45,6 @@ def test_clarification_exposes_explicit_target_field() -> None:
 
 
 def test_chat_resolves_context_before_clarification_for_explicit_mode(monkeypatch) -> None:
-    _enable_legacy_chat_compat(monkeypatch)
     calls: list[str] = []
 
     monkeypatch.setattr(
@@ -71,7 +65,7 @@ def test_chat_resolves_context_before_clarification_for_explicit_mode(monkeypatc
         calls.append("stream")
         yield 'event: done\ndata: {"answer": "ok"}\n\n'
 
-    monkeypatch.setattr(chat_api, "_langgraph_react_stream", stream)
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", stream)
     response = asyncio.run(
         chat_api.chat_stream_endpoint(
             chat_api.ChatRequest(message="分析风险", session_id="context-run", mode="react"),
@@ -86,7 +80,6 @@ def test_chat_resolves_context_before_clarification_for_explicit_mode(monkeypatc
 
 
 def test_chat_passes_one_execution_context_snapshot_to_selected_graph(monkeypatch) -> None:
-    _enable_legacy_chat_compat(monkeypatch)
     context = {
         "history": [{"role": "assistant", "content": "已找到甲公司"}],
         "references": [{"name": "甲公司", "result_id": "result-1", "candidate_type": "local"}],
@@ -105,7 +98,7 @@ def test_chat_passes_one_execution_context_snapshot_to_selected_graph(monkeypatc
         assert execution_context is context
         yield 'event: done\ndata: {"answer": "ok"}\n\n'
 
-    monkeypatch.setattr(chat_api, "_langgraph_react_stream", stream)
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", stream)
     response = asyncio.run(
         chat_api.chat_stream_endpoint(
             chat_api.ChatRequest(message="分析甲公司的风险", session_id="snapshot-run", mode="react"),

@@ -109,9 +109,7 @@ def test_react_stream_emits_completed_workflow_status(monkeypatch) -> None:
     assert any(event.startswith("event: done") for event in events)
 
 
-def test_chat_endpoint_reuses_one_context_snapshot_for_sourcing_mode(monkeypatch) -> None:
-    monkeypatch.setattr(chat_api.settings, "DEBUG", True)
-    monkeypatch.setattr(chat_api.settings, "AGENT_CHAT_LEGACY_COMPAT_ENABLED", True)
+def test_chat_endpoint_reuses_one_context_snapshot_for_legacy_sourcing_mode(monkeypatch) -> None:
     context = {
         "history": [],
         "references": [{"name": "甲电机有限公司"}],
@@ -129,7 +127,7 @@ def test_chat_endpoint_reuses_one_context_snapshot_for_sourcing_mode(monkeypatch
         assert execution_context is context
         yield 'event: done\ndata: {"answer": "已完成"}\n\n'
 
-    monkeypatch.setattr(chat_api, "_langgraph_sourcing_stream", stream)
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", stream)
     response = asyncio.run(chat_api.chat_stream_endpoint(
         chat_api.ChatRequest(message="推荐电机供应商", session_id="agent-e2e-context", mode="sourcing"),
         SimpleNamespace(state=SimpleNamespace(user_id="")),

@@ -529,7 +529,7 @@ python -c 'from app.evals.sourcing_risk import run_sourcing_risk_evals; import j
 | `AGENT_RUN_V2_CANARY_PERCENT` | `0..100` | Canary 按 user ID 的稳定 SHA-256 bucket 放量 |
 | `AGENT_RUN_V2_ROLLOUT_STATE` | `active/rollback_frozen` | 回滚冻结时拒绝新 V2/Shadow 创建、恢复和审批；保留已有 Run/checkpoint/audit |
 
-聊天入口默认统一使用 Harness Runtime。旧 ReAct、Plan-Execute、Parallel 和旧 Supervisor 图仅用于开发期对照：必须同时设置 `DEBUG=true` 与 `AGENT_CHAT_LEGACY_COMPAT_ENABLED=true`，否则显式旧 mode 也会安全回落到 Harness；生产环境不要启用该兼容开关。审批恢复只读取 PostgreSQL 持久化元数据，后端重启后按 mode 重建图。
+聊天入口默认统一使用 Harness Runtime。只读请求不会再进入旧 ReAct、Plan-Execute、Parallel、旧 Supervisor、Sourcing 或 Reflection 图；涉及人工写操作的请求保留持久化 Agent Supervisor 审批入口。审批恢复只读取 PostgreSQL 持久化元数据，后端重启后重建审批图。
 
 | 阶段 | 创建/恢复 API | 用户响应 | 领域动作 | 放行条件 |
 |---|---|---|---|---|

@@ -8,104 +8,11 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.logging import get_logger
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = get_logger()
-
-
-async def _langgraph_react_stream(
-    session_id: str,
-    message: str,
-    preference_context: str = "",
-    execution_context: dict[str, Any] | None = None,
-):
-    """LangGraph ReAct 模式流式输出。"""
-    from app.graphs.react_graph import build_react_graph
-    from app.graphs.streaming import stream_react_graph
-    from app.graphs.agent_core.adapter import load_execution_context
-    from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
-
-    graph = build_react_graph(
-        preference_context,
-        checkpointer=await get_sourcing_risk_checkpointer(),
-    )
-    context = execution_context or load_execution_context(session_id, message)
-    # 传入 config 用于 Human-in-the-Loop 恢复
-    from app.graphs.chat_checkpoint import chat_checkpoint_config
-
-    run_config = chat_checkpoint_config(session_id, "react")
-    async for event in stream_react_graph(
-        graph,
-        message,
-        session_id,
-        context["history"],
-        run_config,
-        context["references"],
-        context,
-    ):
-        yield event
-
-
-async def _langgraph_plan_execute_stream(
-    session_id: str,
-    message: str,
-    preference_context: str = "",
-    execution_context: dict[str, Any] | None = None,
-):
-    """LangGraph Plan-Execute 模式流式输出。"""
-    from app.graphs.plan_execute_graph import stream_plan_execute_graph
-    from app.graphs.agent_core.adapter import load_execution_context
-
-    context = execution_context or load_execution_context(session_id, message)
-    async for event in stream_plan_execute_graph(
-        message,
-        session_id,
-        context["history"],
-        preference_context,
-        context["references"],
-        context,
-    ):
-        yield event
-
-
-async def _langgraph_supervisor_stream(
-    session_id: str,
-    message: str,
-    preference_context: str = "",
-    execution_context: dict[str, Any] | None = None,
-):
-    """LangGraph Supervisor 多智能体模式流式输出。"""
-    from app.graphs.supervisor_graph import stream_supervisor_graph
-    from app.graphs.agent_core.adapter import load_execution_context
-
-    context = execution_context or load_execution_context(session_id, message)
-    async for event in stream_supervisor_graph(
-        message,
-        session_id,
-        context["history"],
-        preference_context,
-        context["references"],
-        context,
-    ):
-        yield event
-
-
-async def _langgraph_sourcing_stream(
-    session_id: str,
-    message: str,
-    preference_context: str = "",
-    execution_context: dict[str, Any] | None = None,
-):
-    """LangGraph Sourcing 寻源子图流式输出。"""
-    from app.graphs.agents.sourcing import stream_sourcing_graph
-
-    async for event in stream_sourcing_graph(
-        session_id, message, preference_context, execution_context
-    ):
-        yield event
 
 
 async def _langgraph_agent_supervisor_stream(
@@ -133,7 +40,7 @@ async def _langgraph_agent_supervisor_stream(
         context = execution_context or load_execution_context(session_id, message)
     except Exception:
         # Conversation references are an enhancement; an unavailable MongoDB
-        # must not alter the Supervisor's existing read-only execution path.
+        # must not turn the write request into an unbound action.
         context = {
             "history": [],
             "references": [],
@@ -189,7 +96,7 @@ async def _langgraph_harness_stream(
     preference_context: str = "",
     execution_context: dict[str, Any] | None = None,
 ):
-    """Unified Harness Runtime stream; legacy graphs remain explicit fallbacks."""
+    """Unified Harness Runtime stream for all read-only chat requests."""
     del preference_context
 
     from app.graphs.agent_core.adapter import load_execution_context
@@ -209,64 +116,10 @@ async def _langgraph_harness_stream(
         yield event
 
 
-async def _langgraph_parallel_stream(
-    session_id: str,
-    message: str,
-    preference_context: str = "",
-    execution_context: dict[str, Any] | None = None,
-):
-    """LangGraph Parallel 并行多 Agent Map-Reduce 流式输出。"""
-    from app.graphs.parallel_graph import stream_parallel_graph
-    from app.graphs.agent_core.adapter import load_execution_context
-
-    context = execution_context or load_execution_context(session_id, message)
-    async for event in stream_parallel_graph(
-        message,
-        session_id,
-        context["history"],
-        preference_context,
-        context["references"],
-        context,
-    ):
-        yield event
-
-
-async def _langgraph_react_reflection_stream(
-    session_id: str,
-    message: str,
-    preference_context: str = "",
-    execution_context: dict[str, Any] | None = None,
-):
-    """LangGraph ReAct + Self-Reflection 流式输出。"""
-    from app.graphs.react_graph import build_react_graph_with_reflection
-    from app.graphs.streaming import stream_react_graph
-    from app.graphs.agent_core.adapter import load_execution_context
-    from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
-
-    graph = build_react_graph_with_reflection(
-        preference_context,
-        checkpointer=await get_sourcing_risk_checkpointer(),
-    )
-    context = execution_context or load_execution_context(session_id, message)
-    from app.graphs.chat_checkpoint import chat_checkpoint_config
-
-    run_config = chat_checkpoint_config(session_id, "react-reflection")
-    async for event in stream_react_graph(
-        graph,
-        message,
-        session_id,
-        context["history"],
-        run_config,
-        context["references"],
-        context,
-    ):
-        yield event
-
-
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
-    mode: str = "auto"  # auto/harness use Harness; old modes require the development compatibility switch
+    mode: str = "auto"  # auto/harness use Harness; agent-supervisor is the write-approval compatibility entry
 
 
 class ResumeRequest(BaseModel):
@@ -283,85 +136,22 @@ async def _rebuild_paused_graph(paused: dict[str, Any]):
         from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
 
         return build_agent_supervisor_graph(await get_sourcing_risk_checkpointer())
-    if mode == "react":
-        from app.graphs.react_graph import build_react_graph
-
-        return build_react_graph(checkpointer=await get_sourcing_risk_checkpointer())
-    if mode == "react-reflection":
-        from app.graphs.react_graph import build_react_graph_with_reflection
-
-        return build_react_graph_with_reflection(
-            checkpointer=await get_sourcing_risk_checkpointer()
-        )
-    if mode == "sourcing":
-        from app.graphs.agents.sourcing import build_sourcing_graph
-
-        return build_sourcing_graph(await get_sourcing_risk_checkpointer())
-    if mode == "plan-execute":
-        from app.graphs.plan_execute_graph import build_plan_execute_graph
-
-        return build_plan_execute_graph()
-    if mode == "supervisor":
-        from app.graphs.supervisor_graph import build_supervisor_graph
-
-        return build_supervisor_graph()
-    if mode == "parallel":
-        from app.graphs.parallel_graph import build_parallel_graph
-
-        return build_parallel_graph(enable_reflection=True)
     raise ValueError(f"无法重建审批恢复图: {mode or 'unknown'}")
 
 
 _CHAT_MODE_ALIASES = {
     "harness": "langgraph-harness",
-    "react": "langgraph-react",
-    "plan-execute": "langgraph-plan-execute",
-    "multi-agent": "langgraph-multi-agent",
-    "sourcing": "langgraph-sourcing",
-    "parallel": "langgraph-parallel",
-    "react-reflection": "langgraph-react-reflection",
     "agent-supervisor": "langgraph-agent-supervisor",
 }
-_LEGACY_CHAT_MODES = {
-    "langgraph-react",
-    "langgraph-plan-execute",
-    "langgraph-multi-agent",
-    "langgraph-sourcing",
-    "langgraph-parallel",
-    "langgraph-react-reflection",
-}
-
-
-def _legacy_chat_compat_enabled() -> bool:
-    """Allow old graph comparison only in an explicitly enabled dev process."""
-    return settings.DEBUG and settings.AGENT_CHAT_LEGACY_COMPAT_ENABLED
 
 
 def _select_chat_stream(mode: str, *, requested_action: str) -> Any:
-    """Resolve one chat stream entrypoint with Harness as the safe default."""
+    """Resolve chat to Harness, retaining only the durable write boundary."""
     normalized_mode = _CHAT_MODE_ALIASES.get(mode, mode)
-    if normalized_mode in {"", "auto", "langgraph-harness"}:
-        if requested_action != "none":
-            return _langgraph_agent_supervisor_stream
-        return _langgraph_harness_stream
-    if normalized_mode == "langgraph-agent-supervisor":
+    if requested_action != "none" or normalized_mode == "langgraph-agent-supervisor":
         return _langgraph_agent_supervisor_stream
-    legacy_streams = {
-        "langgraph-react": _langgraph_react_stream,
-        "langgraph-plan-execute": _langgraph_plan_execute_stream,
-        "langgraph-multi-agent": _langgraph_supervisor_stream,
-        "langgraph-sourcing": _langgraph_sourcing_stream,
-        "langgraph-parallel": _langgraph_parallel_stream,
-        "langgraph-react-reflection": _langgraph_react_reflection_stream,
-    }
-    if normalized_mode in _LEGACY_CHAT_MODES and _legacy_chat_compat_enabled():
-        return legacy_streams[normalized_mode]
-    if normalized_mode in _LEGACY_CHAT_MODES:
-        logger.info(
-            "chat_legacy_mode_normalized_to_harness",
-            requested_mode=mode,
-            compatibility_enabled=False,
-        )
+    if normalized_mode not in {"", "auto", "langgraph-harness"}:
+        logger.info("chat_legacy_mode_removed", requested_mode=mode)
     return _langgraph_harness_stream
 
 
@@ -384,7 +174,7 @@ def _optional_agent_user_id(request: Request) -> str:
 @router.post(
     "/stream",
     summary="AI 智能对话（流式 SSE）",
-    description="以 Server-Sent Events 流式返回 AI 智能体的对话响应。支持多种执行模式。",
+    description="以 Server-Sent Events 流式返回统一 Harness 的只读分析响应；写操作进入人工审批流程。",
     responses={
         400: {"description": "请求参数错误"},
         500: {"description": "服务器内部错误"},
@@ -471,8 +261,6 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
             # Resolve mode only after target resolution and fallback clarification.
             mode = req.mode
-            if mode == "auto":
-                mode = "langgraph-harness"
             requested_action = str(
                 (execution_context.get("llm_intent") or {}).get("requested_action") or "none"
             )

@@ -385,12 +385,7 @@ def test_composite_chat_auto_mode_invokes_harness_stream(
         assert execution_context["current_task"]["target_supplier_names"] == ["华东电机有限公司"]
         yield 'event: done\ndata: {"answer": "harness"}\n\n'
 
-    async def unexpected_stream(*_args):
-        raise AssertionError("composite request used a legacy stream")
-        yield  # pragma: no cover
-
     monkeypatch.setattr(chat_api, "_langgraph_harness_stream", harness_stream)
-    monkeypatch.setattr(chat_api, "_langgraph_react_stream", unexpected_stream)
     monkeypatch.setattr(
         "app.services.clarification.detect_clarification_needed", lambda *_args, **_kwargs: None
     )

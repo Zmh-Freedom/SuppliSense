@@ -523,10 +523,10 @@ Scenario
 
 ### Task 7：统一 Chat API、SSE 与前端工作台（P1）
 
-- [x] `/chat/stream` 默认只进入 Harness Runtime；涉及写动作时暂保留显式兼容路径。
+- [x] `/chat/stream` 默认只进入 Harness Runtime；涉及写动作时暂保留持久化 Agent Supervisor 兼容路径。
 - [x] 统一 SSE 事件和恢复消费协议，新增 `agent_answer`、`evidence` 事件并兼容现有 `/resume`。
 - [x] 前端直接展示 AgentAnswer、Evidence、状态和回执摘要。
-- [x] 保留旧入口为短期显式回退，普通 `auto` 不再按意图路由到旧图。
+- [x] 短期回退观察完成后移除 Chat API 中的旧只读活动入口，普通 `auto` 和旧 mode 均进入 Harness。
 
 当前验收：后端全量 781 项、前端 51 项测试通过，Harness SSE 契约、结构化答案、证据事件和旧模式回退均已覆盖；真实浏览器多轮寻源、风险、证据查看和监控审批闭环待 Task10 验收。
 
@@ -541,12 +541,12 @@ Scenario
 
 ### Task 9：切换默认入口并清理重复路径（P1）
 
-- [x] 使用 `DEBUG=true` + `AGENT_CHAT_LEGACY_COMPAT_ENABLED=true` 对照旧入口和新 Harness；默认关闭兼容开关。
+- [x] 在短期观察阶段完成旧入口与新 Harness 对照；观察结束后移除旧聊天兼容开关。
 - [x] P0 Harness 通过后将 `auto` 及未授权旧 mode 收敛到唯一 Harness Runtime；涉及人工写操作的 `agent-supervisor` 保留为持久化审批兼容入口。
-- [ ] 完成短期回退验证后删除旧 ReAct/Plan-Execute/Parallel/旧 Supervisor 活动图。
+- [x] 完成短期回退验证后删除旧 ReAct/Plan-Execute/Parallel/旧 Supervisor 的 Chat API 活动适配；底层历史图模块仅保留给不影响运行时的定向回归。
 - [x] 删除进程内审批图缓存；恢复入口直接消费 PostgreSQL 元数据并按 mode 重建图。
 
-当前验收：默认聊天路由只有 Harness；旧图仅在开发开关打开时可用于对照，写操作继续走持久化 Supervisor 审批路径；`interrupt_store` 不再缓存编译图。旧图文件及其专用流式适配仍待短期兼容观察结束后删除，避免在审批兼容入口完成迁移前造成回归。
+当前验收：默认聊天路由只有 Harness；只读旧 mode 不再有活动适配，写操作继续走持久化 Supervisor 审批路径；`interrupt_store` 不再缓存编译图。旧图源文件暂作为历史定向回归夹具保留，不再由 Chat API 选择或恢复。
 
 ### Task 10：浏览器验收、问题回填与文档收口（P2）
 
