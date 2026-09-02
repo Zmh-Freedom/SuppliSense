@@ -818,14 +818,18 @@
 ## ISS-20260901-021 会话实体记忆缺少稳定身份与作用域模型
 
 - 发现日期：2026-09-01
-- 状态：已纳入 Harness Task 1 和 Task 2，待实施
+- 状态：Task 2 已验证，已提交
 - 优先级：P0
 - 现象：供应商引用主要按名称去重，加载会话时会以最近一条助手消息的引用覆盖会话累计引用；实体没有统一的 canonical identity、提及轮次、焦点状态、来源证据和失效策略。
 - 影响：多轮对话中“这两家/上述企业/分别评估”等指代可能因最近一次回答、自然语言提取或名称变体而丢失、串线或错误扩展；同名企业和外部待核验候选尤其不稳定。
 - 根因：当前 `SupplierReference` 同时承担展示卡片、会话焦点和业务身份载体，Mongo 会话文档也同时保存累计引用与最近引用，但缺少明确的实体记忆分层和归并规则。
 - 修复方案：引入 `EntityMemory` 契约，区分 canonical entity、mention、focus set、candidate identity 与 display snapshot；所有解析输出必须绑定实体 ID 或明确标记 `pending_verification`，并采用版本化状态更新而非最近回答覆盖。
 - 验证结果：静态审计确认 `_load_conversation_context()` 在存在最近助手引用时替换累计引用；现有多轮 Eval 仅覆盖固定名称和少量代词规则，没有覆盖同名、别名漂移、焦点切换、跨任务恢复和外部候选转正等场景。
-- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+- 实施前补充发现：Task 1 已建立 `agent_entities` 控制面表，但当前解析链仍只向图传递名称列表，未生成稳定实体 ID、Mention 和 FocusSet；Mongo 读取路径仍存在“最近助手引用覆盖累计引用”的活动行为。
+- 首轮复核补充发现：Task 2 初版正则会把“对”带入公司名；别名和供应商代码未完整并入同一目标集合；未知 LLM 候选的 Mention 类型可能误标为显式名称；持久化实现引用了尚未加入内存契约的 `focus_rank` 字段。
+- 修复结果：新增 `EntityMemory`、`EntityMention`、`FocusSet` 和确定性 `resolve_turn`；显式当前企业、别名、供应商代码优先，单复数/序数引用只读取上一轮焦点；未知 LLM 名称保持 `pending_verification`；累计助手引用改为合并；实体记忆可通过 PostgreSQL `agent_entities` 和会话版本原子持久化。
+- 验证结果：实体记忆、上下文、适配器、控制面和 Agent Run/API/Service/Model 共 131 项定向测试通过；PostgreSQL 实体记忆集成测试、Python 编译检查和 `git diff --check` 通过。
+- 关联提交：`72f367b1`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
 
 ## ISS-20260901-022 Agent 工具缺少统一结果信封与写操作执行策略
 

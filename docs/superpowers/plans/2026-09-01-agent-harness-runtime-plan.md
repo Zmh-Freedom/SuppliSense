@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1 已完成，Task 2 待实施
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1-2 已完成，Task 3 待实施
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
@@ -478,12 +478,12 @@ Scenario
 
 ### Task 2：实现统一实体记忆与 Turn Resolver（P0）
 
-- [ ] 实现 EntityMemory、Mention、FocusSet 和身份状态。
-- [ ] 实现显式名称、供应商代码、别名、单复数指代和序数解析。
-- [ ] LLM 解析只返回候选，确定性 Resolver 完成绑定。
-- [ ] 删除“最近助手引用覆盖累计状态”的活动行为。
+- [x] 实现 EntityMemory、Mention、FocusSet 和身份状态。
+- [x] 实现显式名称、供应商代码、别名、单复数指代和序数解析。
+- [x] LLM 解析只返回候选，确定性 Resolver 完成绑定。
+- [x] 删除“最近助手引用覆盖累计状态”的活动行为。
 
-验收：P0 多轮实体场景 100% 通过；新会话不继承旧焦点。
+验收：P0 多轮实体场景 100% 通过；新会话不继承旧焦点。已通过实体记忆、上下文、适配器、控制面和 Agent Run/API/Service/Model 共 131 项定向测试，并通过 PostgreSQL 实体记忆持久化集成测试。
 
 ### Task 3：实现 Tool Registry 与 ToolExecutor（P0）
 

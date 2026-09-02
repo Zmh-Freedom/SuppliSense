@@ -34,7 +34,7 @@ def _dedupe_references(references: list[dict[str, Any]]) -> list[dict[str, Any]]
             "contact_status", "website_url_source", "contact_phone_source",
             "contact_email_source", "discovery_source", "candidate_id",
             "result_id", "candidate_type", "identity_status", "company_id",
-            "risk_level", "risk_score",
+            "supplier_id", "supplier_code", "aliases", "risk_level", "risk_score",
         ):
             if not existing.get(field) and reference.get(field):
                 existing[field] = reference[field]
@@ -72,7 +72,7 @@ def extract_supplier_references(value: Any, tool_name: str = "") -> list[dict[st
                         "contact_phone", "contact_phone_source", "contact_email",
                         "contact_email_source", "contact_status", "candidate_id",
                         "result_id", "candidate_type", "identity_status", "company_id",
-                        "risk_level", "risk_score",
+                        "supplier_id", "supplier_code", "aliases", "risk_level", "risk_score",
                     ):
                         if item.get(field):
                             reference["discovery_source" if field == "source" else field] = item[field]
@@ -109,26 +109,22 @@ def _load_conversation_context(session_id: str) -> dict[str, Any]:
         for reference in doc.get("references", [])
         if isinstance(reference, dict) and isinstance(reference.get("name"), str)
     ])
-    # Prefer the structured references saved with the most recent assistant turn.
-    # This keeps tool output (including contact evidence) stable and avoids
-    # losing references when the natural-language answer omits company names.
-    recent_references: list[dict[str, Any]] = []
-    for message in reversed(messages):
+    # Merge references from every assistant turn.  The current focus is
+    # resolved separately; a recent answer must never erase prior entities.
+    historical_references: list[dict[str, Any]] = []
+    for message in messages:
         if message["role"] != "assistant":
             continue
         saved_references = message.get("references")
         if isinstance(saved_references, list):
-            recent_references = _dedupe_references([
+            historical_references.extend(
                 reference for reference in saved_references if isinstance(reference, dict)
-            ])
-        if not recent_references and isinstance(message.get("content"), str):
-            recent_references = extract_supplier_references(
-                message["content"], "conversation_history"
             )
-        if recent_references:
-            break
-    if recent_references:
-        references = _dedupe_references(recent_references)
+        elif isinstance(message.get("content"), str):
+            historical_references.extend(
+                extract_supplier_references(message["content"], "conversation_history")
+            )
+    references = _dedupe_references([*references, *historical_references])
     state = doc.get("conversation_state")
     return {
         "history": history,
@@ -163,6 +159,24 @@ def _save_turn(
 
         conversation_state = build_conversation_state(
             user_msg, normalized_references, previous_state, session_id=session_id
+        )
+        from app.graphs.agent_core.entity_memory import memory_from_state, resolve_turn
+
+        entity_resolution = resolve_turn(
+            user_msg,
+            session_id=session_id,
+            turn_id=f"mongo-turn:{now.isoformat()}",
+            previous_memory=memory_from_state(previous_state, session_id=session_id),
+            references=normalized_references,
+        )
+        conversation_state["entity_memory"] = entity_resolution.memory.model_dump(mode="json")
+        conversation_state["focus_set"] = (
+            entity_resolution.focus_set.model_dump(mode="json")
+            if entity_resolution.focus_set
+            else None
+        )
+        conversation_state["entity_resolution"] = entity_resolution.model_dump(
+            mode="json", exclude={"memory", "focus_set"}
         )
         assistant_message: dict[str, Any] = {
             "role": "assistant", "content": assistant_msg,

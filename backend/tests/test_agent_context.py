@@ -209,7 +209,7 @@ def test_react_graph_hard_routes_unambiguous_local_access_request():
     assert "仅支持供应商推荐和加入风险监控" in forced_call.content
 
 
-def test_load_conversation_context_prefers_latest_structured_references(monkeypatch):
+def test_load_conversation_context_merges_structured_references_across_turns(monkeypatch):
     class Conversations:
         def find_one(self, _query):
             return {
@@ -223,6 +223,12 @@ def test_load_conversation_context_prefers_latest_structured_references(monkeypa
                             {"name": "乙电机有限公司", "kind": "supplier", "source": "search_suppliers"},
                         ],
                     },
+                    {"role": "user", "content": "对甲电机做风险分析"},
+                    {
+                        "role": "assistant",
+                        "content": "甲电机风险已分析。",
+                        "references": [{"name": "甲电机有限公司", "kind": "supplier", "source": "risk"}],
+                    },
                 ],
                 "references": [{"name": "历史供应商有限公司", "kind": "supplier"}],
             }
@@ -232,7 +238,7 @@ def test_load_conversation_context_prefers_latest_structured_references(monkeypa
     context = agent._load_conversation_context("context-test")
 
     assert [reference["name"] for reference in context["references"]] == [
-        "甲电机有限公司", "乙电机有限公司",
+        "历史供应商有限公司", "甲电机有限公司", "乙电机有限公司",
     ]
 
 

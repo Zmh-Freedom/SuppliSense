@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, put_conn
 from app.domains.agent_run.state_store import SessionStateStore
+from app.graphs.agent_core.entity_memory import resolve_turn
 
 
 @contextmanager
@@ -43,6 +44,20 @@ def test_harness_control_plane_persists_session_turn_run_and_detects_stale_versi
         run = store.create_run(str(session.id), state={"task_type": "sourcing"})
         assert run.run_type == "agent_harness"
         assert run.session_id == session.id
+
+        memory = resolve_turn(
+            "对深圳市立创电子有限公司做风险分析",
+            session_id=str(session.id),
+            references=[{"name": "深圳市立创电子有限公司", "supplier_id": "supplier-1"}],
+        ).memory
+        persisted = store.upsert_entity_memory(
+            str(session.id),
+            expected_version=turn_commit.session.version,
+            memory=memory,
+        )
+        assert persisted is not None
+        assert persisted.version == 3
+        assert persisted.state["focus_set"]["entity_ids"]
     finally:
         with _connection() as (connection, cursor):
             cursor.execute("DELETE FROM agent_sessions WHERE id = %s", (str(session.id),))

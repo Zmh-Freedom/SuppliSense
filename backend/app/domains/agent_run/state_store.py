@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from psycopg2.extras import Json
 
@@ -17,6 +17,9 @@ from app.domains.agent_run.harness_contracts import (
     TurnStatus,
 )
 from app.domains.agent_run.repo import insert_run
+
+if TYPE_CHECKING:
+    from app.graphs.agent_core.entity_memory import EntityMemory
 
 
 def _row_to_dict(cur: PgCursor, row: tuple[Any, ...] | None) -> dict[str, Any] | None:
@@ -179,6 +182,80 @@ class SessionStateStore:
         if turn is None or updated_session is None:
             raise RuntimeError("Agent turn 持久化失败")
         return SessionTurnCommit(session=updated_session, turn=turn)
+
+    def upsert_entity_memory(
+        self,
+        session_id: str,
+        expected_version: int,
+        memory: EntityMemory,
+        *,
+        user_id: str | None = None,
+    ) -> AgentSession | None:
+        """Persist session-scoped entities and focus with one version transition."""
+        if memory.session_id and memory.session_id != session_id:
+            raise ValueError("EntityMemory 不属于当前会话")
+        with get_cursor() as (_, cur):
+            if user_id is None:
+                cur.execute("SELECT * FROM agent_sessions WHERE id = %s FOR UPDATE", (session_id,))
+            else:
+                cur.execute(
+                    "SELECT * FROM agent_sessions WHERE id = %s AND user_id = %s FOR UPDATE",
+                    (session_id, user_id),
+                )
+            session = _session_from_row(cur, cur.fetchone())
+            if session is None or session.version != expected_version:
+                return None
+
+            for entity in memory.entities:
+                entity_row_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"supplisense:entity:{entity.entity_id}"))
+                focus_rank = (
+                    memory.focus_set.entity_ids.index(entity.entity_id) + 1
+                    if memory.focus_set and entity.entity_id in memory.focus_set.entity_ids
+                    else None
+                )
+                cur.execute(
+                    """
+                    INSERT INTO agent_entities
+                        (id, session_id, entity_key, entity_type, display_name,
+                         canonical_id, status, mention_count, focus_rank, attributes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (session_id, entity_key) DO UPDATE SET
+                        entity_type = EXCLUDED.entity_type,
+                        display_name = EXCLUDED.display_name,
+                        canonical_id = EXCLUDED.canonical_id,
+                        status = EXCLUDED.status,
+                        mention_count = GREATEST(agent_entities.mention_count, EXCLUDED.mention_count),
+                        focus_rank = EXCLUDED.focus_rank,
+                        attributes = EXCLUDED.attributes,
+                        updated_at = NOW()
+                    """,
+                    (
+                        entity_row_id,
+                        session_id,
+                        entity.entity_id,
+                        entity.entity_type,
+                        entity.canonical_name,
+                        entity.attributes.get("supplier_id") or entity.attributes.get("company_id") or entity.attributes.get("candidate_id"),
+                        entity.identity_status.value,
+                        entity.mention_count,
+                        focus_rank,
+                        Json({"aliases": entity.aliases, "source_refs": entity.source_refs, **entity.attributes}),
+                    ),
+                )
+
+            state = dict(session.state)
+            state["entity_memory"] = memory.model_dump(mode="json")
+            state["focus_set"] = memory.focus_set.model_dump(mode="json") if memory.focus_set else None
+            cur.execute(
+                """
+                UPDATE agent_sessions
+                SET state = %s, version = version + 1, updated_at = NOW()
+                WHERE id = %s AND version = %s
+                RETURNING *
+                """,
+                (Json(state), session_id, expected_version),
+            )
+            return _session_from_row(cur, cur.fetchone())
 
     def create_run(
         self,

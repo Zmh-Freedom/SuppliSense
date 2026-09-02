@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.logging import get_logger
+from app.graphs.agent_core.entity_memory import memory_from_state, resolve_turn
 from app.graphs.agent_core.planner import plan_supplier_analysis_task
 from app.services.conversation_state import build_conversation_state
 
@@ -160,6 +161,14 @@ def apply_extracted_conversation_intent(
 
     conversation_state = dict(execution_context.get("conversation_state") or {})
     current_task = dict(execution_context.get("current_task") or {})
+    resolved = resolve_turn(
+        str(current_task.get("user_message") or ""),
+        session_id=str(execution_context.get("session_id") or ""),
+        previous_memory=memory_from_state(conversation_state, session_id=str(execution_context.get("session_id") or "")),
+        references=execution_context.get("references") or [],
+        llm_candidates=target_names,
+    )
+    target_names = resolved.target_supplier_names or target_names
     if target_names:
         current_task["target_supplier_names"] = target_names
         conversation_state["selected_supplier_names"] = target_names
@@ -168,6 +177,11 @@ def apply_extracted_conversation_intent(
         current_task["analysis_dimensions"] = dimensions
     if target_names or dimensions:
         current_task["task_type"] = "analysis"
+    conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
+    conversation_state["focus_set"] = resolved.focus_set.model_dump(mode="json") if resolved.focus_set else None
+    conversation_state["entity_resolution"] = resolved.model_dump(
+        mode="json", exclude={"memory", "focus_set"}
+    )
     if target_names and dimensions:
         planned = plan_supplier_analysis_task(
             task_id=str(current_task.get("task_id") or "current-task"),
@@ -204,7 +218,25 @@ def build_execution_context(
         previous_state,
         session_id=session_id,
     )
+    resolution = resolve_turn(
+        user_message,
+        session_id=session_id,
+        turn_id=str(previous_state.get("current_turn_id") or "current-turn") if isinstance(previous_state, dict) else "current-turn",
+        previous_memory=memory_from_state(previous_state, session_id=session_id),
+        references=normalized_references,
+    )
+    conversation_state["entity_memory"] = resolution.memory.model_dump(mode="json")
+    conversation_state["focus_set"] = resolution.focus_set.model_dump(mode="json") if resolution.focus_set else None
+    conversation_state["entity_resolution"] = resolution.model_dump(
+        mode="json", exclude={"memory", "focus_set"}
+    )
+    if resolution.target_supplier_names:
+        conversation_state["selected_supplier_names"] = resolution.target_supplier_names
+        conversation_state["selected_suppliers"] = resolution.target_supplier_names
     current_task = dict(conversation_state.get("current_task") or {})
+    if resolution.target_supplier_names:
+        current_task["target_supplier_names"] = resolution.target_supplier_names
+        current_task["task_type"] = "analysis" if current_task.get("analysis_dimensions") else current_task.get("task_type", "sourcing")
     targets = list(current_task.get("target_supplier_names") or [])
     dimensions = list(current_task.get("analysis_dimensions") or [])
     if current_task.get("task_type") == "analysis" and targets and dimensions:
