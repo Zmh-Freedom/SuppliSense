@@ -1,7 +1,7 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，待实施
+状态：当前唯一有效的 Agent 设计与实施计划，Task 1 已完成，Task 2 待实施
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
@@ -469,12 +469,12 @@ Scenario
 
 ### Task 1：冻结 Harness 核心契约与 PostgreSQL 控制面（P0）
 
-- [ ] 定义 Session、Turn、Run、Task、Entity、ToolCall、ActionProposal 契约。
-- [ ] 设计并迁移 PostgreSQL 表，优先复用现有 Agent Run 表和事件表。
-- [ ] 实现 `SessionStateStore`、状态版本和乐观锁。
-- [ ] 明确 Mongo 会话文档的兼容读取和退出路径。
+- [x] 定义 Session、Turn、Run、Task、Entity、ToolCall、ActionProposal 契约。
+- [x] 设计并迁移 PostgreSQL 表，优先复用现有 Agent Run 表和事件表。
+- [x] 实现 `SessionStateStore`、状态版本和乐观锁。
+- [x] 明确 Mongo 会话文档的兼容读取和退出路径。
 
-验收：状态模型可序列化、可迁移、可并发冲突检测；PostgreSQL 是唯一运行状态来源。
+验收：状态模型可序列化、可迁移、可并发冲突检测；PostgreSQL 是唯一运行状态来源。已通过 5 项离线契约测试、1 项 PostgreSQL 控制面集成测试，以及既有 Agent Run/API/Service/Model 97 项回归测试。
 
 ### Task 2：实现统一实体记忆与 Turn Resolver（P0）
 

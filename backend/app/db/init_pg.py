@@ -165,11 +165,25 @@ DDL_STATEMENTS = [
     )
     """,
 
-    # Agent run V2
+    # Agent Harness control plane
+    """
+    CREATE TABLE IF NOT EXISTS agent_sessions (
+        id UUID PRIMARY KEY,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'active',
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        state JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+
+    # Agent run V2 / Harness run
     """
     CREATE TABLE IF NOT EXISTS agent_runs (
         id UUID PRIMARY KEY,
-        run_type VARCHAR(32) NOT NULL CHECK (run_type = 'sourcing_risk_v2'),
+        session_id UUID REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        run_type VARCHAR(32) NOT NULL CHECK (run_type IN ('sourcing_risk_v2', 'agent_harness')),
         user_id UUID REFERENCES users(id) ON DELETE SET NULL,
         status VARCHAR(32) NOT NULL,
         version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
@@ -179,6 +193,84 @@ DDL_STATEMENTS = [
         error_code VARCHAR(64),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS session_id UUID",
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'agent_runs_session_id_fkey'
+              AND conrelid = 'agent_runs'::regclass
+        ) THEN
+            ALTER TABLE agent_runs
+            ADD CONSTRAINT agent_runs_session_id_fkey
+            FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE;
+        END IF;
+    END $$
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_turns (
+        id UUID PRIMARY KEY,
+        session_id UUID NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        turn_number INTEGER NOT NULL CHECK (turn_number > 0),
+        user_message TEXT NOT NULL,
+        assistant_message TEXT,
+        status VARCHAR(32) NOT NULL DEFAULT 'received',
+        request JSONB NOT NULL DEFAULT '{}',
+        response JSONB,
+        run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ,
+        UNIQUE (session_id, turn_number)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_tasks (
+        id UUID PRIMARY KEY,
+        session_id UUID NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        turn_id UUID REFERENCES agent_turns(id) ON DELETE SET NULL,
+        run_id UUID REFERENCES agent_runs(id) ON DELETE CASCADE,
+        task_type VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'pending',
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        payload JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_entities (
+        id UUID PRIMARY KEY,
+        session_id UUID NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        entity_key VARCHAR(255) NOT NULL,
+        entity_type VARCHAR(64) NOT NULL,
+        display_name VARCHAR(255) NOT NULL,
+        canonical_id VARCHAR(255),
+        status VARCHAR(32) NOT NULL DEFAULT 'pending_verification',
+        mention_count INTEGER NOT NULL DEFAULT 1 CHECK (mention_count > 0),
+        focus_rank INTEGER CHECK (focus_rank IS NULL OR focus_rank > 0),
+        attributes JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (session_id, entity_key)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_tool_calls (
+        id UUID PRIMARY KEY,
+        session_id UUID NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        run_id UUID REFERENCES agent_runs(id) ON DELETE CASCADE,
+        task_id UUID REFERENCES agent_tasks(id) ON DELETE SET NULL,
+        tool_name VARCHAR(128) NOT NULL,
+        status VARCHAR(32) NOT NULL DEFAULT 'pending',
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        input JSONB NOT NULL DEFAULT '{}',
+        output JSONB,
+        error JSONB,
+        idempotency_key VARCHAR(255) UNIQUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         completed_at TIMESTAMPTZ
     )
     """,
@@ -399,7 +491,26 @@ def _ensure_verified_evidence_constraint(cur: object) -> None:
 
 
 def _ensure_agent_run_constraints(cur: object) -> None:
-    """Add V2 constraints when upgrading a database initialized before them."""
+    """Add Harness-compatible constraints when upgrading an existing database."""
+    cur.execute(
+        """
+        SELECT pg_get_constraintdef(oid)
+        FROM pg_constraint
+        WHERE conrelid = 'agent_runs'::regclass
+          AND conname = 'agent_runs_run_type_check'
+        """
+    )
+    run_type_constraint = cur.fetchone()
+    if run_type_constraint is None or "agent_harness" not in str(run_type_constraint[0]):
+        cur.execute("ALTER TABLE agent_runs DROP CONSTRAINT IF EXISTS agent_runs_run_type_check")
+        cur.execute(
+            """
+            ALTER TABLE agent_runs
+            ADD CONSTRAINT agent_runs_run_type_check
+            CHECK (run_type IN ('sourcing_risk_v2', 'agent_harness'))
+            """
+        )
+
     cur.execute(
         """
         SELECT EXISTS (
@@ -479,8 +590,14 @@ INDEX_STATEMENTS = [
     "WHERE published_at IS NULL AND dead_lettered_at IS NULL",
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_company ON assessment_history (company_name, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_assessment_history_user ON assessment_history (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_sessions_user_updated ON agent_sessions (user_id, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_turns_session_created ON agent_turns (session_id, turn_number)",
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_user_created ON agent_runs (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_runs_session_created ON agent_runs (session_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_agent_run_events_run_event ON agent_run_events (run_id, event_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_tasks_run_status ON agent_tasks (run_id, status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_entities_session_focus ON agent_entities (session_id, focus_rank)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run_created ON agent_tool_calls (run_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_agent_run_candidates_run_status ON agent_run_candidates (run_id, status)",
     "CREATE INDEX IF NOT EXISTS idx_agent_evidence_run ON agent_evidence (run_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_evidence_company ON agent_evidence (company_id)",

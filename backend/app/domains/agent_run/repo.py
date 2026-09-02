@@ -86,12 +86,13 @@ def insert_run(
     user_id: str | None = None,
     status: str = "CREATED",
     cur: PgCursor | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     run_id = str(uuid.uuid4())
     if cur is not None:
-        return _insert_run_with_cursor(cur, run_id, run_type, requirement, user_id, status)
+        return _insert_run_with_cursor(cur, run_id, run_type, requirement, user_id, status, session_id)
     with get_cursor() as (_, cur):
-        return _insert_run_with_cursor(cur, run_id, run_type, requirement, user_id, status)
+        return _insert_run_with_cursor(cur, run_id, run_type, requirement, user_id, status, session_id)
 
 
 def _insert_run_with_cursor(
@@ -101,14 +102,15 @@ def _insert_run_with_cursor(
     requirement: dict[str, Any],
     user_id: str | None,
     status: str,
+    session_id: str | None,
 ) -> dict[str, Any]:
     cur.execute(
         """
-        INSERT INTO agent_runs (id, run_type, user_id, status, requirement)
-        VALUES (%s, %s, %s, %s, %s)
+        INSERT INTO agent_runs (id, session_id, run_type, user_id, status, requirement)
+        VALUES (%s, %s, %s, %s, %s, %s)
         RETURNING *
         """,
-        (run_id, run_type, user_id, status, Json(requirement)),
+        (run_id, session_id, run_type, user_id, status, Json(requirement)),
     )
     return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
 

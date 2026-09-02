@@ -784,11 +784,24 @@
 - 状态：已纳入 Harness Task 1、Task 5 和 Task 9，待实施
 - 优先级：P0
 - 现象：聊天 `auto` 模式可路由到 ReAct、Plan-Execute、旧 Supervisor、Sourcing、Parallel、Reflection 和 Agent Supervisor；项目中还存在独立的 Sourcing Risk V2 Run 图。各图拥有不同 `TypedDict` 状态、流式适配和恢复路径。
+- 实施前补充发现：当前 PostgreSQL `agent_runs` 的约束只允许 `sourcing_risk_v2`，并且尚未有统一的 Session、Turn、Task、Entity 和 ToolCall 控制表，无法直接承载计划中的唯一 Harness Runtime。
 - 影响：同一用户意图因路由不同会获得不同的实体解析、工具、证据校验、审批、持久化和错误语义；修复一条路径不能保证其他路径同步修复，形成长期的偶发回归源。
 - 根因：功能按阶段逐图叠加，虽然已增加共享 `execution_context`，但尚未收敛为唯一运行时内核和统一节点协议。
 - 修复方案：建立单一 Agent Harness Runtime；聊天入口只创建一种 `AgentRunContext`，路由只生成能力计划，不再切换整套执行引擎；旧图降级为兼容适配器并逐步退出活动路径。
 - 验证结果：静态审计确认聊天入口存在 7 类模式分支，`backend/app/graphs` 下存在多套独立 StateGraph 状态定义；现有 360 项 Agent/V2 定向测试通过，但未证明跨执行内核的一致性。
-- 关联提交：设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`；代码提交待实施。
+- 关联提交：`4600fd1b`；设计与实施依据为 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md`。
+
+## ISS-20260902-026 Harness AgentRun 契约未兼容现有 V2 元数据字段
+
+- 发现日期：2026-09-02
+- 状态：已验证，已提交
+- 优先级：P0
+- 现象：Task 1 PostgreSQL 集成测试从现有 `agent_runs` 读取 Harness Run 时，Pydantic 校验拒绝数据库返回的 `policy_snapshot_id` 和 `decision_id` 字段。
+- 影响：统一状态存储无法读取已有 V2 Run，迁移期间会阻断运行恢复和新旧状态对账。
+- 根因：新建的 `AgentRun` 契约只覆盖统一 Harness 字段，没有保留现有 V2 表中的策略快照和决策关联元数据。
+- 修复方案：将两个现有可空 UUID 元数据字段纳入 `AgentRun` 契约，保持数据库字段和旧 API 行为兼容。
+- 验证结果：Task 1 离线契约测试 5 项、PostgreSQL 控制面集成测试 1 项，以及 Agent Run/API/Service/Model 回归测试共 103 项全部通过；Python 编译检查和 `git diff --check` 通过。
+- 关联提交：`4600fd1b`。
 
 ## ISS-20260901-019 Harness 审计问题记录复用了已有问题编号
 
