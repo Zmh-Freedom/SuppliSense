@@ -229,14 +229,14 @@
 ## ISS-20260902-046 遗留 Agent Outbox 事件重试后进入 dead-letter
 
 - 发现日期：2026-09-02
-- 状态：已登记待处理
+- 状态：已关闭
 - 优先级：P1
 - 现象：本地后端启动后，调度器每 5 秒重试同一 `agent.action.approved` Outbox 事件；达到重试上限后记录 `consumer_handler_failed` 和 `dead_lettered`。
 - 影响：遗留审批事件无法完成消费，可能造成开发环境日志噪声和历史动作回执缺失；本次只读 Agent 查询未受影响。
-- 根因：当前日志只暴露消费者处理失败和 dead-letter 结果，未在 Task10 范围内继续展开该历史事件的具体业务载荷与失败消费者。
-- 修复方案：后续单独按 Outbox 消费链路排查事件载荷、消费者路由和回执持久化；在定位前不重放、不删除该事件，避免破坏审计事实。
-- 验证结果：本次 Task10 已记录该阻塞；只读 AI 工作台请求仍正常返回 AgentAnswer，未出现工作流异常。
-- 关联提交：`df9797d5`（问题登记）；后续 Outbox 专项任务待处理。
+- 根因：当前日志只暴露消费者处理失败和 dead-letter 结果；进一步核查确认该事件的 `idempotency_key` 为 `test-real-action-*`，来源于真实 PostgreSQL 审批事务测试。测试清理函数只按 `aggregate_id = run_id` 删除，而审批事件的 `aggregate_id` 是 `proposal_id`，Run/Proposal 删除后留下了孤儿 Outbox 事件。
+- 修复方案：测试清理按事件 payload 中绑定的 `run_id` 或聚合 ID 精确删除测试事件；生产消费者保留 fail-closed 行为，不为孤儿事件添加自动业务猜测或静默成功。
+- 验证结果：审批与 Outbox 集成回归 52 项通过；数据库中活动状态的孤儿 `agent.action.approved` 事件为 0；已知测试残留已清理并保留生产事件的 fail-closed 处理边界。
+- 关联提交：待本次修复提交。
 
 ## ISS-20260901-009 飞书三表异常批次可能污染主数据快照
 

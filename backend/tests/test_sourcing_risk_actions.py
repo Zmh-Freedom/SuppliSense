@@ -439,7 +439,20 @@ def test_existing_company_action_rejects_company_that_does_not_match_its_current
 
 def _delete_real_action_run(run_id: str) -> None:
     with get_cursor() as (_, cur):
-        cur.execute("DELETE FROM outbox_events WHERE aggregate_id = %s", (run_id,))
+        cur.execute(
+            """
+            DELETE FROM outbox_events
+            WHERE event_type = 'agent.action.approved'
+              AND (
+                  aggregate_id = %s
+                  OR (
+                      payload->>'run_id' = %s
+                      AND payload->>'idempotency_key' LIKE 'test-real-action-%%'
+                  )
+              )
+            """,
+            (run_id, run_id),
+        )
         cur.execute("DELETE FROM agent_runs WHERE id = %s", (run_id,))
 
 
