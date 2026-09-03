@@ -1153,7 +1153,7 @@
 - 根因：前序任务完成了控制面模型和存储适配器，但 Chat/Harness 生产调用链路仍保留历史 Mongo 上下文和轻量 checkpoint 接入。
 - 修复方案：按新活动计划 Task 11 将 Chat 的 Session/Turn/Run/Task/Entity/ToolCall 创建、版本更新、终态提交和恢复统一接入 PostgreSQL；MongoDB 仅接收已提交的展示投影。
 - 验证结果：Task 11 定向回归 27 项、PostgreSQL/MongoDB/Redis 集成前置与控制面集成 4 项、Python 编译检查和 git diff --check 通过。真实 PostgreSQL 临时闭环验证 Session → Turn → Run → Task → ToolCall → Event → COMPLETED，并已清理测试数据。活动 Harness 已优先读取 PostgreSQL 会话快照，节点快照、任务、工具调用和事件均写入 PostgreSQL；Mongo 仅保留展示投影。
-- 关联提交：待本次 Task 11 提交。
+- 关联提交：`911b1687 feat(agent): persist harness chat state in postgres`。
 
 ## ISS-20260903-002 生产工具缺少严格输出契约与证据强制门禁
 
