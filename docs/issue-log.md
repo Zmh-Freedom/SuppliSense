@@ -236,7 +236,7 @@
 - 根因：当前日志只暴露消费者处理失败和 dead-letter 结果；进一步核查确认该事件的 `idempotency_key` 为 `test-real-action-*`，来源于真实 PostgreSQL 审批事务测试。测试清理函数只按 `aggregate_id = run_id` 删除，而审批事件的 `aggregate_id` 是 `proposal_id`，Run/Proposal 删除后留下了孤儿 Outbox 事件。
 - 修复方案：测试清理按事件 payload 中绑定的 `run_id` 或聚合 ID 精确删除测试事件；生产消费者保留 fail-closed 行为，不为孤儿事件添加自动业务猜测或静默成功。
 - 验证结果：审批与 Outbox 集成回归 52 项通过；数据库中活动状态的孤儿 `agent.action.approved` 事件为 0；已知测试残留已清理并保留生产事件的 fail-closed 处理边界。
-- 关联提交：待本次修复提交。
+- 关联提交：`1a25263c`。
 
 ## ISS-20260901-009 飞书三表异常批次可能污染主数据快照
 
