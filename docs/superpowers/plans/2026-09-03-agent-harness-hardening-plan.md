@@ -108,7 +108,7 @@
 
 验收结果：已通过 Task 11 定向回归 27 项、PostgreSQL/MongoDB/Redis 集成前置与控制面集成 4 项、Python 编译检查和 git diff --check。真实 PostgreSQL 临时闭环已验证 Session → Turn → Run → Task → ToolCall → Event → COMPLETED，并清理测试数据。关联问题：ISS-20260903-001。
 
-#### Task 12：收紧生产 Tool Registry 与 ToolExecutor
+#### Task 12：收紧生产 Tool Registry 与 ToolExecutor（已完成）
 
 实施：
 
@@ -121,6 +121,8 @@
 复核：自动运行全部注册工具的输入、输出、证据、读写、审批、超时矩阵。
 
 门槛：严格契约率 100%，Evidence 要求执行率 100%，非法输出放行率 0。
+
+验收结果：28/28 生产工具使用命名 Pydantic 输出契约，Task 12 定向 11 项、Task 11/Harness/证据回归 22 项、非集成后端回归 566 项通过；空结果、未知字段、缺证据和证据元数据不完整均 fail closed。关联问题：ISS-20260903-002。
 
 #### Task 13：字段级 Claim-Evidence 真实性门禁
 

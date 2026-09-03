@@ -11,8 +11,10 @@ def check_alert(company_name: str) -> dict:
     """
     from app.domains.alert.service import detect_changes, get_latest_snapshot
     if not get_latest_snapshot(company_name):
-        return {"message": "暂无历史快照"}
-    return detect_changes(company_name)
+        return {"status": "not_found", "company_name": company_name, "message": "暂无历史快照"}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(detect_changes(company_name), tool_name="check_alert", entity_id=f"entity:{company_name}", dimension="risk_monitoring")
 
 
 @tool
@@ -20,7 +22,9 @@ def get_watchlist() -> dict:
     """获取监控清单。"""
     from app.domains.alert.service import get_watchlist as _get_watchlist
     companies = _get_watchlist()
-    return {"count": len(companies), "companies": companies}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({"count": len(companies), "companies": companies}, tool_name="get_watchlist", entity_id="watchlist", dimension="risk_monitoring")
 
 
 @tool
@@ -39,7 +43,7 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
 
     companies = _get_watchlist()
     if not companies:
-        return {"count": 0, "message": "监控清单为空", "companies": []}
+        return {"status": "not_found", "count": 0, "message": "监控清单为空", "companies": []}
 
     db = get_db()
     days = period_months * 30
@@ -72,7 +76,9 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             "data": data,
         })
 
-    return {"count": len(results), "period_months": period_months, "companies": results}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({"count": len(results), "period_months": period_months, "companies": results}, tool_name="analyze_watchlist_trend", entity_id="watchlist", dimension="risk_monitoring")
 
 
 @tool

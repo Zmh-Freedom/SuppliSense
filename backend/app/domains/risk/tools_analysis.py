@@ -12,8 +12,10 @@ def esg_assessment(company_name: str) -> dict:
     from app.domains.risk.esg_service import assess_esg
     result = assess_esg(company_name)
     if result is None:
-        return {"error": "未找到企业数据"}
-    return result
+        return {"status": "not_found", "error": "未找到企业数据", "company_name": company_name}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(result, tool_name="esg_assessment", entity_id=f"entity:{company_name}", dimension="esg")
 
 
 @tool
@@ -24,7 +26,9 @@ def contagion_analysis(company_name: str) -> dict:
         company_name: 企业全称
     """
     from app.domains.risk.contagion import analyze_contagion
-    return analyze_contagion(company_name)
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(analyze_contagion(company_name), tool_name="contagion_analysis", entity_id=f"entity:{company_name}", dimension="risk_network")
 
 
 @tool
@@ -37,8 +41,10 @@ def sentiment_analysis(company_name: str) -> dict:
     from app.domains.risk.sentiment import analyze_sentiment
     result = analyze_sentiment(company_name)
     if result is None:
-        return {"error": "暂无舆情数据"}
-    return {
+        return {"status": "not_found", "error": "暂无舆情数据", "company_name": company_name}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({
         "company_name": result["company_name"],
         "sentiment_score": result["sentiment_score"],
         "negative_count": result["negative_count"],
@@ -48,7 +54,7 @@ def sentiment_analysis(company_name: str) -> dict:
         "summary": result["summary"],
         "key_concerns": result.get("key_concerns", []),
         "risk_tags": [t["tag"] for t in result.get("risk_tags", [])],
-    }
+    }, tool_name="sentiment_analysis", entity_id=f"entity:{company_name}", dimension="sentiment")
 
 
 @tool
@@ -59,7 +65,9 @@ def check_sanctions(company_name: str) -> dict:
         company_name: 企业全称
     """
     from app.domains.risk.sanctions_service import check_sanctions as _check
-    return _check(company_name)
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(_check(company_name), tool_name="check_sanctions", entity_id=f"entity:{company_name}", dimension="compliance")
 
 
 @tool
@@ -70,7 +78,9 @@ def find_alternatives(company_name: str) -> dict:
         company_name: 企业全称
     """
     from app.domains.risk.alternative_service import find_alternatives as _find
-    return _find(company_name)
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(_find(company_name), tool_name="find_alternatives", entity_id=f"entity:{company_name}", dimension="sourcing")
 
 
 @tool
@@ -111,7 +121,9 @@ def compare_companies(company_names: list[str]) -> dict:
             item["sentiment"] = {"sentiment_score": sent.get("sentiment_score"), "articles_count": sent.get("articles_count")}
         results.append(item)
 
-    return {"count": len(results), "companies": results}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({"count": len(results), "companies": results}, tool_name="compare_companies", entity_id="comparison", dimension="risk_comparison")
 
 
 @tool
@@ -152,7 +164,9 @@ def analyze_trend(company_name: str, period_months: int = 6) -> dict:
         elif delta < -10:
             trend = "改善"
 
-    return {"company_name": company_name, "period_months": period_months, "trend": trend, "data": data}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({"company_name": company_name, "period_months": period_months, "trend": trend, "data": data}, tool_name="analyze_trend", entity_id=f"entity:{company_name}", dimension="risk_trend")
 
 
 @tool
@@ -166,9 +180,11 @@ def query_financials(company_name: str) -> dict:
 
     fin = get_financial_metrics(company_name)
     if fin is None:
-        return {"error": "未找到财务数据", "company_name": company_name}
+        return {"status": "not_found", "error": "未找到财务数据", "company_name": company_name}
 
-    return {
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({
         "company_name": company_name,
         "revenue_growth": fin.revenue_growth,
         "net_profit_growth": fin.net_profit_growth,
@@ -178,4 +194,4 @@ def query_financials(company_name: str) -> dict:
         "net_profit_margin": fin.net_profit_margin,
         "current_ratio": fin.current_ratio,
         "quick_ratio": fin.quick_ratio,
-    }
+    }, tool_name="query_financials", entity_id=f"entity:{company_name}", dimension="financial")

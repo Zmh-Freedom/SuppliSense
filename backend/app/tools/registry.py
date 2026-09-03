@@ -7,6 +7,8 @@ from typing import Literal
 from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.tools.contracts import TOOL_OUTPUT_MODELS
+
 
 class ToolSpec(BaseModel):
     """Execution policy attached to one registered tool."""
@@ -142,6 +144,9 @@ def build_default_tool_registry(tools: list[BaseTool]) -> ToolRegistry:
     registry = ToolRegistry()
     for tool in tools:
         name = tool.name
+        output_model = TOOL_OUTPUT_MODELS.get(name)
+        if output_model is None:
+            raise ValueError(f"生产工具 {name} 缺少严格输出契约")
         registry.register(
             tool,
             ToolSpec(
@@ -153,6 +158,7 @@ def build_default_tool_registry(tools: list[BaseTool]) -> ToolRegistry:
                 idempotent=name not in {"create_sourcing_request", "generate_report"},
                 evidence_required=name in _EVIDENCE_TOOLS,
             ),
+            output_model=output_model,
         )
     return registry
 

@@ -12,7 +12,15 @@ def assess_risk(company_name: str) -> dict:
     from app.schemas import RiskAssessRequest
     from app.domains.risk.service import assess_risk as _assess
     result = _assess(RiskAssessRequest(company_name=company_name))
-    return result.model_dump()
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(
+        result.model_dump(),
+        tool_name="assess_risk",
+        entity_id=f"entity:{company_name}",
+        dimension="risk",
+        source_type="risk_service_result",
+    )
 
 
 @tool
@@ -25,8 +33,10 @@ def predict_risk(company_name: str) -> dict:
     from app.domains.risk.predictor import predict_company
     result = predict_company(company_name)
     if result is None:
-        return {"error": "未找到企业数据"}
-    return result
+        return {"status": "not_found", "error": "未找到企业数据", "company_name": company_name}
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(result, tool_name="predict_risk", entity_id=f"entity:{company_name}", dimension="risk_prediction")
 
 
 @tool
@@ -37,7 +47,9 @@ def macro_risk(company_name: str) -> dict:
         company_name: 企业全称
     """
     from app.domains.risk.macro_service import assess_macro_risk
-    return assess_macro_risk(company_name)
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(assess_macro_risk(company_name), tool_name="macro_risk", entity_id=f"entity:{company_name}", dimension="macro_risk")
 
 
 @tool
@@ -49,7 +61,9 @@ def scenario_simulate(company_name: str, scenario: str = "bankruptcy") -> dict:
         scenario: 情景类型，可选值: bankruptcy(破产), lawsuit(诉讼), disruption(供应中断), quality(质量)
     """
     from app.domains.risk.scenario_service import simulate
-    return simulate(company_name, scenario)
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(simulate(company_name, scenario), tool_name="scenario_simulate", entity_id=f"entity:{company_name}", dimension="scenario")
 
 
 @tool
@@ -65,7 +79,9 @@ def assess_business_risk(supplier_reference: str, category_code: str = "") -> di
     """
     from app.domains.risk.business_risk_service import assess_business_risk_p0
 
-    return assess_business_risk_p0(
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence(assess_business_risk_p0(
         supplier_reference,
         category_code=category_code or None,
-    )
+    ), tool_name="assess_business_risk", entity_id=f"entity:{supplier_reference}", dimension="business_risk")

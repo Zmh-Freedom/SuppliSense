@@ -11,7 +11,12 @@ def list_formal_suppliers(limit: int = 20) -> dict:
     """
     from app.domains.sourcing.supplier_repo import list_formal_suppliers as _list
 
-    return _list(limit=limit)
+    from app.tools.evidence import attach_tool_evidence
+
+    result = _list(limit=limit)
+    if result.get("total", 0) == 0:
+        result["status"] = "not_found"
+    return attach_tool_evidence(result, tool_name="list_formal_suppliers", entity_id="sourcing", dimension="sourcing")
 
 
 @tool
@@ -40,7 +45,12 @@ def search_suppliers(request_id: str) -> dict:
         request_id: 寻源请求 ID（由 create_sourcing_request 返回）
     """
     from app.domains.sourcing.service import search_suppliers as _search
-    return _search(request_id)
+    from app.tools.evidence import attach_tool_evidence
+
+    result = _search(request_id)
+    if not result.get("results") and not result.get("external_candidates"):
+        result["status"] = "not_found"
+    return attach_tool_evidence(result, tool_name="search_suppliers", entity_id="sourcing", dimension="sourcing")
 
 
 @tool
@@ -157,11 +167,13 @@ def discover_web_suppliers(category: str, specification: str = "", region: str =
     from app.domains.sourcing.repo import save_external_candidate
     for candidate in staged:
         save_external_candidate(candidate)
-    return {
+    from app.tools.evidence import attach_tool_evidence
+
+    return attach_tool_evidence({
         "source": "public_web_search",
         "status": discovery.get("status", "not_found"),
         "candidates": staged,
         "failed_stages": discovery.get("failed_stages", []),
         "failure_reasons": discovery.get("failure_reasons", []),
         "message": "联网结果仅为待核验候选，确认前不会写入供应商主库。",
-    }
+    }, tool_name="discover_web_suppliers", entity_id="sourcing", dimension="sourcing", source_type="public_web_search")

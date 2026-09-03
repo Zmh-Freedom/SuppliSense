@@ -166,6 +166,50 @@ class ToolExecutor:
 
         data = payload.model_dump(mode="json")
         status = _status_from_payload(data)
+        if not data or not any(value not in (None, [], {}, "") for value in data.values()):
+            outcome = self._outcome(
+                context,
+                tool_name,
+                "invalid",
+                error=("invalid_output", "工具不得返回空结果作为成功", False),
+                version=spec.version,
+                attempts=attempts,
+                duration_ms=duration_ms,
+            )
+            await self._record(outcome)
+            return outcome
+        if spec.evidence_required and status in {"success", "partial"} and not _has_evidence(data):
+            outcome = self._outcome(
+                context,
+                tool_name,
+                "invalid",
+                data=data,
+                error=(
+                    "evidence_required",
+                    "该工具要求返回 evidence_records 或 evidence_refs，不能以空证据声明成功",
+                    False,
+                ),
+                version=spec.version,
+                attempts=attempts,
+                duration_ms=duration_ms,
+            )
+            await self._record(outcome)
+            return outcome
+        if spec.evidence_required and status in {"success", "partial"}:
+            invalid_evidence = _invalid_evidence_metadata(data)
+            if invalid_evidence:
+                outcome = self._outcome(
+                    context,
+                    tool_name,
+                    "invalid",
+                    data=data,
+                    error=("evidence_invalid", invalid_evidence, False),
+                    version=spec.version,
+                    attempts=attempts,
+                    duration_ms=duration_ms,
+                )
+                await self._record(outcome)
+                return outcome
         outcome = self._outcome(
             context,
             tool_name,
@@ -232,6 +276,37 @@ def _status_from_payload(payload: dict[str, Any]) -> Literal["success", "partial
 
 def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value if str(item).strip()] if isinstance(value, list) else []
+
+
+def _has_evidence(payload: dict[str, Any]) -> bool:
+    """Return true only when the tool explicitly returned a non-empty reference or record."""
+    refs = payload.get("evidence_refs")
+    if isinstance(refs, list) and any(str(item).strip() for item in refs):
+        return True
+    records = payload.get("evidence_records")
+    if isinstance(records, list) and any(isinstance(item, dict) and item for item in records):
+        return True
+    return False
+
+
+def _invalid_evidence_metadata(payload: dict[str, Any]) -> str | None:
+    """Check metadata required to audit a returned evidence record."""
+    records = payload.get("evidence_records")
+    if not records:
+        return None
+    required = ("evidence_id", "entity_id", "dimension", "provider", "source_type", "status", "collected_at", "data_mode")
+    allowed_statuses = {"available", "confirmed_empty", "missing", "unavailable", "stale", "conflicting", "synthetic"}
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            return f"evidence_records[{index}] 必须是对象"
+        missing = [key for key in required if not str(record.get(key) or "").strip()]
+        if missing:
+            return f"evidence_records[{index}] 缺少: {', '.join(missing)}"
+        if record.get("status") not in allowed_statuses:
+            return f"evidence_records[{index}].status 不合法"
+        if record.get("data_mode") not in {"formal", "synthetic"}:
+            return f"evidence_records[{index}].data_mode 不合法"
+    return None
 
 
 __all__ = ["ToolContext", "ToolError", "ToolExecutor", "ToolMetrics", "ToolOutcome"]
