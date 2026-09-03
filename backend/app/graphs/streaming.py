@@ -1,5 +1,6 @@
 """LangGraph 流式输出适配为 SSE 事件格式，保持与前端兼容。"""
 
+import asyncio
 import json
 import re
 import uuid
@@ -65,30 +66,52 @@ async def stream_harness_graph(
     user_id: str = "",
     run_config: dict[str, Any] | None = None,
     checkpointer: Any = None,
+    turn_id: str | None = None,
+    run_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the unified Harness and map its contract to the public SSE protocol."""
     from app.graphs.harness import run_harness
 
     config = dict(run_config or {})
     configurable = dict(config.get("configurable") or {})
-    configurable.setdefault("thread_id", session_id)
+    active_run_id = run_id or str(uuid.uuid4())
+    configurable.setdefault("thread_id", active_run_id if run_id else session_id)
     configurable.setdefault("checkpoint_ns", "chat:harness")
     config["configurable"] = configurable
-    run_id = str(uuid.uuid4())
+    active_turn_id = turn_id or str(uuid.uuid4())
+    control_context = dict(execution_context)
+    control_context.pop("_control_plane", None)
     state = {
         "session_id": session_id,
-        "turn_id": str(uuid.uuid4()),
-        "run_id": run_id,
+        "turn_id": active_turn_id,
+        "run_id": active_run_id,
         "user_id": user_id or None,
         "user_message": user_message,
-        "execution_context": execution_context,
-        "current_task": execution_context.get("current_task") or {},
+        "execution_context": control_context,
+        "current_task": control_context.get("current_task") or {},
     }
+
+    persist = None
+    if run_id and user_id:
+        from app.domains.agent_run.state_store import session_state_store
+
+        async def persist(event_type: str, snapshot: dict[str, Any]) -> None:
+            await asyncio.to_thread(
+                session_state_store.persist_harness_snapshot,
+                active_run_id,
+                event_type,
+                snapshot,
+            )
 
     yield _workflow_status("running", "understand", "正在解析结构化任务上下文")
     yield _workflow_status("running", "planning", "正在生成受预算约束的任务计划")
     try:
-        result = await run_harness(state, checkpointer=checkpointer, config=config)
+        result = await run_harness(
+            state,
+            checkpointer=checkpointer,
+            config=config,
+            persist=persist,
+        )
         task_specs = result.get("task_specs", [])
         if isinstance(task_specs, list):
             yield _sse_event(
@@ -146,6 +169,26 @@ async def stream_harness_graph(
         for outcome in outcomes if isinstance(outcomes, list) else []:
             if isinstance(outcome, dict):
                 references = collect_supplier_references(references, outcome.get("data", {}), "Harness 工具结果")
+        if run_id and user_id:
+            from app.domains.agent_run.state_store import session_state_store
+
+            next_context = dict(control_context)
+            next_context["history"] = [
+                *list(control_context.get("history") or []),
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": answer_text},
+            ]
+            next_context["references"] = collect_supplier_references(
+                list(control_context.get("references") or []),
+                references,
+                "Harness 已验证结果",
+            )
+            await asyncio.to_thread(
+                session_state_store.update_execution_context,
+                session_id,
+                user_id,
+                next_context,
+            )
         save_execution_turn(session_id, user_message, answer_text, references)
         if references:
             yield _sse_event("references", {"items": references})

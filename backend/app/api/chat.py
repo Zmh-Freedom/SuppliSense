@@ -15,6 +15,21 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = get_logger()
 
 
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
+def _normalize_session_id(session_id: str, user_id: str) -> str:
+    """Keep legacy browser IDs stable while satisfying PostgreSQL UUID columns."""
+    if not user_id or not _is_uuid(user_id) or _is_uuid(session_id):
+        return session_id
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"supplisense:chat-session:{user_id}:{session_id}"))
+
+
 async def _langgraph_agent_supervisor_stream(
     session_id: str,
     message: str,
@@ -105,6 +120,8 @@ async def _langgraph_harness_stream(
     from app.graphs.streaming import stream_harness_graph
 
     context = execution_context or load_execution_context(session_id, message)
+    control_plane = context.get("_control_plane") if isinstance(context, dict) else {}
+    control_plane = control_plane if isinstance(control_plane, dict) else {}
     async for event in stream_harness_graph(
         message,
         session_id,
@@ -112,6 +129,8 @@ async def _langgraph_harness_stream(
         user_id=str(context.get("agent_user_id") or ""),
         run_config=chat_checkpoint_config(session_id, "harness"),
         checkpointer=await get_sourcing_risk_checkpointer(),
+        turn_id=str(control_plane.get("turn_id") or "") or None,
+        run_id=str(control_plane.get("run_id") or "") or None,
     ):
         yield event
 
@@ -184,6 +203,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
     user_id = getattr(request.state, "user_id", "") or _optional_agent_user_id(request)
+    sid = _normalize_session_id(sid, user_id)
     from app.domains.auth.preferences import build_preference_context
     pref_ctx = build_preference_context(user_id) if user_id else ""
 
@@ -222,7 +242,10 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     validate_execution_context,
                 )
 
-                execution_context = load_execution_context(sid, req.message)
+                if _is_uuid(sid) and _is_uuid(user_id):
+                    execution_context = load_execution_context(sid, req.message, user_id)
+                else:
+                    execution_context = load_execution_context(sid, req.message)
                 validate_execution_context(
                     execution_context, source="chat_stream_endpoint"
                 )
@@ -265,6 +288,26 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 (execution_context.get("llm_intent") or {}).get("requested_action") or "none"
             )
             stream_fn = _select_chat_stream(mode, requested_action=requested_action)
+
+            if (
+                stream_fn is _langgraph_harness_stream
+                and _is_uuid(sid)
+                and _is_uuid(user_id)
+            ):
+                from app.domains.agent_run.state_store import session_state_store
+
+                control = await asyncio.to_thread(
+                    session_state_store.start_harness_turn,
+                    sid,
+                    user_id,
+                    req.message,
+                    request={"mode": req.mode},
+                    state={"execution_context": execution_context},
+                )
+                execution_context["_control_plane"] = {
+                    "turn_id": str(control["turn"].id),
+                    "run_id": str(control["run"].id),
+                }
 
             # Stream the chat response
             async for event in stream_fn(

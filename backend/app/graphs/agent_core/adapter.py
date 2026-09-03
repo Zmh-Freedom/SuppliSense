@@ -125,18 +125,34 @@ def collect_supplier_references(
     ])
 
 
-def load_execution_context(session_id: str, user_message: str) -> dict[str, Any]:
-    """Load durable conversation facts and resolve the current Agent task."""
-    from app.services.agent import _load_conversation_context
+def load_execution_context(
+    session_id: str,
+    user_message: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """Load control-plane facts first, using Mongo only for legacy bootstrap."""
     from app.graphs.agent_core.intent_extractor import extract_conversation_intent
 
-    context = _load_conversation_context(session_id)
+    context: dict[str, Any] | None = None
+    if user_id:
+        from app.domains.agent_run.state_store import session_state_store
+
+        context = session_state_store.get_execution_context(session_id, user_id)
+    if context is None:
+        from app.services.agent import _load_conversation_context
+
+        legacy = _load_conversation_context(session_id)
+        context = {
+            "history": legacy.get("history", []),
+            "references": legacy.get("references", []),
+            "state": legacy.get("state", {}),
+        }
     execution_context = build_execution_context(
         session_id=session_id,
         user_message=user_message,
         history=context.get("history", []),
         references=context.get("references", []),
-        previous_state=context.get("state", {}),
+        previous_state=context.get("conversation_state", context.get("state", {})),
     )
     extracted = extract_conversation_intent(user_message, execution_context["references"])
     return validate_execution_context(

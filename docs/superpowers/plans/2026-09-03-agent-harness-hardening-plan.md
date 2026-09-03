@@ -85,14 +85,14 @@
 
 - [x] 登记 ISS-20260903-001 至 ISS-20260903-010。
 - [x] 建立 D01 至 D20 全量缺陷映射。
-- [ ] 将本次审计探针固化为失败回归，不在生产修复前改成假通过。
-- [ ] 记录当前 46 项定向测试和 CI 命令基线。
+- [x] 将本次审计探针固化为失败回归，不在生产修复前改成假通过。
+- [x] 记录当前 Task 11 定向 27 项、非集成回归 560 项和三数据库控制面集成 4 项基线。
 
 验收：每个缺陷都有失败证据、责任 Task 和终态门槛。
 
 ### 阶段 1：可信执行基础（P0）
 
-#### Task 11：接通 PostgreSQL 唯一控制面
+#### Task 11：接通 PostgreSQL 唯一控制面（已完成）
 
 实施：
 
@@ -105,6 +105,8 @@
 复核：后端重启恢复、同会话并发版本冲突、跨用户读取、PostgreSQL 提交失败。
 
 门槛：生产 Chat 不再从 Mongo 构建执行上下文；每个 run_id 都能关联完整控制面；状态提交失败时错误成功声明为 0。
+
+验收结果：已通过 Task 11 定向回归 27 项、PostgreSQL/MongoDB/Redis 集成前置与控制面集成 4 项、Python 编译检查和 git diff --check。真实 PostgreSQL 临时闭环已验证 Session → Turn → Run → Task → ToolCall → Event → COMPLETED，并清理测试数据。关联问题：ISS-20260903-001。
 
 #### Task 12：收紧生产 Tool Registry 与 ToolExecutor
 
