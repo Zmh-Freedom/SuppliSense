@@ -1165,7 +1165,7 @@
 - 根因：ToolRegistry 完成了执行信封，但没有为每类业务能力建立独立 Pydantic 输出模型，ToolExecutor 也没有执行证据要求。
 - 修复方案：按 Task 12 建立寻源、风险、财务、商务、ESG、舆情、合规与写回执的严格契约；对 `evidence_required` 工具在 ToolExecutor 层强制校验 Evidence，否则 fail closed。
 - 验证结果：28 个生产工具全部绑定独立 Pydantic v2 输出模型，默认注册不再使用 `ToolPayload`；`ToolExecutor` 已拒绝未知顶层字段、空结果、缺少 `evidence_records/evidence_refs` 的 success/partial 结果，并校验证据记录的 ID、实体、维度、provider、source_type、status、collected_at 和 data_mode。寻源、风险、财务、商务、ESG、舆情、合规和监控读取工具已统一补充工具结果证据或明确的 not_found/unavailable 状态。Task 12 定向 11 项、Task 11/Harness/证据回归 22 项、后端非集成回归 566 项、注册表契约探针和 Python 编译检查、`git diff --check` 均通过；真实三数据库集成测试未在本 Task 执行。
-- 关联提交：待提交。
+- 关联提交：`16195e1c`。
 
 ## ISS-20260903-003 Claim-Evidence 校验未绑定事实值且覆盖度粒度错误
 
