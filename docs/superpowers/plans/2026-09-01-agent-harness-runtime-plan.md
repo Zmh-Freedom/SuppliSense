@@ -1,13 +1,13 @@
 # Agent Harness 统一运行时设计与实施计划
 
 日期：2026-09-01
-状态：当前唯一有效的 Agent 设计与实施计划，Task 1-10 已完成；后续 Agent 开发必须在本文件边界内新增计划或更新本文件
+状态：历史 Harness 契约骨架建设计划，Task 1-10 已完成；2026-09-03 起由 2026-09-03-agent-harness-hardening-plan.md 替代
 适用分支：`refactor/agent-harness-runtime` 及其后续 Agent 功能分支
 适用范围：AI 工作台、智能寻源、供应商风险/ESG/舆情/合规分析、风险监控提案与人工审批
 
 ## 1. 文档治理
 
-本文件同时承担 Agent 的活动设计、实施顺序和验收门槛，是后续 Agent 开发的唯一有效依据。
+本文件保留当时的 Agent 契约骨架、实施顺序和验收记录。实际代码审计发现多项契约尚未贯穿生产活动链路，后续修复、任务顺序和验收门槛统一以 2026-09-03-agent-harness-hardening-plan.md 为准。
 
 - `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` 已完成并转为历史实施记录。
 - `docs/superpowers/specs/2026-08-18-agent-unified-architecture.md` 是历史架构基线，不再允许作为新功能继续扩展多套执行图。

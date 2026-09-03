@@ -1,7 +1,7 @@
 # 采购决策 Agent 统一架构设计
 
 日期：2026-08-18  
-状态：历史架构基线；当前 Agent 架构以 `../plans/2026-09-01-agent-harness-runtime-plan.md` 为准
+状态：历史架构基线；当前 Agent 修复架构以 `../plans/2026-09-03-agent-harness-hardening-plan.md` 为准
 范围：智能寻源、供应商风险分析、多轮对话、审批与可追溯运行；不包含生产部署改造。
 
 ## 1. 目标与架构原则
@@ -90,6 +90,6 @@
 
 ## 7. 文档治理
 
-本文件保留为 2026-08-18 阶段的历史架构基线。当前 Agent 架构、任务顺序、迁移和质量门槛统一以 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md` 为准。
+本文件保留为 2026-08-18 阶段的历史架构基线。当前 Agent 架构修复、任务顺序、迁移和质量门槛统一以 `docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md` 为准。
 
 历史 V2 和 Supervisor 设计/计划保存在 `docs/archive/agent-design/`，只用于实现追溯，不再作为新开发依据。

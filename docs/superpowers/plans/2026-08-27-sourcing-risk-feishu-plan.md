@@ -1,7 +1,7 @@
 # 供应商推荐、风险监控与飞书只读数据源实施计划
 
 日期：2026-08-27
-状态：已完成的历史计划（2026-09-01）；后续 Agent 开发以 `2026-09-01-agent-harness-runtime-plan.md` 为准
+状态：已完成的历史计划（2026-09-01）；当前 Agent 修复以 `2026-09-03-agent-harness-hardening-plan.md` 为准
 适用分支：历史分支 `codex/feishu-bitable-readonly`，后续已重命名为 `feature/agent-sourcing-risk`
 
 ## 1. 目标与边界
@@ -156,7 +156,7 @@
 ### Task 7：文档、问题和计划收口（P2）
 
 - [x] 每个发现的问题先记录到 `docs/issue-log.md`，修复后补充验证结果和提交号。
-- [x] 本计划在该阶段作为唯一有效开发计划；现已由 `2026-09-01-agent-harness-runtime-plan.md` 替代。
+- [x] 本计划在该阶段作为唯一有效开发计划；先由 `2026-09-01-agent-harness-runtime-plan.md` 替代，当前活动计划为 `2026-09-03-agent-harness-hardening-plan.md`。
 - [x] 更新 README、架构文档、测试手册和飞书配置说明。
 - [x] 补充真实飞书凭据配置后的联调记录，不在文档中暴露密钥。
 
@@ -208,4 +208,4 @@
 
 ## 7. 计划治理
 
-本文件已完成并保留为供应商推荐、风险监控和飞书只读数据源的历史实施记录。2026-09-01 起，Agent 架构、实施顺序和活动验收门槛统一以 `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md` 为准。
+本文件已完成并保留为供应商推荐、风险监控和飞书只读数据源的历史实施记录。2026-09-03 起，Agent 修复顺序和活动验收门槛统一以 `docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md` 为准。

@@ -550,7 +550,8 @@ Shadow → Internal → Canary → Default 逐阶段推进。Promotion 必须同
 | `docs/superpowers/specs/2026-06-17-sourcing-and-risk-system-design.md` | 智能寻源 + 风险预警体系设计 |
 | `docs/integration/feishu-bitable-data-contract.md` | 当前有效的飞书供应商三表数据契约 |
 | `docs/integration/feishu-import-converter.md` | 旧供应商注册 Excel 转飞书三表 CSV 说明 |
-| `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md` | 当前唯一有效的 Agent Harness 设计、实施与验收计划 |
+| `docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md` | 当前唯一有效的 Agent Harness 生产链路修复与验收计划 |
+| `docs/superpowers/plans/2026-09-01-agent-harness-runtime-plan.md` | 已完成的 Harness 契约骨架历史计划 |
 | `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` | 已完成的供应商推荐、风险监控与飞书只读数据源历史计划 |
 | `docs/superpowers/plans/2026-06-16-enterprise-upgrade-zh.md` | 企业级升级实施计划 |
 | `docs/SuppliSense_项目评审_v3.pdf` | 项目评审演示 |

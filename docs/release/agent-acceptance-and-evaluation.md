@@ -1,7 +1,7 @@
 # Agent 验收与评测手册
 
 日期：2026-08-18  
-状态：历史质量基线；当前 Harness 门槛以 `../superpowers/plans/2026-09-01-agent-harness-runtime-plan.md` 第 12 节为准
+状态：历史质量基线；当前 Harness 门槛以 `../superpowers/plans/2026-09-03-agent-harness-hardening-plan.md` 第 4 至 9 节为准
 适用范围：采购决策 Agent 的功能验收、回归、离线评测和灰度判断。
 
 ## 1. 必过功能场景
