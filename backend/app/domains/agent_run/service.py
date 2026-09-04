@@ -74,7 +74,10 @@ def can_read_all_agent_runs(user_role: str) -> bool:
 
 
 def create_sourcing_risk_run(
-    request: CreateSourcingRiskRunRequest, user_id: str, user_role: str
+    request: CreateSourcingRiskRunRequest,
+    user_id: str,
+    user_role: str,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     del user_role
     with get_cursor() as (_, cur):
@@ -83,6 +86,7 @@ def create_sourcing_risk_run(
             requirement=request.model_dump(),
             user_id=user_id,
             cur=cur,
+            session_id=session_id,
         )
         append_event(run["id"], run["version"], "stage", {"status": run["status"]}, cur=cur)
     return run
@@ -610,10 +614,25 @@ def create_supervisor_action_proposals(
             or (datetime.now(timezone.utc) + SUPERVISOR_APPROVAL_TTL).isoformat()
         )
         target = dict(approval.get("target") or {})
+        action_payload = dict(target)
+        action_payload.pop("expires_at", None)
+        if action_type in {"add_watchlist", "remove_watchlist"}:
+            from app.graphs.harness.actions import build_action_hash
+
+            tool_name = {
+                "add_watchlist": "add_to_watchlist",
+                "remove_watchlist": "remove_from_watchlist",
+            }[action_type]
+            action_payload["_harness_action"] = {
+                "tool_name": tool_name,
+                "action_hash": build_action_hash(tool_name, dict(action_payload)),
+                "session_id": str(run.get("session_id") or ""),
+                "expires_at": expires_at,
+            }
         proposal = create_action_proposal(
             run_id,
             action_type,
-            {**target, "expires_at": expires_at},
+            action_payload,
             f"supervisor:{run_id}:{original_id}",
             candidate_id=target.get("candidate_id"),
             user_id=user_id,
@@ -633,11 +652,20 @@ def execute_supervisor_approved_action(run_id: str, approval_id: str) -> None:
     """
     if not run_id or not approval_id:
         raise ValueError("run_id 和 approval_id 不能为空")
+    run = get_orchestration_run(run_id)
+    if run is None or not run.get("user_id"):
+        raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "任务缺少审批人绑定", 409)
 
     from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
 
     execute_sourcing_risk_action(
-        {"payload": {"run_id": run_id, "proposal_id": approval_id}}
+        {
+            "payload": {
+                "run_id": run_id,
+                "proposal_id": approval_id,
+                "approver_id": str(run["user_id"]),
+            }
+        }
     )
 
 

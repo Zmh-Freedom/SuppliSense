@@ -4,6 +4,7 @@ import asyncio
 
 from langchain_core.tools import tool
 
+from app.graphs.harness.actions import ActionGate
 from app.tools import TOOLS_LIST, TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor
 from app.tools.registry import ToolRegistry, ToolSpec
@@ -133,3 +134,35 @@ def test_executor_rejects_invalid_output_and_write_requires_idempotency_after_ap
     assert denied.status == "invalid"
     assert denied.error is not None
     assert denied.error.code == "idempotency_key_required"
+
+
+def test_executor_rejects_nonempty_unsigned_write_token() -> None:
+    called = False
+
+    @tool
+    def unsigned_write(company_name: str) -> dict:
+        """Write tool used to verify token authenticity."""
+        nonlocal called
+        called = True
+        return {"success": True, "side_effect_receipt": {"receipt_id": "r-1"}}
+
+    context = ToolContext(
+        session_id="session-1",
+        run_id="run-1",
+        user_id="requester-1",
+        approval_token="approval-looks-nonempty",
+        approval_proposal_id="proposal-1",
+        approval_actor_id="approver-1",
+        approval_secret_key="test-secret",
+        idempotency_key="idempotency-1",
+    )
+    outcome = asyncio.run(
+        ToolExecutor(_registry_for(unsigned_write, side_effect="write")).execute(
+            "unsigned_write", {"company_name": "甲公司"}, context
+        )
+    )
+
+    assert outcome.status == "denied"
+    assert outcome.error is not None
+    assert outcome.error.code == "approval_token_invalid"
+    assert called is False

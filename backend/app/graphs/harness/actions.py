@@ -138,7 +138,10 @@ class ActionGate:
             call_id=proposal.proposal_id,
             session_id=proposal.session_id,
             run_id=proposal.run_id,
-            user_id=approver_id,
+            user_id=proposal.user_id,
+            approval_actor_id=approver_id,
+            approval_proposal_id=proposal.proposal_id,
+            approval_secret_key=self.secret_key,
             approval_token=approval_token,
             idempotency_key=proposal.idempotency_key,
         )
@@ -243,6 +246,43 @@ def verify_approval_token(
     return claims
 
 
+def verify_approval_token_for_action(
+    token: str,
+    *,
+    tool_name: str,
+    arguments: dict[str, Any],
+    context: ToolContext,
+    now: datetime | None = None,
+) -> ActionApprovalToken:
+    """Verify a token against the exact ToolExecutor call context."""
+    if not context.session_id or not context.run_id or not context.user_id:
+        raise ValueError("审批执行上下文缺少 session_id、run_id 或 user_id")
+    if not context.approval_proposal_id:
+        raise ValueError("写操作缺少已持久化的 proposal_id")
+    if not context.idempotency_key:
+        raise ValueError("写操作缺少幂等键")
+    current = now or datetime.now(timezone.utc)
+    proposal = ActionProposal(
+        proposal_id=context.approval_proposal_id,
+        session_id=context.session_id,
+        run_id=context.run_id,
+        user_id=context.user_id,
+        tool_name=tool_name,
+        arguments=dict(arguments),
+        action_hash=build_action_hash(tool_name, arguments),
+        idempotency_key=context.idempotency_key,
+        expires_at=current + timedelta(seconds=1),
+        status="approved",
+    )
+    return verify_approval_token(
+        token,
+        proposal,
+        approver_id=context.approval_actor_id or context.user_id,
+        secret_key=context.approval_secret_key or settings.SECRET_KEY,
+        now=now,
+    )
+
+
 def _encode(value: dict[str, Any]) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return _b64(raw)
@@ -262,5 +302,6 @@ __all__ = [
     "ActionProposal",
     "build_action_hash",
     "issue_approval_token",
+    "verify_approval_token_for_action",
     "verify_approval_token",
 ]

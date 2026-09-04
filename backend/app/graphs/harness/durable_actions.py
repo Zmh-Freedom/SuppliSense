@@ -10,6 +10,7 @@ from app.graphs.harness.actions import ActionProposal, build_action_hash
 
 _TO_DURABLE_ACTION = {
     "add_to_watchlist": "add_watchlist",
+    "remove_from_watchlist": "remove_watchlist",
     "select_external_supplier_candidate": "add_watchlist",
 }
 _HARNESS_METADATA_KEY = "_harness_action"
@@ -27,8 +28,12 @@ def persist_action_proposal(
     if action_type is None:
         raise ValueError(f"写工具 {proposal.tool_name} 尚未接入 Durable Action Service")
     payload = dict(proposal.arguments)
-    if action_type == "add_watchlist" and candidate_id is None and payload.get("target_source") != "conversation_state":
-        raise ValueError("加入监控提案必须显式绑定 conversation_state")
+    if (
+        action_type in {"add_watchlist", "remove_watchlist"}
+        and candidate_id is None
+        and payload.get("target_source") != "conversation_state"
+    ):
+        raise ValueError("监控提案必须显式绑定 conversation_state")
     payload[_HARNESS_METADATA_KEY] = {
         "tool_name": proposal.tool_name,
         "action_hash": proposal.action_hash,

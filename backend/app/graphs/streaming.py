@@ -321,6 +321,7 @@ async def stream_agent_supervisor_graph(
                     config=config,
                     mode="agent-supervisor",
                     user_message=user_message,
+                    user_id=str((execution_context or {}).get("agent_user_id") or "") or None,
                 )
                 yield _workflow_status("waiting_approval", "approval", "等待人工确认后继续执行")
                 payload = {
@@ -549,6 +550,7 @@ async def stream_react_graph(
                     config=config,
                     mode="react",
                     user_message=user_message,
+                    user_id=str((execution_context or {}).get("agent_user_id") or "") or None,
                 )
                 yield _workflow_status("waiting_approval", "approval", "等待人工确认后继续执行")
                 yield _sse_event("approval_required", {
@@ -631,6 +633,7 @@ async def stream_react_graph(
                 config=config,
                 mode="react",
                 user_message=user_message,
+                user_id=str((execution_context or {}).get("agent_user_id") or "") or None,
             )
 
             yield _workflow_status("waiting_approval", "approval", "等待人工确认后继续执行")

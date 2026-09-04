@@ -1211,6 +1211,7 @@
 - 现象：只读请求进入 Harness，写操作仍进入独立 Supervisor；Supervisor 可直接调用业务 service 而绕过 ToolExecutor。ToolExecutor 对写操作只检查非空 `approval_token`，伪造字符串也可通过。
 - 影响：同一会话在读取和写入时切换状态、证据和答案语义；存在未经真实人工确认执行写入的安全风险。
 - 根因：ActionGate 和签名令牌只在部分图层使用，不是 ToolExecutor 必经的安全边界；写链路未迁入唯一 Harness。
+- Task 16 实施前复核补充：V2 outbox action consumer 仍直接调用领域写 service；旧 Supervisor 的审批恢复记录按 session 删除后才重建图，且执行波次存在重复调度风险。
 - 修复方案：按 Task 16 将监控增删等允许的写操作迁入 Harness，强制 Proposal → 持久化→人工确认→签名 Token → ToolExecutor → SideEffectReceipt；禁止 Supervisor 直接调用 service。
 - 验证结果：待 Task 16 实施后回填。
 - 关联提交：待回填。

@@ -187,6 +187,11 @@ DDL_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE agent_chat_interrupts ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE",
+    "ALTER TABLE agent_chat_interrupts ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'pending'",
+    "ALTER TABLE agent_chat_interrupts ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ",
+    "ALTER TABLE agent_chat_interrupts ADD COLUMN IF NOT EXISTS claim_token UUID",
+    "CREATE INDEX IF NOT EXISTS idx_agent_chat_interrupts_status_updated ON agent_chat_interrupts(status, updated_at)",
 
     # Agent run V2 / Harness run
     """

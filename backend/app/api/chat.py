@@ -84,12 +84,25 @@ async def _langgraph_agent_supervisor_stream(
         from app.domains.agent_run.schemas import CreateSourcingRiskRunRequest
         from app.domains.agent_run.service import create_sourcing_risk_run
 
-        run = await asyncio.to_thread(
-            create_sourcing_risk_run,
-            CreateSourcingRiskRunRequest(requirement_text=message),
-            agent_user_id,
-            "analyst",
-        )
+        try:
+            run = await asyncio.to_thread(
+                create_sourcing_risk_run,
+                CreateSourcingRiskRunRequest(requirement_text=message),
+                agent_user_id,
+                "analyst",
+                session_id,
+            )
+        except TypeError as exc:
+            # Keep older injected compatibility callables working while the
+            # production lifecycle persists the chat session on the Run.
+            if "positional argument" not in str(exc) and "session_id" not in str(exc):
+                raise
+            run = await asyncio.to_thread(
+                create_sourcing_risk_run,
+                CreateSourcingRiskRunRequest(requirement_text=message),
+                agent_user_id,
+                "analyst",
+            )
         run_id = str(run["id"])
         stream = stream_agent_supervisor_graph(
             graph,
@@ -340,11 +353,25 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         404: {"description": "无暂停的会话"},
     },
 )
-async def resume_endpoint(req: ResumeRequest):
+async def resume_endpoint(req: ResumeRequest, current_user: Any = Depends(get_current_user)):
     """Resume a paused graph after user approval/denial."""
-    from app.domains.agent_run.chat_interrupt_repo import take_chat_interrupt
+    from app.domains.agent_run.chat_interrupt_repo import (
+        ack_chat_interrupt,
+        claim_chat_interrupt,
+        release_chat_interrupt,
+        take_chat_interrupt,
+    )
 
-    paused = take_chat_interrupt(req.session_id)
+    authenticated_user_id = getattr(current_user, "id", None)
+    claim_token: str | None = None
+    if isinstance(authenticated_user_id, str) and authenticated_user_id:
+        paused = claim_chat_interrupt(req.session_id, authenticated_user_id)
+        claim_token = str(paused.get("claim_token")) if paused and paused.get("claim_token") else None
+    else:
+        # Direct unit callers from the legacy compatibility surface do not
+        # receive FastAPI's dependency injection object. Production HTTP
+        # requests always take the user-bound claim path above.
+        paused = take_chat_interrupt(req.session_id)
     if not paused:
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")
@@ -354,6 +381,8 @@ async def resume_endpoint(req: ResumeRequest):
         try:
             graph = await _rebuild_paused_graph(paused)
         except Exception as exc:
+            if claim_token:
+                release_chat_interrupt(req.session_id, claim_token)
             from fastapi import HTTPException
 
             raise HTTPException(status_code=503, detail="审批恢复图不可用，请重新发起任务") from exc
@@ -378,6 +407,8 @@ async def resume_endpoint(req: ResumeRequest):
                     graph_input=cmd,
                 ):
                     yield event
+                if claim_token:
+                    ack_chat_interrupt(req.session_id, claim_token)
                 return
 
             from app.graphs.streaming import _workflow_status
@@ -412,8 +443,12 @@ async def resume_endpoint(req: ResumeRequest):
 
             yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
             yield f"event: done\ndata: {json.dumps({'answer': ''}, ensure_ascii=False)}\n\n"
+            if claim_token:
+                ack_chat_interrupt(req.session_id, claim_token)
 
         except Exception as e:
+            if claim_token:
+                release_chat_interrupt(req.session_id, claim_token)
             from app.graphs import format_llm_error
             msg = format_llm_error(e)
             yield _workflow_status("failed", "decision", "恢复执行失败")

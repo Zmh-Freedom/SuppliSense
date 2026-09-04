@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 import json
@@ -31,6 +32,7 @@ SUPPORTED_ACTION_TYPES = frozenset(
     {
         "import_external_supplier",
         "add_watchlist",
+        "remove_watchlist",
         "submit_access_application",
         "export_report",
     }
@@ -154,6 +156,7 @@ def decide_action_proposal(
                     "run_id": run_id,
                     "proposal_id": proposal_id,
                     "idempotency_key": proposal["idempotency_key"],
+                    "approver_id": user_id,
                 },
             )
     return {"run": updated_run, "proposal": updated_proposal, "approval": decision}
@@ -230,6 +233,7 @@ def decide_action_proposals(
                         "run_id": run_id,
                         "proposal_id": proposal_id,
                         "idempotency_key": proposal["idempotency_key"],
+                        "approver_id": user_id,
                     },
                 )
             decisions.append({"run": updated_run, "proposal": updated_proposal, "approval": decision})
@@ -251,7 +255,10 @@ def execute_sourcing_risk_action(event: dict) -> None:
         raise DomainError("AGENT_ACTION_NOT_APPROVED", "操作尚未批准", 409)
 
     action_payload = {**dict(proposal["payload"]), "idempotency_key": proposal["idempotency_key"]}
-    _execute_action(proposal["action_type"], action_payload)
+    if proposal["action_type"] in {"add_watchlist", "remove_watchlist"}:
+        _execute_watchlist_action(event, proposal, action_payload)
+    else:
+        _execute_action(proposal["action_type"], action_payload)
     mark_action_succeeded(run_id, proposal_id)
 
 
@@ -287,6 +294,12 @@ def add_watchlist(payload: dict[str, Any]) -> None:
     from app.domains.alert.service import add_to_watchlist as add_to_watchlist_service
 
     add_to_watchlist_service(_required_event_value(payload, "company_name"))
+
+
+def remove_watchlist(payload: dict[str, Any]) -> None:
+    from app.domains.alert.service import remove_from_watchlist as remove_from_watchlist_service
+
+    remove_from_watchlist_service(_required_event_value(payload, "company_name"))
 
 
 def submit_access_application(payload: dict[str, Any]) -> str:
@@ -392,7 +405,7 @@ def _bind_action_target(
             raise DomainError("AGENT_ACTION_CANDIDATE_INVALID", "候选企业快照无效", 422)
         return dict(snapshot)
 
-    if action_type == "add_watchlist" and candidate_id is None:
+    if action_type in {"add_watchlist", "remove_watchlist"} and candidate_id is None:
         company_name = payload.get("company_name")
         if (
             not isinstance(company_name, str)
@@ -528,10 +541,69 @@ def _execute_action(action_type: str, payload: dict[str, Any]) -> None:
     handlers = {
         "import_external_supplier": import_external_supplier,
         "add_watchlist": add_watchlist,
+        "remove_watchlist": remove_watchlist,
         "submit_access_application": submit_access_application,
         "export_report": export_report,
     }
     handlers[action_type](payload)
+
+
+def _execute_watchlist_action(
+    event: dict[str, Any], proposal: dict[str, Any], payload: dict[str, Any]
+) -> None:
+    """Execute monitor mutations through the shared Harness ToolExecutor boundary."""
+    from app.graphs.harness.actions import issue_approval_token
+    from app.graphs.harness.durable_actions import proposal_from_durable_row
+    from app.tools.executor import ToolContext, ToolExecutor
+    from app.tools import TOOL_REGISTRY
+
+    event_payload = dict(event.get("payload") or {})
+    run_id = _required_event_value(event_payload, "run_id")
+    approver_id = _required_event_value(event_payload, "approver_id")
+    run = get_run(run_id)
+    if run is None:
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+    requester_id = str(run.get("user_id") or "")
+    session_id = str(run.get("session_id") or "")
+    metadata = dict((proposal.get("payload") or {}).get("_harness_action") or {})
+    session_id = session_id or str(metadata.get("session_id") or "")
+    if not requester_id or not session_id:
+        raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "执行上下文缺少用户或会话绑定", 409)
+    try:
+        harness_proposal = proposal_from_durable_row(
+            proposal,
+            session_id=session_id,
+            user_id=requester_id,
+        )
+        token = issue_approval_token(
+            harness_proposal,
+            approver_id,
+            secret_key=settings.SECRET_KEY,
+        )
+        context = ToolContext(
+            call_id=str(uuid.uuid4()),
+            session_id=session_id,
+            run_id=run_id,
+            user_id=requester_id,
+            approval_token=token,
+            approval_proposal_id=str(proposal["id"]),
+            approval_actor_id=approver_id,
+            approval_secret_key=settings.SECRET_KEY,
+            idempotency_key=str(proposal["idempotency_key"]),
+        )
+        result = asyncio.run(
+            ToolExecutor(TOOL_REGISTRY).execute(
+                harness_proposal.tool_name, payload, context
+            )
+        )
+    except (ValueError, TypeError) as exc:
+        raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", str(exc), 409) from exc
+    if result.status != "success" or not result.side_effect_receipt:
+        raise DomainError(
+            "AGENT_ACTION_EXECUTION_FAILED",
+            f"{harness_proposal.tool_name} 未返回有效副作用回执",
+            502,
+        )
 
 
 def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
@@ -576,6 +648,14 @@ def _verify_harness_approval(
     """Verify Harness-bound approval metadata before the durable state transition."""
     metadata = dict((proposal.get("payload") or {}).get("_harness_action") or {})
     if not metadata:
+        if proposal.get("action_type") in {"add_watchlist", "remove_watchlist"}:
+            raise DomainError(
+                "AGENT_ACTION_APPROVAL_CONTEXT_INVALID",
+                "监控写操作缺少 Harness 动作绑定元数据，已拒绝审批",
+                409,
+            )
+        # Keep the legacy V2 action compatibility surface intact for action
+        # types that have not yet been migrated to a registered tool.
         return
     from app.graphs.harness.actions import issue_approval_token, verify_approval_token
     from app.graphs.harness.durable_actions import proposal_from_durable_row

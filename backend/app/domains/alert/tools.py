@@ -82,15 +82,19 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
 
 
 @tool
-def add_to_watchlist(company_name: str) -> dict:
+def add_to_watchlist(company_name: str, target_source: str = "conversation_state") -> dict:
     """将企业加入监控清单（需要用户确认）。
 
     Args:
         company_name: 企业全称
+        target_source: 企业引用来源，写操作必须来自当前会话上下文
     """
+    del target_source
     from app.graphs.approval import needs_approval, request_approval
+    from app.tools.executor import get_active_tool_context
 
-    if needs_approval("add_to_watchlist", {"company_name": company_name}):
+    active_context = get_active_tool_context()
+    if not active_context and needs_approval("add_to_watchlist", {"company_name": company_name}):
         try:
             approved = request_approval("add_to_watchlist", {"company_name": company_name})
         except RuntimeError:
@@ -99,19 +103,31 @@ def add_to_watchlist(company_name: str) -> dict:
             return {"cancelled": True, "message": f"用户取消了将 {company_name} 加入监控清单的操作"}
 
     from app.domains.alert.service import add_to_watchlist as _add
-    return _add(company_name)
+    result = _add(company_name)
+    return {
+        **result,
+        "side_effect_receipt": {
+            "receipt_id": active_context.idempotency_key if active_context else f"watchlist:add:{company_name}",
+            "operation": "add_to_watchlist",
+            "company_name": company_name,
+        },
+    }
 
 
 @tool
-def remove_from_watchlist(company_name: str) -> dict:
+def remove_from_watchlist(company_name: str, target_source: str = "conversation_state") -> dict:
     """将企业从监控清单移除（需要用户确认）。
 
     Args:
         company_name: 企业全称
+        target_source: 企业引用来源，写操作必须来自当前会话上下文
     """
+    del target_source
     from app.graphs.approval import needs_approval, request_approval
+    from app.tools.executor import get_active_tool_context
 
-    if needs_approval("remove_from_watchlist", {"company_name": company_name}):
+    active_context = get_active_tool_context()
+    if not active_context and needs_approval("remove_from_watchlist", {"company_name": company_name}):
         try:
             approved = request_approval("remove_from_watchlist", {"company_name": company_name})
         except RuntimeError:
@@ -120,4 +136,12 @@ def remove_from_watchlist(company_name: str) -> dict:
             return {"cancelled": True, "message": f"用户取消了将 {company_name} 移出监控清单的操作"}
 
     from app.domains.alert.service import remove_from_watchlist as _remove
-    return _remove(company_name)
+    result = _remove(company_name)
+    return {
+        **result,
+        "side_effect_receipt": {
+            "receipt_id": active_context.idempotency_key if active_context else f"watchlist:remove:{company_name}",
+            "operation": "remove_from_watchlist",
+            "company_name": company_name,
+        },
+    }

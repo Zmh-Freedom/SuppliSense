@@ -6,6 +6,7 @@ from app.graphs.harness.actions import (
     ActionProposal,
     build_action_hash,
     issue_approval_token,
+    verify_approval_token_for_action,
     verify_approval_token,
 )
 from app.graphs.harness.graph import build_harness_graph, run_harness
@@ -18,6 +19,7 @@ __all__ = [
     "ActionProposal",
     "build_action_hash",
     "issue_approval_token",
+    "verify_approval_token_for_action",
     "verify_approval_token",
     "HarnessState",
     "HarnessTask",

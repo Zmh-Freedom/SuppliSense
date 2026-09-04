@@ -12,7 +12,7 @@ from app.graphs.harness.durable_actions import (
     persist_action_proposal,
     proposal_from_durable_row,
 )
-from app.tools.executor import ToolContext, ToolExecutor
+from app.tools.executor import ToolContext, ToolExecutor, ToolOutcome
 from app.tools.registry import ToolRegistry, ToolSpec
 
 
@@ -142,3 +142,66 @@ def test_approval_request_accepts_optional_recovery_token() -> None:
     )
 
     assert request.approval_token == "h1.recovery-token"
+
+
+def test_watchlist_delivery_uses_tool_executor_and_approver_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = _watchlist_gate()
+    proposal = gate.propose(
+        "add_to_watchlist",
+        {"company_name": "甲公司", "target_source": "conversation_state"},
+        ToolContext(session_id="session-1", run_id="run-1", user_id="requester"),
+    )
+    row = {
+        "id": proposal.proposal_id,
+        "run_id": proposal.run_id,
+        "status": "approved",
+        "idempotency_key": proposal.idempotency_key,
+        "payload": {
+            **proposal.arguments,
+            "_harness_action": {
+                "tool_name": proposal.tool_name,
+                "action_hash": proposal.action_hash,
+                "session_id": proposal.session_id,
+                "expires_at": proposal.expires_at.isoformat(),
+            },
+        },
+    }
+    captured: dict[str, object] = {}
+
+    class FakeExecutor:
+        def __init__(self, registry):
+            captured["registry"] = registry
+
+        async def execute(self, tool_name, arguments, context):
+            captured.update(tool_name=tool_name, arguments=arguments, context=context)
+            return ToolOutcome(
+                call_id=context.call_id,
+                tool_name=tool_name,
+                tool_version="1.0",
+                status="success",
+                side_effect_receipt={"receipt_id": context.idempotency_key},
+            )
+
+    monkeypatch.setattr(action_service.settings, "SECRET_KEY", "test-secret")
+    monkeypatch.setattr(action_service, "get_run", lambda *_: {"id": "run-1", "session_id": "session-1", "user_id": "requester"})
+    monkeypatch.setattr("app.tools.executor.ToolExecutor", FakeExecutor)
+
+    action_service._execute_watchlist_action(
+        {"payload": {"run_id": "run-1", "proposal_id": proposal.proposal_id, "approver_id": "approver-1"}},
+        row,
+        {**proposal.arguments, "_harness_action": row["payload"]["_harness_action"], "idempotency_key": proposal.idempotency_key},
+    )
+
+    assert captured["tool_name"] == "add_to_watchlist"
+    assert captured["arguments"] == {
+        "company_name": "甲公司",
+        "target_source": "conversation_state",
+        "_harness_action": row["payload"]["_harness_action"],
+        "idempotency_key": proposal.idempotency_key,
+    }
+    context = captured["context"]
+    assert isinstance(context, ToolContext)
+    assert context.approval_actor_id == "approver-1"
+    assert context.approval_proposal_id == proposal.proposal_id

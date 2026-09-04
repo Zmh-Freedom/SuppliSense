@@ -94,6 +94,8 @@ class WatchlistOutput(StrictToolOutput):
     supplier_id: str | None = None
     companies: list[Any] = Field(default_factory=list)
     count: int | None = Field(default=None, ge=0)
+    operation: str | None = None
+    side_effect_receipt: dict[str, Any] | None = None
 
 
 class WatchlistTrendOutput(StrictToolOutput):

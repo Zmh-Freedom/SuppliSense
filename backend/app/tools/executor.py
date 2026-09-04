@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextvars import ContextVar, Token
 import inspect
 import time
 import uuid
@@ -16,6 +17,10 @@ from app.tools.registry import ToolRegistry
 
 logger = get_logger()
 
+_ACTIVE_TOOL_CONTEXT: ContextVar[ToolContext | None] = ContextVar(
+    "active_tool_context", default=None
+)
+
 
 class ToolContext(BaseModel):
     """Per-call authorization, budget and tracing context."""
@@ -27,6 +32,9 @@ class ToolContext(BaseModel):
     run_id: str | None = None
     user_id: str | None = None
     approval_token: str | None = None
+    approval_proposal_id: str | None = None
+    approval_actor_id: str | None = None
+    approval_secret_key: str | None = None
     idempotency_key: str | None = None
     tool_call_count: int = Field(default=0, ge=0)
     max_tool_calls: int = Field(default=32, gt=0)
@@ -116,6 +124,27 @@ class ToolExecutor:
             await self._record(outcome)
             return outcome
 
+        if spec.side_effect == "write":
+            try:
+                from app.graphs.harness.actions import verify_approval_token_for_action
+
+                verify_approval_token_for_action(
+                    context.approval_token or "",
+                    tool_name=tool_name,
+                    arguments=validated.model_dump(),
+                    context=context,
+                )
+            except (TypeError, ValueError) as exc:
+                outcome = self._outcome(
+                    context,
+                    tool_name,
+                    "denied",
+                    error=("approval_token_invalid", str(exc), False),
+                    version=spec.version,
+                )
+                await self._record(outcome)
+                return outcome
+
         attempts = 0
         started = time.monotonic()
         raw_result: Any = None
@@ -126,7 +155,7 @@ class ToolExecutor:
             attempts += 1
             try:
                 raw_result = await asyncio.wait_for(
-                    self._invoke(definition.tool, validated.model_dump()), timeout=timeout
+                    self._invoke(definition.tool, validated.model_dump(), context), timeout=timeout
                 )
                 break
             except asyncio.TimeoutError:
@@ -224,10 +253,14 @@ class ToolExecutor:
         await self._record(outcome)
         return outcome
 
-    async def _invoke(self, tool: Any, arguments: dict[str, Any]) -> Any:
-        if inspect.iscoroutinefunction(getattr(tool, "ainvoke", None)):
-            return await tool.ainvoke(arguments)
-        return await asyncio.to_thread(tool.invoke, arguments)
+    async def _invoke(self, tool: Any, arguments: dict[str, Any], context: ToolContext) -> Any:
+        active: Token[ToolContext | None] = _ACTIVE_TOOL_CONTEXT.set(context)
+        try:
+            if inspect.iscoroutinefunction(getattr(tool, "ainvoke", None)):
+                return await tool.ainvoke(arguments)
+            return await asyncio.to_thread(tool.invoke, arguments)
+        finally:
+            _ACTIVE_TOOL_CONTEXT.reset(active)
 
     async def _record(self, outcome: ToolOutcome) -> None:
         if not self.call_recorder:
@@ -309,4 +342,9 @@ def _invalid_evidence_metadata(payload: dict[str, Any]) -> str | None:
     return None
 
 
-__all__ = ["ToolContext", "ToolError", "ToolExecutor", "ToolMetrics", "ToolOutcome"]
+def get_active_tool_context() -> ToolContext | None:
+    """Return the current verified execution context to a tool wrapper."""
+    return _ACTIVE_TOOL_CONTEXT.get()
+
+
+__all__ = ["ToolContext", "ToolError", "ToolExecutor", "ToolMetrics", "ToolOutcome", "get_active_tool_context"]
