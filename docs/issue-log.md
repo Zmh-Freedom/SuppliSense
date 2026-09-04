@@ -1306,23 +1306,23 @@
 ## ISS-20260904-003 真实浏览器风险查询在工具返回后以 deadline_exceeded 收口
 
 - 发现日期：2026-09-04
-- 状态：处理中
+- 状态：已修复
 - 优先级：P1
 - 现象：真实浏览器登录后，在 AI 工作台提交“分析重庆传动轴股份有限公司当前风险状态”；页面收到工具 1/1 返回，但最终状态为“需人工复核”，Loop 退出原因为 `deadline_exceeded`，有效 Claim 和引用证据均为 0。
 - 影响：真实 Agent 风险查询不能在浏览器中形成可用结果；当前页面没有错误成功显示，前端正确保留了人工复核终态。
-- 根因：后端日志显示 DeepSeek 意图解析成功，`assess_risk` ToolCall 也成功并返回了风险业务字段，但当前结果适配没有把该工具结果转换为可验真的 Evidence/Claim；证据校验因此得到 0/1。该 Run 的执行事件还同时记录了 `budget_exhausted` 与 `deadline_exceeded` 元数据，终态收口为 `NEEDS_REVIEW`。
-- 修复方案：为风险工具补齐统一 Evidence/Claim 结果契约和适配回归，并统一预算/Loop 退出原因；修复后重新执行真实浏览器风险查询，核对 SSE、PostgreSQL Run/Task/ToolCall、Evidence/Claim 和 AgentAnswer 一致性。
-- 验证结果：PostgreSQL `agent_runs` 中该 Run 为 `NEEDS_REVIEW`；`agent_run_events` 产生 21 个有序事件，包含 `run`、`workflow_status`、`plan`、`execute_ready_tasks`、`evidence`、`agent_answer`、`done`；`assess_risk` ToolCall 为 `success` 且业务字段返回，但没有可验证 Evidence/Claim，故页面展示 `needs_review` 和 `evidence_incomplete`，未错误显示完成。浏览器控制台无 error。
-- 关联提交：待修复。
+- 根因：后端日志显示 DeepSeek 意图解析成功，`assess_risk` ToolCall 也成功并返回了风险业务字段，但历史结果适配器生成的 EvidenceRecord 缺少 `content_hash`，且回退逻辑把已有 `facts` 再嵌套进 `facts`，导致 Claim 的 `risk_score/risk_level` 路径无法读取；执行预算事件是该次失败收口的伴随现象，不是业务字段缺失的根因。
+- 修复方案：统一由 `build_evidence_record` 生成完整证据，兼容旧 provider evidence 时保留原 facts 层级并计算内容哈希；补充风险结果契约和 Claim 支持性回归，修复后重新执行真实浏览器风险查询并核对证据覆盖和 AgentAnswer 终态。
+- 验证结果：`python -m pytest backend/tests -m 'not integration' -q` 为 593 passed；真实三数据库集成为 229 passed；浏览器输入“分析重庆传动轴股份有限公司当前风险状态”后显示“已完成”、2 条有效 Claim、1 条证据、1/1 覆盖，Loop 退出 `all_tasks_processed`；浏览器控制台无 error。
+- 关联提交：`ac73eee0`。
 
 ## ISS-20260904-004 聊天入口未识别“查询当前正式供应商”
 
 - 发现日期：2026-09-04
-- 状态：待排期
+- 状态：已修复
 - 优先级：P1
 - 现象：真实浏览器在新对话中输入“查询当前正式供应商”，请求正常返回并完成 Run，但 PostgreSQL 计划为空、工具调用数为 0，页面显示“未形成任何可由证据支持的确定性结论”。
 - 影响：用户使用自然语言查询正式供应商时无法得到供应商库结果；当前页面未错误声称查询成功。
-- 根因：当前活动 Harness 的意图/计划映射未覆盖“查询正式供应商”这一只读目录意图。
-- 修复方案：补充正式供应商目录意图与只读工具契约，并增加真实生产链路回归；不绕过统一 Harness、Evidence/Claim 和 AgentAnswer 门禁。
-- 验证结果：PostgreSQL 计划事件 `steps=[]`，该 Run 没有 ToolCall，页面以 `all_tasks_processed` 收口为人工复核；标准寻源问题同样被解析成无目标风险意图，已复现并纳入后续修复范围。
-- 关联提交：待修复。
+- 根因：当前活动 Harness 的意图/计划映射未覆盖“查询正式供应商”这一只读目录意图；目录工具原先即使执行也只有汇总 Evidence，没有逐供应商 Claim，无法通过最终答案门禁。标准寻源问题还会被“风险最低”过滤词误判为纯风险分析。
+- 修复方案：增加正式供应商目录查询触发词和显式 `task_type` 意图字段；将“找风险最低供应商”识别为 sourcing + risk filter；目录工具输出目录汇总证据、逐供应商证据和名称 Claim，并增加无 LLM 的品类/风险过滤解析回归。
+- 验证结果：真实浏览器输入“查询当前正式供应商”后显示“已完成”、9 家正式供应商、9 条有效 Claim、10 条证据、1/1 覆盖；输入“帮我找光电器件领域风险最低的供应商”后生成寻源计划并返回 2 个外部候选及待核验联系方式；PostgreSQL 记录对应 `list_formal_suppliers`/`discover_supplier_candidates` ToolCall，Loop 均为 `all_tasks_processed`；浏览器控制台无 error。
+- 关联提交：`ac73eee0`。
