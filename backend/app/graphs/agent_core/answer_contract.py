@@ -29,22 +29,23 @@ def build_agent_answer(
     ledger: EvidenceLedger,
     claims: list[Claim],
     required_dimensions: list[str] | None = None,
+    required_evidence: list[dict[str, str]] | None = None,
     action_proposals: list[dict[str, Any]] | None = None,
     action_receipts: list[dict[str, Any]] | None = None,
 ) -> AgentAnswer:
     """Validate claims and produce a truthful completed/partial answer."""
     validated = [ledger.validate_claim(claim).claim for claim in claims]
-    accepted = [claim for claim in validated if claim.validation_status != "unsupported"]
+    accepted = [claim for claim in validated if claim.validation_status == "supported"]
     limitations: list[str] = []
     for claim in validated:
         limitations.extend(claim.validation_reasons)
-    coverage = ledger.coverage(required_dimensions or [])
+    coverage = ledger.coverage(required_dimensions or [], required_evidence)
     limitations.extend(f"缺少 {dimension} 维度的正式证据" for dimension in coverage.missing_dimensions)
     limitations = list(dict.fromkeys(limitations))
     has_review_condition = any(
         claim.validation_status in {"unsupported", "conflicting"} for claim in validated
     ) or bool(coverage.missing_dimensions)
-    has_partial = any(claim.validation_status == "partial" for claim in accepted)
+    has_partial = any(claim.validation_status == "partial" for claim in validated)
     status: Literal["completed", "partial", "needs_review", "failed"]
     if has_review_condition:
         status = "needs_review"

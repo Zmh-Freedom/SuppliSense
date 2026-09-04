@@ -1170,14 +1170,14 @@
 ## ISS-20260903-003 Claim-Evidence 校验未绑定事实值且覆盖度粒度错误
 
 - 发现日期：2026-09-03
-- 状态：待修复
+- 状态：已修复
 - 优先级：P0
 - 现象：Claim Validator 只检查 Evidence ID、企业、维度和状态，不比对 Claim 声明的字段与 Evidence facts；覆盖度仅按维度计算，一家企业的证据可将多家企业的同一维度判为已覆盖。
 - 影响：存在“引用了真证据，但输出了错数字/错等级”和多企业缺证据被掩盖的可能，真实性门禁不足以阻止幻觉。
 - 根因：Evidence 与 Claim 只有引用关系，没有字段级语义和期望任务矩阵。
 - 修复方案：按 Task 13 增加结构化 Claim 路径/值/单位校验，将覆盖度改为 `entity × dimension × required_fact`，为缺失、过期、冲突和 synthetic 建立明确终态。
-- 验证结果：待 Task 13 实施后回填。
-- 关联提交：待回填。
+- 验证结果：Claim 已增加 `fact_path`、`operator` 和 `unit`，对结构化 Evidence facts 支持字段读取、相等/不等/比较/包含/存在性校验，字段值不一致、字段缺失和单位不一致均不再支持确定性 Claim；保留历史无 `fact_path` Claim 的兼容匹配。Evidence 覆盖支持 `entity_id × dimension × required_fact`，Harness 多企业任务不再使用一家企业的证据覆盖另一家；synthetic/partial Claim 不进入最终事实列表。Task 13 定向 4 项、Evidence/Harness/Task12 回归 22 项、后端非集成回归 570 项、Python 编译检查和 `git diff --check` 均通过；真实三数据库集成测试未在本 Task 执行。
+- 关联提交：待提交。
 
 ## ISS-20260903-004 Harness 活动寻源计划未执行品类解析和分层扩源
 

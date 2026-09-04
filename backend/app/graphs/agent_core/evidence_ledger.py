@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,6 +52,9 @@ class Claim(BaseModel):
     dimension: str = Field(min_length=1, max_length=64)
     statement: str = Field(min_length=1, max_length=4000)
     value: str | float | int | bool | None = None
+    fact_path: str | None = Field(default=None, min_length=1, max_length=255)
+    operator: Literal["eq", "neq", "gt", "gte", "lt", "lte", "contains", "exists"] = "eq"
+    unit: str | None = Field(default=None, max_length=64)
     evidence_refs: list[str] = Field(default_factory=list, max_length=20)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -73,6 +76,9 @@ class EvidenceCoverage(BaseModel):
     required_dimensions: list[str] = Field(default_factory=list)
     covered_dimensions: list[str] = Field(default_factory=list)
     missing_dimensions: list[str] = Field(default_factory=list)
+    required_items: list[str] = Field(default_factory=list)
+    covered_items: list[str] = Field(default_factory=list)
+    missing_items: list[str] = Field(default_factory=list)
     coverage_ratio: float = Field(ge=0.0, le=1.0)
 
 
@@ -136,6 +142,11 @@ class EvidenceLedger:
                 invalid_refs.append(ref)
                 reasons.append(f"evidence_{record.status.value}:{ref}")
                 continue
+            fact_reason = _validate_claim_fact(claim, record)
+            if fact_reason:
+                invalid_refs.append(ref)
+                reasons.append(f"{fact_reason}:{ref}")
+                continue
             valid_refs.append(ref)
             if record.status == EvidenceStatus.SYNTHETIC or record.data_mode == "synthetic":
                 reasons.append(f"synthetic_evidence:{ref}")
@@ -159,8 +170,53 @@ class EvidenceLedger:
             invalid_evidence_refs=invalid_refs,
         )
 
-    def coverage(self, required_dimensions: list[str]) -> EvidenceCoverage:
+    def coverage(
+        self,
+        required_dimensions: list[str],
+        required_items: list[dict[str, str]] | None = None,
+    ) -> EvidenceCoverage:
         required = list(dict.fromkeys(required_dimensions))
+        if required_items:
+            normalized_items = [
+                {
+                    "entity_id": str(item["entity_id"]),
+                    "dimension": str(item["dimension"]),
+                    "fact_path": str(item.get("fact_path") or ""),
+                }
+                for item in required_items
+                if item.get("entity_id") and item.get("dimension")
+            ]
+            covered_items = [
+                _coverage_item_key(item)
+                for item in normalized_items
+                if _has_usable_evidence(
+                    self.records,
+                    entity_id=item["entity_id"],
+                    dimension=item["dimension"],
+                    fact_path=item["fact_path"] or None,
+                )
+            ]
+            all_items = [_coverage_item_key(item) for item in normalized_items]
+            missing_items = [item for item in all_items if item not in covered_items]
+            covered = [
+                dimension
+                for dimension in required
+                if any(
+                    item["dimension"] == dimension
+                    and _coverage_item_key(item) in covered_items
+                    for item in normalized_items
+                )
+            ]
+            missing = [dimension for dimension in required if dimension not in covered]
+            return EvidenceCoverage(
+                required_dimensions=required,
+                covered_dimensions=covered,
+                missing_dimensions=missing,
+                required_items=all_items,
+                covered_items=covered_items,
+                missing_items=missing_items,
+                coverage_ratio=len(covered_items) / len(all_items) if all_items else 1.0,
+            )
         covered = [
             dimension
             for dimension in required
@@ -176,8 +232,102 @@ class EvidenceLedger:
             required_dimensions=required,
             covered_dimensions=covered,
             missing_dimensions=missing,
+            required_items=[],
+            covered_items=[],
+            missing_items=[],
             coverage_ratio=len(covered) / len(required) if required else 1.0,
         )
+
+
+_MISSING = object()
+
+
+def _coverage_item_key(item: dict[str, str]) -> str:
+    return ":".join((item["entity_id"], item["dimension"], item.get("fact_path") or "*"))
+
+
+def _has_usable_evidence(
+    records: list[EvidenceRecord],
+    *,
+    entity_id: str,
+    dimension: str,
+    fact_path: str | None,
+) -> bool:
+    for record in records:
+        if record.entity_id != entity_id or record.dimension != dimension:
+            continue
+        if record.status not in {EvidenceStatus.AVAILABLE, EvidenceStatus.CONFIRMED_EMPTY}:
+            continue
+        if record.data_mode == "synthetic":
+            continue
+        if fact_path and _read_fact(record.facts, fact_path) is _MISSING:
+            continue
+        return True
+    return False
+
+
+def _read_fact(facts: dict[str, Any], path: str) -> Any:
+    current: Any = facts
+    for part in path.split("."):
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        return _MISSING
+    return current
+
+
+def _validate_claim_fact(claim: Claim, record: EvidenceRecord) -> str | None:
+    """Compare a structured claim with the exact fact in its evidence."""
+    if not claim.fact_path:
+        # Compatibility for historical graph claims. New deterministic claims
+        # must provide fact_path and are checked by the branch below.
+        if claim.value is None or _contains_equal_value(record.facts, claim.value):
+            return None
+        return "claim_value_not_supported"
+
+    actual = _read_fact(record.facts, claim.fact_path)
+    if actual is _MISSING:
+        return "fact_not_found"
+    if claim.unit:
+        observed_unit = record.facts.get(f"{claim.fact_path}_unit") or record.facts.get("unit")
+        if not observed_unit:
+            return "evidence_unit_missing"
+        if str(observed_unit).strip().casefold() != claim.unit.strip().casefold():
+            return "unit_mismatch"
+    if claim.operator == "exists":
+        return None if actual is not None else "fact_not_found"
+    if claim.operator == "contains":
+        if isinstance(actual, str):
+            return None if str(claim.value) in actual else "claim_value_mismatch"
+        if isinstance(actual, (list, tuple, set)):
+            return None if claim.value in actual else "claim_value_mismatch"
+        return "claim_operator_invalid"
+    try:
+        matches = {
+            "eq": _safe_equal(actual, claim.value),
+            "neq": not _safe_equal(actual, claim.value),
+            "gt": actual > claim.value,
+            "gte": actual >= claim.value,
+            "lt": actual < claim.value,
+            "lte": actual <= claim.value,
+        }[claim.operator]
+    except (KeyError, TypeError, ValueError):
+        return "claim_operator_invalid"
+    return None if matches else "claim_value_mismatch"
+
+
+def _safe_equal(actual: Any, expected: Any) -> bool:
+    if isinstance(actual, str) or isinstance(expected, str):
+        return str(actual).strip().casefold() == str(expected).strip().casefold()
+    return actual == expected
+
+
+def _contains_equal_value(value: Any, expected: Any) -> bool:
+    if isinstance(value, dict):
+        return any(_contains_equal_value(item, expected) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_equal_value(item, expected) for item in value)
+    return _safe_equal(value, expected)
 
 
 def build_evidence_record(

@@ -129,3 +129,94 @@ def test_agent_answer_with_only_formal_supported_claims_is_completed() -> None:
 
     assert answer.status == "completed"
     assert answer.claims[0].validation_status == "supported"
+
+
+def test_claim_fact_path_rejects_value_mismatch() -> None:
+    ledger = EvidenceLedger([
+        build_evidence_record(
+            evidence_id="ev-score",
+            entity_id="supplier-1",
+            dimension="risk",
+            provider="official_registry",
+            source_type="official",
+            payload={"risk_score": 42},
+            collected_at=NOW,
+        )
+    ])
+    claim = Claim(
+        claim_id="claim-wrong-score",
+        entity_id="supplier-1",
+        dimension="risk",
+        statement="风险评分为 99",
+        value=99,
+        fact_path="risk_score",
+        evidence_refs=["ev-score"],
+    )
+
+    result = ledger.validate_claim(claim, now=NOW)
+
+    assert result.claim.validation_status == "unsupported"
+    assert "claim_value_mismatch:ev-score" in result.claim.validation_reasons
+
+
+def test_claim_fact_path_rejects_unit_mismatch() -> None:
+    ledger = EvidenceLedger([
+        build_evidence_record(
+            evidence_id="ev-ratio",
+            entity_id="supplier-1",
+            dimension="risk",
+            provider="official_registry",
+            source_type="official",
+            payload={"debt_ratio": 0.42, "debt_ratio_unit": "fraction"},
+            collected_at=NOW,
+        )
+    ])
+    claim = Claim(
+        claim_id="claim-wrong-unit",
+        entity_id="supplier-1",
+        dimension="risk",
+        statement="资产负债率为 42%",
+        value=0.42,
+        fact_path="debt_ratio",
+        unit="%",
+        evidence_refs=["ev-ratio"],
+    )
+
+    result = ledger.validate_claim(claim, now=NOW)
+
+    assert result.claim.validation_status == "unsupported"
+    assert "unit_mismatch:ev-ratio" in result.claim.validation_reasons
+
+
+def test_coverage_is_scoped_by_entity_and_dimension() -> None:
+    ledger = EvidenceLedger([
+        _record("ev-a", entity_id="supplier-a"),
+    ])
+
+    coverage = ledger.coverage(
+        ["risk"],
+        [
+            {"entity_id": "supplier-a", "dimension": "risk"},
+            {"entity_id": "supplier-b", "dimension": "risk"},
+        ],
+    )
+
+    assert coverage.coverage_ratio == 0.5
+    assert coverage.covered_items == ["supplier-a:risk:*"]
+    assert coverage.missing_items == ["supplier-b:risk:*"]
+
+
+def test_synthetic_claim_is_not_rendered_as_final_fact() -> None:
+    ledger = EvidenceLedger([
+        _record("ev-synthetic", status=EvidenceStatus.SYNTHETIC, data_mode="synthetic"),
+    ])
+    answer = build_agent_answer(
+        summary="待复核",
+        ledger=ledger,
+        claims=[_claim("ev-synthetic")],
+        required_dimensions=["risk"],
+    )
+
+    assert answer.status == "needs_review"
+    assert answer.claims == []
+    assert "synthetic_evidence:ev-synthetic" in answer.limitations

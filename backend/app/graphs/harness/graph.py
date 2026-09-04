@@ -219,6 +219,9 @@ def _payload_claims(outcome: ToolOutcome, task: HarnessTask) -> list[Claim]:
                     dimension=str(raw.get("dimension") or task.dimension),
                     statement=str(raw["statement"]),
                     value=raw.get("value"),
+                    fact_path=str(raw["fact_path"]) if raw.get("fact_path") else None,
+                    operator=str(raw.get("operator") or "eq"),
+                    unit=str(raw["unit"]) if raw.get("unit") else None,
                     evidence_refs=[str(item) for item in raw.get("evidence_refs", [])],
                     confidence=float(raw.get("confidence", 0.0)),
                 )
@@ -230,6 +233,25 @@ def _payload_claims(outcome: ToolOutcome, task: HarnessTask) -> list[Claim]:
 
 def _required_dimensions(tasks: list[HarnessTask]) -> list[str]:
     return list(dict.fromkeys(task.dimension for task in tasks if task.required))
+
+
+def _required_evidence_items(tasks: list[HarnessTask]) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    for task in tasks:
+        if not task.required:
+            continue
+        requirements = task.evidence_requirements or [task.dimension]
+        for requirement in requirements:
+            items.append({
+                "entity_id": task.entity_id,
+                "dimension": task.dimension,
+                "fact_path": (
+                    requirement
+                    if requirement not in {task.dimension, "supplier_candidate"}
+                    else ""
+                ),
+            })
+    return items
 
 
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
@@ -354,7 +376,7 @@ def build_harness_graph(
         claims = [Claim.model_validate(item) for item in state.get("claims", [])]
         tasks = [HarnessTask.model_validate(item) for item in state.get("task_specs", [])]
         required = _required_dimensions(tasks)
-        coverage = ledger.coverage(required)
+        coverage = ledger.coverage(required, _required_evidence_items(tasks))
         validated = [ledger.validate_claim(claim).claim.model_dump(mode="json") for claim in claims]
         missing = list(coverage.missing_dimensions)
         patch = {
@@ -401,6 +423,7 @@ def build_harness_graph(
             ledger=ledger,
             claims=claims,
             required_dimensions=_required_dimensions(tasks),
+            required_evidence=_required_evidence_items(tasks),
         )
         if not claims:
             answer = answer.model_copy(
