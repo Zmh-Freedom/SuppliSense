@@ -66,6 +66,20 @@ class BusinessRiskOutput(StrictToolOutput):
     evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class OperationalRiskOutput(StrictToolOutput):
+    dimension: str
+    company_name: str
+    supplier_code: str | None = None
+    period: str | None = None
+    assessment_status: str
+    risk_score: float | None = None
+    risk_level: str | None = None
+    data_coverage: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    reason: str | None = None
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class AlertCheckOutput(StrictToolOutput):
     company_name: str
     changed: bool = False
@@ -270,6 +284,7 @@ TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "search_company": CompanySearchOutput,
     "assess_risk": RiskAssessmentOutput,
     "assess_business_risk": BusinessRiskOutput,
+    "assess_operational_risk": OperationalRiskOutput,
     "check_alert": AlertCheckOutput,
     "get_watchlist": WatchlistOutput,
     "analyze_watchlist_trend": WatchlistTrendOutput,

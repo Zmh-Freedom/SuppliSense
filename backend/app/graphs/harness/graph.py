@@ -33,17 +33,18 @@ from app.graphs.harness.state import (
     new_budget,
     utc_now_iso,
 )
+from app.domains.risk.risk_contract import get_risk_dimension_spec
 
 
 PersistCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
 _DIMENSION_TO_TOOL = {
-    "risk": ("assess_risk", "company_name"),
-    "financial": ("query_financials", "company_name"),
-    "business_risk": ("assess_business_risk", "supplier_reference"),
-    "esg": ("esg_assessment", "company_name"),
-    "sentiment": ("sentiment_analysis", "company_name"),
-    "compliance": ("check_sanctions", "company_name"),
+    dimension: (spec.tool_name, spec.argument_name)
+    for dimension in (
+        "risk", "financial", "business_risk", "quality", "delivery",
+        "esg", "sentiment", "compliance",
+    )
+    if (spec := get_risk_dimension_spec(dimension)) is not None
 }
 
 
@@ -105,10 +106,13 @@ def _task_from_subtask(
     if not mapping or not supplier_name:
         return None
     tool_name, argument_name = mapping
+    arguments = {argument_name: supplier_name}
+    if tool_name == "assess_operational_risk":
+        arguments["dimension"] = dimension
     return HarnessTask(
         task_id=str(subtask.get("subtask_id") or f"{task.get('task_id', 'task')}-{dimension}-{supplier_name}"),
         tool_name=tool_name,
-        arguments={argument_name: supplier_name},
+        arguments=arguments,
         entity_id=_entity_id(supplier_name, context),
         dimension=dimension,
         required=bool(subtask.get("required", True)),
@@ -170,11 +174,14 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
             if not mapping:
                 continue
             tool_name, argument_name = mapping
+            arguments = {argument_name: name}
+            if tool_name == "assess_operational_risk":
+                arguments["dimension"] = dimension
             result.append(
                 HarnessTask(
                     task_id=f"{current_task.get('task_id', 'task')}:{name}:{dimension}",
                     tool_name=tool_name,
-                    arguments={argument_name: name},
+                    arguments=arguments,
                     entity_id=_entity_id(name, context),
                     dimension=dimension,
                     required=dimension != "sentiment",
@@ -430,10 +437,19 @@ def build_harness_graph(
 
     async def remediate(state: HarnessState) -> dict[str, Any]:
         attempts = int(state.get("remediation_attempts", 0)) + 1
-        existing = {str(item.get("task_id")) for item in state.get("task_specs", []) if isinstance(item, dict)}
+        existing = [item for item in state.get("task_specs", []) if isinstance(item, dict)]
+        existing_ids = {str(item.get("task_id")) for item in existing}
+        existing_sources = {
+            str(item.get("source_key")) for item in existing if item.get("source_key")
+        }
         additions = [
             item for item in state.get("remediation_specs", [])
-            if isinstance(item, dict) and str(item.get("task_id")) not in existing
+            if isinstance(item, dict)
+            and str(item.get("task_id")) not in existing_ids
+            and (
+                not item.get("source_key")
+                or str(item.get("source_key")) not in existing_sources
+            )
         ]
         patch = {
             "task_specs": list(state.get("task_specs", [])) + additions,

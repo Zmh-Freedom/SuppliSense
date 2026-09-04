@@ -32,6 +32,9 @@ class HarnessTask(BaseModel):
     dimension: str = Field(min_length=1)
     required: bool = True
     evidence_requirements: list[str] = Field(default_factory=list)
+    # Only remediation tasks supplied by a policy may set this key.  It lets
+    # the runtime reject a second call to the same provider/source.
+    source_key: str | None = None
     status: Literal["pending", "running", "completed", "partial", "failed"] = "pending"
     attempts: int = Field(default=0, ge=0)
 

@@ -15,7 +15,7 @@ def esg_assessment(company_name: str) -> dict:
         return {"status": "not_found", "error": "未找到企业数据", "company_name": company_name}
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence(result, tool_name="esg_assessment", entity_id=f"entity:{company_name}", dimension="esg")
+    return attach_tool_evidence(result, tool_name="esg_assessment", entity_id=f"entity:{company_name}", dimension="esg", claim_fields=["total_score", "total_level"])
 
 
 @tool
@@ -67,7 +67,7 @@ def check_sanctions(company_name: str) -> dict:
     from app.domains.risk.sanctions_service import check_sanctions as _check
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence(_check(company_name), tool_name="check_sanctions", entity_id=f"entity:{company_name}", dimension="compliance")
+    return attach_tool_evidence(_check(company_name), tool_name="check_sanctions", entity_id=f"entity:{company_name}", dimension="compliance", claim_fields=["clean", "match_count"])
 
 
 @tool
@@ -194,4 +194,7 @@ def query_financials(company_name: str) -> dict:
         "net_profit_margin": fin.net_profit_margin,
         "current_ratio": fin.current_ratio,
         "quick_ratio": fin.quick_ratio,
-    }, tool_name="query_financials", entity_id=f"entity:{company_name}", dimension="financial")
+    }, tool_name="query_financials", entity_id=f"entity:{company_name}", dimension="financial", claim_fields=[
+        "revenue_growth", "net_profit_growth", "debt_ratio", "cash_flow", "roe",
+        "net_profit_margin", "current_ratio", "quick_ratio",
+    ])

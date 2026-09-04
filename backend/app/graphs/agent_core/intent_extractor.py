@@ -14,7 +14,10 @@ from app.core.logging import get_logger
 
 logger = get_logger()
 
-_ANALYSIS_TOKENS = ("风险", "ESG", "esg", "舆情", "合规", "制裁", "监控", "评估", "分析")
+_ANALYSIS_TOKENS = (
+    "风险", "财务", "商务", "供应依赖", "可替代", "质量", "交付",
+    "ESG", "esg", "舆情", "合规", "制裁", "监控", "评估", "分析",
+)
 
 
 class ConversationIntentExtraction(BaseModel):
@@ -23,9 +26,11 @@ class ConversationIntentExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     target_supplier_names: list[str] = Field(default_factory=list, max_length=10)
-    analysis_dimensions: list[Literal["risk", "esg", "sentiment", "compliance"]] = Field(
+    analysis_dimensions: list[Literal[
+        "risk", "financial", "business_risk", "quality", "delivery", "esg", "sentiment", "compliance"
+    ]] = Field(
         default_factory=list,
-        max_length=4,
+        max_length=8,
     )
     requested_action: Literal["add_watchlist", "none"] = "none"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -38,8 +43,12 @@ class ConversationIntentExtraction(BaseModel):
     @field_validator("analysis_dimensions")
     @classmethod
     def normalize_dimensions(
-        cls, value: list[Literal["risk", "esg", "sentiment", "compliance"]]
-    ) -> list[Literal["risk", "esg", "sentiment", "compliance"]]:
+        cls, value: list[Literal[
+            "risk", "financial", "business_risk", "quality", "delivery", "esg", "sentiment", "compliance"
+        ]]
+    ) -> list[Literal[
+        "risk", "financial", "business_risk", "quality", "delivery", "esg", "sentiment", "compliance"
+    ]]:
         return list(dict.fromkeys(value))
 
 
@@ -138,6 +147,16 @@ def _normalize_llm_payload(payload: Any) -> Any:
     dimension_map = {
         "风险": "risk",
         "风险评估": "risk",
+        "财务": "financial",
+        "财务风险": "financial",
+        "商务": "business_risk",
+        "商务风险": "business_risk",
+        "供应依赖": "business_risk",
+        "可替代性": "business_risk",
+        "质量": "quality",
+        "质量风险": "quality",
+        "交付": "delivery",
+        "交付风险": "delivery",
         "esg": "esg",
         "ESG": "esg",
         "舆情": "sentiment",

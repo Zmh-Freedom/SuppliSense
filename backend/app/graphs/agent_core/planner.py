@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from app.graphs.agent_core.contracts import AgentSubtask, AgentTask
+from app.domains.risk.risk_contract import RISK_DIMENSION_SPECS
 
 
 _OPTIONAL_DIMENSIONS = {"sentiment"}
 _EVIDENCE_REQUIREMENTS = {
-    "risk": ["risk"],
-    "esg": ["esg"],
-    "sentiment": ["sentiment"],
-    "compliance": ["compliance"],
+    dimension: list(spec.evidence_requirements)
+    for dimension, spec in RISK_DIMENSION_SPECS.items()
 }
 
 

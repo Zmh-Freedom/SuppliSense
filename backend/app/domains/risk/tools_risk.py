@@ -20,6 +20,7 @@ def assess_risk(company_name: str) -> dict:
         entity_id=f"entity:{company_name}",
         dimension="risk",
         source_type="risk_service_result",
+        claim_fields=["risk_score", "risk_level"],
     )
 
 
@@ -84,4 +85,36 @@ def assess_business_risk(supplier_reference: str, category_code: str = "") -> di
     return attach_tool_evidence(assess_business_risk_p0(
         supplier_reference,
         category_code=category_code or None,
-    ), tool_name="assess_business_risk", entity_id=f"entity:{supplier_reference}", dimension="business_risk")
+    ), tool_name="assess_business_risk", entity_id=f"entity:{supplier_reference}", dimension="business_risk", claim_fields=[
+        "risk_level", "supplier_spend_share", "active_supplier_count",
+    ])
+
+
+@tool
+def assess_operational_risk(company_name: str, dimension: str) -> dict:
+    """评估质量或交付风险，仅使用正式且校验通过的内部快照。
+
+    缺少质量/交付指标时返回数据不足，不会把缺失当成低风险。
+
+    Args:
+        company_name: 企业全称
+        dimension: 风险维度，只能是 quality 或 delivery
+    """
+    if dimension not in {"quality", "delivery"}:
+        return {
+            "status": "invalid",
+            "dimension": dimension,
+            "company_name": company_name,
+            "error": "dimension 必须是 quality 或 delivery",
+        }
+    from app.domains.risk.operational_risk_service import assess_operational_risk as _assess
+    from app.tools.evidence import attach_tool_evidence
+
+    result = _assess(company_name, dimension)  # type: ignore[arg-type]
+    return attach_tool_evidence(
+        result,
+        tool_name="assess_operational_risk",
+        entity_id=f"entity:{company_name}",
+        dimension=dimension,
+        claim_fields=["risk_score", "risk_level"],
+    )

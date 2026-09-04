@@ -252,6 +252,11 @@ def assess_business_risk_p0(
             "claim": "采购集中度与可替代性基于当前评估数据模式的月度收货金额计算。",
             "data_mode": assessment_data_mode,
             "rows": len(scope_rows),
+            "facts": {
+                "risk_level": dependency_level,
+                "supplier_spend_share": round(share, 4),
+                "active_supplier_count": supplier_count,
+            },
         }
     ]
     return {

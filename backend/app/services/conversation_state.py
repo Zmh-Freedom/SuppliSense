@@ -11,6 +11,10 @@ from app.graphs.agent_core.contracts import AgentTask, ConversationState, migrat
 
 _ANALYSIS_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("risk", ("风险", "风险评估", "风险分析")),
+    ("financial", ("财务", "财务风险")),
+    ("business_risk", ("商务", "商务风险", "供应依赖", "可替代性")),
+    ("quality", ("质量", "质量风险")),
+    ("delivery", ("交付", "交付风险")),
     ("esg", ("ESG", "esg", "环境社会治理")),
     ("sentiment", ("舆情", "新闻", "负面信息")),
     ("compliance", ("合规", "制裁", "黑名单")),
@@ -48,6 +52,8 @@ class TargetResolution:
 
 def analysis_dimensions_from_message(message: str) -> list[str]:
     """Return explicitly requested analysis dimensions in stable order."""
+    if "五维风险" in message or "五个维度" in message:
+        return ["risk", "financial", "business_risk", "quality", "delivery", "compliance"]
     return [
         dimension
         for dimension, keywords in _ANALYSIS_DIMENSIONS
