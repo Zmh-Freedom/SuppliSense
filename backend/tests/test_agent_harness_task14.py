@@ -60,6 +60,38 @@ def test_harness_does_not_recommend_unfiltered_suppliers_without_category() -> N
     assert planned == []
 
 
+def test_harness_recognizes_formal_supplier_directory_query() -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "formal-directory",
+            "task_type": "sourcing",
+            "user_message": "查询当前正式供应商",
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert len(planned) == 1
+    assert planned[0].tool_name == "list_formal_suppliers"
+
+
+def test_harness_builds_discovery_plan_for_risk_filtered_sourcing() -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "risk-filtered-sourcing",
+            "task_type": "sourcing",
+            "user_message": "帮我找光电器件领域风险最低的供应商",
+            "requirement": {
+                "category": "光电器件",
+                "specification": "光电器件",
+            },
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert len(planned) == 1
+    assert planned[0].tool_name == "discover_supplier_candidates"
+
+
 def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monkeypatch) -> None:
     formal = {
         "supplier_id": "supplier-1",

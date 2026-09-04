@@ -16,6 +16,55 @@ def list_formal_suppliers(limit: int = 20) -> dict:
     result = _list(limit=limit)
     if result.get("total", 0) == 0:
         result["status"] = "not_found"
+        return attach_tool_evidence(
+            result,
+            tool_name="list_formal_suppliers",
+            entity_id="sourcing",
+            dimension="sourcing",
+        )
+
+    from app.graphs.agent_core.evidence_ledger import build_evidence_record
+
+    evidence_records: list[dict] = [build_evidence_record(
+        evidence_id="list_formal_suppliers:directory",
+        entity_id="sourcing",
+        dimension="sourcing",
+        provider="formal_supplier_directory",
+        source_type="feishu_formal_supplier_snapshot",
+        payload={
+            "total": result.get("total", 0),
+            "items": result.get("items", []),
+        },
+    ).model_dump(mode="json")]
+    claims: list[dict] = []
+    for index, supplier in enumerate(result.get("items", [])):
+        if not isinstance(supplier, dict) or not supplier.get("supplier_name"):
+            continue
+        supplier_name = str(supplier["supplier_name"])
+        evidence_id = (
+            f"list_formal_suppliers:{supplier.get('supplier_id') or supplier_name}:{index}"
+        )
+        evidence_records.append(build_evidence_record(
+            evidence_id=evidence_id,
+            entity_id=str(supplier.get("supplier_id") or f"entity:{supplier_name}"),
+            dimension="sourcing",
+            provider=str(supplier.get("source") or "formal_supplier_directory"),
+            source_type="feishu_formal_supplier_snapshot",
+            payload=supplier,
+        ).model_dump(mode="json"))
+        claims.append({
+            "claim_id": f"{evidence_id}:claim:supplier_name",
+            "entity_id": str(supplier.get("supplier_id") or f"entity:{supplier_name}"),
+            "dimension": "sourcing",
+            "statement": f"{supplier_name} 是当前正式供应商",
+            "value": supplier_name,
+            "fact_path": "supplier_name",
+            "operator": "eq",
+            "evidence_refs": [evidence_id],
+            "confidence": 0.99,
+        })
+    result["evidence_records"] = evidence_records
+    result["claims"] = claims
     return attach_tool_evidence(result, tool_name="list_formal_suppliers", entity_id="sourcing", dimension="sourcing")
 
 

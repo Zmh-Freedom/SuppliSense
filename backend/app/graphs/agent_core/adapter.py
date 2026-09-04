@@ -206,8 +206,9 @@ def apply_extracted_conversation_intent(
 
     target_names = list(getattr(extracted, "target_supplier_names", []) or [])
     dimensions = list(getattr(extracted, "analysis_dimensions", []) or [])
+    task_type = getattr(extracted, "task_type", "none")
     requested_action = getattr(extracted, "requested_action", "none")
-    if not target_names and not dimensions and requested_action == "none":
+    if not target_names and not dimensions and task_type == "none" and requested_action == "none":
         return execution_context
 
     conversation_state = dict(execution_context.get("conversation_state") or {})
@@ -226,7 +227,9 @@ def apply_extracted_conversation_intent(
         conversation_state["selected_suppliers"] = target_names
     if dimensions:
         current_task["analysis_dimensions"] = dimensions
-    if target_names or dimensions:
+    if task_type == "sourcing" and not target_names:
+        current_task["task_type"] = "sourcing"
+    elif target_names or dimensions:
         current_task["task_type"] = "analysis"
     conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
     conversation_state["focus_set"] = resolved.focus_set.model_dump(mode="json") if resolved.focus_set else None
@@ -288,6 +291,11 @@ def build_execution_context(
     if resolution.target_supplier_names:
         current_task["target_supplier_names"] = resolution.target_supplier_names
         current_task["task_type"] = "analysis" if current_task.get("analysis_dimensions") else current_task.get("task_type", "sourcing")
+    from app.graphs.agent_core.intent_extractor import infer_task_type
+
+    inferred_task_type = infer_task_type(user_message)
+    if inferred_task_type == "sourcing":
+        current_task["task_type"] = "sourcing"
     targets = list(current_task.get("target_supplier_names") or [])
     dimensions = list(current_task.get("analysis_dimensions") or [])
     if current_task.get("task_type") == "analysis" and targets and dimensions:

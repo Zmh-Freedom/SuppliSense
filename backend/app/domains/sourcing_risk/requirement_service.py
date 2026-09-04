@@ -164,6 +164,15 @@ def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
     target = match.group("target").strip(" ，,、").rstrip("的").strip()
     if not target:
         return None
+    risk_limit = None
+    risk_filter = re.search(r"(?:领域)?风险(?P<level>最低|较低|可控|最小)$", target)
+    if risk_filter:
+        risk_limit = risk_filter.group("level")
+        target = target[:risk_filter.start()].strip()
+        if target.endswith("领域"):
+            target = target[:-2].strip()
+    if not target:
+        return None
     region = next((item for item in _REGION_NAMES if target.startswith(item)), None)
     category = target[len(region):].strip() if region else target
     if not category:
@@ -172,6 +181,7 @@ def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
         "category": category,
         "product": category,
         "specification": category,
+        **({"risk_limit": risk_limit} if risk_limit else {}),
         **({"region": region, "supply_region": region} if region else {}),
         "must_have": [],
         "optional_conditions": [],

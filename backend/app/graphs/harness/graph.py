@@ -211,7 +211,9 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
 def _is_formal_directory_query(task: Mapping[str, Any]) -> bool:
     """Only a directory question may use the unfiltered formal-supplier tool."""
     message = str(task.get("user_message") or "")
-    return "正式供应商" in message and any(token in message for token in ("哪些", "列表", "目录", "清单"))
+    return "正式供应商" in message and any(
+        token in message for token in ("查询", "哪些", "列表", "目录", "清单", "有多少")
+    )
 
 
 def _append_derived_tasks(

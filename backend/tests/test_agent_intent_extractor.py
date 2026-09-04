@@ -69,3 +69,39 @@ def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix()
     assert result["current_task"]["analysis_dimensions"] == ["risk", "esg", "sentiment", "compliance"]
     assert len(result["current_task"]["subtasks"]) == 4
     assert result["conversation_state"]["selected_supplier_names"] == ["四川建安工业有限责任公司"]
+
+
+def test_llm_intent_keeps_risk_filter_as_sourcing_task(monkeypatch):
+    payload = {
+        "target_supplier_names": [],
+        "analysis_dimensions": ["risk"],
+        "requested_action": "none",
+        "confidence": 0.95,
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "帮我找光电器件领域风险最低的供应商", []
+    )
+
+    assert result is not None
+    assert result.task_type == "sourcing"
+    assert result.analysis_dimensions == ["risk"]
+
+
+def test_deterministic_intent_marks_sourcing_without_llm():
+    assert intent_extractor.infer_task_type("帮我找钢材供应商") == "sourcing"
+    assert intent_extractor.infer_task_type("查询当前正式供应商") == "sourcing"
+    assert intent_extractor.infer_task_type("分析甲公司当前风险") == "analysis"

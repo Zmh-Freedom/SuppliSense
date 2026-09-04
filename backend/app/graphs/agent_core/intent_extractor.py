@@ -32,6 +32,7 @@ class ConversationIntentExtraction(BaseModel):
         default_factory=list,
         max_length=8,
     )
+    task_type: Literal["sourcing", "analysis", "none"] = "none"
     requested_action: Literal["add_watchlist", "none"] = "none"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -75,6 +76,8 @@ def extract_conversation_intent(
             "Extract explicitly named companies from the current message even when they are absent from known_supplier_references.",
             "Use known_supplier_references only to resolve pronouns or aliases such as '这家' and '上述两家'.",
             "Do not invent companies, supplier codes, risk findings, or actions.",
+            "Set task_type='sourcing' for finding, recommending, or listing suppliers, including requests such as '找风险最低的供应商'; risk is then a sourcing filter, not a company risk-assessment task.",
+            "Set task_type='analysis' for assessing explicitly named suppliers; set task_type='none' only when no agent task is requested.",
             "Use requested_action='add_watchlist' only when the user explicitly asks to monitor or add to monitoring.",
             "This is read-only intent extraction and must not execute an action.",
         ],
@@ -100,19 +103,40 @@ def extract_conversation_intent(
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
         return None
 
+    inferred_task_type = infer_task_type(message)
     validated = extracted.model_copy(update={
         "target_supplier_names": validate_extracted_targets(
             extracted.target_supplier_names, supplier_references
-        )
+        ),
+        "task_type": inferred_task_type if inferred_task_type != "none" else extracted.task_type,
     })
     logger.info(
         "conversation_intent_extracted",
         target_supplier_names=validated.target_supplier_names,
         analysis_dimensions=validated.analysis_dimensions,
+        task_type=validated.task_type,
         requested_action=validated.requested_action,
         confidence=validated.confidence,
     )
     return validated
+
+
+def infer_task_type(message: str) -> Literal["sourcing", "analysis", "none"]:
+    """Classify the explicit operation before applying dimension filters."""
+    text = str(message or "").strip()
+    if not text:
+        return "none"
+    if "正式供应商" in text and any(
+        token in text for token in ("查询", "哪些", "列表", "目录", "清单", "有多少")
+    ):
+        return "sourcing"
+    has_supplier_target = any(token in text for token in ("供应商", "厂家", "厂商"))
+    has_discovery_verb = any(token in text for token in ("找", "推荐", "寻找", "采购", "搜寻", "寻源"))
+    if has_supplier_target and has_discovery_verb:
+        return "sourcing"
+    if any(token in text for token in _ANALYSIS_TOKENS):
+        return "analysis"
+    return "none"
 
 
 def validate_extracted_targets(

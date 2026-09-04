@@ -47,36 +47,100 @@ def attach_tool_evidence(
     now = datetime.now(timezone.utc).isoformat()
     legacy_records = result.get("evidence")
     if isinstance(legacy_records, list) and legacy_records:
-        result["evidence_records"] = [
-            {
-                "evidence_id": str(item.get("evidence_id") or f"{tool_name}:{entity_id}:{dimension}:{index}"),
-                "entity_id": str(item.get("entity_id") or entity_id),
-                "dimension": str(item.get("dimension") or dimension),
-                "provider": str(item.get("provider") or item.get("source") or tool_name),
-                "source_type": str(item.get("source_type") or item.get("source") or source_type),
-                "status": str(item.get("status") or "available"),
-                "collected_at": str(item.get("collected_at") or item.get("observed_at") or now),
-                "data_mode": "synthetic" if item.get("data_mode") == "synthetic" else "formal",
-                "facts": dict(item.get("facts") or item),
-            }
-            for index, item in enumerate(legacy_records)
-            if isinstance(item, dict)
-        ]
+        result["evidence_records"] = _normalize_legacy_records(
+            legacy_records,
+            tool_name=tool_name,
+            entity_id=entity_id,
+            dimension=dimension,
+            source_type=source_type,
+            fallback_collected_at=now,
+        )
         _append_claims(result, claim_fields, result["evidence_records"])
         return result
-    result["evidence_records"] = [{
-        "evidence_id": f"{tool_name}:{entity_id}:{dimension}",
-        "entity_id": entity_id,
-        "dimension": dimension,
-        "provider": tool_name,
-        "source_type": source_type,
-        "status": "available",
-        "collected_at": now,
-        "data_mode": data_mode,
-        "facts": {key: value for key, value in result.items() if key not in {"evidence_records", "claims"}},
-    }]
+    from app.graphs.agent_core.evidence_ledger import build_evidence_record
+
+    result["evidence_records"] = [build_evidence_record(
+        evidence_id=f"{tool_name}:{entity_id}:{dimension}",
+        entity_id=entity_id,
+        dimension=dimension,
+        provider=tool_name,
+        source_type=source_type,
+        status=_status_value(result.get("status")),
+        collected_at=datetime.fromisoformat(now),
+        data_mode=data_mode,
+        payload={
+            key: value
+            for key, value in result.items()
+            if key not in {"evidence_records", "claims", "evidence", "evidence_refs"}
+        },
+    ).model_dump(mode="json")]
     _append_claims(result, claim_fields, result["evidence_records"])
     return result
+
+
+def _normalize_legacy_records(
+    records: list[Any],
+    *,
+    tool_name: str,
+    entity_id: str,
+    dimension: str,
+    source_type: str,
+    fallback_collected_at: str,
+) -> list[dict[str, Any]]:
+    """Convert historical provider records into the complete evidence contract."""
+    from app.graphs.agent_core.evidence_ledger import build_evidence_record
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(records):
+        if not isinstance(item, dict):
+            continue
+        status = _status_value(item.get("status"))
+        data_mode = "synthetic" if item.get("data_mode") == "synthetic" else "formal"
+        collected_at = _parse_datetime(
+            item.get("collected_at") or item.get("observed_at") or fallback_collected_at
+        )
+        facts = item.get("facts")
+        payload = dict(facts) if isinstance(facts, dict) else {
+            key: value for key, value in item.items()
+            if key not in {
+                "evidence_id", "entity_id", "dimension", "provider", "source",
+                "source_type", "status", "collected_at", "observed_at", "data_mode",
+                "endpoint", "query", "raw_payload_ref",
+            }
+        }
+        normalized.append(build_evidence_record(
+            evidence_id=str(item.get("evidence_id") or f"{tool_name}:{entity_id}:{dimension}:{index}"),
+            entity_id=str(item.get("entity_id") or entity_id),
+            dimension=str(item.get("dimension") or dimension),
+            provider=str(item.get("provider") or item.get("source") or tool_name),
+            source_type=str(item.get("source_type") or item.get("source") or source_type),
+            status=status,
+            collected_at=collected_at,
+            data_mode=data_mode,
+            endpoint=str(item["endpoint"]) if item.get("endpoint") else None,
+            query=item.get("query") if isinstance(item.get("query"), dict) else None,
+            raw_payload_ref=str(item["raw_payload_ref"]) if item.get("raw_payload_ref") else None,
+            payload=payload,
+        ).model_dump(mode="json"))
+    return normalized
+
+
+def _status_value(value: Any) -> Any:
+    from app.graphs.agent_core.evidence_ledger import EvidenceStatus
+
+    try:
+        return EvidenceStatus(str(value or EvidenceStatus.AVAILABLE.value))
+    except ValueError:
+        return EvidenceStatus.UNAVAILABLE
+
+
+def _parse_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.now(timezone.utc)
 
 
 def _append_claims(

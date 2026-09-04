@@ -9,6 +9,7 @@ from langchain_core.tools import StructuredTool
 from app.domains.risk.operational_risk_service import assess_operational_risk
 from app.domains.risk.risk_contract import RiskAssessmentRequest, get_risk_dimension_spec
 from app.graphs.agent_core.planner import plan_supplier_analysis_task
+from app.graphs.agent_core.evidence_ledger import Claim, EvidenceLedger, EvidenceRecord
 from app.graphs.harness import run_harness
 from app.services.conversation_state import analysis_dimensions_from_message
 from app.tools.executor import ToolExecutor
@@ -108,6 +109,24 @@ def test_formal_real_source_is_normalized_to_formal_evidence_mode() -> None:
 
     assert result["evidence_records"][0]["data_mode"] == "formal"
     assert result["claims"][0]["fact_path"] == "risk_level"
+
+
+def test_tool_evidence_is_complete_and_claim_is_supported() -> None:
+    result = attach_tool_evidence(
+        {"risk_score": 12, "risk_level": "低风险"},
+        tool_name="assess_risk",
+        entity_id="entity:甲公司",
+        dimension="risk",
+        source_type="risk_service_result",
+        claim_fields=["risk_score", "risk_level"],
+    )
+
+    record = EvidenceRecord.model_validate(result["evidence_records"][0])
+    claims = [Claim.model_validate(item) for item in result["claims"]]
+    validation = [EvidenceLedger([record]).validate_claim(claim) for claim in claims]
+
+    assert record.content_hash
+    assert all(item.claim.validation_status == "supported" for item in validation)
 
 
 def test_harness_maps_quality_and_delivery_to_independent_tasks() -> None:
