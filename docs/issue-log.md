@@ -1349,23 +1349,23 @@
 ## ISS-20260904-005 ToolExecutor 未把提供方限流错误提升到 ToolOutcome.error
 
 - 发现日期：2026-09-04
-- 状态：处理中（Task19 最终批次）
+- 状态：已关闭（Task19 最终批次）
 - 优先级：P1
 - 现象：Task19 故障注入回归让工具按契约返回 `status=unavailable` 和 `error=provider_rate_limited`，但 `ToolOutcome.status` 虽为 `unavailable`，`ToolOutcome.error` 却为 `None`。
 - 影响：Harness 能以 `needs_review` 安全收口，但 Trace、SSE 和最终诊断无法从统一工具结果字段读取提供方错误码，故障定位与重试策略会退化为只看非结构化 `data`。
 - 根因：ToolExecutor 只处理执行器抛出的异常，未将已通过输出契约返回的 `error` 字段映射到统一 `ToolError`。
 - 修复方案：在 ToolExecutor 输出收口处将失败/不可用/拒绝等状态的结构化错误映射到 `ToolOutcome.error`，保留原始工具数据，并补充 429/限流故障注入回归。
-- 验证结果：待修复后补充。
-- 关联提交：待修复。
+- 验证结果：`test_task19_provider_rate_limit_fails_closed_with_explicit_tool_error` 通过；提供方返回 `status=unavailable` 和错误码时，统一 `ToolOutcome.error` 现在保留错误码、消息和可重试属性，同时 AgentAnswer 仍以 `needs_review` 收口，不产生错误成功结论。离线 Agent E2E 24 项、真实 `agent_e2e_live` 3 项、三库集成回归 229 项通过。
+- 关联提交：`ca0612d0`。
 
 ## ISS-20260904-006 Harness 在恰好用尽工具预算时误报预算耗尽
 
 - 发现日期：2026-09-04
-- 状态：处理中（Task19 最终批次）
+- 状态：已关闭（Task19 最终批次）
 - 优先级：P1
 - 现象：单个必需任务使用完最后一个允许的工具调用后，Harness 下一轮循环先命中 `tool_budget_exhausted`，而不是识别全部任务已处理；最终结果虽安全为 `needs_review`，但 Loop 退出原因错误。
 - 影响：前端和 Trace 将正常的“全部任务已处理”误报为预算失败，影响用户判断、稳定性指标和后续故障重试决策。
 - 根因：执行波次完成后，循环下一轮先检查剩余工具预算，没有在预算检查前判断所有任务是否已进入终态。
 - 修复方案：每轮执行前先判断是否不存在 pending 任务；全部任务已结束时记录 `all_tasks_processed`，仅对仍有待执行任务的场景触发预算耗尽。
-- 验证结果：待修复后补充。
-- 关联提交：待修复。
+- 验证结果：Task19 供应商 × 五维矩阵和限流故障回归通过；全部任务在刚好用尽工具预算时，Loop 退出原因为 `all_tasks_processed`，只有仍有 pending 任务时才报告 `tool_budget_exhausted`。离线 Agent E2E 24 项、真实 `agent_e2e_live` 3 项、三库集成回归 229 项通过。
+- 关联提交：`ca0612d0`。
