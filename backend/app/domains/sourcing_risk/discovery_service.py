@@ -747,6 +747,7 @@ def discover_candidates(requirement: dict, policy: dict) -> dict:
     if is_candidate_supply_sufficient(local_candidates, requirement, policy):
         return {
             "source": "local",
+            "source_order": ["local_history", "feishu_formal", "tianyancha", "web_search"],
             "local_candidates": local_candidates,
             "local_status": local_status,
             "local_failure_reason": local_failure_reason,
@@ -763,6 +764,7 @@ def discover_candidates(requirement: dict, policy: dict) -> dict:
     )
     return {
         "source": "local_and_external" if external_candidates else "local",
+        "source_order": ["local_history", "feishu_formal", "tianyancha", "web_search"],
         "local_candidates": local_candidates,
         "local_status": local_status,
         "local_failure_reason": local_failure_reason,

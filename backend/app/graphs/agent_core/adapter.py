@@ -155,10 +155,45 @@ def load_execution_context(
         previous_state=context.get("conversation_state", context.get("state", {})),
     )
     extracted = extract_conversation_intent(user_message, execution_context["references"])
+    resolved = apply_extracted_conversation_intent(execution_context, extracted)
     return validate_execution_context(
-        apply_extracted_conversation_intent(execution_context, extracted),
+        _apply_harness_sourcing_requirement(resolved, user_message),
         source="load_execution_context",
     )
+
+
+def _apply_harness_sourcing_requirement(
+    execution_context: dict[str, Any],
+    user_message: str,
+) -> dict[str, Any]:
+    """Bind one validated sourcing requirement before the Harness graph starts."""
+    current_task = dict(execution_context.get("current_task") or {})
+    if current_task.get("task_type") != "sourcing":
+        return execution_context
+    existing = current_task.get("requirement")
+    if not isinstance(existing, dict):
+        existing = (execution_context.get("conversation_state") or {}).get("current_requirement")
+    from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
+
+    resolved = resolve_harness_requirement(
+        user_message,
+        existing if isinstance(existing, dict) else None,
+    )
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    current_task["requirement_status"] = resolved.get("status")
+    current_task["requirement_extraction_source"] = resolved.get("extraction_source")
+    if resolved.get("status") == "ready":
+        requirement = dict(resolved["requirement"])
+        current_task["requirement"] = requirement
+        conversation_state["current_requirement"] = requirement
+    else:
+        current_task["requirement_missing"] = list(resolved.get("missing") or ["category"])
+    conversation_state["current_task"] = current_task
+    return {
+        **execution_context,
+        "conversation_state": conversation_state,
+        "current_task": current_task,
+    }
 
 
 def apply_extracted_conversation_intent(

@@ -54,6 +54,151 @@ def search_suppliers(request_id: str) -> dict:
 
 
 @tool
+def discover_supplier_candidates(requirement: dict) -> dict:
+    """按已验证采购需求执行 Harness 只读寻源。
+
+    顺序固定为本地历史/Mongo 与飞书正式快照、天眼查、受限联网；正式
+    候选和外部待核验候选分开返回，不创建供应商主数据或准入记录。
+    """
+    from app.domains.sourcing_risk.discovery_service import discover_candidates
+    from app.domains.sourcing_risk.policy_service import resolve_policy_template
+    from app.domains.sourcing_risk.requirement_service import SourcingRequirement
+    from app.graphs.agent_core.evidence_ledger import build_evidence_record
+    from app.tools.evidence import attach_tool_evidence
+
+    validated = SourcingRequirement.model_validate(requirement)
+    normalized = validated.model_dump(mode="json", exclude_none=True)
+    result = discover_candidates(
+        normalized,
+        resolve_policy_template(str(normalized.get("category", ""))),
+    )
+    local = [_mark_candidate(item, "formal") for item in result.get("local_candidates", [])]
+    external = [_mark_candidate(item, "external") for item in result.get("external_candidates", [])]
+    local = _rank_candidates(local, normalized)
+    external = _rank_candidates(external, normalized)
+    candidates = [*local, *external]
+    evidence_records: list[dict] = []
+    claims: list[dict] = []
+    for index, candidate in enumerate(candidates):
+        name = str(candidate.get("supplier_name") or "").strip()
+        if not name:
+            continue
+        evidence_id = f"sourcing:candidate:{candidate.get('candidate_id') or candidate.get('supplier_id') or index}"
+        evidence_records.append(build_evidence_record(
+            evidence_id=evidence_id,
+            entity_id="sourcing",
+            dimension="sourcing",
+            provider=str(candidate.get("source") or "sourcing_discovery"),
+            source_type=str(candidate.get("source_type") or candidate.get("source") or "unknown"),
+            payload={
+                "supplier_name": name,
+                "candidate_type": candidate.get("candidate_type"),
+                "source_stage": candidate.get("source_stage"),
+                "source_reference": candidate.get("source_reference"),
+                "website_url": candidate.get("website_url"),
+                "contact_phone": candidate.get("contact_phone"),
+                "contact_email": candidate.get("contact_email"),
+            },
+        ).model_dump(mode="json"))
+        claims.append({
+            "claim_id": f"sourcing:recommendation:{candidate.get('candidate_id') or candidate.get('supplier_id') or index}",
+            "entity_id": "sourcing",
+            "dimension": "sourcing",
+            "statement": f"{name}符合当前寻源条件，可作为{candidate.get('candidate_type', 'external')}候选",
+            "value": name,
+            "fact_path": "supplier_name",
+            "operator": "eq",
+            "evidence_refs": [evidence_id],
+            "confidence": float(candidate.get("identity_confidence") or 0.8),
+        })
+    payload = {
+        "status": "success" if candidates else ("partial" if result.get("external_failure_reasons") else "not_found"),
+        "source": result.get("source"),
+        "source_order": result.get("source_order", ["local_history", "feishu_formal", "tianyancha", "web_search"]),
+        "requirement": normalized,
+        "local_candidates": local,
+        "external_candidates": external,
+        "candidates": candidates,
+        "local_status": result.get("local_status"),
+        "local_failure_reason": result.get("local_failure_reason"),
+        "external_status": result.get("external_status"),
+        "external_stop_reason": result.get("external_stop_reason"),
+        "external_failure_reasons": result.get("external_failure_reasons", []),
+        "external_loop": result.get("external_loop", {}),
+        "evidence_records": evidence_records,
+        "claims": claims,
+        "message": "外部候选仅为待核验推荐，不会写入供应商主数据。" if external else "已返回正式供应商候选。",
+    }
+    return attach_tool_evidence(
+        payload,
+        tool_name="discover_supplier_candidates",
+        entity_id="sourcing",
+        dimension="sourcing",
+    )
+
+
+def _mark_candidate(candidate: dict, candidate_type: str) -> dict:
+    """Add the stable identity state required by the Harness candidate contract."""
+    result = dict(candidate)
+    result["candidate_type"] = candidate_type
+    if candidate_type == "formal":
+        result.setdefault("identity_status", "exact")
+        result.setdefault("verification_status", "verified")
+        result.setdefault("source_stage", "local_history")
+    else:
+        result.setdefault("verification_status", "pending_verification")
+        result.setdefault("identity_status", "pending_verification")
+    return result
+
+
+def _rank_candidates(candidates: list[dict], requirement: dict) -> list[dict]:
+    """Rank candidates with inspectable sourcing-only components."""
+    ranked: list[dict] = []
+    for candidate in candidates:
+        match_score = _bounded_score(candidate.get("match_score"), 0.5)
+        categories = [str(item) for item in candidate.get("categories", []) if item]
+        specifications = [str(item) for item in candidate.get("specifications", []) if item]
+        requested_category = str(requirement.get("category") or "")
+        requested_specification = str(requirement.get("specification") or "")
+        capability_score = sum([
+            bool(requested_category and _contains_text(categories, requested_category)),
+            bool(requested_specification and _contains_text(specifications, requested_specification)),
+        ]) / max(1, sum(bool(item) for item in (requested_category, requested_specification)))
+        identity_score = 1.0 if candidate.get("candidate_type") == "formal" else _bounded_score(candidate.get("identity_confidence"), 0.0)
+        completeness_score = sum(bool(candidate.get(field)) for field in (
+            "source_reference", "source_updated_at", "website_url", "contact_phone", "contact_email"
+        )) / 5
+        final_rank = round(
+            0.55 * match_score + 0.20 * capability_score + 0.15 * identity_score + 0.10 * completeness_score,
+            3,
+        )
+        item = dict(candidate)
+        item["ranking_components"] = {
+            "requirement_match": round(match_score, 3),
+            "capability": round(capability_score, 3),
+            "identity_trust": round(identity_score, 3),
+            "data_completeness": round(completeness_score, 3),
+        }
+        item["final_rank"] = final_rank
+        item["match_reason"] = "、".join(str(value) for value in candidate.get("match_reasons", []) if value)
+        ranked.append(item)
+    return sorted(ranked, key=lambda item: item["final_rank"], reverse=True)
+
+
+def _bounded_score(value: object, default: float) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, score))
+
+
+def _contains_text(values: list[str], requested: str) -> bool:
+    normalized = "".join(requested.casefold().split())
+    return any(normalized and normalized in "".join(value.casefold().split()) for value in values)
+
+
+@tool
 def select_sourcing_result(result_id: str, action: str = "watchlist") -> dict:
     """将正式供应商候选加入风险监控列表。
 

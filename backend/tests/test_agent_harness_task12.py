@@ -13,7 +13,7 @@ from app.tools.registry import ToolRegistry, ToolSpec
 def test_default_tools_use_named_strict_output_contracts() -> None:
     definitions = TOOL_REGISTRY.definitions()
 
-    assert len(definitions) == len(TOOLS_LIST) == 28
+    assert len(definitions) == len(TOOLS_LIST) == 29
     assert all(definition.output_model.__name__ != "ToolPayload" for definition in definitions)
     assert all(definition.output_model.model_config.get("extra") == "forbid" for definition in definitions)
 

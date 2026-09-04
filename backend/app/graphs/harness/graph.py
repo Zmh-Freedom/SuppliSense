@@ -68,12 +68,23 @@ def _task_from_subtask(
     dimension = str(subtask.get("dimension") or "").strip()
     supplier_name = str(subtask.get("supplier_name") or "").strip()
     if dimension == "sourcing":
-        request_id = str((task.get("requirement") or {}).get("request_id") or "").strip()
+        requirement = task.get("requirement") or {}
+        request_id = str(requirement.get("request_id") or "").strip() if isinstance(requirement, dict) else ""
         if request_id:
             return HarnessTask(
                 task_id=str(subtask.get("subtask_id") or "sourcing"),
                 tool_name="search_suppliers",
                 arguments={"request_id": request_id},
+                entity_id="sourcing",
+                dimension="sourcing",
+                required=bool(subtask.get("required", True)),
+                evidence_requirements=["supplier_candidate"],
+            )
+        if isinstance(requirement, dict) and requirement.get("category"):
+            return HarnessTask(
+                task_id=str(subtask.get("subtask_id") or "sourcing"),
+                tool_name="discover_supplier_candidates",
+                arguments={"requirement": requirement},
                 entity_id="sourcing",
                 dimension="sourcing",
                 required=bool(subtask.get("required", True)),
@@ -127,17 +138,30 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
     if current_task.get("task_type") == "sourcing":
         requirement = current_task.get("requirement") or {}
         request_id = str(requirement.get("request_id") or "").strip() if isinstance(requirement, dict) else ""
-        result.append(
-            HarnessTask(
-                task_id=f"{current_task.get('task_id', 'task')}:sourcing",
-                tool_name="search_suppliers" if request_id else "list_formal_suppliers",
-                arguments={"request_id": request_id} if request_id else {"limit": 20},
-                entity_id="sourcing",
-                dimension="sourcing",
-                required=True,
-                evidence_requirements=["supplier_candidate"],
+        if isinstance(requirement, dict) and requirement.get("category") and not request_id:
+            result.append(
+                HarnessTask(
+                    task_id=f"{current_task.get('task_id', 'task')}:sourcing",
+                    tool_name="discover_supplier_candidates",
+                    arguments={"requirement": requirement},
+                    entity_id="sourcing",
+                    dimension="sourcing",
+                    required=True,
+                    evidence_requirements=["supplier_candidate"],
+                )
             )
-        )
+        else:
+            result.append(
+                HarnessTask(
+                    task_id=f"{current_task.get('task_id', 'task')}:sourcing",
+                    tool_name="search_suppliers" if request_id else "list_formal_suppliers",
+                    arguments={"request_id": request_id} if request_id else {"limit": 20},
+                    entity_id="sourcing",
+                    dimension="sourcing",
+                    required=True,
+                    evidence_requirements=["supplier_candidate"],
+                )
+            )
     for name in dict.fromkeys(names):
         for dimension in dict.fromkeys(dimensions):
             mapping = _DIMENSION_TO_TOOL.get(dimension)

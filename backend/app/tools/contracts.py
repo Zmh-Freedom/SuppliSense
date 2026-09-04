@@ -237,6 +237,21 @@ class SourcingSearchOutput(StrictToolOutput):
     external_failure_reasons: list[Any] = Field(default_factory=list)
 
 
+class SourcingCandidatesOutput(StrictToolOutput):
+    source: str | None = None
+    source_order: list[str] = Field(default_factory=list)
+    requirement: dict[str, Any] = Field(default_factory=dict)
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    local_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    external_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    local_status: str | None = None
+    local_failure_reason: str | None = None
+    external_status: str | None = None
+    external_stop_reason: str | None = None
+    external_failure_reasons: list[Any] = Field(default_factory=list)
+    external_loop: dict[str, Any] = Field(default_factory=dict)
+
+
 class SelectionOutput(StrictToolOutput):
     action: str | None = None
     candidate_id: str | None = None
@@ -276,6 +291,7 @@ TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "list_formal_suppliers": FormalSupplierOutput,
     "create_sourcing_request": SourcingRequestOutput,
     "search_suppliers": SourcingSearchOutput,
+    "discover_supplier_candidates": SourcingCandidatesOutput,
     "select_sourcing_result": SelectionOutput,
     "expand_supplier_library": DiscoveryOutput,
     "discover_web_suppliers": DiscoveryOutput,
