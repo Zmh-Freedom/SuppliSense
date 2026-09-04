@@ -408,7 +408,7 @@ export default function ChatView() {
     const { session_id: approvalSid, tool, args, message } = streamState.approval;
 
     // 记录审批结果到消息历史
-    const statusText = approved ? '✅ 已批准' : '❌ 已拒绝';
+    const statusText = approved ? '⏳ 已提交审批请求，等待服务端确认' : '⏳ 已提交拒绝请求，等待服务端确认';
     const approvalMsg: ChatMessage = {
       role: 'assistant',
       content: `${message}\n\n${statusText}：${tool}(${JSON.stringify(args)})`,
