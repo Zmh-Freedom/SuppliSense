@@ -47,6 +47,19 @@ def test_harness_binds_requirement_to_current_task_before_planning(monkeypatch) 
     assert planned[0].arguments["requirement"]["category"] == "钢材"
 
 
+def test_harness_does_not_recommend_unfiltered_suppliers_without_category() -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "source-unknown",
+            "task_type": "sourcing",
+            "user_message": "帮我推荐供应商",
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert planned == []
+
+
 def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monkeypatch) -> None:
     formal = {
         "supplier_id": "supplier-1",

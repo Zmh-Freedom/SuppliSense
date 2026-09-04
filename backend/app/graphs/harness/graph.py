@@ -90,15 +90,17 @@ def _task_from_subtask(
                 required=bool(subtask.get("required", True)),
                 evidence_requirements=["supplier_candidate"],
             )
-        return HarnessTask(
-            task_id=str(subtask.get("subtask_id") or "sourcing"),
-            tool_name="list_formal_suppliers",
-            arguments={"limit": 20},
-            entity_id="sourcing",
-            dimension="sourcing",
-            required=bool(subtask.get("required", True)),
-            evidence_requirements=["supplier_candidate"],
-        )
+        if not task.get("user_message") or _is_formal_directory_query(task):
+            return HarnessTask(
+                task_id=str(subtask.get("subtask_id") or "sourcing"),
+                tool_name="list_formal_suppliers",
+                arguments={"limit": 20},
+                entity_id="sourcing",
+                dimension="sourcing",
+                required=bool(subtask.get("required", True)),
+                evidence_requirements=["supplier_candidate"],
+            )
+        return None
     mapping = _DIMENSION_TO_TOOL.get(dimension)
     if not mapping or not supplier_name:
         return None
@@ -150,7 +152,7 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                     evidence_requirements=["supplier_candidate"],
                 )
             )
-        else:
+        elif _is_formal_directory_query(current_task):
             result.append(
                 HarnessTask(
                     task_id=f"{current_task.get('task_id', 'task')}:sourcing",
@@ -180,6 +182,12 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                 )
             )
     return result
+
+
+def _is_formal_directory_query(task: Mapping[str, Any]) -> bool:
+    """Only a directory question may use the unfiltered formal-supplier tool."""
+    message = str(task.get("user_message") or "")
+    return "正式供应商" in message and any(token in message for token in ("哪些", "列表", "目录", "清单"))
 
 
 def _payload_evidence(
