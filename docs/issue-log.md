@@ -1188,7 +1188,7 @@
 - 根因：Evidence 与 Claim 只有引用关系，没有字段级语义和期望任务矩阵。
 - 修复方案：按 Task 13 增加结构化 Claim 路径/值/单位校验，将覆盖度改为 `entity × dimension × required_fact`，为缺失、过期、冲突和 synthetic 建立明确终态。
 - 验证结果：Claim 已增加 `fact_path`、`operator` 和 `unit`，对结构化 Evidence facts 支持字段读取、相等/不等/比较/包含/存在性校验，字段值不一致、字段缺失和单位不一致均不再支持确定性 Claim；保留历史无 `fact_path` Claim 的兼容匹配。Evidence 覆盖支持 `entity_id × dimension × required_fact`，Harness 多企业任务不再使用一家企业的证据覆盖另一家；synthetic/partial Claim 不进入最终事实列表。Task 13 定向 4 项、Evidence/Harness/Task12 回归 22 项、后端非集成回归 570 项、Python 编译检查和 `git diff --check` 均通过；真实三数据库集成测试未在本 Task 执行。
-- 关联提交：待提交。
+- 关联提交：`70ed35a0`。
 
 ## ISS-20260903-004 Harness 活动寻源计划未执行品类解析和分层扩源
 
@@ -1289,7 +1289,7 @@
 - 根因：Outbox `mark_failed` 使用 PostgreSQL `NOW()`（事务开始时间）计算下一次重试，而测试起点在事务开始之后；事务时间戳可能早于调用方记录的失败起点。
 - 修复方案：重试调度使用 PostgreSQL `clock_timestamp()` 获取语句实际时间，保留现有指数退避和死信规则；重新运行完整 integration 集合。
 - 验证结果：将 `mark_failed` 的重试时间计算从事务时间 `NOW()` 调整为语句实际时间 `clock_timestamp()`；单项回归通过，随后使用真实 PostgreSQL、MongoDB、Redis 执行 `pytest -m integration -v`，229 项全部通过（588 项非集成测试被筛除）。
-- 关联提交：待提交。
+- 关联提交：`70ed35a0`。
 
 ## ISS-20260904-002 真实浏览器登录收到空响应导致 JSON 解析失败
 
