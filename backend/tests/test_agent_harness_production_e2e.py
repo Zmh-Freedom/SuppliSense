@@ -277,7 +277,6 @@ def test_production_harness_http_sse_persists_server_terminal_state(
     assert "tool_call" in event_types
     assert "agent_answer" in event_types
     assert event_types[-1] == "done"
-
     run_id = done_payload["run_id"]
     metrics = collect_persisted_harness_metrics(run_id)
     assert_persisted_harness_quality(metrics)
@@ -305,3 +304,12 @@ def test_production_harness_http_sse_persists_server_terminal_state(
     ]
     assert replay_ids and min(replay_ids) > 1
     assert any("event: done" in block.splitlines() for block in replay_blocks)
+
+
+def test_task19_fixture_residual_is_not_exposed_as_formal_supplier() -> None:
+    """Interrupted Task19 fixtures must not pollute the formal supplier directory."""
+    residual = get_db()["supplier_master_snapshots"].find_one(
+        {"source_record_id": {"$regex": r"^task19-"}},
+        {"_id": 1, "source_record_id": 1},
+    )
+    assert residual is None, residual

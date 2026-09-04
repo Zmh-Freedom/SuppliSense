@@ -64,6 +64,8 @@ python -m pytest -m "not agent_e2e" -v # 单元、图级与领域回归
 cd ../frontend && npm run lint && npm test -- --run && npm run build
 ```
 
+真实浏览器验收前需启动后端及 PostgreSQL、MongoDB、Redis，并确认 `/health/ready` 四项均为 `ok`。本次开发验收使用 `http://127.0.0.1:8002` 后端和 `http://127.0.0.1:5173` 前端，固定账号为 `admin/admin123`；完整过程和结果见 [`docs/release/agent-acceptance-and-evaluation.md`](docs/release/agent-acceptance-and-evaluation.md)。
+
 `/api/v1/chat/stream` 会在每次请求中构建唯一的结构化会话快照，供路由、澄清和所有 LangGraph 执行图复用。当前 SuppliSense 负责供应商推荐和风险监控；供应商主数据来自飞书多维表格只读同步，加入监控等本地写操作必须出现人工审批卡片。供应商准入由外部供应商管理系统负责，不在当前 Agent 执行范围内。
 
 ### 飞书正式供应商主数据（只读）

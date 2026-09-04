@@ -59,6 +59,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="请输入用户名"
+                autoComplete="username"
                 className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] transition-colors"
                 autoFocus
               />
@@ -72,6 +73,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="请输入密码"
+                autoComplete="current-password"
                 className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] transition-colors"
               />
             </div>
