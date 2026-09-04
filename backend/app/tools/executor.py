@@ -36,6 +36,7 @@ class ToolContext(BaseModel):
     approval_actor_id: str | None = None
     approval_secret_key: str | None = None
     idempotency_key: str | None = None
+    entity_id: str | None = None
     tool_call_count: int = Field(default=0, ge=0)
     max_tool_calls: int = Field(default=32, gt=0)
     timeout_seconds: int | None = Field(default=None, gt=0)

@@ -548,6 +548,7 @@ def build_harness_graph(
                     session_id=state["session_id"],
                     run_id=state["run_id"],
                     user_id=state.get("user_id"),
+                    entity_id=task.entity_id,
                     tool_call_count=count + index,
                     max_tool_calls=budget.max_tool_calls,
                 )

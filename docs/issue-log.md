@@ -1400,11 +1400,47 @@
 ## ISS-20260904-009 正式供应商目录引用未写入 PostgreSQL 且跨轮 Harness 复用了旧任务计划
 
 - 发现日期：2026-09-04
-- 状态：已修复（待真实环境验收）
+- 状态：已关闭（真实三库与浏览器验收）
 - 优先级：P1
 - 现象：同一会话先查询正式供应商目录，再询问“这些供应商的风险情况”，系统错误要求重新指定企业；随后用户输入“上海汽车制动系统有限公司”，最终回答再次返回上一轮的正式供应商清单，没有执行风险分析。
 - 影响：多轮会话无法从正式供应商目录进入风险分析；当前轮的明确企业目标可能被旧任务计划覆盖，导致工具、证据和回答全部偏离用户问题。
 - 根因：Harness 结果提取出的引用对象已是 `{name: ...}` 结构，但 PostgreSQL 会话更新再次调用只识别 `supplier_name/company_name` 的提取器，导致正式供应商引用没有写入 `execution_context.references`；同时 `chat_checkpoint_config()` 固定以 `session_id` 作为 Harness `thread_id`，新 Run 继承上一轮 `task_specs`，而 `_build_default_plan()` 优先返回旧的显式任务计划。公司名单独输入时还没有风险维度，不能自行构造风险任务矩阵，放大了旧计划复用问题。
 - 修复方案：统一引用归一化函数，使 `{name: ...}` 和工具原始候选都能写入 PostgreSQL 会话实体记忆；每个新 Harness Run 强制使用独立的 `thread_id`，禁止上一轮 `task_specs` 覆盖当前任务；当前轮明确公司名在缺少维度时继承最近一次明确的分析意图，且不继承旧的 sourcing 子任务。LLM 意图解析改为每个有意义的用户轮次都尝试执行，只有明确的寒暄/短确认跳过；意图和寻源字段解析增加真正的 system prompt。补充目录查询、引用合并、实体-only 跟进和 checkpoint 隔离回归。
-- 验证结果：新增回归覆盖“正式供应商目录 → 这些供应商风险 → 单家公司名”，确认多企业风险任务和单企业风险任务均生成 `risk` 分析矩阵；规范化 `{name: ...}` 引用可保留 `supplier_id` 写回上下文；带旧 session thread 的新 Run 最终使用 Run ID 作为 checkpoint `thread_id`。意图/引用/Harness/上下文定向回归 37 项通过；后端非集成全量回归 604 项通过；Python 编译和 `git diff --check` 通过。本轮尚未执行真实 PostgreSQL/MongoDB/Redis 集成测试和浏览器验收。
-- 关联提交：`377c8445 fix(agent): unify intent and harness context`。
+- 验证结果：新增回归覆盖“正式供应商目录 → 这些供应商风险 → 单家公司名”，确认多企业风险任务和单企业风险任务均生成 `risk` 分析矩阵；规范化 `{name: ...}` 引用可保留 `supplier_id` 写回上下文；带旧 session thread 的新 Run 最终使用 Run ID 作为 checkpoint `thread_id`。意图/引用/Harness/上下文定向回归 37 项通过；后端非集成全量回归 604 项通过；Python 编译和 `git diff --check` 通过。重启当前 8002 开发后端后，真实浏览器完成目录查询 → 多供应商风险任务链路，9 个 `assess_risk` ToolCall 全部返回，且单企业切换不再复用目录任务；真实三库集成除异步插件阻塞项外通过。
+- 关联提交：`23725e71 fix(agent): unify intent and harness context`。
+
+## ISS-20260904-010 真实集成测试的异步 E2E 缺少 pytest 异步插件
+
+- 发现日期：2026-09-04
+- 状态：待修复（验收阻塞）
+- 优先级：P1
+- 现象：执行 `pytest -m integration` 时，真实 PostgreSQL/MongoDB/Redis 集成集合中 `test_agent_harness_production_e2e.py` 的两个 `async def` 测试报 `async def functions are not natively supported`；同文件的 `pytest.mark.asyncio` 同时产生 UnknownMark 警告。
+- 影响：真实集成集合无法完整通过；除这两个异步 E2E 外，其余 231 项真实集成测试通过。
+- 根因：当前测试环境未安装或未加载 pytest-asyncio，而项目未在测试依赖和 pytest 配置中提供该异步测试插件。
+- 修复方案：将异步 E2E 所需测试插件纳入明确的后端开发/CI 测试依赖，并增加插件可用性探针；重新运行完整真实集成集合。
+- 验证结果：本轮已确认 PostgreSQL 5432、MongoDB 27017、Redis 6379 均可连接；`pytest -m integration` 结果为 231 passed、2 failed、604 deselected。浏览器验收继续执行；本问题尚未修复。
+- 关联提交：待处理。
+
+## ISS-20260904-011 真实浏览器目录结果未形成跨轮供应商引用
+
+- 发现日期：2026-09-04
+- 状态：已关闭（重启开发进程后复验通过）
+- 优先级：P1
+- 现象：真实浏览器登录后，在旧的后端进程中先询问“当前正式供应商有哪些？”，页面正确返回 9 家正式供应商及逐家证据；随后询问“这些供应商的风险情况有哪些？”，系统仍要求重新提供企业名称或先完成寻源。重启后端加载本次提交代码后，同一链路进入 9 家风险任务。
+- 影响：正式供应商目录无法作为后续风险、ESG、舆情或合规分析的实体来源，多轮 Agent 工作流在目录查询后中断。
+- 根因：本次复现使用的旧 Uvicorn reload 进程没有加载已提交的 Harness checkpoint 隔离代码，导致浏览器实际仍运行旧版本；当前工作区代码中的共享引用收集和独立 Run checkpoint 逻辑在重启后生效。
+- 修复方案：重启当前开发后端加载提交 `23725e71`，并用全新浏览器会话重新执行目录查询、跨轮多供应商风险查询。
+- 验证结果：目录查询返回 9 家正式供应商、9 条名称 Claim、10 条证据；第二轮成功生成 9 项 `assess_risk` 任务并全部返回，PostgreSQL `execution_context.references` 保存 9 家供应商；无澄清中断。数据库健康检查通过。
+- 关联提交：`23725e71 fix(agent): unify intent and harness context`。
+
+## ISS-20260904-012 风险工具证据实体 ID 与正式供应商引用不一致
+
+- 发现日期：2026-09-04
+- 状态：已修复（待提交）
+- 优先级：P1
+- 现象：真实浏览器完成“正式供应商目录 → 这些供应商的风险情况”后，9 个 `assess_risk` 工具均成功返回 `risk_score` 和 `risk_level`，但最终答案状态为“需人工复核”；证据覆盖为 `0/1`，缺失项是以正式供应商 ID 计算的 `supplier:feishu:*:risk:*`。
+- 影响：工具已经取得风险结果，但 Harness 不能把结果证据绑定到当前供应商实体，最终无法形成可用的确定性风险结论。
+- 根因：Harness 任务根据正式供应商引用使用 `supplier:feishu:*` 作为 `entity_id`，而 `assess_risk` 工具包装器仍固定以 `entity:{company_name}` 生成 EvidenceRecord 和 Claim；证据实体 ID 不一致，EvidenceLedger 无法覆盖任务要求。
+- 修复方案：通过统一 ToolExecutor/ToolContext 将 Harness 规范化实体 ID 传入工具证据适配层；保持 service 层不变，补充风险工具证据覆盖回归。
+- 验证结果：`ToolContext.entity_id` 已由 Harness 任务注入，证据适配层优先采用该 ID，直接调用工具仍保持原有回退；完整非集成回归 605 项通过，定向 Harness/证据回归通过。真实浏览器单企业风险查询返回 2 条 Claim、1 条证据，覆盖 `1/1`；正式供应商目录 → 多供应商风险查询生成 9 个 `assess_risk` 任务，18 条 Claim、9 条证据，覆盖 `1/1`，最终状态“已完成”，Loop 为 `all_tasks_processed`；真实三库集成（排除已知异步插件阻塞测试）229 项通过。
+- 关联提交：待处理。

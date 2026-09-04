@@ -24,6 +24,7 @@ def attach_tool_evidence(
     evidence record.
     """
     result = dict(payload)
+    entity_id = _active_entity_id(entity_id)
     assessment_status = result.get("assessment_status")
     if assessment_status == "missing_supplier":
         result.setdefault("status", "not_found")
@@ -76,6 +77,21 @@ def attach_tool_evidence(
     ).model_dump(mode="json")]
     _append_claims(result, claim_fields, result["evidence_records"])
     return result
+
+
+def _active_entity_id(fallback: str) -> str:
+    """Use the Harness task entity while preserving direct tool compatibility.
+
+    Domain tool wrappers historically derive an entity from the company name,
+    while Harness tasks use the canonical supplier/company ID from session
+    memory.  The executor context is the only shared boundary where both are
+    available, so evidence must prefer it to keep ledger coverage stable.
+    """
+    from app.tools.executor import get_active_tool_context
+
+    context = get_active_tool_context()
+    context_entity_id = context.entity_id if context else None
+    return str(context_entity_id or fallback)
 
 
 def _normalize_legacy_records(
