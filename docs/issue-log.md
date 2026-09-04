@@ -1270,7 +1270,7 @@
 ## ISS-20260903-010 Agent E2E 与质量指标无法证明生产 Harness 真实稳定
 
 - 发现日期：2026-09-03
-- 状态：处理中（Task19 第一阶段完成）
+- 状态：处理中（Task19 第二阶段完成）
 - 优先级：P0
 - 现象：当前测试中的临时工具会返回比生产工具更完整的 Evidence/Claim；非法输出、PG 提交失败、重启恢复和同会话并发场景没有贯穿真实生产链路；部分观测指标使用默认通过值，后端覆盖率门槛仅 20%。
 - 影响：“测试全绿”与真实用户链路的状态丢失、工具断点、幻觉成功和恢复失败之间存在显著缺口。
@@ -1294,7 +1294,7 @@
 - 第二阶段复核发现：checkpoint 按事件循环隔离后，旧幂等单元测试使用两次 `asyncio.run()` 创建不同 loop，却仍断言同一异步连接对象，导致初始化被重复执行的测试失败。
 - 第二阶段修复方案：幂等测试改为在同一事件循环内连续获取；跨 loop 场景由真实 HTTP/SSE E2E 覆盖，要求重建而非复用旧连接。
 - 验证结果：真实 `agent_e2e_live` 3 项通过；checkpoint 与生产 E2E 定向回归 14 项通过；离线 Agent E2E 24 项通过；三数据库集成回归 229 项通过；Harness 核心执行路径定向覆盖率 83.60%（门槛 80%）；缺失数据场景稳定产生 `done.status=needs_review`，HTTP/SSE 带事件 ID 的终态可正确解析，快照/关系投影/事件流计数一致，无错误成功声明。Task19 后续仍需补齐多企业五维风险、审批/拒绝/重放、断线重连和故障注入场景。
-- 关联提交：`91a62b95 test(agent): add production harness e2e gates`。
+- 关联提交：`91a62b95 test(agent): add production harness e2e gates`、`499f89ba test(agent): verify harness http sse persistence`。
 
 ## ISS-20260904-001 真实 Outbox 集成测试的重试时间边界不稳定
 
