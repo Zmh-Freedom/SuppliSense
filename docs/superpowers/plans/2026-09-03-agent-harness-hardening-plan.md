@@ -252,7 +252,7 @@ Task 14 与 Task 15 必须独立实施和提交：寻源只消费已验证风险
 
 门槛：固定场景、实体焦点、工具契约、Claim 支持率均 100%；错误成功、未审批写入、重复写入和未完成 tool call 均为 0。
 
-当前进度：第一阶段已完成。新增 `agent_e2e_live` 生产回归标记和独立 CI 步骤，真实穿过 Harness、生产 ToolRegistry/ToolExecutor、PostgreSQL 控制面与 checkpoint、MongoDB 业务读模型、Redis round-trip；新增缺失数据必须以 `needs_review` 终态收口的场景。质量指标由 PostgreSQL 持久化 Run 快照和事件流反算，核心执行路径定向覆盖率门槛设为 80%，本地实测 83.60%。多企业五维风险、审批/拒绝/重放、断线重连和故障注入仍在本 Task 后续批次补齐。
+当前进度：第一、二阶段已完成。新增 `agent_e2e_live` 生产回归标记和独立 CI 步骤，真实穿过 FastAPI/SSE、Harness、生产 ToolRegistry/ToolExecutor、PostgreSQL 控制面与 checkpoint、MongoDB 业务读模型、Redis round-trip；新增缺失数据必须以 `needs_review` 终态收口的场景。质量指标由 PostgreSQL 持久化 Run 快照、Task/ToolCall 关系投影和事件流反算，并执行跨层计数一致性校验；核心执行路径定向覆盖率门槛设为 80%，本地实测 83.60%。已覆盖 HTTP/SSE 带事件 ID 的终态解析和跨事件循环 checkpoint 重建。多企业五维风险、审批/拒绝/重放、断线重连和故障注入仍在本 Task 后续批次补齐。
 
 #### Task 20：浏览器验收、问题回填和文档收口
 

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.core.cache import cache_client
+from app.core.security import create_access_token
 from app.db.init_pg import ensure_pg_schema
 from app.db.mongo import get_db
 from app.db.postgres import get_cursor
@@ -142,6 +145,12 @@ async def test_production_harness_sourcing_persists_real_run_artifacts(productio
     assert_persisted_harness_quality(metrics)
     assert metrics.run_status == "COMPLETED"
     assert metrics.tool_call_count == 1
+    assert metrics.persisted_task_count == 1
+    assert metrics.persisted_tool_call_count == 1
+    assert metrics.snapshot_tool_call_count == 1
+    assert metrics.tool_call_event_count == 1
+    assert metrics.tool_result_event_count == 1
+    assert metrics.artifact_consistent is True
     assert metrics.persisted_evidence_count >= 2
     assert metrics.evidence_coverage_ratio == 1.0
     assert metrics.unresolved_tool_calls == 0
@@ -210,3 +219,66 @@ async def test_production_harness_missing_data_finishes_needs_review(
     assert metrics.persisted_evidence_count == 0
     assert metrics.evidence_coverage_ratio == 0.0
     assert metrics.claim_count == 0
+    assert metrics.artifact_consistent is True
+
+
+def test_production_harness_http_sse_persists_server_terminal_state(
+    production_harness_context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The authenticated FastAPI/SSE boundary must expose the same durable terminal state."""
+    from app.graphs.agent_core import adapter
+    from app.main import app
+
+    base_context = production_harness_context["context"]
+    context = {
+        **base_context,
+        "references": [{
+            "name": production_harness_context["supplier_name"],
+            "supplier_id": production_harness_context["supplier_id"],
+        }],
+        "conversation_state": {
+            "active_suppliers": [{"name": production_harness_context["supplier_name"]}],
+            "selected_supplier_names": [production_harness_context["supplier_name"]],
+        },
+    }
+    monkeypatch.setattr(adapter, "load_execution_context", lambda *_args: context)
+    token = create_access_token({"sub": production_harness_context["user_id"]})
+
+    @asynccontextmanager
+    async def no_lifespan(_app):
+        yield
+
+    monkeypatch.setattr(app.router, "lifespan_context", no_lifespan)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/chat/stream",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "message": "查询当前正式供应商",
+                "session_id": production_harness_context["session_id"],
+                "mode": "auto",
+            },
+        )
+
+    assert response.status_code == 200
+    blocks = [
+        block for block in response.text.split("\n\n")
+        if any(line.startswith("event: ") for line in block.splitlines())
+    ]
+    event_types = [
+        next(line.removeprefix("event: ") for line in block.splitlines() if line.startswith("event: "))
+        for block in blocks
+    ]
+    assert "done" in event_types, response.text
+    done_block = next(block for block in blocks if "event: done" in block.splitlines())
+    done_payload = json.loads(next(line[6:] for line in done_block.splitlines() if line.startswith("data: ")))
+    assert done_payload["status"] == "completed"
+    assert "tool_call" in event_types
+    assert "agent_answer" in event_types
+    assert event_types[-1] == "done"
+
+    run_id = done_payload["run_id"]
+    metrics = collect_persisted_harness_metrics(run_id)
+    assert_persisted_harness_quality(metrics)
+    assert metrics.artifact_consistent is True

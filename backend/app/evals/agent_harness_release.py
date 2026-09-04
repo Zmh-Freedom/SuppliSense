@@ -8,7 +8,7 @@ the wording of an answer.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from app.domains.agent_run.repo import get_run, list_events_after
+from app.domains.agent_run.repo import get_harness_artifact_counts, get_run, list_events_after
 
 
 _TERMINAL_STATUSES = {"COMPLETED", "PARTIAL", "NEEDS_REVIEW", "FAILED", "CANCELLED", "ACTION_FAILED"}
@@ -24,12 +24,19 @@ class PersistedHarnessMetrics:
     answer_status: str
     event_types: tuple[str, ...]
     tool_call_count: int
+    persisted_task_count: int
+    persisted_tool_call_count: int
+    snapshot_tool_call_count: int
+    tool_call_event_count: int
+    tool_result_event_count: int
+    side_effect_receipt_count: int
     persisted_evidence_count: int
     claim_count: int
     supported_claim_count: int
     evidence_coverage_ratio: float
     unresolved_tool_calls: int
     terminal_event_present: bool
+    artifact_consistent: bool
 
     @property
     def claim_support_rate(self) -> float:
@@ -57,6 +64,10 @@ def collect_persisted_harness_metrics(run_id: str) -> PersistedHarnessMetrics:
     )
     raw_outcomes = snapshot.get("tool_outcomes") or []
     outcome_count = sum(isinstance(item, dict) for item in raw_outcomes)
+    receipt_count = sum(
+        isinstance(item, dict) and isinstance(item.get("side_effect_receipt"), dict)
+        for item in raw_outcomes
+    )
     raw_evidence = snapshot.get("evidence_records") or []
     evidence_count = sum(isinstance(item, dict) for item in raw_evidence)
     raw_claims = snapshot.get("validated_claims") or (
@@ -73,18 +84,37 @@ def collect_persisted_harness_metrics(run_id: str) -> PersistedHarnessMetrics:
 
     events = list_events_after(run_id)
     event_types = tuple(str(item.get("event_type")) for item in events if item.get("event_type"))
+    artifacts = get_harness_artifact_counts(run_id)
+    tool_call_event_count = event_types.count("tool_call")
+    tool_result_event_count = event_types.count("tool_result")
+    persisted_tool_call_count = artifacts["tool_call_count"]
+    artifact_consistent = all(
+        (
+            artifacts["task_count"] == sum(isinstance(item, dict) for item in raw_tasks),
+            persisted_tool_call_count == outcome_count,
+            tool_call_event_count == outcome_count,
+            tool_result_event_count == outcome_count,
+        )
+    )
     return PersistedHarnessMetrics(
         run_id=run_id,
         run_status=str(run.get("status") or ""),
         answer_status=answer_status,
         event_types=event_types,
-        tool_call_count=outcome_count,
+        tool_call_count=persisted_tool_call_count,
+        persisted_task_count=artifacts["task_count"],
+        persisted_tool_call_count=persisted_tool_call_count,
+        snapshot_tool_call_count=outcome_count,
+        tool_call_event_count=tool_call_event_count,
+        tool_result_event_count=tool_result_event_count,
+        side_effect_receipt_count=receipt_count,
         persisted_evidence_count=evidence_count,
         claim_count=len(claims),
         supported_claim_count=supported,
         evidence_coverage_ratio=coverage_ratio,
-        unresolved_tool_calls=unresolved,
+        unresolved_tool_calls=max(unresolved, artifacts["active_tool_call_count"]),
         terminal_event_present="done" in event_types,
+        artifact_consistent=artifact_consistent,
     )
 
 
@@ -97,6 +127,8 @@ def assert_persisted_harness_quality(metrics: PersistedHarnessMetrics) -> None:
         failures.append(f"answer_status={metrics.answer_status}")
     if metrics.unresolved_tool_calls:
         failures.append(f"unresolved_tool_calls={metrics.unresolved_tool_calls}")
+    if not metrics.artifact_consistent:
+        failures.append("persisted_artifact_counts_inconsistent")
     if not metrics.terminal_event_present:
         failures.append("terminal_event_missing=done")
     if metrics.answer_status == "completed" and metrics.evidence_coverage_ratio < 1.0:

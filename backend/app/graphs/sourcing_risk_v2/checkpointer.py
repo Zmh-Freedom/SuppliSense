@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,7 @@ except ImportError:  # pragma: no cover - exercised in deployments missing the o
 
 _checkpointer: AsyncPostgresSaver | None = None
 _checkpointer_context: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
+_checkpointer_loop: asyncio.AbstractEventLoop | None = None
 _SCHEMA_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
@@ -58,10 +60,19 @@ async def _ensure_checkpoint_schema(saver: AsyncPostgresSaver) -> None:
 
 async def get_sourcing_risk_checkpointer() -> AsyncPostgresSaver:
     """Return the process-wide, initialized persistent checkpoint saver."""
-    global _checkpointer
+    global _checkpointer, _checkpointer_context, _checkpointer_loop
 
-    if _checkpointer is not None:
+    current_loop = asyncio.get_running_loop()
+    if _checkpointer is not None and _checkpointer_loop is current_loop:
         return _checkpointer
+
+    if _checkpointer is not None and _checkpointer_loop is not current_loop:
+        # Async psycopg connections contain loop-bound locks.  A TestClient,
+        # worker handoff, or controlled restart may invoke this accessor from
+        # another loop, so never hand the stale connection to that caller.
+        _checkpointer = None
+        _checkpointer_context = None
+        _checkpointer_loop = None
 
     saver = await _new_checkpointer()
     try:
@@ -72,6 +83,7 @@ async def get_sourcing_risk_checkpointer() -> AsyncPostgresSaver:
         raise
 
     _checkpointer = saver
+    _checkpointer_loop = current_loop
     return saver
 
 
@@ -98,10 +110,11 @@ def compile_sourcing_risk_graph(graph: Any, checkpointer: AsyncPostgresSaver | N
 
 async def close_sourcing_risk_checkpointer() -> None:
     """Release the dedicated psycopg3 connection held by the saver."""
-    global _checkpointer, _checkpointer_context
+    global _checkpointer, _checkpointer_context, _checkpointer_loop
 
     context = _checkpointer_context
     _checkpointer = None
     _checkpointer_context = None
+    _checkpointer_loop = None
     if context is not None:
         await context.__aexit__(None, None, None)

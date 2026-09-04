@@ -131,6 +131,32 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def get_harness_artifact_counts(run_id: str) -> dict[str, int]:
+    """Count the relational Harness projections for one persisted Run."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM agent_tasks WHERE run_id = %s) AS task_count,
+                (SELECT COUNT(*) FROM agent_tool_calls WHERE run_id = %s) AS tool_call_count,
+                (SELECT COUNT(*) FROM agent_tool_calls
+                 WHERE run_id = %s AND status NOT IN (
+                     'success', 'partial', 'not_found', 'invalid',
+                     'denied', 'failed', 'unavailable'
+                 )) AS active_tool_call_count
+            """,
+            (run_id, run_id, run_id),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return {"task_count": 0, "tool_call_count": 0, "active_tool_call_count": 0}
+    return {
+        "task_count": int(row[0] or 0),
+        "tool_call_count": int(row[1] or 0),
+        "active_tool_call_count": int(row[2] or 0),
+    }
+
+
 def get_run_for_update(run_id: str, cur: PgCursor) -> dict[str, Any] | None:
     """Lock one Run inside the caller-owned lifecycle transaction."""
     cur.execute("SELECT * FROM agent_runs WHERE id = %s FOR UPDATE", (run_id,))

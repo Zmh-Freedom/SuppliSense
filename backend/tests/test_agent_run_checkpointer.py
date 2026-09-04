@@ -21,8 +21,14 @@ def test_checkpointer_setup_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> No
     fake = AsyncMock()
     monkeypatch.setattr(checkpointer, "_new_checkpointer", AsyncMock(return_value=fake))
 
-    assert asyncio.run(checkpointer.get_sourcing_risk_checkpointer()) is fake
-    assert asyncio.run(checkpointer.get_sourcing_risk_checkpointer()) is fake
+    async def get_twice():
+        first = await checkpointer.get_sourcing_risk_checkpointer()
+        second = await checkpointer.get_sourcing_risk_checkpointer()
+        return first, second
+
+    first, second = asyncio.run(get_twice())
+    assert first is fake
+    assert second is fake
     fake.conn.execute.assert_awaited_once_with('CREATE SCHEMA IF NOT EXISTS "agent_checkpoint"')
     fake.setup.assert_awaited_once()
 
