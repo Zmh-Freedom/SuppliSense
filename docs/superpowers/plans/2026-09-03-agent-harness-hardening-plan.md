@@ -229,6 +229,12 @@ Task 14 与 Task 15 必须独立实施和提交：寻源只消费已验证风险
 
 门槛：开发环境 P95 首事件不超过 2 秒，事件可关联率 100%，前端错误成功显示为 0。
 
+状态：已完成。
+
+验收结果：Harness 通过异步队列实时发布节点、工具、证据、AgentAnswer、终态和错误事件；生产控制面事件先追加 PostgreSQL `agent_run_events` 后携带 SSE `id` 发送；新增 `/api/v1/chat/runs/{run_id}/events` 支持 `Last-Event-ID` 断线重放；Trace 事件包含 run/task/call 关联、输入哈希、工具版本、耗时、状态和错误信息，不暴露模型隐藏推理；前端以服务端 `done.status` 和 AgentAnswer 为终态来源，`partial`、`needs_review`、`failed` 不会被改写为 `completed`。Task 18 定向后端 2 项、Task 17 运行时 10 项、后端全量非集成回归 817 项和前端 Vitest 54 项通过；TypeScript、Lint、生产构建、Python 编译和 `git diff --check` 通过。本 Task 未执行 PostgreSQL/MongoDB/Redis 集成测试和真实浏览器验收。
+
+关联提交：`57e5963c`、`d1032f35`。
+
 ### 阶段 5：真实验收门禁与收口（P0/P2）
 
 #### Task 19：重建生产链路 E2E 与 CI 门禁
