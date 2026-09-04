@@ -20,7 +20,8 @@
 
 - 单元测试覆盖目标解析、任务矩阵、Loop 退出、证据合并、策略评分、审批拦截和错误降级。
 - 图级测试覆盖组合任务并行/依赖、部分失败、暂停恢复和 SSE 事件映射。
-- `agent_e2e` 覆盖固定的跨层用户链路：请求级会话快照复用、“本地候选 → 审批暂停 → API 批准恢复 → 成功工具回执”和 Agent `workflow_status` 生命周期；同时执行 12 条无外部服务的多轮 Eval。该集必须在 CI 单独执行。
+- `agent_e2e` 覆盖固定的跨层用户链路：请求级会话快照复用、“本地候选 → 审批暂停 → API 批准恢复 → 成功工具回执”和 Agent `workflow_status` 生命周期；同时执行 12 条无外部服务的多轮 Eval。
+- `agent_e2e_live` 必须穿过真实 FastAPI/Harness/ToolRegistry/ToolExecutor、PostgreSQL、MongoDB、Redis 和 PostgreSQL checkpoint；只允许替换外部 LLM/Provider，不允许替换运行时或数据库。它在 CI 中作为独立门禁执行。
 - 前端测试覆盖聊天引用卡、工作流、审批卡、部分结果与错误状态。
 - 集成测试仅在 PostgreSQL 与 MongoDB 健康时运行；任一不可用立即停止集成测试并报告阻塞。
 - 每次合并前必须通过相关后端 pytest、前端测试、前端构建和 `git diff --check`。
@@ -30,7 +31,17 @@
 ```bash
 cd backend
 python -m pytest -m "not agent_e2e" -v
-python -m pytest -m agent_e2e -v
+python -m pytest -m "agent_e2e and not agent_e2e_live" -v
+python -m pytest -m agent_e2e_live -v
+
+# Harness 核心执行路径定向覆盖率
+python -m pytest -m "not integration and not agent_e2e" \
+  --cov=app.graphs.harness.graph \
+  --cov=app.graphs.harness.state \
+  --cov=app.graphs.agent_core.answer_contract \
+  --cov=app.graphs.agent_core.evidence_ledger \
+  --cov=app.tools.executor \
+  --cov-fail-under=80
 ```
 
 ## 3. 离线 Eval 集

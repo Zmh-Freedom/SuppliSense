@@ -3,6 +3,7 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 markers = [
     "agent_e2e: deterministic end-to-end Agent workflow regression",
+    "agent_e2e_live: production Harness E2E requiring PostgreSQL, MongoDB, and Redis",
     "agent_chat_contract: P0 authenticated chat context contract regression",
     "integration: tests that require live PostgreSQL, MongoDB, or Redis services",
 ]

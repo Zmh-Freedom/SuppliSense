@@ -174,7 +174,10 @@ def mark_failed(
                 last_error = %s,
                 next_attempt_at = CASE
                     WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN clock_timestamp()
-                    ELSE clock_timestamp() + (%s * INTERVAL '1 second')
+                    -- Add a small scheduling cushion so the externally observed
+                    -- failure timestamp cannot precede the retry deadline by
+                    -- sub-millisecond transaction/round-trip time.
+                    ELSE clock_timestamp() + (%s * INTERVAL '1 second') + INTERVAL '1 millisecond'
                 END,
                 dead_lettered_at = CASE
                     WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN clock_timestamp()

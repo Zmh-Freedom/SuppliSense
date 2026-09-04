@@ -96,8 +96,20 @@ jobs:
           --cov-report=xml
           --cov-fail-under=20
 
+      - name: Enforce targeted Harness core coverage
+        run: >-
+          python -m pytest -q
+          -m "not integration and not agent_e2e"
+          --cov=app.graphs.harness.graph
+          --cov=app.graphs.harness.state
+          --cov=app.graphs.agent_core.answer_contract
+          --cov=app.graphs.agent_core.evidence_ledger
+          --cov=app.tools.executor
+          --cov-report=term-missing
+          --cov-fail-under=80
+
       - name: Run PostgreSQL, MongoDB, and Redis integration tests
-        run: python -m pytest -v -m integration
+        run: python -m pytest -v -m "integration and not agent_e2e_live"
 
       - name: Upload backend coverage
         uses: actions/upload-artifact@v4
@@ -107,7 +119,10 @@ jobs:
           if-no-files-found: error
 
       - name: Run Agent E2E regression suite
-        run: python -m pytest -v -s -m "agent_e2e and not agent_chat_contract"
+        run: python -m pytest -v -s -m "agent_e2e and not agent_chat_contract and not agent_e2e_live"
+
+      - name: Run production Agent Harness E2E against three databases
+        run: python -m pytest -v -s -m agent_e2e_live
 
       - name: Run P0 Agent chat context contract gate
         run: python -m pytest -v -m agent_chat_contract
