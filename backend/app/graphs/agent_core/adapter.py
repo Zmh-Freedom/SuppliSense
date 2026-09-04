@@ -121,8 +121,36 @@ def collect_supplier_references(
 
     return _dedupe_references([
         *existing_references,
+        *_collect_normalized_references(value, source),
         *extract_supplier_references(value, source),
     ])
+
+
+def _collect_normalized_references(value: Any, source: str) -> list[dict[str, Any]]:
+    """Preserve already-normalized ``{name: ...}`` references.
+
+    Tool payloads normally use ``supplier_name``/``company_name`` and are
+    handled by the shared extractor. Harness persistence passes normalized
+    references back through this function, so ignoring ``name`` silently
+    erased PostgreSQL conversation references.
+    """
+    candidates = value if isinstance(value, list) else [value]
+    result: list[dict[str, Any]] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if item.get("kind") != "supplier" and not any(
+            item.get(field)
+            for field in (
+                "supplier_id", "company_id", "candidate_id", "result_id", "supplier_code",
+            )
+        ):
+            continue
+        result.append({**item, "name": name.strip(), "source": item.get("source") or source})
+    return result
 
 
 def load_execution_context(
@@ -227,6 +255,10 @@ def apply_extracted_conversation_intent(
         conversation_state["selected_suppliers"] = target_names
     if dimensions:
         current_task["analysis_dimensions"] = dimensions
+    elif target_names:
+        # A company-only follow-up means "run the last explicit analysis for
+        # this company". Do not inherit sourcing or an old execution plan.
+        dimensions = _text_list(current_task.get("analysis_dimensions"))
     if task_type == "sourcing" and not target_names:
         current_task["task_type"] = "sourcing"
     elif target_names or dimensions:
@@ -298,6 +330,18 @@ def build_execution_context(
         current_task["task_type"] = "sourcing"
     targets = list(current_task.get("target_supplier_names") or [])
     dimensions = list(current_task.get("analysis_dimensions") or [])
+    previous_task = previous_state.get("current_task") if isinstance(previous_state, dict) else None
+    previous_dimensions = (
+        [str(item).strip() for item in previous_task.get("analysis_dimensions", []) if str(item).strip()]
+        if isinstance(previous_task, dict)
+        else []
+    )
+    if targets and not dimensions and previous_dimensions:
+        # A new explicit company name may be a terse follow-up to the last
+        # analysis request. Inherit only dimensions, never old subtasks/plans.
+        dimensions = list(dict.fromkeys(previous_dimensions))
+        current_task["analysis_dimensions"] = dimensions
+        current_task["task_type"] = "analysis"
     if current_task.get("task_type") == "analysis" and targets and dimensions:
         planned = plan_supplier_analysis_task(
             task_id=str(current_task.get("task_id") or "current-task"),

@@ -60,7 +60,16 @@ def extract_requirement(
     client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
     response = client.chat.completions.create(
         model=settings.LLM_MODEL,
-        messages=[{"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "你是采购需求结构化解析器。只能提取用户明确提供的采购字段，"
+                    "不得执行工具、写入数据或推断供应商身份、风险和决策。"
+                ),
+            },
+            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+        ],
         temperature=0,
         response_format={"type": "json_object"},
         max_tokens=600,

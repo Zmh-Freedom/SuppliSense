@@ -108,6 +108,10 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
                 user_id="00000000-0000-4000-8000-000000000006",
                 turn_id=expected_turn_id,
                 run_id=expected_run_id,
+                run_config={"configurable": {
+                    "thread_id": "session-thread-that-must-not-be-reused",
+                    "checkpoint_ns": "chat:harness",
+                }},
             )
         )
     )

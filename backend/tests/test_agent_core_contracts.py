@@ -78,6 +78,24 @@ def test_collect_supplier_references_merges_same_supplier_evidence():
     }]
 
 
+def test_collect_supplier_references_preserves_normalized_reference_lists():
+    collected = collect_supplier_references(
+        [],
+        [{
+            "name": "上海汽车制动系统有限公司",
+            "supplier_id": "supplier-1",
+            "source": "list_formal_suppliers",
+        }],
+        "Harness 已验证结果",
+    )
+
+    assert collected == [{
+        "name": "上海汽车制动系统有限公司",
+        "supplier_id": "supplier-1",
+        "source": "list_formal_suppliers",
+    }]
+
+
 def test_agent_task_rejects_duplicate_supplier_dimension_subtasks():
     with pytest.raises(ValidationError):
         AgentTask(

@@ -1396,3 +1396,15 @@
 - 修复方案：为用户名设置 `username`、密码设置 `current-password`，补充组件回归并重新加载登录页确认控制台不再提示该 warning。
 - 验证结果：用户名和密码分别声明 `autocomplete=username` 与 `autocomplete=current-password`；新增组件回归。重启前端开发服务器并刷新真实浏览器后，DOM 属性正确，控制台为 0 error、0 warning（仅保留 React DevTools info）。前端 Lint、TypeScript、Vitest 55 项和生产构建通过。
 - 关联提交：`4e1095db test(agent): close task20 browser acceptance`。
+
+## ISS-20260904-009 正式供应商目录引用未写入 PostgreSQL 且跨轮 Harness 复用了旧任务计划
+
+- 发现日期：2026-09-04
+- 状态：已修复（待真实环境验收）
+- 优先级：P1
+- 现象：同一会话先查询正式供应商目录，再询问“这些供应商的风险情况”，系统错误要求重新指定企业；随后用户输入“上海汽车制动系统有限公司”，最终回答再次返回上一轮的正式供应商清单，没有执行风险分析。
+- 影响：多轮会话无法从正式供应商目录进入风险分析；当前轮的明确企业目标可能被旧任务计划覆盖，导致工具、证据和回答全部偏离用户问题。
+- 根因：Harness 结果提取出的引用对象已是 `{name: ...}` 结构，但 PostgreSQL 会话更新再次调用只识别 `supplier_name/company_name` 的提取器，导致正式供应商引用没有写入 `execution_context.references`；同时 `chat_checkpoint_config()` 固定以 `session_id` 作为 Harness `thread_id`，新 Run 继承上一轮 `task_specs`，而 `_build_default_plan()` 优先返回旧的显式任务计划。公司名单独输入时还没有风险维度，不能自行构造风险任务矩阵，放大了旧计划复用问题。
+- 修复方案：统一引用归一化函数，使 `{name: ...}` 和工具原始候选都能写入 PostgreSQL 会话实体记忆；每个新 Harness Run 强制使用独立的 `thread_id`，禁止上一轮 `task_specs` 覆盖当前任务；当前轮明确公司名在缺少维度时继承最近一次明确的分析意图，且不继承旧的 sourcing 子任务。LLM 意图解析改为每个有意义的用户轮次都尝试执行，只有明确的寒暄/短确认跳过；意图和寻源字段解析增加真正的 system prompt。补充目录查询、引用合并、实体-only 跟进和 checkpoint 隔离回归。
+- 验证结果：新增回归覆盖“正式供应商目录 → 这些供应商风险 → 单家公司名”，确认多企业风险任务和单企业风险任务均生成 `risk` 分析矩阵；规范化 `{name: ...}` 引用可保留 `supplier_id` 写回上下文；带旧 session thread 的新 Run 最终使用 Run ID 作为 checkpoint `thread_id`。意图/引用/Harness/上下文定向回归 37 项通过；后端非集成全量回归 604 项通过；Python 编译和 `git diff --check` 通过。本轮尚未执行真实 PostgreSQL/MongoDB/Redis 集成测试和浏览器验收。
+- 关联提交：`377c8445 fix(agent): unify intent and harness context`。

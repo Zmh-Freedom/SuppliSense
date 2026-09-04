@@ -76,7 +76,9 @@ async def stream_harness_graph(
     config = dict(run_config or {})
     configurable = dict(config.get("configurable") or {})
     active_run_id = run_id or str(uuid.uuid4())
-    configurable.setdefault("thread_id", active_run_id if run_id else session_id)
+    # A checkpoint thread is execution state, not session state. Reusing the
+    # session thread lets an earlier task_specs list override this run's task.
+    configurable["thread_id"] = active_run_id
     configurable.setdefault("checkpoint_ns", "chat:harness")
     config["configurable"] = configurable
     active_turn_id = turn_id or str(uuid.uuid4())

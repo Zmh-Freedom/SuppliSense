@@ -18,6 +18,9 @@ _ANALYSIS_TOKENS = (
     "风险", "财务", "商务", "供应依赖", "可替代", "质量", "交付",
     "ESG", "esg", "舆情", "合规", "制裁", "监控", "评估", "分析",
 )
+_NON_AGENT_TURN_PATTERNS = (
+    "你好", "您好", "嗨", "hello", "hi", "谢谢", "感谢", "好的", "ok", "收到",
+)
 
 
 class ConversationIntentExtraction(BaseModel):
@@ -54,8 +57,20 @@ class ConversationIntentExtraction(BaseModel):
 
 
 def should_extract_conversation_intent(message: str) -> bool:
-    """Avoid an LLM call for greetings and non-agent conversational turns."""
-    return any(token in message for token in _ANALYSIS_TOKENS)
+    """Call the LLM for every meaningful turn, skipping only clear small talk.
+
+    Entity-only follow-ups such as ``上海某某有限公司`` deliberately pass this
+    gate: the previous implementation required an analysis keyword and therefore
+    never gave the LLM a chance to bind the company to the pending task.
+    """
+    normalized = "".join(str(message or "").strip().lower().split())
+    if not normalized:
+        return False
+    if normalized in _NON_AGENT_TURN_PATTERNS:
+        return False
+    if len(normalized) <= 3 and not any(token in normalized for token in _ANALYSIS_TOKENS):
+        return False
+    return True
 
 
 def extract_conversation_intent(
@@ -86,7 +101,17 @@ def extract_conversation_intent(
         client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
-            messages=[{"role": "user", "content": json.dumps(prompt, ensure_ascii=False)}],
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是供应商分析系统的意图与实体解析器。"
+                        "只能返回符合用户消息和 JSON Schema 的结构化结果，"
+                        "不得执行工具、写入数据或编造企业与风险事实。"
+                    ),
+                },
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
             temperature=0,
             response_format={"type": "json_object"},
             max_tokens=500,

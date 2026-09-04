@@ -40,6 +40,43 @@ def test_llm_extractor_parses_current_explicit_company_before_history(monkeypatc
     assert result.requested_action == "add_watchlist"
 
 
+def test_llm_extractor_runs_for_entity_only_follow_up(monkeypatch):
+    calls: list[dict] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                    "target_supplier_names": ["上海汽车制动系统有限公司"],
+                    "analysis_dimensions": [],
+                    "task_type": "analysis",
+                })))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "上海汽车制动系统有限公司",
+        [{"name": "上海汽车制动系统有限公司"}],
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["上海汽车制动系统有限公司"]
+    assert calls[0]["messages"][0]["role"] == "system"
+
+
+def test_small_talk_does_not_call_llm():
+    assert intent_extractor.should_extract_conversation_intent("你好") is False
+    assert intent_extractor.should_extract_conversation_intent("谢谢") is False
+    assert intent_extractor.should_extract_conversation_intent("上海汽车制动系统有限公司") is True
+
+
 def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix():
     """Every graph must consume the LLM-validated target from shared context."""
     extraction = intent_extractor.ConversationIntentExtraction(
@@ -69,6 +106,78 @@ def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix()
     assert result["current_task"]["analysis_dimensions"] == ["risk", "esg", "sentiment", "compliance"]
     assert len(result["current_task"]["subtasks"]) == 4
     assert result["conversation_state"]["selected_supplier_names"] == ["四川建安工业有限责任公司"]
+
+
+def test_entity_only_follow_up_inherits_previous_analysis_dimensions():
+    extraction = intent_extractor.ConversationIntentExtraction(
+        target_supplier_names=["上海汽车制动系统有限公司"],
+        task_type="analysis",
+        confidence=1.0,
+    )
+    context = {
+        "session_id": "session-1",
+        "references": [{"name": "上海汽车制动系统有限公司"}],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "current-task",
+            "target_supplier_names": ["上海汽车制动系统有限公司"],
+            "analysis_dimensions": ["risk"],
+            "user_message": "上一轮风险分析",
+        },
+    }
+
+    result = adapter.apply_extracted_conversation_intent(context, extraction)
+
+    assert result["current_task"]["analysis_dimensions"] == ["risk"]
+    assert result["current_task"]["subtasks"][0]["dimension"] == "risk"
+
+
+def test_build_execution_context_inherits_dimensions_for_explicit_company_follow_up():
+    result = adapter.build_execution_context(
+        session_id="session-1",
+        user_message="上海汽车制动系统有限公司",
+        references=[{"name": "上海汽车制动系统有限公司"}],
+        previous_state={
+            "current_task": {
+                "task_type": "analysis",
+                "analysis_dimensions": ["risk", "esg"],
+            }
+        },
+    )
+
+    assert result["current_task"]["target_supplier_names"] == ["上海汽车制动系统有限公司"]
+    assert result["current_task"]["analysis_dimensions"] == ["risk", "esg"]
+
+
+def test_directory_to_plural_risk_to_company_keeps_analysis_task():
+    directory_references = [
+        {"name": "上海汽车制动系统有限公司", "kind": "supplier", "supplier_id": "sh"},
+        {"name": "重庆红旗弹簧有限公司", "kind": "supplier", "supplier_id": "cq"},
+    ]
+    directory = adapter.build_execution_context(
+        session_id="session-1",
+        user_message="当前正式供应商有哪些？",
+        references=[],
+    )
+    plural_risk = adapter.build_execution_context(
+        session_id="session-1",
+        user_message="这些供应商的风险情况有哪些？",
+        references=directory_references,
+        previous_state=directory["conversation_state"],
+    )
+    company = adapter.build_execution_context(
+        session_id="session-1",
+        user_message="上海汽车制动系统有限公司",
+        references=directory_references,
+        previous_state=plural_risk["conversation_state"],
+    )
+
+    assert plural_risk["current_task"]["target_supplier_names"] == [
+        "上海汽车制动系统有限公司", "重庆红旗弹簧有限公司",
+    ]
+    assert plural_risk["current_task"]["analysis_dimensions"] == ["risk"]
+    assert company["current_task"]["target_supplier_names"] == ["上海汽车制动系统有限公司"]
+    assert company["current_task"]["analysis_dimensions"] == ["risk"]
 
 
 def test_llm_intent_keeps_risk_filter_as_sourcing_task(monkeypatch):
