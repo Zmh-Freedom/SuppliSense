@@ -1206,27 +1206,27 @@
 ## ISS-20260903-006 写操作存在双运行时、ToolExecutor 绕过和审批令牌弱验证
 
 - 发现日期：2026-09-03
-- 状态：待修复
+- 状态：已修复（Task 16；Supervisor 仅保留兼容审批入口）
 - 优先级：P0
 - 现象：只读请求进入 Harness，写操作仍进入独立 Supervisor；Supervisor 可直接调用业务 service 而绕过 ToolExecutor。ToolExecutor 对写操作只检查非空 `approval_token`，伪造字符串也可通过。
 - 影响：同一会话在读取和写入时切换状态、证据和答案语义；存在未经真实人工确认执行写入的安全风险。
 - 根因：ActionGate 和签名令牌只在部分图层使用，不是 ToolExecutor 必经的安全边界；写链路未迁入唯一 Harness。
 - Task 16 实施前复核补充：V2 outbox action consumer 仍直接调用领域写 service；旧 Supervisor 的审批恢复记录按 session 删除后才重建图，且执行波次存在重复调度风险。
 - 修复方案：按 Task 16 将监控增删等允许的写操作迁入 Harness，强制 Proposal → 持久化→人工确认→签名 Token → ToolExecutor → SideEffectReceipt；禁止 Supervisor 直接调用 service。
-- 验证结果：待 Task 16 实施后回填。
-- 关联提交：待回填。
+- 验证结果：监控增删执行已统一经过签名 ApprovalToken + ToolExecutor + SideEffectReceipt；伪造非空令牌被拒绝；Outbox 消费不再直接调用监控 service；审批事件绑定 approver_id；相关定向回归和后端非集成回归通过。未执行三数据库集成测试。
+- 关联提交：`63a98133`。
 
 ## ISS-20260903-007 审批恢复缺少授权绑定且消费语义不可恢复
 
 - 发现日期：2026-09-03
-- 状态：待修复
+- 状态：已修复（Task 16）
 - 优先级：P0
 - 现象：`/chat/resume` 主要接收 `session_id` 和批准结果，缺少对当前用户、提案版本、动作哈希和真实审批人的强绑定；暂停记录在图重建或恢复成功前被删除。
 - 影响：越权恢复、陈旧页面重放和错提案确认可能被接受；恢复过程中失败会丢失暂停状态，用户无法再试。
 - 根因：恢复端点沿用旧会话级接口，暂停存储使用先取出删除再执行的模式。
 - 修复方案：按 Task 16 为兼容 API 增加强制服务端校验，认领暂停记录后在成功提交时 ack，失败时可释放重试；验证 Session/Run/Proposal/用户/版本/动作哈希。
-- 验证结果：待 Task 16 实施后回填。
-- 关联提交：待回填。
+- 验证结果：真实 HTTP 恢复按当前用户 claim；恢复记录在执行前不删除，成功 ack，异常 release，过期 lease 可重新认领；图重建失败保留可重试状态。兼容单元调用仍保留旧 take 入口，不参与生产 HTTP 路径。未执行三数据库集成测试。
+- 关联提交：`63a98133`。
 
 ## ISS-20260903-008 Harness 异步边界、实时 SSE 和可观测链路不完整
 

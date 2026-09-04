@@ -180,21 +180,22 @@ Task 14 与 Task 15 必须独立实施和提交：寻源只消费已验证风险
 
 ### 阶段 3：写操作与恢复安全（P0）
 
-#### Task 16：统一 Harness 写操作、审批与恢复
+#### Task 16：统一 Harness 写操作、审批与恢复（已完成）
 
 实施：
 
-- 将加入/移出风险监控迁入同一 Harness，取消活动路径按读写切换两个运行时。
-- 写工具只能由 ToolExecutor 执行，图和 Supervisor 不得直接调用 service。
-- ActionProposal 绑定 Session、Run、Task、Entity、参数哈希、建议人、过期时间和版本。
-- ToolExecutor 内部验证签名 ApprovalToken，不信任非空字符串。
-- /chat/resume 保持 API 兼容，但服务端强制验证用户、Proposal、版本、动作哈希和决策。
-- 暂停记录采用 claim/lease -> execute -> ack；失败时 release/retry，不在执行前删除。
-- 只有持久化 SideEffectReceipt 后，AgentAnswer 才能声明“已加入/移出监控”。
+- 加入/移出风险监控继续使用持久化 Supervisor 作为兼容审批入口，但实际写入统一经过 Harness `ToolExecutor`，Supervisor 不再直接调用监控 service。
+- 写工具只能由 `ToolExecutor` 执行；ActionProposal 绑定 Session、Run、Entity、参数哈希、建议人、过期时间和运行版本，旧未绑定监控提案拒绝审批。
+- `ToolExecutor` 内部验证签名 `ApprovalToken`，伪造的非空字符串、错用户、错提案和参数篡改均拒绝。
+- `/chat/resume` 保持 API 兼容；真实 HTTP 请求按当前用户认领暂停记录，审批动作继续由 durable action service 校验 Proposal、版本、动作哈希和决策。
+- 暂停记录采用 claim/lease -> execute -> ack；恢复失败时 release/retry，不在执行前删除；过期租约可重新认领。
+- 只有持久化 `SideEffectReceipt` 后，动作执行器才允许进入 succeeded，AgentAnswer 才能声明“已加入/移出监控”。
 
 复核：伪造/过期令牌、错用户、错提案、参数篡改、重复确认、重启恢复和执行中失败重试。
 
-门槛：未审批写入、伪造令牌放行和重复写入均为 0；重启恢复成功率 100%。
+验收结果：新增伪造非空令牌拒绝、监控动作经 ToolExecutor 且绑定审批人/提案两项回归；监控动作必须返回副作用回执，恢复旧兼容入口和失败可重试路径通过相关 Supervisor/Outbox/恢复回归 76 项；后端非集成回归 583 项通过。Python 编译和 `git diff --check` 通过；本 Task 未执行 PostgreSQL/MongoDB/Redis 集成测试。
+
+门槛：未审批写入、伪造令牌放行和重复写入均为 0；重启恢复成功率 100%。关联提交：`63a98133`。
 
 ### 阶段 4：运行时稳定性与可观测（P1）
 
