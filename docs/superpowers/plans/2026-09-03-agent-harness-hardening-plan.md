@@ -213,7 +213,7 @@ Task 14 与 Task 15 必须独立实施和提交：寻源只消费已验证风险
 
 验收结果：Harness 任务新增显式依赖、资源键和有限 Loop 类型；规划器支持按当前任务派生风险趋势与多企业比较节点；执行器按 `max_parallel_tasks` 分波次并行、同实体串行，按剩余 deadline 等待，并在 LLM/工具预算耗尽、依赖阻塞和截止时间超时时 fail closed；补采按 `source_key + loop_type` 去重，Loop 退出原因持久化。Task 17 定向 10 项、相关回归 76 项、后端非集成回归 587 项通过；Python 编译和 `git diff --check` 通过；本 Task 未执行 PostgreSQL/MongoDB/Redis 集成测试。
 
-门槛：预算越界、无限 Loop、工具消息串线和事件循环阻塞调用均为 0。关联提交：待回填。
+门槛：预算越界、无限 Loop、工具消息串线和事件循环阻塞调用均为 0。关联提交：`f0a05f7a`。
 
 #### Task 18：真实流式 SSE、Trace 与前端服务端终态
 
