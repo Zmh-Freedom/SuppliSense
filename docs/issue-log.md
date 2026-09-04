@@ -1284,7 +1284,7 @@
 - 修复方案补充：同一生产 E2E 模块共享事件循环，避免跨事件循环复用异步 checkpoint 连接；该调整同时覆盖多用例运行稳定性。
 - 验证结果补充：真实 `agent_e2e_live` 2 项通过；缺失数据场景稳定产生 `done.status=needs_review`，覆盖率为 0 且无错误成功声明。
 - 验证结果：真实 `agent_e2e_live` 2 项通过；离线 Agent E2E 24 项通过；三数据库集成回归 229 项通过；Harness 核心执行路径定向覆盖率 83.60%（门槛 80%）；缺失数据场景稳定产生 `done.status=needs_review`，无错误成功声明。Task19 后续仍需补齐多企业五维风险、审批/拒绝/重放、断线重连和故障注入场景。
-- 关联提交：待本轮提交。
+- 关联提交：`91a62b95 test(agent): add production harness e2e gates`。
 
 ## ISS-20260904-001 真实 Outbox 集成测试的重试时间边界不稳定
 
@@ -1298,7 +1298,7 @@
 - 复发记录（2026-09-04）：完整集成回归再次出现约几十微秒的边界失败；`clock_timestamp()` 已消除事务时间偏差，但调用方观测时间与 SQL 语句时间仍可能存在亚毫秒往返差。
 - 本轮修复方案：在非死信重试截止时间上增加 1ms 调度缓冲，保持指数退避秒数不变，避免边界时间倒退。
 - 验证结果：将 `mark_failed` 的重试时间计算从事务时间 `NOW()` 调整为语句实际时间 `clock_timestamp()`；单项回归通过，随后使用真实 PostgreSQL、MongoDB、Redis 执行 `pytest -m integration -v`，229 项全部通过（588 项非集成测试被筛除）。
-- 关联提交：`70ed35a0`。
+- 关联提交：`70ed35a0`、`91a62b95 test(agent): add production harness e2e gates`。
 
 ## ISS-20260904-002 真实浏览器登录收到空响应导致 JSON 解析失败
 
