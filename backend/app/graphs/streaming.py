@@ -22,9 +22,10 @@ _SUPERVISOR_STAGE_MESSAGES = {
 }
 
 
-def _sse_event(event_type: str, data: dict) -> str:
+def _sse_event(event_type: str, data: dict, event_id: int | None = None) -> str:
     """Format data as SSE event string."""
-    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+    event_id_line = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{event_id_line}event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 def _workflow_status(
@@ -69,7 +70,7 @@ async def stream_harness_graph(
     turn_id: str | None = None,
     run_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Run the unified Harness and map its contract to the public SSE protocol."""
+    """Run the unified Harness and publish durable progress as it happens."""
     from app.graphs.harness import run_harness
 
     config = dict(run_config or {})
@@ -91,6 +92,116 @@ async def stream_harness_graph(
         "current_task": control_context.get("current_task") or {},
     }
 
+    queue: asyncio.Queue[tuple[str, dict[str, Any], int | None]] = asyncio.Queue()
+    progress_seen = False
+
+    async def publish(
+        event_type: str,
+        payload: dict[str, Any],
+        *,
+        durable: bool = True,
+    ) -> None:
+        event_id: int | None = None
+        if durable and run_id and user_id:
+            from app.domains.agent_run.state_store import session_state_store
+
+            append_event = getattr(session_state_store, "append_harness_event", None)
+            if callable(append_event):
+                event = await asyncio.to_thread(
+                    append_event,
+                    active_run_id,
+                    event_type,
+                    payload,
+                )
+                event_id = int(event["event_id"])
+        await queue.put((event_type, payload, event_id))
+
+    async def progress(
+        event_type: str,
+        snapshot: dict[str, Any],
+        already_persisted: bool,
+    ) -> None:
+        """Translate internal node/tool progress into public, replayable events."""
+        nonlocal progress_seen
+        progress_seen = True
+        if event_type == "tool_call":
+            await publish("tool_call", snapshot)
+            return
+        if event_type == "tool_result":
+            await publish("tool_result", snapshot)
+            return
+
+        status = str(snapshot.get("status") or "running")
+        run_details = {"run_id": active_run_id, "status": status}
+        if event_type == "load_session":
+            await publish("workflow_status", {
+                **run_details, "stage": "understand", "message": "正在解析结构化任务上下文",
+            })
+        elif event_type == "resolve_turn":
+            await publish("workflow_status", {
+                **run_details, "stage": "understand", "message": "已完成会话与当前任务解析",
+            })
+        elif event_type == "build_plan":
+            tasks = snapshot.get("task_specs") or []
+            await publish("plan", {
+                "run_id": active_run_id,
+                "steps": [
+                    {"tool": item.get("tool_name", ""), "args": item.get("arguments", {})}
+                    for item in tasks if isinstance(item, dict)
+                ],
+            })
+            await publish("workflow_status", {
+                **run_details, "stage": "planning", "message": "已生成受预算约束的任务计划",
+            })
+        elif event_type == "execute_ready_tasks":
+            await publish("workflow_status", {
+                **run_details,
+                "stage": "executing",
+                "message": "正在通过统一 ToolExecutor 执行任务",
+                "tool_call_count": snapshot.get("tool_call_count", 0),
+                "completed_tool_count": len(snapshot.get("tool_outcomes") or []),
+            })
+        elif event_type == "validate_evidence":
+            coverage = snapshot.get("evidence_coverage") or {}
+            await publish("evidence", {
+                "run_id": active_run_id,
+                "records": snapshot.get("evidence_records", []),
+                "coverage": coverage,
+            })
+            await publish("workflow_status", {
+                **run_details,
+                "stage": "evidence",
+                "message": "正在校验证据覆盖度与 Claim 引用",
+                "evidence_status": (
+                    f"{len(coverage.get('covered_dimensions', []))}/"
+                    f"{len(coverage.get('required_dimensions', []))} 已覆盖"
+                ),
+                "loop_exit_reason": snapshot.get("loop_exit_reason"),
+            })
+        elif event_type == "remediate":
+            await publish("workflow_status", {
+                **run_details,
+                "stage": "executing",
+                "message": "正在执行受限证据补全循环",
+                "loop_exit_reason": snapshot.get("loop_exit_reason"),
+            })
+        elif event_type == "render_answer":
+            answer = snapshot.get("answer") or {}
+            await publish("agent_answer", answer)
+            await publish("evidence", {
+                "run_id": active_run_id,
+                "records": snapshot.get("evidence_records", []),
+                "coverage": snapshot.get("evidence_coverage") or {},
+            })
+            await publish("answer_chunk", {"text": _render_harness_answer(answer)})
+        elif event_type == "persist_turn":
+            await publish("workflow_status", {
+                **run_details,
+                "stage": "decision",
+                "message": "正在整理最终回答",
+                "loop_exit_reason": snapshot.get("loop_exit_reason"),
+            })
+
     persist = None
     if run_id and user_id:
         from app.domains.agent_run.state_store import session_state_store
@@ -104,64 +215,54 @@ async def stream_harness_graph(
             )
 
     yield _workflow_status("running", "understand", "正在解析结构化任务上下文")
-    yield _workflow_status("running", "planning", "正在生成受预算约束的任务计划")
+    if run_id and user_id:
+        await publish("run", {"run_id": active_run_id, "turn_id": active_turn_id})
     try:
-        result = await run_harness(
-            state,
-            checkpointer=checkpointer,
-            config=config,
-            persist=persist,
-        )
-        task_specs = result.get("task_specs", [])
-        if isinstance(task_specs, list):
-            yield _sse_event(
-                "plan",
-                {
-                    "steps": [
-                        {
-                            "tool": item.get("tool_name", ""),
-                            "args": item.get("arguments", {}),
-                        }
-                        for item in task_specs
-                        if isinstance(item, dict)
-                    ]
-                },
+        async def run_graph() -> Any:
+            return await run_harness(
+                state,
+                checkpointer=checkpointer,
+                config=config,
+                persist=persist,
+                progress=progress,
             )
-        yield _workflow_status("running", "executing", "正在通过统一 ToolExecutor 执行任务")
-        outcomes = result.get("tool_outcomes", [])
-        if isinstance(outcomes, list):
-            for outcome in outcomes:
-                if not isinstance(outcome, dict):
-                    continue
-                tool_name = str(outcome.get("tool_name") or "unknown")
-                yield _sse_event("tool_call", {"tool": tool_name, "args": outcome.get("input", {})})
-                yield _sse_event("tool_result", {"tool": tool_name, "result": outcome})
 
-        coverage = result.get("evidence_coverage") or {}
-        yield _workflow_status(
-            "running",
-            "evidence",
-            "正在校验证据覆盖度与 Claim 引用",
-            evidence_status=(
-                f"{len(coverage.get('covered_dimensions', []))}/"
-                f"{len(coverage.get('required_dimensions', []))} 已覆盖"
-            ),
-            loop_exit_reason="evidence_sufficient" if not coverage.get("missing_dimensions") else "evidence_incomplete",
-        )
-        answer = result.get("answer") or {
-            "status": "failed",
-            "summary": "Harness 未生成结构化回答。",
-            "claims": [],
-            "limitations": ["缺少 AgentAnswer"],
-            "evidence_refs": [],
-        }
+        runner = asyncio.create_task(run_graph())
+        try:
+            while not runner.done() or not queue.empty():
+                if queue.empty():
+                    try:
+                        event_type, data, event_id = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        continue
+                else:
+                    event_type, data, event_id = queue.get_nowait()
+                yield _sse_event(event_type, data, event_id)
+            result = await runner
+        finally:
+            if not runner.done():
+                runner.cancel()
+        if not progress_seen:
+            # Compatibility fallback for injected test runners and old callers.
+            task_specs = result.get("task_specs", [])
+            if isinstance(task_specs, list):
+                await publish("plan", {"steps": [
+                    {"tool": item.get("tool_name", ""), "args": item.get("arguments", {})}
+                    for item in task_specs if isinstance(item, dict)
+                ]}, durable=False)
+            for outcome in result.get("tool_outcomes", []) if isinstance(result.get("tool_outcomes"), list) else []:
+                if isinstance(outcome, dict):
+                    tool_name = str(outcome.get("tool_name") or "unknown")
+                    await publish("tool_call", {"tool": tool_name, "args": outcome.get("input", {})}, durable=False)
+                    await publish("tool_result", {"tool": tool_name, "result": outcome}, durable=False)
+            await publish("evidence", {"records": result.get("evidence_records", []), "coverage": result.get("evidence_coverage") or {}}, durable=False)
+            answer = result.get("answer") or {"status": "failed", "summary": "Harness 未生成结构化回答。", "claims": [], "limitations": ["缺少 AgentAnswer"], "evidence_refs": []}
+            await publish("agent_answer", answer, durable=False)
+            await publish("answer_chunk", {"text": _render_harness_answer(answer)}, durable=False)
+        else:
+            answer = result.get("answer") or {}
+        outcomes = result.get("tool_outcomes", [])
         answer_text = _render_harness_answer(answer)
-        yield _sse_event("agent_answer", answer)
-        yield _sse_event(
-            "evidence",
-            {"records": result.get("evidence_records", []), "coverage": coverage},
-        )
-        yield _sse_event("answer_chunk", {"text": answer_text})
 
         from app.graphs.agent_core.adapter import collect_supplier_references, save_execution_turn
 
@@ -191,16 +292,29 @@ async def stream_harness_graph(
             )
         save_execution_turn(session_id, user_message, answer_text, references)
         if references:
-            yield _sse_event("references", {"items": references})
+            await publish("references", {"items": references})
         final_status = str(answer.get("status") or "failed")
         final_stage = "completed" if final_status in {"completed", "partial"} else "decision"
-        yield _workflow_status(final_status, final_stage, "本轮 Harness 工作流已完成")
-        yield _sse_event("done", {"answer": answer_text})
+        await publish("workflow_status", {
+            "run_id": active_run_id,
+            "status": final_status,
+            "stage": final_stage,
+            "message": "本轮 Harness 工作流已完成",
+            "loop_exit_reason": result.get("loop_exit_reason"),
+        })
+        await publish("done", {"run_id": active_run_id, "status": final_status, "answer": answer_text})
+        while not queue.empty():
+            event_type, data, event_id = queue.get_nowait()
+            yield _sse_event(event_type, data, event_id)
     except Exception as exc:
         from app.graphs import format_llm_error
 
-        yield _workflow_status("failed", "decision", "Harness 工作流执行失败")
-        yield _sse_event("error", {"message": format_llm_error(exc)})
+        message = format_llm_error(exc)
+        await publish("workflow_status", {"run_id": active_run_id, "status": "failed", "stage": "decision", "message": "Harness 工作流执行失败"})
+        await publish("error", {"run_id": active_run_id, "message": message})
+        while not queue.empty():
+            event_type, data, event_id = queue.get_nowait()
+            yield _sse_event(event_type, data, event_id)
 
 
 def _event_data(event: dict[str, Any]) -> dict[str, Any]:

@@ -70,7 +70,7 @@ interface StreamState {
   thinking: string;
   plan: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> | null;
   agents: { selected: string[]; reasoning: string; status: Record<string, AgentStatus>; descriptions?: Record<string, string> } | null;
-  toolCalls: Array<{ tool: string; args: Record<string, unknown>; result?: unknown }>;
+  toolCalls: Array<{ tool: string; args: Record<string, unknown>; task_id?: string; result?: unknown }>;
   answerChunks: string[];
   answerStarted: boolean;
   approval: ApprovalData | null;
@@ -222,10 +222,13 @@ export default function ChatView() {
             status: data.status as AgentWorkflowLifecycle | string,
             stage: data.stage ?? previous.stage,
             message: data.message,
+            runId: data.run_id ?? previous.runId,
             targetSuppliers: data.target_suppliers ?? previous.targetSuppliers,
             sources: data.sources ?? previous.sources,
             evidenceStatus: data.evidence_status ?? previous.evidenceStatus,
             loopExitReason: data.loop_exit_reason ?? previous.loopExitReason,
+            toolCallCount: data.tool_call_count ?? previous.toolCallCount,
+            completedToolCount: data.completed_tool_count ?? previous.completedToolCount,
           };
           workflowAccRef.current = next;
           setStreamState(prev => prev ? { ...prev, workflowStatus: next } : null);
@@ -283,7 +286,7 @@ export default function ChatView() {
                 selected: agents.selected.includes(agent) ? agents.selected : [...agents.selected, agent],
                 status: { ...agents.status, [agent]: 'running' },
               } : agents,
-              toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }],
+              toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args, task_id: data.task_id }],
               workflowStatus: { ...prev.workflowStatus, toolCallCount: prev.toolCalls.length + 1 },
             };
           });
@@ -292,9 +295,11 @@ export default function ChatView() {
           setStreamState(prev => {
             if (!prev) return null;
             const toolCalls = [...prev.toolCalls];
-            const lastTool = toolCalls[toolCalls.length - 1];
-            if (lastTool && lastTool.tool === data.tool) {
-              lastTool.result = data.result;
+            const target = [...toolCalls].reverse().find(call =>
+              (data.task_id && call.task_id === data.task_id) || (!data.task_id && call.tool === data.tool && call.result === undefined),
+            );
+            if (target) {
+              target.result = data.result;
             }
             const agent = agentFromTool(data.tool);
             const agents = agent && prev.agents ? {
@@ -315,11 +320,13 @@ export default function ChatView() {
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
           const contractStatus = agentAnswerAccRef.current?.status;
+          const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
+          const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
-            status: (contractStatus || 'completed') as AgentWorkflowLifecycle | string,
-            stage: contractStatus === 'needs_review' ? 'decision' : 'completed',
-            message: contractStatus === 'needs_review' ? '结果需要人工复核' : '本轮 Agent 工作流已完成',
+            status: (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
+            stage: hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
+            message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
           const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow }];
@@ -437,10 +444,13 @@ export default function ChatView() {
             status: data.status as AgentWorkflowLifecycle | string,
             stage: data.stage ?? previous.stage,
             message: data.message,
+            runId: data.run_id ?? previous.runId,
             targetSuppliers: data.target_suppliers ?? previous.targetSuppliers,
             sources: data.sources ?? previous.sources,
             evidenceStatus: data.evidence_status ?? previous.evidenceStatus,
             loopExitReason: data.loop_exit_reason ?? previous.loopExitReason,
+            toolCallCount: data.tool_call_count ?? previous.toolCallCount,
+            completedToolCount: data.completed_tool_count ?? previous.completedToolCount,
           };
           workflowAccRef.current = next;
           setStreamState(prev => prev ? { ...prev, workflowStatus: next, approvalSubmitting: true } : null);
@@ -451,7 +461,7 @@ export default function ChatView() {
         onToolCall: (data) => {
           setStreamState(prev => prev ? {
             ...prev,
-            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args }],
+            toolCalls: [...prev.toolCalls, { tool: data.tool, args: data.args, task_id: data.task_id }],
             workflowStatus: { ...prev.workflowStatus, toolCallCount: prev.workflowStatus.toolCallCount + 1 },
           } : null);
         },
@@ -459,9 +469,11 @@ export default function ChatView() {
           setStreamState(prev => {
             if (!prev) return null;
             const toolCalls = [...prev.toolCalls];
-            const lastTool = toolCalls[toolCalls.length - 1];
-            if (lastTool && lastTool.tool === data.tool) {
-              lastTool.result = data.result;
+            const target = [...toolCalls].reverse().find(call =>
+              (data.task_id && call.task_id === data.task_id) || (!data.task_id && call.tool === data.tool && call.result === undefined),
+            );
+            if (target) {
+              target.result = data.result;
             }
             return { ...prev, toolCalls, workflowStatus: { ...prev.workflowStatus, completedToolCount: prev.workflowStatus.completedToolCount + 1 } };
           });
@@ -483,11 +495,13 @@ export default function ChatView() {
         onDone: (data) => {
           const finalAnswer = answerAccRef.current || data.answer;
           const contractStatus = agentAnswerAccRef.current?.status;
+          const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
+          const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
-            status: (contractStatus || 'completed') as AgentWorkflowLifecycle | string,
-            stage: contractStatus === 'needs_review' ? 'decision' : 'completed',
-            message: contractStatus === 'needs_review' ? '结果需要人工复核' : '本轮 Agent 工作流已完成',
+            status: (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
+            stage: hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
+            message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
           const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow }];

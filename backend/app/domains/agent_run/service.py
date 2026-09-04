@@ -410,6 +410,31 @@ def stream_events(
         yield {"event_type": "keepalive", "data": {}}
 
 
+def stream_harness_events(
+    run_id: str, last_event_id: int, user_id: str, user_role: str
+) -> Iterator[dict[str, Any]]:
+    """Replay the chat Harness event log without projecting V2 business tables."""
+    cursor = last_event_id
+    while True:
+        run = _get_authorized_run(run_id, user_id, user_role)
+        events = list_events_after(run_id, cursor)
+        if events:
+            for event in events:
+                cursor = int(event["event_id"])
+                yield {
+                    "event_id": cursor,
+                    "event_type": event["event_type"],
+                    "data": dict(event.get("payload") or {}),
+                }
+            if run["status"] in TERMINAL_STATUSES:
+                return
+            continue
+        if run["status"] in TERMINAL_STATUSES:
+            return
+        time.sleep(2)
+        yield {"event_type": "keepalive", "data": {}}
+
+
 def append_orchestration_event(run_id: str, event_type: str, payload: dict[str, Any]) -> int | None:
     """Append a typed graph event through the service boundary without graph SQL access."""
     run = get_run(run_id)

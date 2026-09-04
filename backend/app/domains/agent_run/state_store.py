@@ -262,6 +262,20 @@ class SessionStateStore:
             )
         return updated
 
+    def append_harness_event(
+        self,
+        run_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Append a replayable chat event without fabricating a state snapshot."""
+        with get_cursor() as (_, cur):
+            cur.execute("SELECT version FROM agent_runs WHERE id = %s FOR UPDATE", (run_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError("Agent Harness run 不存在")
+            return append_event_with_cursor(cur, run_id, int(row[0]), event_type, payload)
+
     def update_execution_context(
         self,
         session_id: str,

@@ -110,6 +110,8 @@ export interface ApprovalData {
 
 export interface StreamCallbacks {
   onSession?: (sessionId: string) => void;
+  onRun?: (data: { run_id: string; turn_id?: string }) => void;
+  onEventId?: (eventId: number) => void;
   onThinking?: (data: { iteration?: number; message: string }) => void;
   onWorkflowStatus?: (data: {
     status: import('./types').AgentWorkflowLifecycle | string;
@@ -119,15 +121,18 @@ export interface StreamCallbacks {
     sources?: string[];
     evidence_status?: string;
     loop_exit_reason?: string;
+    run_id?: string;
+    tool_call_count?: number;
+    completed_tool_count?: number;
   }) => void;
   onPlan?: (data: { steps: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> }) => void;
   onAgentSelection?: (data: { agents: string[]; reasoning: string }) => void;
   onAgentStart?: (data: { agent: string; description: string }) => void;
   onAgentComplete?: (data: { agent: string; summary: string }) => void;
-  onToolCall?: (data: { tool: string; args: Record<string, unknown> }) => void;
-  onToolResult?: (data: { tool: string; result: unknown }) => void;
+  onToolCall?: (data: { tool: string; args: Record<string, unknown>; task_id?: string }) => void;
+  onToolResult?: (data: { tool: string; result: unknown; task_id?: string }) => void;
   onAnswerChunk?: (data: { text: string }) => void;
-  onDone?: (data: { answer: string }) => void;
+  onDone?: (data: { answer: string; status?: string; run_id?: string }) => void;
   onAgentAnswer?: (data: import('./types').AgentAnswer) => void;
   onEvidence?: (data: { records: import('./types').AgentEvidenceRecord[]; coverage?: Record<string, unknown> }) => void;
   onError?: (data: { message: string }) => void;
@@ -148,6 +153,7 @@ async function _parseSSEStream(
   let buffer = '';
   let fullAnswer = '';
   let currentEvent = '';
+  let currentEventId: number | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -159,7 +165,9 @@ async function _parseSSEStream(
     buffer = lines.pop() || '';
 
     for (const line of lines) {
-      if (line.startsWith('event: ')) {
+      if (line.startsWith('id: ')) {
+        currentEventId = Number(line.slice(4));
+      } else if (line.startsWith('event: ')) {
         currentEvent = line.slice(7);
       } else if (line.startsWith('data: ')) {
         const dataStr = line.slice(6);
@@ -168,6 +176,9 @@ async function _parseSSEStream(
           switch (currentEvent) {
             case 'session':
               callbacks.onSession?.(data);
+              break;
+            case 'run':
+              callbacks.onRun?.(data);
               break;
             case 'thinking':
               callbacks.onThinking?.(data);
@@ -222,7 +233,9 @@ async function _parseSSEStream(
               callbacks.onReferences?.(data);
               break;
           }
+          if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
           currentEvent = '';
+          currentEventId = null;
         } catch {
           // Ignore parse errors
         }
@@ -312,12 +325,13 @@ export async function agentRunEventStream(
   lastEventId: number | null,
   callbacks: AgentRunEventStreamCallbacks,
   signal?: AbortSignal,
+  pathPrefix = '/agent-runs',
 ): Promise<void> {
   const headers: HeadersInit = {};
   if (lastEventId !== null) headers['Last-Event-ID'] = String(lastEventId);
 
   try {
-    const res = await fetch(`${API_BASE}/agent-runs/${encodeURIComponent(runId)}/events`, {
+    const res = await fetch(`${API_BASE}${pathPrefix}/${encodeURIComponent(runId)}/events`, {
       headers,
       credentials: 'same-origin',
       signal,
@@ -376,4 +390,14 @@ export async function agentRunEventStream(
   } catch (error) {
     if (!signal?.aborted) callbacks.onError?.(error instanceof Error ? error : new Error('事件流连接失败'));
   }
+}
+
+/** Read a chat Harness replay using the same durable event/cursor protocol. */
+export async function chatRunEventStream(
+  runId: string,
+  lastEventId: number | null,
+  callbacks: AgentRunEventStreamCallbacks,
+  signal?: AbortSignal,
+): Promise<void> {
+  return agentRunEventStream(runId, lastEventId, callbacks, signal, '/chat/runs');
 }

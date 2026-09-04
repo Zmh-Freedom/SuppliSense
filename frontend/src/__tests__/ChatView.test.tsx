@@ -153,4 +153,28 @@ describe('ChatView session lifecycle', () => {
     expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
     expect(screen.getByText('结构化结论')).toBeInTheDocument()
   })
+
+  it('trusts the server terminal status instead of turning partial into completed', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'partial',
+        summary: '部分证据已完成',
+        claims: [],
+        limitations: ['部分维度缺少证据'],
+        action_proposals: [],
+        action_receipts: [],
+        evidence_refs: [],
+      })
+      handlers.onDone?.({ answer: '部分证据已完成', status: 'partial', run_id: 'run-1' })
+      return '部分证据已完成'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('当前状态：部分完成')).toBeInTheDocument()
+    expect(screen.queryByText('当前状态：已完成')).not.toBeInTheDocument()
+  })
 })

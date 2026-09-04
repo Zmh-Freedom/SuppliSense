@@ -119,6 +119,7 @@ export interface AgentWorkflowSnapshot {
   status: AgentWorkflowLifecycle | string;
   stage?: string;
   message: string;
+  runId?: string;
   targetSuppliers: string[];
   sources: string[];
   toolCallCount: number;

@@ -1,11 +1,14 @@
 import asyncio
 import json
 import uuid
+from collections.abc import Iterator
 from typing import Any
+from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.deps import get_current_user
@@ -152,6 +155,38 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
     mode: str = "auto"  # auto/harness use Harness; agent-supervisor is the write-approval compatibility entry
+
+
+@router.get("/runs/{run_id}/events", summary="恢复聊天 Harness 事件")
+async def chat_run_events(
+    run_id: UUID,
+    last_event_id: Annotated[int | None, Header(alias="Last-Event-ID")] = None,
+    current_user: Any = Depends(get_current_user),
+):
+    """Replay a persisted chat run from a cursor after a browser reconnect."""
+    from app.domains.agent_run.service import stream_harness_events
+
+    user_id = str(getattr(current_user, "id", ""))
+    user_role = str(getattr(getattr(current_user, "role", None), "value", ""))
+
+    def event_generator() -> Iterator[str]:
+        for event in stream_harness_events(
+            str(run_id), last_event_id or 0, user_id, user_role
+        ):
+            if event["event_type"] == "keepalive":
+                yield ": keepalive\n\n"
+            else:
+                yield (
+                    f"id: {event['event_id']}\n"
+                    f"event: {event['event_type']}\n"
+                    f"data: {json.dumps(event['data'], ensure_ascii=False, default=str)}\n\n"
+                )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 class ResumeRequest(BaseModel):

@@ -9,7 +9,9 @@ planner integration; this makes the runtime deterministic and testable.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
@@ -38,6 +40,7 @@ from app.domains.risk.risk_contract import get_risk_dimension_spec
 
 
 PersistCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
+ProgressCallback = Callable[[str, dict[str, Any], bool], Awaitable[None] | None]
 
 _DIMENSION_TO_TOOL = {
     dimension: (spec.tool_name, spec.argument_name)
@@ -60,6 +63,11 @@ def _entity_id(name: str, context: Mapping[str, Any]) -> str:
             or f"entity:{name}"
         )
     return f"entity:{name}"
+
+
+def _input_hash(arguments: dict[str, Any]) -> str:
+    serialized = json.dumps(arguments, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _task_from_subtask(
@@ -425,6 +433,7 @@ def build_harness_graph(
     *,
     executor: ToolExecutor | None = None,
     persist: PersistCallback | None = None,
+    progress: ProgressCallback | None = None,
     checkpointer: Any = None,
 ) -> Any:
     """Build the only runtime graph used by Harness-level tests and callers."""
@@ -440,6 +449,10 @@ def build_harness_graph(
         snapshot["events"] = events
         if persist:
             result = persist(event, snapshot)
+            if inspect.isawaitable(result):
+                await result
+        if progress:
+            result = progress(event, snapshot, True)
             if inspect.isawaitable(result):
                 await result
 
@@ -533,10 +546,49 @@ def build_harness_graph(
                     tool_call_count=count + index,
                     max_tool_calls=budget.max_tool_calls,
                 )
-                return await asyncio.wait_for(
+                if progress:
+                    result = progress(
+                        "tool_call",
+                        {
+                            "run_id": state["run_id"],
+                            "task_id": task.task_id,
+                            "tool": task.tool_name,
+                            "args": task.arguments,
+                            "trace": {
+                                "task_id": task.task_id,
+                                "input_hash": _input_hash(task.arguments),
+                                "started_at": utc_now_iso(),
+                            },
+                        },
+                        False,
+                    )
+                    if inspect.isawaitable(result):
+                        await result
+                tool_started = time.monotonic()
+                outcome = await asyncio.wait_for(
                     active_executor.execute(task.tool_name, task.arguments, context),
                     timeout=max(0.001, remaining_seconds),
                 )
+                if progress:
+                    result = progress(
+                        "tool_result",
+                        {
+                            "run_id": state["run_id"],
+                            "task_id": task.task_id,
+                            "tool": task.tool_name,
+                            "result": outcome.model_dump(mode="json"),
+                            "trace": {
+                                "task_id": task.task_id,
+                                "call_id": outcome.call_id,
+                                "tool_version": outcome.tool_version,
+                                "duration_ms": int((time.monotonic() - tool_started) * 1000),
+                            },
+                        },
+                        False,
+                    )
+                    if inspect.isawaitable(result):
+                        await result
+                return outcome
 
             wave_results = await asyncio.gather(
                 *(execute_one(index, task) for index, task in enumerate(wave)),
@@ -565,6 +617,20 @@ def build_harness_graph(
                 else:
                     outcome = result
                     task.status = "completed" if outcome.status in {"success", "partial", "not_found"} else "failed"
+                if isinstance(result, Exception) and progress:
+                    progress_result = progress(
+                        "tool_result",
+                        {
+                            "run_id": state["run_id"],
+                            "task_id": task.task_id,
+                            "tool": task.tool_name,
+                            "result": outcome.model_dump(mode="json"),
+                            "trace": {"task_id": task.task_id, "duration_ms": 0},
+                        },
+                        False,
+                    )
+                    if inspect.isawaitable(progress_result):
+                        await progress_result
                 task.attempts += 1
                 outcomes.append(outcome.model_dump(mode="json"))
                 executed += 1
@@ -729,6 +795,7 @@ async def run_harness(
     *,
     executor: ToolExecutor | None = None,
     persist: PersistCallback | None = None,
+    progress: ProgressCallback | None = None,
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
 ) -> HarnessState:
@@ -737,7 +804,12 @@ async def run_harness(
     configurable = dict(active_config.get("configurable") or {})
     configurable.setdefault("thread_id", state["run_id"])
     active_config["configurable"] = configurable
-    graph = build_harness_graph(executor=executor, persist=persist, checkpointer=checkpointer)
+    graph = build_harness_graph(
+        executor=executor,
+        persist=persist,
+        progress=progress,
+        checkpointer=checkpointer,
+    )
     return await graph.ainvoke(state, config=active_config)
 
 
