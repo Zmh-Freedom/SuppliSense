@@ -1297,7 +1297,7 @@
 - 关联提交：`91a62b95 test(agent): add production harness e2e gates`、`499f89ba test(agent): verify harness http sse persistence`。
 
 - Task20 最终验证：真实浏览器完成登录、正式供应商目录、智能寻源外部候选、风险/ESG/舆情/合规分析、供应商画像分页与关联图、人工确认卡和刷新恢复；后端 `agent_e2e_live` 4 项通过，证明真实 FastAPI/SSE、Harness、ToolExecutor、PostgreSQL、MongoDB、Redis 和 checkpoint 终态可落库。缺证据场景显示 `needs_review`，没有错误成功；测试残留探针通过。
-- Task20 关联提交：见本次 Task20 代码与文档提交。
+- Task20 关联提交：`4e1095db test(agent): close task20 browser acceptance`。
 
 ## ISS-20260904-001 真实 Outbox 集成测试的重试时间边界不稳定
 
@@ -1383,7 +1383,7 @@
 - 根因：历史 Task19 真实 E2E 夹具曾在 MongoDB/控制面创建带 `task19-` 前缀的测试供应商；部分异常中断或旧夹具遗留数据未被清理。当前夹具自身的正常 teardown 已覆盖新增记录，但未处理历史残留。
 - 修复方案：只读核对 `task19-` 残留记录的来源、关联快照和控制面状态；确认不属于业务数据后，按精确 ID 做可恢复清理或隔离，并增加验收前残留探针，禁止测试标记数据进入正式供应商目录。
 - 验证结果：只读核对确认残留仅存在于 `supplier_master_snapshots`，`source_record_id` 为 `task19-c008c1ca87ba49fa8740f0e433178f3b`，无对应 `suppliers` 业务主数据；按精确 `_id` 和 `source_record_id` 删除 1 条测试快照。清理后真实浏览器正式供应商从 10 家恢复为 9 家，目录无 `task19-` 残留；新增 `agent_e2e_live` 残留探针通过。
-- 关联提交：见本次 Task20 代码与文档提交；数据清理为精确测试残留清理，无业务代码提交。
+- 关联提交：`4e1095db test(agent): close task20 browser acceptance`；数据清理为精确测试残留清理，无业务代码提交。
 
 ## ISS-20260904-008 登录表单缺少自动填充语义
 
@@ -1395,4 +1395,4 @@
 - 根因：登录表单的用户名和密码输入未声明标准自动填充用途。
 - 修复方案：为用户名设置 `username`、密码设置 `current-password`，补充组件回归并重新加载登录页确认控制台不再提示该 warning。
 - 验证结果：用户名和密码分别声明 `autocomplete=username` 与 `autocomplete=current-password`；新增组件回归。重启前端开发服务器并刷新真实浏览器后，DOM 属性正确，控制台为 0 error、0 warning（仅保留 React DevTools info）。前端 Lint、TypeScript、Vitest 55 项和生产构建通过。
-- 关联提交：见本次 Task20 代码与文档提交。
+- 关联提交：`4e1095db test(agent): close task20 browser acceptance`。
