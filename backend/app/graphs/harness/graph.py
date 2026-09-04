@@ -8,6 +8,7 @@ planner integration; this makes the runtime deterministic and testable.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -78,6 +79,7 @@ def _task_from_subtask(
                 arguments={"request_id": request_id},
                 entity_id="sourcing",
                 dimension="sourcing",
+                resource_key="sourcing",
                 required=bool(subtask.get("required", True)),
                 evidence_requirements=["supplier_candidate"],
             )
@@ -88,6 +90,7 @@ def _task_from_subtask(
                 arguments={"requirement": requirement},
                 entity_id="sourcing",
                 dimension="sourcing",
+                resource_key="sourcing",
                 required=bool(subtask.get("required", True)),
                 evidence_requirements=["supplier_candidate"],
             )
@@ -98,6 +101,7 @@ def _task_from_subtask(
                 arguments={"limit": 20},
                 entity_id="sourcing",
                 dimension="sourcing",
+                resource_key="sourcing",
                 required=bool(subtask.get("required", True)),
                 evidence_requirements=["supplier_candidate"],
             )
@@ -115,6 +119,8 @@ def _task_from_subtask(
         arguments=arguments,
         entity_id=_entity_id(supplier_name, context),
         dimension=dimension,
+        depends_on=[str(item) for item in subtask.get("depends_on", []) if str(item).strip()],
+        resource_key=_entity_id(supplier_name, context),
         required=bool(subtask.get("required", True)),
         evidence_requirements=[str(item) for item in subtask.get("evidence_requirements", [dimension])],
     )
@@ -136,7 +142,7 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
         if result is not None
     ]
     if planned:
-        return planned
+        return _append_derived_tasks(planned, current_task, context)
 
     names = [str(item).strip() for item in current_task.get("target_supplier_names", []) if str(item).strip()]
     dimensions = [str(item).strip() for item in current_task.get("analysis_dimensions", []) if str(item).strip()]
@@ -152,6 +158,7 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                     arguments={"requirement": requirement},
                     entity_id="sourcing",
                     dimension="sourcing",
+                    resource_key="sourcing",
                     required=True,
                     evidence_requirements=["supplier_candidate"],
                 )
@@ -164,6 +171,7 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                     arguments={"request_id": request_id} if request_id else {"limit": 20},
                     entity_id="sourcing",
                     dimension="sourcing",
+                    resource_key="sourcing",
                     required=True,
                     evidence_requirements=["supplier_candidate"],
                 )
@@ -184,17 +192,127 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                     arguments=arguments,
                     entity_id=_entity_id(name, context),
                     dimension=dimension,
+                    resource_key=_entity_id(name, context),
                     required=dimension != "sentiment",
                     evidence_requirements=[dimension],
                 )
             )
-    return result
+    return _append_derived_tasks(result, current_task, context)
 
 
 def _is_formal_directory_query(task: Mapping[str, Any]) -> bool:
     """Only a directory question may use the unfiltered formal-supplier tool."""
     message = str(task.get("user_message") or "")
     return "正式供应商" in message and any(token in message for token in ("哪些", "列表", "目录", "清单"))
+
+
+def _append_derived_tasks(
+    tasks: list[HarnessTask],
+    current_task: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> list[HarnessTask]:
+    """Add explicit trend/comparison nodes without changing the supplier matrix."""
+    names = [
+        str(item).strip()
+        for item in current_task.get("target_supplier_names", [])
+        if str(item).strip()
+    ]
+    message = str(current_task.get("user_message") or "")
+    wants_trend = bool(current_task.get("include_trend")) or any(
+        token in message for token in ("趋势", "历史变化", "变化情况")
+    )
+    wants_comparison = bool(current_task.get("comparison")) or any(
+        token in message for token in ("对比", "比较", "横向")
+    )
+    existing_tool_names = {task.tool_name for task in tasks}
+    task_prefix = str(current_task.get("task_id") or "task")
+    if wants_trend and names and "analyze_trend" not in existing_tool_names:
+        for name in dict.fromkeys(names):
+            entity_id = _entity_id(name, context)
+            dependencies = [
+                task.task_id
+                for task in tasks
+                if task.entity_id == entity_id
+                and task.dimension not in {"sourcing", "risk_trend"}
+            ]
+            tasks.append(
+                HarnessTask(
+                    task_id=f"{task_prefix}:{name}:trend",
+                    tool_name="analyze_trend",
+                    arguments={
+                        "company_name": name,
+                        "period_months": int(current_task.get("period_months") or 6),
+                    },
+                    entity_id=entity_id,
+                    dimension="risk_trend",
+                    depends_on=dependencies,
+                    resource_key=entity_id,
+                    evidence_requirements=["risk_trend"],
+                )
+            )
+    if len(names) >= 2 and wants_comparison and "compare_companies" not in existing_tool_names:
+        tasks.append(
+            HarnessTask(
+                task_id=f"{task_prefix}:comparison",
+                tool_name="compare_companies",
+                arguments={"company_names": list(dict.fromkeys(names))},
+                entity_id="comparison",
+                dimension="risk_comparison",
+                depends_on=[task.task_id for task in tasks],
+                resource_key="comparison",
+                evidence_requirements=["risk_comparison"],
+            )
+        )
+    return tasks
+
+
+_ALLOWED_REMEDIATION_LOOP_TYPES = {"sourcing", "evidence", "provider_retry"}
+
+
+def _remediation_specs(state: HarnessState) -> list[dict[str, Any]]:
+    """Keep remediation loops explicit, typed and bounded before execution."""
+    normalized: list[dict[str, Any]] = []
+    for item in state.get("remediation_specs", []):
+        if not isinstance(item, dict):
+            continue
+        loop_type = str(item.get("loop_type") or "evidence")
+        if loop_type not in _ALLOWED_REMEDIATION_LOOP_TYPES:
+            continue
+        if not str(item.get("task_id") or "").strip() or not str(item.get("tool_name") or "").strip():
+            continue
+        normalized.append({**item, "loop_type": loop_type})
+    return normalized
+
+
+def _task_is_ready(task: HarnessTask, task_by_id: dict[str, HarnessTask]) -> bool:
+    return all(
+        dependency in task_by_id
+        and task_by_id[dependency].status in {"completed", "partial"}
+        for dependency in task.depends_on
+    )
+
+
+def _select_task_wave(
+    tasks: list[HarnessTask],
+    *,
+    max_parallel_tasks: int,
+    max_tasks: int,
+) -> list[HarnessTask]:
+    """Select a dependency-ready wave with one task per serialized resource."""
+    task_by_id = {task.task_id: task for task in tasks}
+    selected: list[HarnessTask] = []
+    resources: set[str] = set()
+    for task in tasks:
+        if task.status != "pending" or not _task_is_ready(task, task_by_id):
+            continue
+        resource = str(task.resource_key or task.entity_id or task.task_id)
+        if resource in resources:
+            continue
+        selected.append(task)
+        resources.add(resource)
+        if len(selected) >= min(max_parallel_tasks, max_tasks):
+            break
+    return selected
 
 
 def _payload_evidence(
@@ -360,7 +478,11 @@ def build_harness_graph(
 
     async def build_plan(state: HarnessState) -> dict[str, Any]:
         tasks = _build_default_plan(state)
-        patch = {"task_specs": [task.model_dump(mode="json") for task in tasks], "status": "planned"}
+        patch = {
+            "task_specs": [task.model_dump(mode="json") for task in tasks],
+            "remediation_specs": _remediation_specs(state),
+            "status": "planned",
+        }
         await persist_event("build_plan", state, patch)
         return patch
 
@@ -371,38 +493,102 @@ def build_harness_graph(
         evidence_records = list(state.get("evidence_records", []))
         claims = list(state.get("claims", []))
         count = int(state.get("tool_call_count", 0))
+        llm_count = int(state.get("llm_call_count", 0))
         started = _parse_time(state.get("started_at"))
         executed = 0
-        for task in tasks:
-            if task.status == "completed":
-                continue
-            if count >= budget.max_tool_calls:
+        stop_reason: str | None = None
+
+        if llm_count > budget.max_llm_calls:
+            stop_reason = "llm_budget_exhausted"
+        while stop_reason is None:
+            remaining_calls = budget.max_tool_calls - count
+            remaining_seconds = budget.max_duration_seconds - (
+                datetime.now(timezone.utc) - started
+            ).total_seconds()
+            if remaining_calls <= 0:
+                stop_reason = "tool_budget_exhausted"
                 break
-            if (datetime.now(timezone.utc) - started).total_seconds() >= budget.max_duration_seconds:
+            if remaining_seconds <= 0:
+                stop_reason = "deadline_exceeded"
                 break
-            context = ToolContext(
-                session_id=state["session_id"],
-                run_id=state["run_id"],
-                user_id=state.get("user_id"),
-                tool_call_count=count,
-                max_tool_calls=budget.max_tool_calls,
+            wave = _select_task_wave(
+                tasks,
+                max_parallel_tasks=budget.max_parallel_tasks,
+                max_tasks=remaining_calls,
             )
-            outcome = await active_executor.execute(task.tool_name, task.arguments, context)
-            count += 1
-            executed += 1
-            task.status = "completed" if outcome.status in {"success", "partial", "not_found"} else "failed"
-            task.attempts += 1
-            outcomes.append(outcome.model_dump(mode="json"))
-            for record in _payload_evidence(outcome, task):
-                evidence_records.append(record.model_dump(mode="json"))
-            claims.extend(claim.model_dump(mode="json") for claim in _payload_claims(outcome, task))
-        status = "executed" if executed else "budget_exhausted"
+            if not wave:
+                pending = [task for task in tasks if task.status == "pending"]
+                if pending:
+                    stop_reason = "dependency_blocked"
+                break
+
+            for task in wave:
+                task.status = "running"
+
+            async def execute_one(index: int, task: HarnessTask) -> ToolOutcome:
+                context = ToolContext(
+                    session_id=state["session_id"],
+                    run_id=state["run_id"],
+                    user_id=state.get("user_id"),
+                    tool_call_count=count + index,
+                    max_tool_calls=budget.max_tool_calls,
+                )
+                return await asyncio.wait_for(
+                    active_executor.execute(task.tool_name, task.arguments, context),
+                    timeout=max(0.001, remaining_seconds),
+                )
+
+            wave_results = await asyncio.gather(
+                *(execute_one(index, task) for index, task in enumerate(wave)),
+                return_exceptions=True,
+            )
+            for task, result in zip(wave, wave_results, strict=True):
+                if isinstance(result, asyncio.TimeoutError):
+                    task.status = "failed"
+                    outcome = ToolOutcome(
+                        call_id=f"{state['run_id']}:{task.task_id}",
+                        tool_name=task.tool_name,
+                        tool_version="runtime",
+                        status="unavailable",
+                        error={"code": "deadline_exceeded", "message": "任务超过 Harness 截止时间", "retryable": True},
+                    )
+                    stop_reason = "deadline_exceeded"
+                elif isinstance(result, Exception):
+                    task.status = "failed"
+                    outcome = ToolOutcome(
+                        call_id=f"{state['run_id']}:{task.task_id}",
+                        tool_name=task.tool_name,
+                        tool_version="runtime",
+                        status="failed",
+                        error={"code": "task_execution_failed", "message": str(result), "retryable": False},
+                    )
+                else:
+                    outcome = result
+                    task.status = "completed" if outcome.status in {"success", "partial", "not_found"} else "failed"
+                task.attempts += 1
+                outcomes.append(outcome.model_dump(mode="json"))
+                executed += 1
+                for record in _payload_evidence(outcome, task):
+                    evidence_records.append(record.model_dump(mode="json"))
+                claims.extend(claim.model_dump(mode="json") for claim in _payload_claims(outcome, task))
+            count += len(wave)
+            if stop_reason is not None:
+                break
+
+        if stop_reason is None and all(task.status in {"completed", "partial", "failed"} for task in tasks):
+            status = "executed"
+            stop_reason = "all_tasks_processed"
+        else:
+            status = "budget_exhausted" if stop_reason in {
+                "llm_budget_exhausted", "tool_budget_exhausted", "deadline_exceeded"
+            } else "blocked"
         patch = {
             "task_specs": [task.model_dump(mode="json") for task in tasks],
             "tool_outcomes": outcomes,
             "evidence_records": evidence_records,
             "claims": claims,
             "tool_call_count": count,
+            "loop_exit_reason": stop_reason,
             "status": status,
         }
         await persist_event("execute_ready_tasks", state, patch)
@@ -431,7 +617,8 @@ def build_harness_graph(
         missing = coverage.get("missing_dimensions", [])
         attempts = int(state.get("remediation_attempts", 0))
         budget = new_budget(state.get("budget"))
-        if missing and state.get("remediation_specs") and attempts < budget.max_loop_iterations:
+        specs = _remediation_specs(state)
+        if missing and specs and attempts < budget.max_loop_iterations:
             return "remediate"
         return "render_answer"
 
@@ -440,21 +627,27 @@ def build_harness_graph(
         existing = [item for item in state.get("task_specs", []) if isinstance(item, dict)]
         existing_ids = {str(item.get("task_id")) for item in existing}
         existing_sources = {
-            str(item.get("source_key")) for item in existing if item.get("source_key")
+            (str(item.get("source_key")), str(item.get("loop_type") or "evidence"))
+            for item in existing
+            if item.get("source_key")
         }
         additions = [
-            item for item in state.get("remediation_specs", [])
+            item for item in _remediation_specs(state)
             if isinstance(item, dict)
             and str(item.get("task_id")) not in existing_ids
             and (
                 not item.get("source_key")
-                or str(item.get("source_key")) not in existing_sources
+                or (
+                    str(item.get("source_key")),
+                    str(item.get("loop_type") or "evidence"),
+                ) not in existing_sources
             )
         ]
         patch = {
             "task_specs": list(state.get("task_specs", [])) + additions,
             "remediation_attempts": attempts,
             "loop_iterations": int(state.get("loop_iterations", 0)) + 1,
+            "loop_exit_reason": "remediation_scheduled",
             "status": "remediating",
         }
         await persist_event("remediate", state, patch)
@@ -483,7 +676,22 @@ def build_harness_graph(
             )
         else:
             answer = answer.model_copy(update={"summary": _summary(answer, state)})
-        patch = {"answer": answer.model_dump(mode="json"), "status": answer.status}
+        coverage = state.get("evidence_coverage") or {}
+        loop_exit_reason = state.get("loop_exit_reason")
+        if coverage.get("missing_dimensions") and loop_exit_reason not in {
+            "llm_budget_exhausted",
+            "tool_budget_exhausted",
+            "deadline_exceeded",
+        }:
+            if int(state.get("remediation_attempts", 0)) >= new_budget(state.get("budget")).max_loop_iterations:
+                loop_exit_reason = "iteration_budget_exhausted"
+            elif not _remediation_specs(state):
+                loop_exit_reason = "no_remediation_spec"
+        patch = {
+            "answer": answer.model_dump(mode="json"),
+            "loop_exit_reason": loop_exit_reason,
+            "status": answer.status,
+        }
         await persist_event("render_answer", state, patch)
         return patch
 

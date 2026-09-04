@@ -30,6 +30,9 @@ class HarnessTask(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     entity_id: str = Field(min_length=1)
     dimension: str = Field(min_length=1)
+    depends_on: list[str] = Field(default_factory=list)
+    resource_key: str | None = None
+    loop_type: Literal["sourcing", "evidence", "provider_retry"] | None = None
     required: bool = True
     evidence_requirements: list[str] = Field(default_factory=list)
     # Only remediation tasks supplied by a policy may set this key.  It lets
@@ -67,6 +70,7 @@ class HarnessState(TypedDict, total=False):
     llm_call_count: int
     loop_iterations: int
     remediation_attempts: int
+    loop_exit_reason: str | None
     status: str
     error: dict[str, Any] | None
     events: list[dict[str, Any]]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -293,3 +294,137 @@ def test_harness_requires_langgraph_thread_id_with_checkpointer() -> None:
     result = asyncio.run(graph.ainvoke(_base_state(), {"configurable": {"thread_id": "run-1"}}))
 
     assert result["answer"]["status"] == "completed"
+
+
+def test_harness_enforces_parallel_limit_for_independent_entities() -> None:
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def parallel_tool(company_name: str) -> dict:
+        nonlocal active, max_active
+        del company_name
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        import time
+
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return {"status": "success", "message": "done"}
+
+    tool = StructuredTool.from_function(parallel_tool, name="parallel_tool", description="test")
+    registry = ToolRegistry()
+    registry.register(tool, ToolSpec(name="parallel_tool", capability="risk", side_effect="read", approval_policy="none"))
+    result = asyncio.run(
+        run_harness(
+            _base_state(
+                task_specs=[
+                    {
+                        "task_id": "parallel-a",
+                        "tool_name": "parallel_tool",
+                        "arguments": {"company_name": "甲"},
+                        "entity_id": "supplier-a",
+                        "dimension": "risk",
+                    },
+                    {
+                        "task_id": "parallel-b",
+                        "tool_name": "parallel_tool",
+                        "arguments": {"company_name": "乙"},
+                        "entity_id": "supplier-b",
+                        "dimension": "risk",
+                    },
+                ],
+                budget={**ExecutionBudget().model_dump(mode="json"), "max_parallel_tasks": 2, "max_tool_calls": 2},
+            ),
+            executor=ToolExecutor(registry),
+        )
+    )
+
+    assert max_active == 2
+    assert result["tool_call_count"] == 2
+
+
+def test_harness_respects_task_dependencies_before_parallel_scheduling() -> None:
+    calls: list[str] = []
+
+    def dependency_tool(company_name: str) -> dict:
+        calls.append(company_name)
+        return {"status": "success", "message": company_name}
+
+    tool = StructuredTool.from_function(dependency_tool, name="dependency_tool", description="test")
+    registry = ToolRegistry()
+    registry.register(tool, ToolSpec(name="dependency_tool", capability="risk", side_effect="read", approval_policy="none"))
+    result = asyncio.run(
+        run_harness(
+            _base_state(
+                task_specs=[
+                    {
+                        "task_id": "dependency-a",
+                        "tool_name": "dependency_tool",
+                        "arguments": {"company_name": "甲"},
+                        "entity_id": "supplier-a",
+                        "dimension": "risk",
+                    },
+                    {
+                        "task_id": "dependency-b",
+                        "tool_name": "dependency_tool",
+                        "arguments": {"company_name": "乙"},
+                        "entity_id": "supplier-b",
+                        "dimension": "risk",
+                        "depends_on": ["dependency-a"],
+                    },
+                ],
+                budget={**ExecutionBudget().model_dump(mode="json"), "max_parallel_tasks": 2},
+            ),
+            executor=ToolExecutor(registry),
+        )
+    )
+
+    assert calls == ["甲", "乙"]
+    assert result["tool_call_count"] == 2
+
+
+def test_harness_stops_before_tools_when_deadline_or_llm_budget_is_exhausted() -> None:
+    def never_called(company_name: str) -> dict:
+        del company_name
+        return {"status": "success"}
+
+    tool = StructuredTool.from_function(never_called, name="never_called", description="test")
+    registry = ToolRegistry()
+    registry.register(tool, ToolSpec(name="never_called", capability="risk", side_effect="read", approval_policy="none"))
+    result = asyncio.run(
+        run_harness(
+            _base_state(
+                llm_call_count=5,
+                budget={**ExecutionBudget().model_dump(mode="json"), "max_llm_calls": 4},
+            ),
+            executor=ToolExecutor(registry),
+        )
+    )
+
+    assert result["tool_call_count"] == 0
+    assert result["loop_exit_reason"] == "llm_budget_exhausted"
+
+
+def test_harness_planner_adds_bounded_trend_and_comparison_dependencies() -> None:
+    from app.graphs.harness.graph import _build_default_plan
+
+    tasks = _build_default_plan(
+        {
+            "current_task": {
+                "task_id": "analysis-1",
+                "user_message": "对甲公司和乙公司做风险趋势和横向对比",
+                "target_supplier_names": ["甲公司", "乙公司"],
+                "analysis_dimensions": ["risk"],
+            },
+            "execution_context": {"references": []},
+        }
+    )
+
+    trend_tasks = [task for task in tasks if task.tool_name == "analyze_trend"]
+    comparison = next(task for task in tasks if task.tool_name == "compare_companies")
+    assert len(trend_tasks) == 2
+    assert all(task.depends_on for task in trend_tasks)
+    assert set(comparison.depends_on) == {task.task_id for task in tasks if task is not comparison}
