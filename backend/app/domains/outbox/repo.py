@@ -173,11 +173,11 @@ def mark_failed(
             SET attempt_count = COALESCE(attempt_count, 0) + 1,
                 last_error = %s,
                 next_attempt_at = CASE
-                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN NOW()
-                    ELSE NOW() + (%s * INTERVAL '1 second')
+                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN clock_timestamp()
+                    ELSE clock_timestamp() + (%s * INTERVAL '1 second')
                 END,
                 dead_lettered_at = CASE
-                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN NOW()
+                    WHEN COALESCE(attempt_count, 0) + 1 >= %s THEN clock_timestamp()
                     ELSE NULL
                 END,
                 locked_by = NULL,

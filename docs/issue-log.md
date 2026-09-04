@@ -1278,3 +1278,51 @@
 - 修复方案：按 Task 19 重建场景驱动 E2E，只替换 LLM 和外部 Provider，不替换生产 Runtime/ToolExecutor/数据库/SSE；从真实执行产物计算指标，分阶段提高 Agent 核心覆盖率。
 - 验证结果：待 Task 19/20 实施和浏览器验收后回填。
 - 关联提交：待回填。
+
+## ISS-20260904-001 真实 Outbox 集成测试的重试时间边界不稳定
+
+- 发现日期：2026-09-04
+- 状态：已修复
+- 优先级：P1
+- 现象：真实 PostgreSQL integration 回归中，`test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler` 偶发断言 `next_attempt_at >= failure_started_at + 2s` 失败，数据库返回时间比测试起点早几十微秒。
+- 影响：完整真实集成回归无法稳定通过，重试调度的时间语义在事务级时间戳边界下不明确。
+- 根因：Outbox `mark_failed` 使用 PostgreSQL `NOW()`（事务开始时间）计算下一次重试，而测试起点在事务开始之后；事务时间戳可能早于调用方记录的失败起点。
+- 修复方案：重试调度使用 PostgreSQL `clock_timestamp()` 获取语句实际时间，保留现有指数退避和死信规则；重新运行完整 integration 集合。
+- 验证结果：将 `mark_failed` 的重试时间计算从事务时间 `NOW()` 调整为语句实际时间 `clock_timestamp()`；单项回归通过，随后使用真实 PostgreSQL、MongoDB、Redis 执行 `pytest -m integration -v`，229 项全部通过（588 项非集成测试被筛除）。
+- 关联提交：待提交。
+
+## ISS-20260904-002 真实浏览器登录收到空响应导致 JSON 解析失败
+
+- 发现日期：2026-09-04
+- 状态：已关闭（验收环境配置）
+- 优先级：P1
+- 现象：真实浏览器访问本地 `http://127.0.0.1:5173/login`，使用开发固定账号提交登录后，页面显示 `Failed to execute 'json' on 'Response': Unexpected end of JSON input`，仍停留在登录页。
+- 影响：无法进入 Agent 工作台，浏览器验收无法继续；不代表三数据库集成失败。
+- 根因：前端 `frontend/.env.local` 将 Vite 代理指向 `8002`，本次首次验收误将后端启动在 `8000`，浏览器请求未到达后端。
+- 修复方案：按项目开发配置在 `127.0.0.1:8002` 启动后端；不修改业务代码。
+- 验证结果：切换后端到 `8002` 后，浏览器登录成功并跳转总览；后端日志记录 `POST /api/v1/auth/login/json` 返回 `200`，后续页面 API 均正常返回。
+- 关联提交：无代码提交；本条问题记录随验收文档提交。
+
+## ISS-20260904-003 真实浏览器风险查询在工具返回后以 deadline_exceeded 收口
+
+- 发现日期：2026-09-04
+- 状态：处理中
+- 优先级：P1
+- 现象：真实浏览器登录后，在 AI 工作台提交“分析重庆传动轴股份有限公司当前风险状态”；页面收到工具 1/1 返回，但最终状态为“需人工复核”，Loop 退出原因为 `deadline_exceeded`，有效 Claim 和引用证据均为 0。
+- 影响：真实 Agent 风险查询不能在浏览器中形成可用结果；当前页面没有错误成功显示，前端正确保留了人工复核终态。
+- 根因：后端日志显示 DeepSeek 意图解析成功，`assess_risk` ToolCall 也成功并返回了风险业务字段，但当前结果适配没有把该工具结果转换为可验真的 Evidence/Claim；证据校验因此得到 0/1。该 Run 的执行事件还同时记录了 `budget_exhausted` 与 `deadline_exceeded` 元数据，终态收口为 `NEEDS_REVIEW`。
+- 修复方案：为风险工具补齐统一 Evidence/Claim 结果契约和适配回归，并统一预算/Loop 退出原因；修复后重新执行真实浏览器风险查询，核对 SSE、PostgreSQL Run/Task/ToolCall、Evidence/Claim 和 AgentAnswer 一致性。
+- 验证结果：PostgreSQL `agent_runs` 中该 Run 为 `NEEDS_REVIEW`；`agent_run_events` 产生 21 个有序事件，包含 `run`、`workflow_status`、`plan`、`execute_ready_tasks`、`evidence`、`agent_answer`、`done`；`assess_risk` ToolCall 为 `success` 且业务字段返回，但没有可验证 Evidence/Claim，故页面展示 `needs_review` 和 `evidence_incomplete`，未错误显示完成。浏览器控制台无 error。
+- 关联提交：待修复。
+
+## ISS-20260904-004 聊天入口未识别“查询当前正式供应商”
+
+- 发现日期：2026-09-04
+- 状态：待排期
+- 优先级：P1
+- 现象：真实浏览器在新对话中输入“查询当前正式供应商”，请求正常返回并完成 Run，但 PostgreSQL 计划为空、工具调用数为 0，页面显示“未形成任何可由证据支持的确定性结论”。
+- 影响：用户使用自然语言查询正式供应商时无法得到供应商库结果；当前页面未错误声称查询成功。
+- 根因：当前活动 Harness 的意图/计划映射未覆盖“查询正式供应商”这一只读目录意图。
+- 修复方案：补充正式供应商目录意图与只读工具契约，并增加真实生产链路回归；不绕过统一 Harness、Evidence/Claim 和 AgentAnswer 门禁。
+- 验证结果：PostgreSQL 计划事件 `steps=[]`，该 Run 没有 ToolCall，页面以 `all_tasks_processed` 收口为人工复核；标准寻源问题同样被解析成无目标风险意图，已复现并纳入后续修复范围。
+- 关联提交：待修复。

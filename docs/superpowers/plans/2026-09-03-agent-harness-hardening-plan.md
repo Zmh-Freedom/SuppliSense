@@ -231,7 +231,7 @@ Task 14 与 Task 15 必须独立实施和提交：寻源只消费已验证风险
 
 状态：已完成。
 
-验收结果：Harness 通过异步队列实时发布节点、工具、证据、AgentAnswer、终态和错误事件；生产控制面事件先追加 PostgreSQL `agent_run_events` 后携带 SSE `id` 发送；新增 `/api/v1/chat/runs/{run_id}/events` 支持 `Last-Event-ID` 断线重放；Trace 事件包含 run/task/call 关联、输入哈希、工具版本、耗时、状态和错误信息，不暴露模型隐藏推理；前端以服务端 `done.status` 和 AgentAnswer 为终态来源，`partial`、`needs_review`、`failed` 不会被改写为 `completed`。Task 18 定向后端 2 项、Task 17 运行时 10 项、后端全量非集成回归 817 项和前端 Vitest 54 项通过；TypeScript、Lint、生产构建、Python 编译和 `git diff --check` 通过。本 Task 未执行 PostgreSQL/MongoDB/Redis 集成测试和真实浏览器验收。
+验收结果：Harness 通过异步队列实时发布节点、工具、证据、AgentAnswer、终态和错误事件；生产控制面事件先追加 PostgreSQL `agent_run_events` 后携带 SSE `id` 发送；新增 `/api/v1/chat/runs/{run_id}/events` 支持 `Last-Event-ID` 断线重放；Trace 事件包含 run/task/call 关联、输入哈希、工具版本、耗时、状态和错误信息，不暴露模型隐藏推理；前端以服务端 `done.status` 和 AgentAnswer 为终态来源，`partial`、`needs_review`、`failed` 不会被改写为 `completed`。Task 18 定向后端 2 项、Task 17 运行时 10 项、后端全量非集成回归 817 项、前端 Vitest 54 项和真实 PostgreSQL/MongoDB/Redis 集成回归 229 项通过；TypeScript、Lint、生产构建、Python 编译和 `git diff --check` 通过。真实浏览器已验证登录、总览、智能寻源、风险页、供应商库、供应商画像概览/风险/关联/日志页面加载及控制台无错误；但真实 Agent 风险查询因工具结果缺少可验证 Evidence/Claim 收口为 `needs_review`，标准寻源问题因意图未生成执行计划，Task 18/20 的业务闭环仍未通过，分别记录为 ISS-20260904-003、ISS-20260904-004。
 
 关联提交：`57e5963c`、`d1032f35`。
 
@@ -262,6 +262,10 @@ Task 14 与 Task 15 必须独立实施和提交：寻源只消费已验证风险
 - 更新 README、AGENTS、验收手册、架构图和 API 说明；仓库只保留一份活动 Agent 计划。
 
 验收：开发环境浏览器场景全部通过，代码、测试、问题状态和文档无冲突。
+
+状态：部分完成，业务闭环未通过。
+
+本轮真实验收：使用本地后端 `127.0.0.1:8002`、Vite 前端 `127.0.0.1:5173` 和健康的 PostgreSQL/MongoDB/Redis；固定开发账号登录成功。总览、智能寻源、风险页、供应商库和供应商画像的概览/风险/关联/日志页面均可加载，画像显示 9 家正式供应商、风险历史和 2 个关联分支机构，浏览器控制台无错误。真实风险查询产生 21 个 PostgreSQL Run/Event 事件且前端正确展示服务端 `needs_review` 终态，但因 `assess_risk` 未返回可验证 Evidence/Claim 未形成结论；真实标准寻源查询产生空计划且未调用工具。故浏览器 UI 基础验收通过，Agent 业务闭环验收失败，不能宣称本阶段全部收口。
 
 ## 5. 阶段依赖与停止条件
 
