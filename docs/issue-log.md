@@ -1188,8 +1188,8 @@
 - 影响：推荐结果可与用户品类无关，或在已有扩源能力时返回无结果；无法稳定展示匹配理由、来源和联系方式。
 - 根因：历史寻源 service 具备分层扩源，但统一 Harness 的意图契约、计划器和生产工具没有完成迁移。
 - 修复方案：按 Task 14 将扩展 SourcingRequirement、当前轮需求解析与上下文绑定、分层发现、候选归一、证据验真、排序和降级状态迁入活动 Harness；新增只读 `discover_supplier_candidates` 工具，外部候选保持待核验且不写入供应商主数据。
-- 验证结果：Task 14 专项 4 项、寻源/Harness/需求/工具契约合并定向 35 项、后端非集成回归 574 项通过；覆盖钢材/工业相机类需求、当前轮改问品类、正式候选保留、天眼查/联网阶段失败和外部候选待核验。Python 编译与 `git diff --check` 通过；因本轮未执行数据库集成测试，未宣称三数据库联调完成。
-- 关联提交：`a8c3eb3f feat(agent): move sourcing workflow into harness`。
+- 验证结果：Task 14 专项 5 项、寻源/Harness/需求/工具契约合并定向 35 项、后端非集成回归 575 项通过；覆盖钢材/工业相机类需求、当前轮改问品类、无品类先澄清、正式候选保留、天眼查/联网阶段失败和外部候选待核验。Python 编译与 `git diff --check` 通过；因本轮未执行数据库集成测试，未宣称三数据库联调完成。
+- 关联提交：`a8c3eb3f feat(agent): move sourcing workflow into harness`、`7fdd61e4 fix(agent): clarify missing sourcing category`。
 
 ## ISS-20260903-005 风险能力规划、证据补全和执行预算未完整接入 Harness
 
