@@ -1194,14 +1194,14 @@
 ## ISS-20260903-005 风险能力规划、证据补全和执行预算未完整接入 Harness
 
 - 发现日期：2026-09-03
-- 状态：待修复
+- 状态：部分修复（Task 15 已完成，Task 17 待修复）
 - 优先级：P0
-- 现象：活动意图契约只直接覆盖 risk/ESG/sentiment/compliance，财务与商务风险在聊天路径中难以到达；规划器只做供应商×维度固定展开，生产链路没有生成 remediation spec，`max_llm_calls` 和 `max_parallel_tasks` 等预算未强制执行。
+- 现象：活动意图契约只直接覆盖 risk/ESG/sentiment/compliance，财务与商务风险在聊天路径中难以到达；规划器只做供应商×维度固定展开，生产链路没有自动生成 remediation spec，`max_llm_calls` 和 `max_parallel_tasks` 等预算未强制执行。
 - 影响：多企业多维风险、历史趋势、比较和缺证据补采无法形成稳定可解释执行，Loop 和预算只停留在契约层。
-- 根因：Harness Planner 是骨架式固定展开器，尚未与五维风险策略、工具能力和执行器预算对齐。
+- 根因：Harness Planner 是骨架式固定展开器，尚未与五维风险策略、工具能力和执行器预算完全对齐。
 - 修复方案：按 Task 15 建立五维能力矩阵、数据覆盖状态和有限补证计划；按 Task 17 强制 LLM/工具/并行/总耗时预算和可解释 Loop 退出。
-- 验证结果：待 Task 15/17 实施后回填。
-- 关联提交：待回填。
+- 验证结果：Task 15 已补齐五维风险能力矩阵、财务/商务/质量/交付意图解析、质量/交付正式快照工具、Evidence/Claim 字段绑定和缺数据终态；Harness 维持供应商×维度独立覆盖，并对显式 remediation spec 的 `source_key` 做单源去重。Task 15 定向 6 项、相关定向 17 项、后端非集成回归 581 项通过；Python 编译和 `git diff --check` 通过。自动 remediation 生成、LLM/并行预算仍由 Task 17 处理；本轮未执行数据库集成测试。
+- 关联提交：`54357620 feat(agent): migrate five-dimension risk into harness`。
 
 ## ISS-20260903-006 写操作存在双运行时、ToolExecutor 绕过和审批令牌弱验证
 
