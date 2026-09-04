@@ -1312,7 +1312,7 @@
 - 影响：真实 Agent 风险查询不能在浏览器中形成可用结果；当前页面没有错误成功显示，前端正确保留了人工复核终态。
 - 根因：后端日志显示 DeepSeek 意图解析成功，`assess_risk` ToolCall 也成功并返回了风险业务字段，但历史结果适配器生成的 EvidenceRecord 缺少 `content_hash`，且回退逻辑把已有 `facts` 再嵌套进 `facts`，导致 Claim 的 `risk_score/risk_level` 路径无法读取；执行预算事件是该次失败收口的伴随现象，不是业务字段缺失的根因。
 - 修复方案：统一由 `build_evidence_record` 生成完整证据，兼容旧 provider evidence 时保留原 facts 层级并计算内容哈希；补充风险结果契约和 Claim 支持性回归，修复后重新执行真实浏览器风险查询并核对证据覆盖和 AgentAnswer 终态。
-- 验证结果：`python -m pytest backend/tests -m 'not integration' -q` 为 593 passed；真实三数据库集成为 229 passed；浏览器输入“分析重庆传动轴股份有限公司当前风险状态”后显示“已完成”、2 条有效 Claim、1 条证据、1/1 覆盖，Loop 退出 `all_tasks_processed`；浏览器控制台无 error。
+- 验证结果：`python -m pytest backend/tests -m 'not integration' -q` 为 594 passed；真实三数据库集成为 229 passed；浏览器输入“分析重庆传动轴股份有限公司当前风险状态”后显示“已完成”、2 条有效 Claim、1 条证据、1/1 覆盖，Loop 退出 `all_tasks_processed`；浏览器控制台无 error。
 - 关联提交：`ac73eee0`。
 
 ## ISS-20260904-004 聊天入口未识别“查询当前正式供应商”
