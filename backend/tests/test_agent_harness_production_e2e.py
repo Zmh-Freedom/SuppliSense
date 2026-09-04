@@ -282,3 +282,26 @@ def test_production_harness_http_sse_persists_server_terminal_state(
     metrics = collect_persisted_harness_metrics(run_id)
     assert_persisted_harness_quality(metrics)
     assert metrics.artifact_consistent is True
+
+    # Simulate a browser reconnect after the first persisted event. The replay
+    # endpoint must honor the cursor and still deliver the durable terminal event.
+    with TestClient(app) as client:
+        replay = client.get(
+            f"/api/v1/chat/runs/{run_id}/events",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Last-Event-ID": "1",
+            },
+        )
+
+    assert replay.status_code == 200
+    replay_blocks = [
+        block for block in replay.text.split("\n\n")
+        if any(line.startswith("event: ") for line in block.splitlines())
+    ]
+    replay_ids = [
+        int(next(line[4:] for line in block.splitlines() if line.startswith("id: ")).strip())
+        for block in replay_blocks
+    ]
+    assert replay_ids and min(replay_ids) > 1
+    assert any("event: done" in block.splitlines() for block in replay_blocks)

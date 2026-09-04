@@ -83,3 +83,4 @@ Eval 集必须包含固定输入、期望目标、最小证据要求和可接受
 | 2026-09-01 | 三表同步、寻源降级与风险历史版本定向回归 | 通过 | 后端相关回归 33 + 31 + 8 项通过；前端 9 个测试文件、50 项通过，Lint、TypeScript 检查和生产构建通过。真实浏览器验收因后端重启后登录态失效待人工登录。 |
 | 2026-09-01 | 数据库集成回归 | 通过，228 项 | `/health/ready` 显示 PostgreSQL、MongoDB、Redis 和 checkpoint 均正常；集成测试完整执行通过。 |
 | 2026-09-01 | 后端完整非集成与 Agent E2E 回归 | 通过，501 + 9 项 | 非集成回归 501 项，`agent_e2e` 9 项；Python 编译检查和 `git diff --check` 通过。 |
+| 2026-09-04 | Task19 Harness 生产链路与稳定性门禁 | 通过 | 离线 Agent E2E 24 项、P0 固定场景 150/150、真实 `agent_e2e_live` 3 项、三数据库集成 229 项；核心 Harness 覆盖率 81.89%；前端 Lint、TypeScript、Vitest 54 项和生产构建通过；真实 SSE 断线重连按 `Last-Event-ID` 回放通过。 |

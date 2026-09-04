@@ -516,6 +516,9 @@ def build_harness_graph(
         if llm_count > budget.max_llm_calls:
             stop_reason = "llm_budget_exhausted"
         while stop_reason is None:
+            if all(task.status in {"completed", "partial", "failed"} for task in tasks):
+                stop_reason = "all_tasks_processed"
+                break
             remaining_calls = budget.max_tool_calls - count
             remaining_seconds = budget.max_duration_seconds - (
                 datetime.now(timezone.utc) - started

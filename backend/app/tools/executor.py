@@ -245,6 +245,7 @@ class ToolExecutor:
             status,
             data=data,
             evidence_refs=_string_list(data.get("evidence_refs")),
+            error=_payload_error(data, status),
             side_effect_receipt=data.get("side_effect_receipt") or data.get("receipt"),
             version=spec.version,
             attempts=attempts,
@@ -305,6 +306,26 @@ def _status_from_payload(payload: dict[str, Any]) -> Literal["success", "partial
     if payload.get("error"):
         return "failed"
     return "success"
+
+
+def _payload_error(
+    payload: dict[str, Any],
+    status: Literal["success", "partial", "not_found", "unavailable", "invalid", "denied", "failed"],
+) -> tuple[str, str, bool] | None:
+    """Promote provider-declared failures into the stable ToolOutcome error field."""
+    if status in {"success", "partial"}:
+        return None
+    raw_error = payload.get("error")
+    if not raw_error:
+        return None
+    if isinstance(raw_error, dict):
+        code = str(raw_error.get("code") or status)
+        message = str(raw_error.get("message") or payload.get("message") or code)
+        retryable = bool(raw_error.get("retryable", status == "unavailable"))
+        return code, message, retryable
+    code = str(raw_error)
+    message = str(payload.get("message") or raw_error)
+    return code, message, status == "unavailable"
 
 
 def _string_list(value: Any) -> list[str]:
