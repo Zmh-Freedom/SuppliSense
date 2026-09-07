@@ -114,6 +114,231 @@ def _price_signal(rows: list[dict[str, Any]], prior_rows: list[dict[str, Any]]) 
     }
 
 
+def _shift_month(month: str, offset: int) -> str:
+    year, month_number = (int(part) for part in month.split("-"))
+    zero_based = year * 12 + month_number - 1 + offset
+    return f"{zero_based // 12:04d}-{zero_based % 12 + 1:02d}"
+
+
+def _aggregate_monthly_summary(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    monthly: dict[str, dict[str, float]] = {}
+    for row in rows:
+        month = row.get("snapshot_month")
+        if not isinstance(month, str) or not month:
+            continue
+        item = monthly.setdefault(
+            month,
+            {"actual_settlement_amount": 0.0, "received_record_count": 0.0},
+        )
+        amount = _as_number(row.get("actual_settlement_amount"))
+        count = _as_number(row.get("received_record_count"))
+        if amount is not None:
+            item["actual_settlement_amount"] += amount
+        if count is not None:
+            item["received_record_count"] += count
+    return monthly
+
+
+def _change_signal(current: float, previous: float | None) -> dict[str, Any]:
+    if previous is None or previous == 0:
+        return {
+            "status": "missing",
+            "current": round(current, 2),
+            "previous": round(previous, 2) if previous is not None else None,
+            "change_ratio": None,
+        }
+    return {
+        "status": "observed",
+        "current": round(current, 2),
+        "previous": round(previous, 2),
+        "change_ratio": round((current - previous) / abs(previous), 4),
+    }
+
+
+def _assess_supplier_month_summary(
+    db: Any,
+    master: dict[str, Any],
+    supplier_rows: list[dict[str, Any]],
+    *,
+    assessment_data_mode: str,
+) -> dict[str, Any]:
+    """Assess internal procurement exposure at the available supplier-month grain."""
+    supplier_code = str(master["supplier_code"])
+    monthly = _aggregate_monthly_summary(supplier_rows)
+    if not monthly:
+        return {
+            "assessment_status": "missing_data",
+            "assessment_scope": "business_p0_supplier_month_summary",
+            "supplier": {
+                "supplier_id": master.get("supplier_id"),
+                "supplier_code": supplier_code,
+                "name": master.get("name"),
+            },
+            "formal_business_score": None,
+            "reason": "供应商月度汇总中没有可用月份。",
+            "required_data_mode": "real",
+        }
+
+    latest_month = max(monthly)
+    previous_month = _shift_month(latest_month, -1)
+    latest = monthly[latest_month]
+    previous = monthly.get(previous_month)
+    latest_amount = latest["actual_settlement_amount"]
+    latest_receipts = latest["received_record_count"]
+
+    all_rows = list(db["supplier_transaction_snapshots"].find({
+        "sync_status": "current",
+        "data_mode": assessment_data_mode,
+    }))
+    comparison_rows = [
+        row
+        for row in all_rows
+        if row.get("data_granularity") == "supplier_month"
+        and row.get("snapshot_month") == latest_month
+        and _is_assessment_row(row, data_mode=assessment_data_mode)
+    ]
+    supplier_totals: dict[str, float] = defaultdict(float)
+    for row in comparison_rows:
+        amount = _as_number(row.get("actual_settlement_amount"))
+        code = row.get("supplier_code")
+        if amount is not None and code:
+            supplier_totals[str(code)] += amount
+    positive_total = sum(amount for amount in supplier_totals.values() if amount > 0)
+    settlement_share = (
+        latest_amount / positive_total
+        if latest_amount > 0 and positive_total > 0
+        else None
+    )
+    comparison_supplier_count = sum(
+        1 for amount in supplier_totals.values() if amount > 0
+    )
+    exposure_level = (
+        _risk_level(settlement_share, comparison_supplier_count)
+        if settlement_share is not None
+        else "unknown"
+    )
+
+    window_months = [_shift_month(latest_month, offset) for offset in range(-11, 1)]
+    present_months = [month for month in window_months if month in monthly]
+    missing_months = [month for month in window_months if month not in monthly]
+    trailing_amount = sum(
+        monthly[month]["actual_settlement_amount"] for month in present_months
+    )
+    trailing_receipts = int(sum(
+        monthly[month]["received_record_count"] for month in present_months
+    ))
+    negative_months = [
+        month
+        for month in present_months
+        if monthly[month]["actual_settlement_amount"] < 0
+    ]
+    settlement_without_receipts = [
+        month
+        for month in present_months
+        if monthly[month]["received_record_count"] == 0
+        and monthly[month]["actual_settlement_amount"] != 0
+    ]
+    amount_trend = _change_signal(
+        latest_amount,
+        previous["actual_settlement_amount"] if previous else None,
+    )
+    receipt_trend = _change_signal(
+        latest_receipts,
+        previous["received_record_count"] if previous else None,
+    )
+
+    evidence_facts = {
+        "exposure_level": exposure_level,
+        "settlement_share": round(settlement_share, 8) if settlement_share is not None else None,
+        "latest_actual_settlement_amount": round(latest_amount, 2),
+        "latest_received_record_count": int(latest_receipts),
+        "comparison_supplier_count": comparison_supplier_count,
+        "missing_month_count": len(missing_months),
+    }
+    evidence = [{
+        "source": "feishu_supplier_monthly_summary",
+        "period": latest_month,
+        "claim": "内部采购敞口基于供应商月度实结算金额计算；收货记录数仅表示源明细行数。",
+        "data_mode": assessment_data_mode,
+        "rows": len(comparison_rows),
+        "facts": evidence_facts,
+    }]
+    return {
+        "assessment_status": "partial",
+        "assessment_scope": "business_p0_supplier_month_summary",
+        "assessment_data_mode": "demo" if assessment_data_mode == "synthetic" else "formal",
+        "decision_usable": assessment_data_mode == "real",
+        "supplier": {
+            "supplier_id": master.get("supplier_id"),
+            "supplier_code": supplier_code,
+            "name": master.get("name"),
+        },
+        "period": latest_month,
+        "scope": {
+            "data_granularity": "supplier_month",
+            "comparison_basis": "同月已关联供应商的正向实结算金额",
+            "currency": None,
+            "amount_basis": "源表实结算金额口径",
+        },
+        "coverage": None,
+        "formal_business_score": None,
+        "enabled_dimension": {
+            "name": "内部采购敞口",
+            "model_weight": 0.0,
+            "risk_level": exposure_level,
+            "exposure_level": exposure_level,
+            "supplier_spend_share": round(settlement_share, 8) if settlement_share is not None else 0,
+            "settlement_share": round(settlement_share, 8) if settlement_share is not None else None,
+            "supplier_received_amount": round(latest_amount, 2),
+            "category_total_received_amount": round(positive_total, 2),
+            "latest_actual_settlement_amount": round(latest_amount, 2),
+            "comparison_actual_settlement_amount": round(positive_total, 2),
+            "active_supplier_count": comparison_supplier_count,
+            "single_source": False,
+        },
+        "observed_signals": {
+            "contract": {"status": "missing"},
+            "settlement": {
+                "status": "observed",
+                "actual_settlement_amount": round(latest_amount, 2),
+                "trailing_12_month_amount": round(trailing_amount, 2),
+                "change_ratio": amount_trend["change_ratio"],
+                "negative_months": negative_months,
+                "settlement_without_receipts_months": settlement_without_receipts,
+                "unsettled_amount": None,
+                "unsettled_ratio": None,
+            },
+            "receipts": {
+                "status": "observed",
+                "received_record_count": int(latest_receipts),
+                "trailing_12_month_count": trailing_receipts,
+                "change_ratio": receipt_trend["change_ratio"],
+            },
+            "price": {"status": "missing", "change_ratio": None},
+            "data_continuity": {
+                "status": "complete" if not missing_months else "incomplete",
+                "present_months": len(present_months),
+                "expected_months": 12,
+                "missing_months": missing_months,
+            },
+        },
+        "not_formally_enabled_dimensions": [
+            "供应依赖与可替代性",
+            "价格与成本",
+            "合同与条款",
+            "未结算暴露",
+            "商务合作稳定性",
+        ],
+        "limitations": [
+            "当前数据只支持判断内部采购敞口，不能单独证明供应商自身风险或可替代性。",
+            "缺少采购品类、物料、基地和币种口径，不能进行同品类集中度或价格比较。",
+            "收货记录数是源明细行数，不代表送货批次、交付频次或收货数量。",
+            "历史月份缺失与数值为零严格区分，缺失月份不参与趋势计算。",
+        ] + ([f"最近 12 个自然月缺少 {len(missing_months)} 个月数据。"] if missing_months else []),
+        "evidence": evidence,
+    }
+
+
 def assess_business_risk_p0(
     supplier_reference: str,
     *,
@@ -165,6 +390,18 @@ def assess_business_risk_p0(
             "reason": "没有可用于正式评估的真实且校验通过的交易快照；合成、未知或无效数据已被隔离。",
             "required_data_mode": "real",
         }
+
+    if any(row.get("data_granularity") == "supplier_month" for row in supplier_rows):
+        summary_rows = [
+            row for row in supplier_rows
+            if row.get("data_granularity") == "supplier_month"
+        ]
+        return _assess_supplier_month_summary(
+            db,
+            master,
+            summary_rows,
+            assessment_data_mode=assessment_data_mode,
+        )
 
     latest_month = max(str(row["snapshot_month"]) for row in supplier_rows if row.get("snapshot_month"))
     current_supplier_rows = [row for row in supplier_rows if row.get("snapshot_month") == latest_month]

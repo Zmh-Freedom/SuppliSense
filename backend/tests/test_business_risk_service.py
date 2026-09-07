@@ -127,3 +127,79 @@ def test_business_risk_p0_resolves_supplier_by_internal_supplier_id(monkeypatch)
 
     assert result["assessment_status"] == "partial"
     assert result["supplier"]["supplier_code"] == "S-1"
+
+
+def test_business_risk_p0_reports_supplier_month_exposure_without_overclaiming(monkeypatch) -> None:
+    def monthly(code: str, month: str, amount: float, receipts: int) -> dict:
+        return {
+            "supplier_code": code,
+            "sync_status": "current",
+            "data_mode": "real",
+            "eligible_for_formal_assessment": True,
+            "data_quality_status": "valid",
+            "validation_errors": [],
+            "data_quality_issues": [],
+            "data_granularity": "supplier_month",
+            "snapshot_month": month,
+            "received_record_count": receipts,
+            "actual_settlement_amount": amount,
+        }
+
+    database = FakeDatabase({
+        "supplier_master_snapshots": [
+            {
+                "supplier_id": "supplier:1",
+                "supplier_code": "S-1",
+                "name": "企业一",
+                "sync_status": "current",
+            }
+        ],
+        "supplier_transaction_snapshots": [
+            monthly("S-1", "2026-07", 200, 8),
+            monthly("S-1", "2026-08", 300, 10),
+            monthly("S-2", "2026-08", 700, 20),
+        ],
+    })
+    monkeypatch.setattr(business_risk_service, "get_db", lambda: database)
+
+    result = business_risk_service.assess_business_risk_p0("企业一")
+
+    assert result["assessment_status"] == "partial"
+    assert result["assessment_scope"] == "business_p0_supplier_month_summary"
+    assert result["enabled_dimension"]["name"] == "内部采购敞口"
+    assert result["enabled_dimension"]["settlement_share"] == 0.3
+    assert result["enabled_dimension"]["latest_actual_settlement_amount"] == 300
+    assert result["observed_signals"]["receipts"]["received_record_count"] == 10
+    assert result["observed_signals"]["settlement"]["change_ratio"] == 0.5
+    assert "供应依赖与可替代性" in result["not_formally_enabled_dimensions"]
+    assert any("不能单独证明供应商自身风险" in item for item in result["limitations"])
+
+
+def test_business_risk_p0_does_not_treat_missing_month_as_zero(monkeypatch) -> None:
+    row = {
+        "supplier_code": "S-1",
+        "sync_status": "current",
+        "data_mode": "real",
+        "eligible_for_formal_assessment": True,
+        "data_quality_status": "valid",
+        "validation_errors": [],
+        "data_quality_issues": [],
+        "data_granularity": "supplier_month",
+        "snapshot_month": "2026-08",
+        "received_record_count": 0,
+        "actual_settlement_amount": 100,
+    }
+    database = FakeDatabase({
+        "supplier_master_snapshots": [
+            {"supplier_id": "supplier:1", "supplier_code": "S-1", "name": "企业一", "sync_status": "current"}
+        ],
+        "supplier_transaction_snapshots": [row],
+    })
+    monkeypatch.setattr(business_risk_service, "get_db", lambda: database)
+
+    result = business_risk_service.assess_business_risk_p0("S-1")
+
+    settlement = result["observed_signals"]["settlement"]
+    assert settlement["change_ratio"] is None
+    assert settlement["settlement_without_receipts_months"] == ["2026-08"]
+    assert "2026-07" in result["observed_signals"]["data_continuity"]["missing_months"]

@@ -186,7 +186,9 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "is_verified": ("is_verified", "isVerified", "是否已验证"),
     "verified_at": ("verified_at", "verifiedAt", "验证时间"),
     "snapshot_id": ("snapshot_id", "snapshotId", "快照ID", "快照Id"),
-    "snapshot_month": ("snapshot_month", "snapshotMonth", "统计月份", "统计月"),
+    "snapshot_month": (
+        "snapshot_month", "snapshotMonth", "统计月份", "统计月", "月份", "年月",
+    ),
     "snapshot_date": ("snapshot_date", "snapshotDate", "快照日期"),
     "purchasing_org_code": ("purchasing_org_code", "purchasingOrgCode", "采购组织代码"),
     "base": ("base", "基地"),
@@ -196,6 +198,9 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "material_name": ("material_name", "materialName", "物料名称"),
     "unit": ("unit", "计量单位", "单位"),
     "received_qty": ("received_qty", "receivedQty", "收货数量"),
+    "received_record_count": (
+        "received_record_count", "receivedRecordCount", "收货记录数",
+    ),
     "positive_settlement_qty": ("positive_settlement_qty", "positiveSettlementQty", "正结算数量"),
     "negative_settlement_qty": ("negative_settlement_qty", "negativeSettlementQty", "负结算数量"),
     "actual_settlement_qty": ("actual_settlement_qty", "actualSettlementQty", "实结算数量", "实结算"),
@@ -288,7 +293,8 @@ def _normalise_month(value: Any) -> str | None:
     scalar = _scalar(value)
     if not scalar:
         return None
-    matched = re.search(r"(20\d{2})[-/.年](\d{1,2})", scalar)
+    compact = re.fullmatch(r"(20\d{2})(\d{2})", scalar)
+    matched = compact or re.search(r"(20\d{2})[-/.年](\d{1,2})", scalar)
     if not matched:
         return None
     month = int(matched.group(2))
@@ -487,6 +493,16 @@ def normalize_supplier_transaction_record(
     if not isinstance(fields, dict) or not record_id:
         return None
 
+    if _field_value(fields, _FIELD_ALIASES["received_record_count"]) is not None:
+        return _normalize_supplier_monthly_summary_record(
+            record,
+            fields=fields,
+            record_id=record_id,
+            supplier_id=supplier_id,
+            supplier_code=supplier_code,
+            synced_at=synced_at,
+        )
+
     snapshot_id = _scalar(_field_value(fields, _FIELD_ALIASES["snapshot_id"]))
     snapshot_month = _normalise_month(_field_value(fields, _FIELD_ALIASES["snapshot_month"]))
     snapshot_date = _scalar(_field_value(fields, _FIELD_ALIASES["snapshot_date"]))
@@ -593,6 +609,96 @@ def normalize_supplier_transaction_record(
         "data_quality_issues": quality_issues,
         "data_quality_status": "invalid" if validation_errors else ("warning" if quality_issues else "valid"),
         "eligible_for_formal_assessment": data_mode == "real" and not validation_errors and not quality_issues,
+        "synced_at": synced_at,
+        "sync_status": "current",
+        "raw_fields": fields,
+    }
+
+
+def _normalize_supplier_monthly_summary_record(
+    record: dict[str, Any],
+    *,
+    fields: dict[str, Any],
+    record_id: str,
+    supplier_id: str,
+    supplier_code: str,
+    synced_at: datetime,
+) -> dict[str, Any]:
+    """Map one real supplier-month summary without inventing material-level facts."""
+    del record
+    supplier_name = _scalar(_field_value(fields, _FIELD_ALIASES["name"]))
+    snapshot_month = _normalise_month(
+        _field_value(fields, _FIELD_ALIASES["snapshot_month"])
+    )
+    received_record_count = _decimal_value(
+        _field_value(fields, _FIELD_ALIASES["received_record_count"])
+    )
+    actual_settlement_amount = _decimal_value(
+        _field_value(fields, _FIELD_ALIASES["actual_settlement_amount"])
+    )
+    data_mode = _normalise_data_mode(
+        settings.FEISHU_BITABLE_TRANSACTION_DATA_MODE
+    )
+
+    validation_errors: list[str] = []
+    if not supplier_name:
+        validation_errors.append("供应商名称")
+    if not snapshot_month:
+        validation_errors.append("年月格式无效或缺失")
+    if received_record_count is None:
+        validation_errors.append("收货记录数格式无效或缺失")
+    elif received_record_count < 0 or not received_record_count.is_integer():
+        validation_errors.append("收货记录数必须为非负整数")
+    if actual_settlement_amount is None:
+        validation_errors.append("实结算金额格式无效或缺失")
+    if data_mode == "unknown":
+        validation_errors.append("交易数据模式未明确配置")
+
+    normalized_count = (
+        int(received_record_count) if received_record_count is not None else None
+    )
+    return {
+        "_id": f"feishu:transaction:{record_id}",
+        "supplier_id": supplier_id,
+        "supplier_code": supplier_code,
+        "supplier_name": supplier_name,
+        "source": "feishu_bitable",
+        "source_system": "feishu_bitable",
+        "source_record_id": record_id,
+        "snapshot_id": f"{supplier_code}:{snapshot_month}" if snapshot_month else None,
+        "snapshot_month": snapshot_month,
+        "snapshot_date": None,
+        "data_granularity": "supplier_month",
+        "received_record_count": normalized_count,
+        "actual_settlement_amount": actual_settlement_amount,
+        "purchasing_org_code": None,
+        "base": None,
+        "category_code": None,
+        "category_name": None,
+        "material_code": None,
+        "material_name": None,
+        "unit": None,
+        "received_qty": None,
+        "positive_settlement_qty": None,
+        "negative_settlement_qty": None,
+        "actual_settlement_qty": None,
+        "settled_qty": None,
+        "unsettled_qty": None,
+        "unit_price": None,
+        "received_amount": None,
+        "settled_amount": None,
+        "unsettled_amount": None,
+        "currency": None,
+        "amount_basis": "源表实结算金额口径",
+        "contract_number": None,
+        "contract_status": "unknown",
+        "data_source": "feishu_supplier_monthly_summary",
+        "data_mode": data_mode,
+        "source_updated_at": synced_at.isoformat(),
+        "validation_errors": validation_errors,
+        "data_quality_issues": [],
+        "data_quality_status": "invalid" if validation_errors else "valid",
+        "eligible_for_formal_assessment": data_mode == "real" and not validation_errors,
         "synced_at": synced_at,
         "sync_status": "current",
         "raw_fields": fields,
@@ -737,6 +843,26 @@ def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> st
         if isinstance(record, dict) and isinstance(record.get("fields"), dict)
         for key in record["fields"]
     }
+    if table_name == "supplier_transaction":
+        legacy_contract = (
+            ("快照ID", "snapshot_id", "snapshotId"),
+            ("统计月份", "snapshot_month", "snapshotMonth"),
+            ("供应商代码", "supplier_code", "supplierCode"),
+            ("物料号", "material_code", "materialCode"),
+        )
+        summary_contract = (
+            ("供应商代码", "supplier_code", "supplierCode"),
+            ("供应商名称", "supplier_name", "company_name", "name"),
+            ("年月", "月份", "统计月份", "snapshot_month", "snapshotMonth"),
+            ("收货记录数", "received_record_count", "receivedRecordCount"),
+            ("实结算金额", "actual_settlement_amount", "actualSettlementAmount"),
+        )
+        if _schema_matches(field_keys, legacy_contract) or _schema_matches(
+            field_keys, summary_contract
+        ):
+            return None
+        return "表结构不符合交易明细或供应商月度汇总契约"
+
     expected_fields = {
         "supplier_master": (
             ("供应商代码", "supplier_code", "supplierCode"),
@@ -747,12 +873,6 @@ def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> st
             ("产品名称", "product_name", "productName"),
         ),
         "supplier_contact": (("联系人姓名", "contact_name", "contactName", "姓名"),),
-        "supplier_transaction": (
-            ("快照ID", "snapshot_id", "snapshotId"),
-            ("统计月份", "snapshot_month", "snapshotMonth"),
-            ("供应商代码", "supplier_code", "supplierCode"),
-            ("物料号", "material_code", "materialCode"),
-        ),
     }[table_name]
     missing = [
         aliases[0]
@@ -762,6 +882,46 @@ def _validate_table_schema(table_name: str, records: list[dict[str, Any]]) -> st
     if missing:
         return f"表结构不符合契约，缺少字段: {', '.join(missing)}"
     return None
+
+
+def _schema_matches(
+    field_keys: set[str], contract: tuple[tuple[str, ...], ...]
+) -> bool:
+    return all(
+        field_keys.intersection({_normalise_key(alias) for alias in aliases})
+        for aliases in contract
+    )
+
+
+def _validate_transaction_batch(records: list[dict[str, Any]]) -> str | None:
+    """Reject duplicate supplier-month summary rows before they can be double counted."""
+    seen_keys: set[tuple[str, str]] = set()
+    duplicate_keys: set[tuple[str, str]] = set()
+    for record in records:
+        fields = record.get("fields")
+        if not isinstance(fields, dict):
+            continue
+        if _field_value(fields, _FIELD_ALIASES["received_record_count"]) is None:
+            continue
+        supplier_code = _scalar(
+            _field_value(fields, _FIELD_ALIASES["supplier_code"])
+        )
+        snapshot_month = _normalise_month(
+            _field_value(fields, _FIELD_ALIASES["snapshot_month"])
+        )
+        if not supplier_code or not snapshot_month:
+            continue
+        key = (supplier_code, snapshot_month)
+        if key in seen_keys:
+            duplicate_keys.add(key)
+        seen_keys.add(key)
+    if not duplicate_keys:
+        return None
+    examples = ", ".join(
+        f"{supplier_code}/{month}"
+        for supplier_code, month in sorted(duplicate_keys)[:5]
+    )
+    return f"供应商代码与年月重复，已阻止本批次交易数据提交: {examples}"
 
 
 def _sync_error(
@@ -802,6 +962,7 @@ def sync_supplier_tables() -> dict[str, Any]:
             "fetched": len(records) if records is not None else 0,
             "synced": 0,
             "skipped": 0,
+            "invalid": 0,
         }
         if error:
             errors.append(_sync_error(batch_id, table_name, error))
@@ -810,6 +971,11 @@ def sync_supplier_tables() -> dict[str, Any]:
             if schema_error:
                 table_results[table_name]["status"] = "invalid_schema"
                 errors.append(_sync_error(batch_id, table_name, schema_error))
+            elif table_name == "supplier_transaction":
+                data_error = _validate_transaction_batch(records)
+                if data_error:
+                    table_results[table_name]["status"] = "invalid_data"
+                    errors.append(_sync_error(batch_id, table_name, data_error))
 
     db = get_db()
     supplier_ids: dict[str, str] = {}
@@ -918,6 +1084,8 @@ def sync_supplier_tables() -> dict[str, Any]:
                 ))
                 continue
             normalized["sync_batch_id"] = batch_id
+            if normalized.get("data_quality_status") == "invalid":
+                table_results[table_name]["invalid"] += 1
             _upsert_snapshot(
                 collection,
                 normalized,

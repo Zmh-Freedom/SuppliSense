@@ -132,6 +132,41 @@ describe('SupplierProfilePage', () => {
     expect(mocks.get).toHaveBeenCalledWith('/risk/business/supplier-1');
   });
 
+  it('labels supplier-month data as internal procurement evidence', async () => {
+    const user = userEvent.setup();
+    mocks.get.mockImplementation((path: string) => Promise.resolve(
+      path.startsWith('/risk/business/') ? {
+        assessment_status: 'partial',
+        assessment_data_mode: 'formal',
+        period: '2026-05',
+        scope: { data_granularity: 'supplier_month' },
+        enabled_dimension: {
+          name: '内部采购敞口', model_weight: 0.15, risk_level: 'low', exposure_level: 'low',
+          supplier_spend_share: 0.00001, settlement_share: 0.00001,
+          supplier_received_amount: 60430.19, category_total_received_amount: 6000000,
+          latest_actual_settlement_amount: 60430.19, comparison_actual_settlement_amount: 6000000,
+          active_supplier_count: 200, single_source: false,
+        },
+        observed_signals: {
+          receipts: { status: 'observed', received_record_count: 27, change_ratio: null },
+          settlement: { status: 'observed', change_ratio: null },
+          data_continuity: { status: 'incomplete', present_months: 8, expected_months: 12 },
+        },
+      } : path === '/alert/snapshots' ? RISK_SNAPSHOTS : PROFILE,
+    ));
+
+    renderProfile();
+    await screen.findByText('测试供应商有限公司');
+    await user.click(screen.getByRole('button', { name: '风险' }));
+
+    expect(await screen.findByText('内部采购证据')).toBeInTheDocument();
+    expect(screen.getByText('结算金额占比')).toBeInTheDocument();
+    expect(screen.getByText('低敞口')).toBeInTheDocument();
+    expect(screen.getByText('<0.1%')).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === '收货记录：27 条（源明细行数）')).toBeInTheDocument();
+    expect(screen.getAllByText('相邻自然月数据不足')).toHaveLength(2);
+  });
+
   it('shows append-only risk assessment versions', async () => {
     const user = userEvent.setup();
     renderProfile();

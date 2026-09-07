@@ -714,12 +714,19 @@ export interface BusinessRiskP0 {
     category_total_received_amount: number;
     active_supplier_count: number;
     single_source: boolean;
+    exposure_level?: 'low' | 'medium' | 'high' | 'unknown' | string;
+    settlement_share?: number | null;
+    latest_actual_settlement_amount?: number;
+    comparison_actual_settlement_amount?: number;
   };
   observed_signals?: {
     contract?: { status: string; active_rows?: number; expiring_rows?: number; expired_rows?: number; unsigned_rows?: number };
-    settlement?: { status: string; unsettled_amount?: number | null; unsettled_ratio?: number | null };
+    settlement?: { status: string; unsettled_amount?: number | null; unsettled_ratio?: number | null; actual_settlement_amount?: number; trailing_12_month_amount?: number; change_ratio?: number | null; negative_months?: string[]; settlement_without_receipts_months?: string[] };
+    receipts?: { status: string; received_record_count?: number; trailing_12_month_count?: number; change_ratio?: number | null };
+    data_continuity?: { status: string; present_months?: number; expected_months?: number; missing_months?: string[] };
     price?: { status: string; current_weighted_price?: number | null; change_ratio?: number | null };
   };
+  scope?: { data_granularity?: string; comparison_basis?: string; currency?: string | null; amount_basis?: string | null; [key: string]: unknown };
   limitations?: string[];
   evidence?: { source: string; period?: string; claim: string; data_mode?: string; rows?: number }[];
 }

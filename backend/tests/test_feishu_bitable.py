@@ -351,6 +351,123 @@ def test_sync_supplier_tables_persists_transaction_snapshot_when_configured(monk
     assert saved["eligible_for_formal_assessment"] is True
 
 
+def test_normalize_supplier_transaction_record_maps_supplier_month_summary(monkeypatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "FEISHU_BITABLE_TRANSACTION_DATA_MODE",
+        "real",
+    )
+
+    result = normalize_supplier_transaction_record(
+        {
+            "record_id": "monthly-1",
+            "fields": {
+                "供应商代码": "08370069",
+                "供应商名称": "青岛三祥科技股份有限公司",
+                "年月": "202605",
+                "收货记录数": "27",
+                "实结算金额": "60,430.19",
+            },
+        },
+        supplier_id="supplier:1",
+        supplier_code="08370069",
+        synced_at=datetime(2026, 9, 7, tzinfo=timezone.utc),
+    )
+
+    assert result is not None
+    assert result["supplier_code"] == "08370069"
+    assert result["snapshot_month"] == "2026-05"
+    assert result["data_granularity"] == "supplier_month"
+    assert result["received_record_count"] == 27
+    assert result["received_qty"] is None
+    assert result["actual_settlement_amount"] == 60430.19
+    assert result["data_mode"] == "real"
+    assert result["eligible_for_formal_assessment"] is True
+
+
+def test_normalize_supplier_month_summary_rejects_invalid_record_count(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_DATA_MODE", "real")
+
+    result = normalize_supplier_transaction_record(
+        {
+            "record_id": "monthly-invalid",
+            "fields": {
+                "供应商代码": "S-1",
+                "供应商名称": "企业一",
+                "年月": "2026-08",
+                "收货记录数": "1.5",
+                "实结算金额": "-100",
+            },
+        },
+        supplier_id="supplier:1",
+        supplier_code="S-1",
+        synced_at=datetime(2026, 9, 7, tzinfo=timezone.utc),
+    )
+
+    assert result is not None
+    assert result["actual_settlement_amount"] == -100
+    assert result["eligible_for_formal_assessment"] is False
+    assert "收货记录数必须为非负整数" in result["validation_errors"]
+
+
+def test_sync_supplier_tables_accepts_supplier_month_summary_schema(monkeypatch) -> None:
+    database = MultiFakeDatabase()
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "tbl-monthly")
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_DATA_MODE", "real")
+    monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
+        {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_capability_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_contact_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_transaction_client", lambda: RecordsClient([
+        {
+            "record_id": "monthly-1",
+            "fields": {
+                "供应商代码": "S-1",
+                "供应商名称": "企业一",
+                "年月": "202608",
+                "收货记录数": 12,
+                "实结算金额": 1000,
+            },
+        },
+    ]))
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result["status"] == "ok"
+    assert result["tables"]["supplier_transaction"]["synced"] == 1
+    saved = database.collections["supplier_transaction_snapshots"].documents[0]
+    assert saved["data_granularity"] == "supplier_month"
+    assert saved["snapshot_month"] == "2026-08"
+    assert saved["received_record_count"] == 12
+
+
+def test_sync_supplier_tables_rejects_duplicate_supplier_month_rows(monkeypatch) -> None:
+    database = MultiFakeDatabase()
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "tbl-monthly")
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_DATA_MODE", "real")
+    monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
+        {"record_id": "master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_capability_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_contact_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_transaction_client", lambda: RecordsClient([
+        {"record_id": "monthly-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一", "年月": "202608", "收货记录数": 12, "实结算金额": 1000}},
+        {"record_id": "monthly-2", "fields": {"供应商代码": "S-1", "供应商名称": "企业一", "年月": "2026-08", "收货记录数": 1, "实结算金额": 20}},
+    ]))
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result["status"] == "partial_failed"
+    assert result["tables"]["supplier_transaction"]["status"] == "invalid_data"
+    assert database.collections["supplier_transaction_snapshots"].documents == []
+    assert "S-1/2026-08" in result["errors"][0]["reason"]
+
+
 def test_sync_supplier_tables_reports_partial_failure_without_marking_failed_table_stale(monkeypatch) -> None:
     database = MultiFakeDatabase()
     monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)

@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     FEISHU_BITABLE_TRANSACTION_TABLE_ID: str = os.getenv(
         "FEISHU_BITABLE_TRANSACTION_TABLE_ID", ""
     )
+    FEISHU_BITABLE_TRANSACTION_DATA_MODE: str = os.getenv(
+        "FEISHU_BITABLE_TRANSACTION_DATA_MODE", "unknown"
+    )
     FEISHU_BITABLE_BASE_URL: str = os.getenv("FEISHU_BITABLE_BASE_URL", "https://open.feishu.cn")
     FEISHU_BITABLE_PAGE_SIZE: int = int(os.getenv("FEISHU_BITABLE_PAGE_SIZE", "100"))
     FEISHU_BITABLE_TIMEOUT_SECONDS: float = float(os.getenv("FEISHU_BITABLE_TIMEOUT_SECONDS", "10"))

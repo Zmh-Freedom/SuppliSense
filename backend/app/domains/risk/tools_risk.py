@@ -86,7 +86,8 @@ def assess_business_risk(supplier_reference: str, category_code: str = "") -> di
         supplier_reference,
         category_code=category_code or None,
     ), tool_name="assess_business_risk", entity_id=f"entity:{supplier_reference}", dimension="business_risk", claim_fields=[
-        "risk_level", "supplier_spend_share", "active_supplier_count",
+        "exposure_level", "settlement_share", "latest_actual_settlement_amount",
+        "latest_received_record_count", "comparison_supplier_count",
     ])
 
 
