@@ -34,6 +34,15 @@ def test_conversation_state_extracts_five_dimensions() -> None:
     ]
 
 
+def test_conversation_state_defaults_generic_review_to_available_real_dimensions() -> None:
+    assert analysis_dimensions_from_message("复核青岛三祥科技股份有限公司") == [
+        "risk", "financial", "business_risk",
+    ]
+    assert analysis_dimensions_from_message("财务复核青岛三祥科技股份有限公司") == [
+        "financial",
+    ]
+
+
 def test_planner_builds_supplier_dimension_matrix_with_required_evidence() -> None:
     task = plan_supplier_analysis_task(
         task_id="risk-15",

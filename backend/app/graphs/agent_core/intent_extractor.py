@@ -16,7 +16,7 @@ logger = get_logger()
 
 _ANALYSIS_TOKENS = (
     "风险", "财务", "商务", "供应依赖", "可替代", "质量", "交付",
-    "ESG", "esg", "舆情", "合规", "制裁", "监控", "评估", "分析",
+    "ESG", "esg", "舆情", "合规", "制裁", "监控", "评估", "分析", "复核",
 )
 _NON_AGENT_TURN_PATTERNS = (
     "你好", "您好", "嗨", "hello", "hi", "谢谢", "感谢", "好的", "ok", "收到",
@@ -93,6 +93,7 @@ def extract_conversation_intent(
             "Do not invent companies, supplier codes, risk findings, or actions.",
             "Set task_type='sourcing' for finding, recommending, or listing suppliers, including requests such as '找风险最低的供应商'; risk is then a sourcing filter, not a company risk-assessment task.",
             "Set task_type='analysis' for assessing explicitly named suppliers; set task_type='none' only when no agent task is requested.",
+            "For a generic supplier review ('复核') without explicit dimensions, use risk, financial, and business_risk; explicit dimensions take precedence.",
             "Use requested_action='add_watchlist' only when the user explicitly asks to monitor or add to monitoring.",
             "This is read-only intent extraction and must not execute an action.",
         ],

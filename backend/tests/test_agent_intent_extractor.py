@@ -214,3 +214,19 @@ def test_deterministic_intent_marks_sourcing_without_llm():
     assert intent_extractor.infer_task_type("帮我找钢材供应商") == "sourcing"
     assert intent_extractor.infer_task_type("查询当前正式供应商") == "sourcing"
     assert intent_extractor.infer_task_type("分析甲公司当前风险") == "analysis"
+    assert intent_extractor.infer_task_type("复核青岛三祥科技股份有限公司") == "analysis"
+
+
+def test_supplier_review_builds_default_real_evidence_task_matrix():
+    result = adapter.build_execution_context(
+        session_id="review-session",
+        user_message="复核青岛三祥科技股份有限公司",
+    )
+
+    assert result["current_task"]["target_supplier_names"] == ["青岛三祥科技股份有限公司"]
+    assert result["current_task"]["analysis_dimensions"] == [
+        "risk", "financial", "business_risk",
+    ]
+    assert [item["dimension"] for item in result["current_task"]["subtasks"]] == [
+        "risk", "financial", "business_risk",
+    ]

@@ -19,6 +19,7 @@ _ANALYSIS_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("sentiment", ("舆情", "新闻", "负面信息")),
     ("compliance", ("合规", "制裁", "黑名单")),
 )
+_DEFAULT_REVIEW_DIMENSIONS = ["risk", "financial", "business_risk"]
 _PLURAL_REFERENCE_TOKENS = (
     "这些企业", "上述企业", "这些供应商", "上述供应商",
     "推荐的供应商", "推荐企业", "它们", "全部企业", "所有企业",
@@ -36,7 +37,7 @@ _COMPANY_NAME_PATTERN = re.compile(
     r"(?:有限责任公司|股份有限公司|集团有限公司|有限公司))"
 )
 _COMPANY_NAME_PREFIXES = (
-    "请对", "对", "将", "把", "分析", "评估", "查询", "查看", "监控", "请", "帮我",
+    "请复核", "复核", "请对", "对", "将", "把", "分析", "评估", "查询", "查看", "监控", "请", "帮我",
 )
 
 
@@ -54,11 +55,16 @@ def analysis_dimensions_from_message(message: str) -> list[str]:
     """Return explicitly requested analysis dimensions in stable order."""
     if "五维风险" in message or "五个维度" in message:
         return ["risk", "financial", "business_risk", "quality", "delivery", "compliance"]
-    return [
+    explicit_dimensions = [
         dimension
         for dimension, keywords in _ANALYSIS_DIMENSIONS
         if any(keyword in message for keyword in keywords)
     ]
+    if explicit_dimensions:
+        return explicit_dimensions
+    if "复核" in message:
+        return list(_DEFAULT_REVIEW_DIMENSIONS)
+    return []
 
 
 def resolve_supplier_targets(

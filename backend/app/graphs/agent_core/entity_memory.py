@@ -128,7 +128,9 @@ _ORDINAL_TARGETS = (
 )
 _EXCLUSION_TOKENS = ("除了", "除去", "排除")
 _SUPPLIER_CODE_PATTERN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9][A-Za-z0-9_\-/]{1,63})(?![A-Za-z0-9])")
-_COMPANY_NAME_PREFIXES = ("请对", "对", "将", "把", "分析", "评估", "查询", "查看", "监控", "请", "帮我")
+_COMPANY_NAME_PREFIXES = (
+    "请复核", "复核", "请对", "对", "将", "把", "分析", "评估", "查询", "查看", "监控", "请", "帮我",
+)
 
 
 def resolve_turn(
