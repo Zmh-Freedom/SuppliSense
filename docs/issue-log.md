@@ -1902,4 +1902,4 @@
 - 根因：监控清单先于企业主数据和 Harness 实体契约设计，旧链路把企业名称、企业主体、供应商关系和监控订阅混为一体。
 - 修复方案：在兼容保留旧 `companies` 字段和旧名称参数的前提下，引入 `monitor_target_id`、`target_type`、`supplier_id`、`candidate_id`、`company_id` 等字段；后端返回完整监控对象；Agent 监控写操作使用稳定实体 ID 并继续经过审批；风险快照、告警和 Agent 证据带上监控对象引用；旧名称接口仅作为兼容适配。
 - 验证结果：新增 `backend/tests/test_monitor_target_migration.py` 覆盖稳定监控对象写入、按 `monitor_target_id` 分隔快照版本、告警身份回传和 Supervisor Agent 证据引用；该文件 4 项通过。后端全量 858 项中 857 项通过，另 1 项既有 outbox 时间窗口测试首次运行偶发越界，单独重跑通过；前端 59 项测试、lint、TypeScript、build、`git diff --check` 通过。
-- 关联提交：`883038b1 feat: migrate monitoring to stable target identities`、`18675d6c refactor: resolve monitoring consumers by target identity`。
+- 关联提交：`883038b1 feat: migrate monitoring to stable target identities`、`18675d6c refactor: resolve monitoring consumers by target identity`、`fd85bb86 fix: preserve existing target identity on reactivation`。
