@@ -57,7 +57,7 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
   })
 
-  it('marks every phase complete when the final answer needs review', () => {
+  it('marks every phase complete when the final answer needs review', async () => {
     const state = createState()
     state.workflowStatus = {
       ...state.workflowStatus!,
@@ -67,6 +67,7 @@ describe('AgentWorkflowPanel', () => {
     }
 
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: '执行详情' }))
 
     expect(screen.getByLabelText('理解需求：已完成')).toBeInTheDocument()
     expect(screen.getByLabelText('任务规划：已完成')).toBeInTheDocument()

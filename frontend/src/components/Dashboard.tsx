@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
-import RiskMatrix from './RiskMatrix';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
 import { getRiskColor, getRiskBg } from '../riskColors';
 import { useDashboard, useWatchlist } from '../hooks';
@@ -35,6 +34,7 @@ export default function Dashboard() {
   // Watchlist management
   const [newName, setNewName] = useState('');
   const [toast, setToast] = useState('');
+  const [watchlistOpen, setWatchlistOpen] = useState(false);
 
   const addMutation = useMutation({
     mutationFn: (name: string) => api.post('/alert/watch', { company_name: name }),
@@ -130,11 +130,10 @@ export default function Dashboard() {
           <svg className="w-4 h-4 text-[var(--color-primary-bg)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
           <span className="text-sm font-medium text-[var(--color-text)]">Agent 建议</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {[
-            { label: '生成本周风险报告', q: '生成本周监控清单的风险报告' },
-            { label: '对比高风险企业', q: '对比监控清单中高风险企业的综合差异' },
-            { label: '分析本月趋势', q: '分析监控清单中本月风险变化趋势' },
+            { label: '复核上市供应商案例', q: '复核青岛三祥科技股份有限公司' },
+            { label: '复核非上市供应商案例', q: '复核上海汽车制动系统有限公司' },
           ].map(item => (
             <button
               key={item.label}
@@ -260,8 +259,12 @@ export default function Dashboard() {
       <SentimentPanel />
 
       {/* watchlist management */}
-      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-3">监控清单管理</h3>
+      <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl shadow-sm">
+        <button type="button" onClick={() => setWatchlistOpen(open => !open)} aria-expanded={watchlistOpen} className="flex w-full items-center justify-between gap-3 p-5 text-left">
+          <span><span className="text-sm font-medium text-[var(--color-text-secondary)]">监控清单管理</span><span className="ml-2 text-xs text-gray-400">{watchlist.length} 家企业</span></span>
+          <span aria-hidden="true" className={`text-gray-400 transition-transform ${watchlistOpen ? 'rotate-180' : ''}`}>⌄</span>
+        </button>
+        {watchlistOpen && <div className="border-t border-[var(--color-border)] p-5">
 
         {/* add form */}
         <form onSubmit={e => { e.preventDefault(); add(); }} className="flex gap-2 mb-3">
@@ -341,7 +344,8 @@ export default function Dashboard() {
             })}
           </div>
         )}
-      </div>
+        </div>}
+      </section>
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-xs text-red-600 z-30 shadow-md">
@@ -350,8 +354,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* risk matrix */}
-      <RiskMatrix />
     </div>
   );
 }

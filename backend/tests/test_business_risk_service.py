@@ -171,6 +171,10 @@ def test_business_risk_p0_reports_supplier_month_exposure_without_overclaiming(m
     assert result["enabled_dimension"]["latest_actual_settlement_amount"] == 300
     assert result["observed_signals"]["receipts"]["received_record_count"] == 10
     assert result["observed_signals"]["settlement"]["change_ratio"] == 0.5
+    assert result["evidence"][0]["facts"]["monthly_trend"] == [
+        {"month": "2026-07", "actual_settlement_amount": 200.0, "received_record_count": 8},
+        {"month": "2026-08", "actual_settlement_amount": 300.0, "received_record_count": 10},
+    ]
     assert "供应依赖与可替代性" in result["not_formally_enabled_dimensions"]
     assert any("不能单独证明供应商自身风险" in item for item in result["limitations"])
 

@@ -109,9 +109,31 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '查找钢材供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
+    const supplierDetails = await screen.findByText('本轮识别供应商（1 家）')
+    expect(supplierDetails.closest('details')).not.toHaveAttribute('open')
+    await user.click(supplierDetails)
     expect(await screen.findByRole('link', { name: '官网（待核验）' })).toHaveAttribute('href', 'https://steel.example.com')
     expect(screen.getByText('电话（待核验）：021-12345678')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '邮箱（待核验）：sales@steel.example.com' })).toHaveAttribute('href', 'mailto:sales@steel.example.com')
+  })
+
+  it('starts the verified listed supplier review from the demo case entry', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已完成复核。', status: 'completed' })
+      return '已完成复核。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    expect(screen.getByText('比赛演示案例')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '复核青岛三祥科技股份有限公司' }))
+
+    expect(mocks.chatStream).toHaveBeenCalledWith(
+      '复核青岛三祥科技股份有限公司',
+      expect.any(String),
+      expect.any(Object),
+      'auto',
+    )
   })
 
   it('persists the completed Agent workflow summary with the answer', async () => {
@@ -126,6 +148,7 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
+    await user.click(await screen.findByRole('button', { name: '执行详情' }))
     expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
     expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
   })
@@ -150,8 +173,177 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
+    expect(screen.getAllByText('业务结论').length).toBeGreaterThan(0)
+    expect(screen.getByText('数据说明').closest('details')).not.toHaveAttribute('open')
+    await user.click(await screen.findByRole('button', { name: '执行详情' }))
     expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
-    expect(screen.getByText('结构化结论')).toBeInTheDocument()
+    await user.click(screen.getByText('数据说明'))
+    expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
+  })
+
+  it('translates internal fields and lists the covered risk items', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '已完成风险分析。',
+        claims: [
+          {
+            claim_id: 'claim-risk-score',
+            entity_id: 'entity:华东钢材供应有限公司',
+            dimension: 'risk',
+            statement: '华东钢材供应有限公司 risk_score 为 6',
+            value: 6,
+            fact_path: 'risk_score',
+            evidence_refs: ['risk-evidence'],
+            confidence: 0.85,
+            validation_status: 'supported',
+            validation_reasons: [],
+          },
+          {
+            claim_id: 'claim-net-profit-growth',
+            entity_id: 'entity:华东钢材供应有限公司',
+            dimension: 'financial',
+            statement: '华东钢材供应有限公司 Net Profit Growth: -10%',
+            value: -0.1,
+            fact_path: 'Net Profit Growth',
+            evidence_refs: ['financial-history-evidence'],
+            confidence: 0.85,
+            validation_status: 'supported',
+            validation_reasons: [],
+          },
+        ],
+        limitations: [],
+        action_proposals: [],
+        action_receipts: [],
+        evidence_refs: ['risk-evidence'],
+      })
+      handlers.onEvidence?.({
+        records: [{
+          evidence_id: 'risk-evidence',
+          entity_id: 'entity:华东钢材供应有限公司',
+          dimension: 'risk',
+          provider: 'assess_risk',
+          source_type: 'risk_service_result',
+          status: 'available',
+          data_mode: 'formal',
+          collected_at: '2026-09-05T09:00:00Z',
+          facts: {
+            risk_score: 6,
+            risk_level: '低风险',
+            risk_detail: { lawsuit_count: 0, administrative_penalty_count: 0 },
+            data_coverage: { available_dimensions: ['financial', 'judicial'] },
+          },
+        }, {
+          evidence_id: 'financial-history-evidence',
+          entity_id: 'entity:华东钢材供应有限公司',
+          dimension: 'financial',
+          provider: 'query_financials',
+          source_type: 'financial_provider',
+          status: 'available',
+          data_mode: 'formal',
+          collected_at: '2026-09-05T09:00:00Z',
+          facts: {
+            financial_history: [
+              { period: '2024', revenue: 100, net_profit: 12 },
+              { period: '2025', revenue: 120, net_profit: 10 },
+            ],
+          },
+        }],
+      })
+      handlers.onDone?.({ answer: '已完成风险分析。' })
+      return '已完成风险分析。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(screen.getByText('6/100')).toBeInTheDocument()
+    expect(screen.getByText('6/100').closest('tr')?.textContent).not.toContain('risk_score')
+    expect(screen.getByText(/本轮围绕综合风险、财务风险形成 2 条判断，其中 2 条已有证据支持/)).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '指标/检查项' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '判断' })).toBeInTheDocument()
+    expect(screen.getAllByText('综合风险评分').length).toBeGreaterThan(0)
+    expect(screen.getByText('风险较低')).toBeInTheDocument()
+    expect(screen.getAllByText('净利润同比增长率').length).toBeGreaterThan(0)
+    expect(screen.getByText('需关注')).toBeInTheDocument()
+    expect(screen.getByText('-10.0%').closest('tr')?.textContent).not.toContain('华东钢材供应有限公司')
+    expect(screen.getAllByText('证据支持').length).toBeGreaterThan(0)
+    await user.click(await screen.findByText('数据说明'))
+    expect(screen.getByText('本次已评估的风险项')).toBeInTheDocument()
+    expect(screen.getByText('司法风险')).toBeInTheDocument()
+    expect(screen.getAllByText('财务数据').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('综合风险评分').length).toBeGreaterThan(0)
+    expect(screen.getByText('综合风险评估')).toBeInTheDocument()
+    expect(screen.getAllByText('已获取').length).toBeGreaterThan(0)
+    expect(screen.getByText('上市供应商财务趋势')).toBeInTheDocument()
+    expect(screen.getByText('营业收入')).toBeInTheDocument()
+    expect(screen.getByText('净利润')).toBeInTheDocument()
+  })
+
+  it('turns supplier review evidence into findings, basis, and procurement checks', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'needs_review',
+        summary: '分析已停止在证据复核点。',
+        claims: [
+          {
+            claim_id: 'settlement-change', entity_id: 'supplier:8310163', dimension: 'business_risk',
+            statement: '上海汽车制动系统有限公司 最新月实结算金额环比变化：-99.9%', value: -0.999, fact_path: 'settlement_change_ratio',
+            evidence_refs: ['business-evidence'], confidence: 0.85, validation_status: 'supported', validation_reasons: [],
+          },
+          {
+            claim_id: 'receipt-count', entity_id: 'supplier:8310163', dimension: 'business_risk',
+            statement: '上海汽车制动系统有限公司 最新月收货记录数：32,602 条', value: 32602, fact_path: 'latest_received_record_count',
+            evidence_refs: ['business-evidence'], confidence: 0.85, validation_status: 'supported', validation_reasons: [],
+          },
+        ],
+        limitations: ['缺少 financial 维度的正式证据'], action_proposals: [], action_receipts: [], evidence_refs: ['business-evidence'],
+      })
+      handlers.onEvidence?.({
+        records: [{
+          evidence_id: 'business-evidence', entity_id: 'supplier:8310163', dimension: 'business_risk', provider: 'assess_business_risk',
+          source_type: 'domain_service_result', status: 'available', data_mode: 'formal', collected_at: '2026-09-08T09:00:00Z',
+          facts: {
+            settlement_change_ratio: -0.999,
+            latest_received_record_count: 32602,
+            missing_month_count: 1,
+            monthly_trend: [
+              { month: '2026-07', actual_settlement_amount: 2460000, received_record_count: 36100 },
+              { month: '2026-08', actual_settlement_amount: 2469.59, received_record_count: 32602 },
+            ],
+          },
+        }],
+      })
+      handlers.onDone?.({ answer: '分析已停止在证据复核点。', status: 'needs_review' })
+      return '分析已停止在证据复核点。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '复核上海汽车制动系统有限公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('采购复核结论')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '建议复核' })).toBeInTheDocument()
+    expect(screen.getByText('核对复核事项')).toBeInTheDocument()
+    expect(screen.getByText('2 / 2 条已支持')).toBeInTheDocument()
+    expect(screen.getByText('发现了什么')).toBeInTheDocument()
+    expect(screen.getByText('依据是什么')).toBeInTheDocument()
+    expect(screen.getByText('采购人员需要核实什么')).toBeInTheDocument()
+    expect(screen.getByText('财务信息覆盖不足，当前无法判断其财务变化。')).toBeInTheDocument()
+    expect(screen.getByText('最新月实结算金额环比显著下降，需要核实交易变化原因。')).toBeInTheDocument()
+    expect(screen.getAllByText('最新月实结算金额环比变化').length).toBeGreaterThan(0)
+    expect(screen.getByText('波动需复核')).toBeInTheDocument()
+    expect(screen.getAllByText('商务风险')[0]).toHaveClass('bg-teal-50')
+    expect(screen.getByText(/收货记录数仅表示源明细行数/)).toBeInTheDocument()
+    expect(screen.getByText(/不将数据缺失判定为低风险或高风险/)).toBeInTheDocument()
+    expect(screen.getByText('采购人员需要核实什么').closest('article')?.querySelector('ol')).toBeTruthy()
+    expect(screen.getByText('供应商交易连续性趋势')).toBeInTheDocument()
+    expect(screen.getByText('实结算金额（元）')).toBeInTheDocument()
+    expect(screen.getByText('收货记录数（条）')).toBeInTheDocument()
+    expect(screen.getByText('财务趋势资料待补充。')).toBeInTheDocument()
   })
 
   it('trusts the server terminal status instead of turning partial into completed', async () => {
@@ -174,6 +366,7 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
+    await user.click(await screen.findByRole('button', { name: '执行详情' }))
     expect(await screen.findByText('当前状态：部分完成')).toBeInTheDocument()
     expect(screen.queryByText('当前状态：已完成')).not.toBeInTheDocument()
   })

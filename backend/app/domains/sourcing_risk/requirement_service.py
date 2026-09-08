@@ -15,6 +15,8 @@ _REGION_NAMES = ("华东", "华南", "华北", "西南", "西北", "东北")
 _SOURCING_REQUEST_PATTERN = re.compile(
     r"(?:找|推荐|寻找|采购|需要)(?P<target>.+?)(?:供应商|厂家|厂商)"
 )
+_MATERIAL_NUMBER_PATTERN = re.compile(r"物料号(?:为|是|[:：])?\s*(?P<material>\d{4,})")
+_HISTORICAL_SUPPLIER_PATTERN = re.compile(r"(?P<material>.+?)(?:有)?哪些历史合作供应商")
 
 
 class SourcingRequirement(BaseModel):
@@ -167,6 +169,29 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
+    material_number = _MATERIAL_NUMBER_PATTERN.search(message or "")
+    if material_number:
+        material = material_number.group("material")
+        return {
+            "category": "物料号寻源",
+            "material": material,
+            "product": material,
+            "specification": material,
+            "must_have": [],
+            "optional_conditions": [],
+        }
+    historical = _HISTORICAL_SUPPLIER_PATTERN.search(message or "")
+    if historical:
+        material = historical.group("material").strip(" ，,、？?请帮我查询")
+        if material:
+            return {
+                "category": material,
+                "material": material,
+                "product": material,
+                "specification": material,
+                "must_have": [],
+                "optional_conditions": [],
+            }
     match = _SOURCING_REQUEST_PATTERN.search(message or "")
     if not match:
         return None

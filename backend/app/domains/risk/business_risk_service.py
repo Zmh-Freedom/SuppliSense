@@ -254,6 +254,17 @@ def _assess_supplier_month_summary(
         "latest_received_record_count": int(latest_receipts),
         "comparison_supplier_count": comparison_supplier_count,
         "missing_month_count": len(missing_months),
+        "settlement_change_ratio": amount_trend["change_ratio"],
+        "receipt_record_change_ratio": receipt_trend["change_ratio"],
+        "settlement_without_receipts_month_count": len(settlement_without_receipts),
+        "monthly_trend": [
+            {
+                "month": month,
+                "actual_settlement_amount": round(monthly[month]["actual_settlement_amount"], 2),
+                "received_record_count": int(monthly[month]["received_record_count"]),
+            }
+            for month in present_months
+        ],
     }
     evidence = [{
         "source": "feishu_supplier_monthly_summary",

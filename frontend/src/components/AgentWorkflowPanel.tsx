@@ -148,7 +148,10 @@ function stageLabel(stage?: string): string {
 }
 
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(() => {
+    const lifecycle = state.workflowStatus?.status;
+    return lifecycle !== 'completed' && lifecycle !== 'partial' && lifecycle !== 'needs_review' && lifecycle !== 'failed';
+  });
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);
 
@@ -158,7 +161,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   };
 
   return (
-    <section className="w-full max-w-full overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 工作流">
+    <section className="w-full max-w-full overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="执行详情">
       <button
         type="button"
         onClick={() => setExpanded(value => !value)}
@@ -167,7 +170,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
       >
         <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
           <span aria-hidden="true" className="text-[var(--color-primary-bg)]">◇</span>
-          <span className="truncate">Agent 工作流</span>
+          <span className="truncate">执行详情</span>
           {state.approval && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">待人工确认</span>}
         </span>
         <span aria-hidden="true" className="shrink-0 text-lg text-gray-400">{expanded ? '⌃' : '⌄'}</span>

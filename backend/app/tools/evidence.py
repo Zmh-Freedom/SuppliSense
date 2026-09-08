@@ -215,9 +215,14 @@ _CLAIM_LABELS = {
     "latest_actual_settlement_amount": "最新月实结算金额",
     "latest_received_record_count": "最新月收货记录数",
     "comparison_supplier_count": "同月可比较供应商数量",
+    "missing_month_count": "最近 12 个月缺失交易月份数",
+    "settlement_change_ratio": "最新月实结算金额环比变化",
+    "receipt_record_change_ratio": "最新月收货记录数环比变化",
+    "settlement_without_receipts_month_count": "结算与收货记录不一致月份数",
 }
 _PERCENTAGE_CLAIMS = {
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",
+    "settlement_change_ratio", "receipt_record_change_ratio",
 }
 
 
@@ -237,6 +242,8 @@ def _format_claim_value(path: str, value: Any) -> str:
         return f"{value:,.0f} 条"
     if path == "comparison_supplier_count" and isinstance(value, (int, float)):
         return f"{value:,.0f} 家"
+    if path in {"missing_month_count", "settlement_without_receipts_month_count"} and isinstance(value, (int, float)):
+        return f"{value:,.0f} 个月"
     if path in {"current_ratio", "quick_ratio"} and isinstance(value, (int, float)):
         return f"{value:.2f}"
     if path == "cash_flow" and isinstance(value, (int, float)):

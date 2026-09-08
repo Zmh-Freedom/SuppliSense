@@ -42,20 +42,21 @@ def _workflow_status(
 
 
 def _render_harness_answer(answer: dict[str, Any]) -> str:
-    """Render the structured answer without allowing unsupported text claims."""
+    """Render only the business-facing layer of a structured answer.
+
+    Evidence references and limitations remain in the structured ``agent_answer``
+    event for the UI's expandable data layer. They must not leak into the main
+    conversational text, where opaque IDs and execution terminology distract
+    from the actual business conclusion.
+    """
     lines = [str(answer.get("summary") or "Agent 未形成可展示的确定性结论。")]
     for claim in answer.get("claims", []):
         if not isinstance(claim, dict):
             continue
         statement = str(claim.get("statement") or "").strip()
-        evidence_refs = [str(item) for item in claim.get("evidence_refs", []) if str(item).strip()]
         if not statement:
             continue
-        suffix = f"（证据：{'、'.join(evidence_refs)}）" if evidence_refs else "（无有效证据引用）"
-        lines.append(f"- {statement}{suffix}")
-    limitations = [str(item).strip() for item in answer.get("limitations", []) if str(item).strip()]
-    if limitations:
-        lines.append(f"\n限制：{'；'.join(dict.fromkeys(limitations))}")
+        lines.append(f"- {statement}")
     return "\n".join(lines)
 
 

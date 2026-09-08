@@ -122,6 +122,16 @@ export default function SourcingPage() {
     },
   });
 
+  const verifyMutation = useMutation({
+    mutationFn: (candidateId: string) => api.post<SourcingRiskCandidate>(`/sourcing/external-candidates/${encodeURIComponent(candidateId)}/verify`),
+    onSuccess: (candidate) => {
+      setExternalCandidates(current => current.map(item => item.candidate_id === candidate.candidate_id ? candidate : item));
+      setSelectMsg('天眼查核验已完成，请继续确认技术能力、认证、产能与报价');
+      setTimeout(() => setSelectMsg(''), 3000);
+    },
+    onError: () => setError('天眼查核验失败，请稍后重试'),
+  });
+
   const canSubmit = form.category && form.spec;
   const hasResults = results.length > 0;
   const hasExternalCandidates = externalCandidates.length > 0;
@@ -131,11 +141,17 @@ export default function SourcingPage() {
   return (
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-3xl mx-auto space-y-6">
+        <div>
+          <h2 className="text-lg font-bold text-[var(--color-text)]">智能寻源</h2>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-1">先从历史合作和外部候选中召回供应商，再进行主体与风险核验。</p>
+        </div>
+
         <SourcingRiskWorkbench />
 
-        <div className="border-t border-[var(--color-border)] pt-6">
-          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-4">历史寻源请求</h2>
-        <h2 className="text-lg font-bold text-[var(--color-text)]">智能寻源</h2>
+        <details className="border-t border-[var(--color-border)] pt-4">
+          <summary className="cursor-pointer list-none text-sm font-medium text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">快速寻源（辅助入口）<span className="ml-2 text-xs font-normal text-gray-400">适用于已有明确规格的旧式提交</span></summary>
+          <div className="pt-5">
+          <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-4">快速提交采购需求</h3>
 
         {/* 采购需求表单 */}
         <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm space-y-4">
@@ -243,9 +259,9 @@ export default function SourcingPage() {
           <div className="space-y-3">
             <div>
               <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">外部待核验候选 ({externalCandidates.length})</h3>
-              <p className="text-xs text-amber-700 mt-1">来自天眼查和公开网络，仅用于供应商推荐；尚未进入正式供应商主数据。</p>
+              <p className="text-xs text-amber-700 mt-1">盖世人工获取候选优先展示；需完成天眼查主体与风险核验，以及采购技术、认证、产能和报价确认，才可进入后续准入流程。</p>
             </div>
-            {externalCandidates.map(candidate => <SourcingRiskCandidateCard key={candidate.candidate_id ?? candidate.supplier_name} candidate={candidate} />)}
+            {externalCandidates.map(candidate => <SourcingRiskCandidateCard key={candidate.candidate_id ?? candidate.supplier_name} candidate={candidate} onVerify={candidate.candidate_id ? () => verifyMutation.mutate(candidate.candidate_id!) : undefined} verifying={verifyMutation.isPending && verifyMutation.variables === candidate.candidate_id} />)}
           </div>
         )}
 
@@ -295,7 +311,8 @@ export default function SourcingPage() {
             ))}
           </div>
         )}
-        </div>
+          </div>
+        </details>
       </div>
     </div>
   );
@@ -316,6 +333,7 @@ function SourcingResultCard({ result, watched, onWatch }: {
   const color = getRiskColor(result.risk_score ?? 50);
   const matchPct = (result.match_score * 100).toFixed(0);
   const rankPct = (result.final_rank * 100).toFixed(0);
+  const isHistoricalCandidate = result.source === 'internal_supplier_material_list';
 
   return (
     <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
@@ -323,6 +341,7 @@ function SourcingResultCard({ result, watched, onWatch }: {
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-2">
             <h4 className="font-semibold text-[var(--color-text)]">{result.supplier_name}</h4>
+            {isHistoricalCandidate && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">历史合作候选</span>}
             {result.risk_level && result.risk_level !== 'unknown' && (
               <span className="text-xs px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: color }}>
                 {result.risk_level}
@@ -347,6 +366,7 @@ function SourcingResultCard({ result, watched, onWatch }: {
               {result.capabilities?.length ? <p>供货能力：{result.capabilities.map(item => String(item.product_name || item.category || '')).filter(Boolean).join('、')}</p> : null}
             </div>
           )}
+          {isHistoricalCandidate && result.match_reason && <p className="mt-2 text-xs text-blue-700">历史供货依据：{result.match_reason}</p>}
           {(result.website_url || result.contact_person || result.contact_phone || result.contact_email) && (
             <div className="mt-2 text-xs text-[var(--color-text-muted)] space-y-1">
               {result.website_url ? <a href={result.website_url} target="_blank" rel="noreferrer" className="block w-fit text-[var(--color-primary-bg)] hover:underline">官网</a> : null}

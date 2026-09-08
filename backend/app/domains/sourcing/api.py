@@ -239,3 +239,17 @@ async def import_from_tianyancha(
         region=region,
         max_results=max_results,
     )
+
+
+@router.post(
+    "/external-candidates/{candidate_id}/verify",
+    summary="核验外部候选",
+    description="按需调用天眼查核验单个外部候选主体与风险。核验结果仍不会写入正式供应商主数据。",
+)
+async def verify_external_candidate(candidate_id: str):
+    from app.domains.sourcing.service import verify_external_candidate as _verify
+
+    try:
+        return await asyncio.to_thread(_verify, candidate_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

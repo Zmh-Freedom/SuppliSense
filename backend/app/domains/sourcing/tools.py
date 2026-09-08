@@ -109,6 +109,7 @@ def discover_supplier_candidates(requirement: dict) -> dict:
     顺序固定为本地历史/Mongo 与飞书正式快照、天眼查、受限联网；正式
     候选和外部待核验候选分开返回，不创建供应商主数据或准入记录。
     """
+    from app.domains.sourcing.service import discover_read_only_sourcing_candidates
     from app.domains.sourcing_risk.discovery_service import discover_candidates
     from app.domains.sourcing_risk.policy_service import resolve_policy_template
     from app.domains.sourcing_risk.requirement_service import SourcingRequirement
@@ -117,12 +118,18 @@ def discover_supplier_candidates(requirement: dict) -> dict:
 
     validated = SourcingRequirement.model_validate(requirement)
     normalized = validated.model_dump(mode="json", exclude_none=True)
-    result = discover_candidates(
-        normalized,
-        resolve_policy_template(str(normalized.get("category", ""))),
-    )
-    local = [_mark_candidate(item, "formal") for item in result.get("local_candidates", [])]
-    external = [_mark_candidate(item, "external") for item in result.get("external_candidates", [])]
+    library_result = discover_read_only_sourcing_candidates(normalized)
+    if library_result.get("local_candidates") or library_result.get("external_candidates"):
+        result = library_result
+        local = [_mark_candidate(item, "historical") for item in result.get("local_candidates", [])]
+        external = [_mark_candidate(item, "external") for item in result.get("external_candidates", [])]
+    else:
+        result = discover_candidates(
+            normalized,
+            resolve_policy_template(str(normalized.get("category", ""))),
+        )
+        local = [_mark_candidate(item, "formal") for item in result.get("local_candidates", [])]
+        external = [_mark_candidate(item, "external") for item in result.get("external_candidates", [])]
     local = _rank_candidates(local, normalized)
     external = _rank_candidates(external, normalized)
     candidates = [*local, *external]
@@ -149,11 +156,18 @@ def discover_supplier_candidates(requirement: dict) -> dict:
                 "contact_email": candidate.get("contact_email"),
             },
         ).model_dump(mode="json"))
+        candidate_type = str(candidate.get("candidate_type") or "external")
+        if candidate_type == "historical":
+            statement = f"{name}存在与当前物料相关的历史供货关系，可作为历史合作候选"
+        elif candidate_type == "external":
+            statement = f"{name}为外部待核验候选，需确认主体、技术能力与准入条件"
+        else:
+            statement = f"{name}符合当前寻源条件，可作为正式供应商候选"
         claims.append({
             "claim_id": f"sourcing:recommendation:{candidate.get('candidate_id') or candidate.get('supplier_id') or index}",
             "entity_id": "sourcing",
             "dimension": "sourcing",
-            "statement": f"{name}符合当前寻源条件，可作为{candidate.get('candidate_type', 'external')}候选",
+            "statement": statement,
             "value": name,
             "fact_path": "supplier_name",
             "operator": "eq",
@@ -176,7 +190,12 @@ def discover_supplier_candidates(requirement: dict) -> dict:
         "external_loop": result.get("external_loop", {}),
         "evidence_records": evidence_records,
         "claims": claims,
-        "message": "外部候选仅为待核验推荐，不会写入供应商主数据。" if external else "已返回正式供应商候选。",
+        "message": (
+            "已返回历史合作候选和盖世外部待核验候选；请先选择企业，再按需发起天眼查核验。"
+            if external else "已返回历史合作候选。"
+        ) if result is library_result else (
+            "外部候选仅为待核验推荐，不会写入供应商主数据。" if external else "已返回正式供应商候选。"
+        ),
     }
     return attach_tool_evidence(
         payload,
@@ -193,6 +212,10 @@ def _mark_candidate(candidate: dict, candidate_type: str) -> dict:
     if candidate_type == "formal":
         result.setdefault("identity_status", "exact")
         result.setdefault("verification_status", "verified")
+        result.setdefault("source_stage", "local_history")
+    elif candidate_type == "historical":
+        result.setdefault("identity_status", "internal_reference")
+        result.setdefault("verification_status", "pending_tianyancha_review")
         result.setdefault("source_stage", "local_history")
     else:
         result.setdefault("verification_status", "pending_verification")

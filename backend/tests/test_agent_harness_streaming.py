@@ -19,7 +19,11 @@ def test_harness_stream_emits_contract_events(monkeypatch):
             "answer": {
                 "status": "needs_review",
                 "summary": "证据不足",
-                "claims": [],
+                "claims": [{
+                    "claim_id": "claim-1",
+                    "statement": "甲公司风险数据暂未形成确定结论",
+                    "evidence_refs": ["evidence:internal-secret"],
+                }],
                 "limitations": ["缺少 risk 维度的正式证据"],
                 "action_proposals": [],
                 "action_receipts": [],
@@ -49,7 +53,10 @@ def test_harness_stream_emits_contract_events(monkeypatch):
     assert '"status": "needs_review"' in events
     assert "event: evidence" in events
     assert "event: done" in events
-    assert saved_turns == [("session-1", "分析甲公司风险", "证据不足\n\n限制：缺少 risk 维度的正式证据", [])]
+    assert saved_turns == [("session-1", "分析甲公司风险", "证据不足\n- 甲公司风险数据暂未形成确定结论", [])]
+    answer_chunk = next(line for line in events.splitlines() if line.startswith('data: {"text":'))
+    assert "evidence:internal-secret" not in answer_chunk
+    assert "evidence:internal-secret" in events
 
 
 def test_harness_stream_publishes_progress_before_runner_finishes(monkeypatch):

@@ -8,6 +8,8 @@ from app.domains.sourcing.service import (
     reject_application,
     search_suppliers,
     select_external_candidate,
+    verify_external_candidate,
+    _search_internal_history_candidates,
 )
 
 
@@ -167,6 +169,71 @@ def test_search_suppliers_marks_local_results_for_typed_agent_routing(monkeypatc
     assert result["results"][0]["result_id"]
 
 
+def test_search_suppliers_returns_gaishi_candidates_before_network_discovery(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing.service.get_request", lambda _request_id: {"category": "制动系统", "spec": ""})
+    monkeypatch.setattr("app.domains.sourcing.service.update_request_status", lambda *args: None)
+    monkeypatch.setattr("app.domains.sourcing.service._search_feishu_snapshot_suppliers", lambda _request: None)
+    monkeypatch.setattr("app.domains.sourcing.service._vector_search", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        "app.domains.sourcing.service._stage_gaishi_candidates",
+        lambda _request, request_id: [{
+            "candidate_id": "gasgoo-1",
+            "supplier_name": "盖世制动候选",
+            "source": "gasgoo_manual_export",
+            "status": "staged_candidate",
+            "verification_reasons": ["需通过天眼查核验企业主体与风险信息"],
+        }] * 3,
+    )
+    monkeypatch.setattr("app.domains.sourcing.service.save_external_candidate", lambda *_args: None)
+
+    result = search_suppliers("request-1")
+
+    assert result["results"] == []
+    assert len(result["external_candidates"]) == 3
+    assert result["external_candidates"][0]["source"] == "gasgoo_manual_export"
+    assert result["external_status"] == "gasgoo_manual_export"
+
+
+def test_search_internal_history_candidates_uses_exact_material_number(monkeypatch) -> None:
+    class Collection:
+        def find(self, query):
+            assert query == {"material_number": "23987432"}
+            return self
+
+        def limit(self, _limit):
+            return [{
+                "_id": "history:1", "supplier_code": "8110026", "supplier_name": "北京示例有限公司",
+                "material_number": "23987432", "material_name": "自动变速器油", "base_code": "1000",
+            }]
+
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: {"internal_supplier_material_relations": Collection()})
+
+    candidates = _search_internal_history_candidates({"spec": "23987432"})
+
+    assert candidates[0]["source_stage"] == "local_history"
+    assert candidates[0]["supplier_code"] == "8110026"
+
+
+def test_search_internal_history_candidates_groups_multiple_bases_by_supplier(monkeypatch) -> None:
+    class Collection:
+        def find(self, _query):
+            return self
+
+        def limit(self, _limit):
+            return [
+                {"_id": "history:1", "supplier_code": "8130047", "supplier_name": "示例制动企业", "material_number": "23748163", "material_name": "后轮制动鼓", "base_code": "1000"},
+                {"_id": "history:2", "supplier_code": "8130047", "supplier_name": "示例制动企业", "material_number": "23748163", "material_name": "后轮制动鼓", "base_code": "3000"},
+                {"_id": "history:3", "supplier_code": "8130048", "supplier_name": "另一制动企业", "material_number": "23748163", "material_name": "后轮制动鼓", "base_code": "1000"},
+            ]
+
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: {"internal_supplier_material_relations": Collection()})
+
+    candidates = _search_internal_history_candidates({"spec": "23748163"})
+
+    assert [candidate["supplier_code"] for candidate in candidates] == ["8130047", "8130048"]
+    assert "1000、3000" in candidates[0]["match_reasons"][1]
+
+
 def test_search_suppliers_uses_feishu_snapshot_candidate_details(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.domains.sourcing.service.get_request",
@@ -243,6 +310,19 @@ def test_external_candidate_rejects_access_application_even_after_exact_identity
         assert False, "当前范围不应创建准入申请"
     except ValueError as exc:
         assert "不执行供应商准入" in str(exc)
+
+
+def test_verify_external_candidate_marks_unavailable_when_tianyancha_fails(monkeypatch) -> None:
+    candidate = {"_id": "candidate-1", "supplier_name": "待核验企业", "status": "staged_candidate"}
+    updates = []
+    monkeypatch.setattr("app.domains.sourcing.service.get_external_candidate", lambda _candidate_id: candidate)
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: {"external_supplier_candidates": type("Collection", (), {"update_one": lambda _self, *_args: updates.append(_args)})()})
+    monkeypatch.setattr("app.services.tianyancha_client.fetch_company", lambda _name: False)
+
+    result = verify_external_candidate("candidate-1")
+
+    assert result == candidate
+    assert updates
 
 
 class FakeCollection:

@@ -10,11 +10,13 @@ function EvidenceLabels({ evidence }: { evidence: SourcingRiskEvidence[] }) {
   return labels.length > 0 ? <div className="flex flex-wrap gap-1">{[...new Set(labels)].map(label => <span key={label} className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{label}</span>)}</div> : null;
 }
 
-export default function SourcingRiskCandidateCard({ candidate, evidence }: { candidate: SourcingRiskCandidate; evidence?: SourcingRiskEvidence[] }) {
+export default function SourcingRiskCandidateCard({ candidate, evidence, onVerify, verifying = false }: { candidate: SourcingRiskCandidate; evidence?: SourcingRiskEvidence[]; onVerify?: () => void; verifying?: boolean }) {
   const name = candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
-  const source = candidate.source === 'staged_external' || candidate.status === 'staged_candidate'
-    ? '外部暂存'
-    : '本地库';
+  const source = candidate.source === 'gasgoo_manual_export'
+    ? '盖世人工候选'
+    : candidate.source === 'staged_external' || candidate.status === 'staged_candidate'
+      ? '外部待核验'
+      : '本地库';
   const candidateEvidence = evidence ?? candidate.evidence ?? candidate.evidence_by_dimension ?? [];
   return (
     <article className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-4 space-y-2">
@@ -23,6 +25,7 @@ export default function SourcingRiskCandidateCard({ candidate, evidence }: { can
         <span className="text-[10px] shrink-0 rounded-full px-2 py-0.5 bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]">{source}</span>
       </div>
       {candidate.identity_status && <p className="text-xs text-[var(--color-text-secondary)]">主体状态：{candidate.identity_status}</p>}
+      {candidate.risk_score != null && <p className="text-xs text-[var(--color-text-secondary)]">天眼查风险复核：{candidate.risk_level || '未知'} {candidate.risk_score}/100</p>}
       {(candidate.industry || candidate.categories?.length || candidate.capabilities?.length) && (
         <div className="space-y-1 text-xs text-[var(--color-text-secondary)]">
           {candidate.industry && <p>行业：{candidate.industry}</p>}
@@ -39,6 +42,11 @@ export default function SourcingRiskCandidateCard({ candidate, evidence }: { can
         {candidate.contact_email ? <a href={`mailto:${candidate.contact_email}`} className="w-fit text-[var(--color-primary-bg)] hover:underline">邮箱（待核验）：{candidate.contact_email}</a> : <span>邮箱：未找到</span>}
       </div>
       {Array.isArray(candidate.verification_reasons) && candidate.verification_reasons.length > 0 && <p className="text-xs text-amber-700">核验状态：{candidate.verification_reasons.map(item => String(item)).join('；')}</p>}
+      {onVerify && candidate.identity_status !== 'exact' && (
+        <button type="button" onClick={onVerify} disabled={verifying} className="w-fit rounded-lg border border-[var(--color-primary-bg)] px-2.5 py-1 text-xs font-medium text-[var(--color-primary-bg)] disabled:opacity-50">
+          {verifying ? '天眼查核验中…' : '核验主体与风险'}
+        </button>
+      )}
       {candidate.source_updated_at && <p className="text-[10px] text-[var(--color-text-secondary)]">数据更新时间：{String(candidate.source_updated_at).slice(0, 10)}</p>}
       <EvidenceLabels evidence={candidateEvidence} />
     </article>

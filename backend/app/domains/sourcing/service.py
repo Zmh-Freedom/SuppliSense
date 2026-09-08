@@ -5,6 +5,7 @@ Sourcing service — 智能寻源业务逻辑。
 风险评估改用 MongoDB alert_snapshots 快速查分，不再调外部 API。
 """
 
+import re
 import uuid
 from typing import Any
 
@@ -79,10 +80,13 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
     snapshot_candidates = _search_feishu_snapshot_suppliers(req_doc)
     candidates = snapshot_candidates if snapshot_candidates is not None else _vector_search(query_text, top_k=10)
     candidates = _filter_category_candidates(candidates, req_doc.get("category", ""))
-    external_candidates: list[dict] = []
-    external_status = "not_required"
+    history_candidates = _search_internal_history_candidates(req_doc)
+    if history_candidates:
+        candidates = [*history_candidates, *candidates]
+    external_candidates = _stage_gaishi_candidates(req_doc, request_id)
+    external_status = "gasgoo_manual_export" if external_candidates else "not_required"
     external_failure_reasons: list[dict[str, str]] = []
-    if len(candidates) < 3:
+    if len(candidates) + len(external_candidates) < 3:
         from app.domains.sourcing_risk.discovery_service import discover_external_provider, stage_external_candidates
 
         external_discovery = discover_external_provider({
@@ -90,14 +94,18 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
             "specification": req_doc.get("spec", ""),
             "region": req_doc.get("region_required", ""),
         })
-        external_candidates = stage_external_candidates(
+        discovered_candidates = stage_external_candidates(
             request_id,
             external_discovery.get("candidates", []),
         )
-        external_status = external_discovery.get("status", "not_found")
+        external_candidates.extend(discovered_candidates)
+        external_status = (
+            "gasgoo_and_external"
+            if external_candidates else external_discovery.get("status", "not_found")
+        )
         external_failure_reasons = list(external_discovery.get("failure_reasons", []))
-        for candidate in external_candidates:
-            save_external_candidate(candidate)
+    for candidate in external_candidates:
+        save_external_candidate(candidate)
     if not candidates and not external_candidates:
         update_request_status(request_id, "done", 0)
         return {
@@ -199,7 +207,7 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         "external_status": external_status,
         "external_failure_reasons": external_failure_reasons,
         "message": (
-            f"本地暂无“{req_doc.get('category', '')}”匹配，以下为天眼查和联网搜索的待核验候选。"
+                f"本地暂无“{req_doc.get('category', '')}”匹配，以下为盖世人工获取、天眼查或联网搜索的待核验候选。"
             if external_candidates and not candidates
             else "已综合本地历史候选，外部补充结果待人工核验。"
             if external_candidates
@@ -308,6 +316,63 @@ def select_external_candidate(
         {"_id": candidate_id}, {"$set": {"status": "access_pending", "access_application_id": aid}}
     )
     return {"success": True, "action": action, "application_id": aid, "candidate_id": candidate_id}
+
+
+def verify_external_candidate(candidate_id: str) -> dict:
+    """Verify one staged external candidate on demand through Tianyancha.
+
+    Verification is deliberately candidate-by-candidate: a category recall may
+    contain hundreds of leads, whereas every Tianyancha call is a paid external
+    request and the procurement user must choose which lead is worth checking.
+    """
+    candidate = get_external_candidate(candidate_id)
+    if not candidate:
+        raise ValueError("外部候选不存在或已过期")
+
+    from app.db.mongo import get_db
+
+    supplier_name = str(candidate.get("supplier_name") or "").strip()
+    if not supplier_name:
+        raise ValueError("外部候选缺少企业名称")
+
+    try:
+        from app.domains.risk.company_service import get_company_profile
+        from app.domains.risk.service import assess_risk
+        from app.schemas import RiskAssessRequest
+        from app.services.tianyancha_client import fetch_company
+
+        if not fetch_company(supplier_name):
+            raise ValueError("天眼查未返回可核验的企业主体")
+        profile = get_company_profile(supplier_name)
+        risk = assess_risk(RiskAssessRequest(company_name=profile.company_name))
+    except Exception as exc:
+        reason = str(exc) or "天眼查主体或风险核验未完成"
+        get_db()["external_supplier_candidates"].update_one(
+            {"_id": candidate_id},
+            {"$set": {
+                "identity_status": "verification_unavailable",
+                "verification_status": "verification_unavailable",
+                "verification_reasons": [f"天眼查核验未完成：{reason}"],
+            }},
+        )
+        return get_external_candidate(candidate_id) or candidate
+
+    updated_at = datetime.now(timezone.utc)
+    get_db()["external_supplier_candidates"].update_one(
+        {"_id": candidate_id},
+        {"$set": {
+            "tianyancha_company_name": profile.company_name,
+            "tianyancha_verified": True,
+            "tianyancha_source_reference": f"tyc:{profile.company_name}",
+            "identity_status": "exact",
+            "verification_status": "verified",
+            "verification_reasons": ["天眼查已完成企业主体与风险核验", "仍需由采购确认技术能力、认证、产能与报价"],
+            "risk_score": risk.risk_score,
+            "risk_level": risk.risk_level,
+            "verified_at": updated_at,
+        }},
+    )
+    return get_external_candidate(candidate_id) or candidate
 
 
 def get_request_detail(request_id: str) -> dict | None:
@@ -462,6 +527,144 @@ def _vector_search(query_text: str, top_k: int = 20) -> list[dict[str, Any]]:
 
     candidates.sort(key=lambda item: item["match_score"], reverse=True)
     return candidates[:top_k]
+
+
+def _stage_gaishi_candidates(req_doc: dict[str, Any], request_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Recall manually obtained Gasgoo category candidates as review-only leads.
+
+    The category link is the only matching assertion.  A listing is neither a
+    legal-entity verification nor proof of technical interchangeability, so the
+    returned records stay in the external-candidate boundary until Tianyancha
+    and procurement review are complete.
+    """
+    category = str(req_doc.get("category") or "").strip()
+    if not category:
+        return []
+
+    from app.db.mongo import get_db
+    from app.domains.sourcing_risk.discovery_service import stage_external_candidates
+
+    db = get_db()
+    links = list(db["gaishi_supplier_category_links"].find({"category": category}).limit(limit))
+    if not links:
+        return []
+
+    profile_ids = [link["supplier_profile_id"] for link in links if link.get("supplier_profile_id")]
+    profiles = {
+        profile["_id"]: profile
+        for profile in db["gaishi_supplier_profiles"].find({"_id": {"$in": profile_ids}})
+    }
+    candidates: list[dict[str, Any]] = []
+    requested_region = str(req_doc.get("region_required") or "").strip()
+    for link in links:
+        profile = profiles.get(link.get("supplier_profile_id"))
+        if not profile:
+            continue
+        location = str(profile.get("location") or "")
+        if requested_region and requested_region not in location:
+            continue
+        main_products = str(profile.get("main_products") or "")
+        reasons = [f"盖世品类：{category}"]
+        if location:
+            reasons.append(f"所在地：{location}")
+        candidates.append({
+            "supplier_name": profile.get("company_name", ""),
+            "categories": [category],
+            "regions": [location] if location else [],
+            "capabilities": ([{"category": category, "product_name": main_products}] if main_products else []),
+            "source": "gasgoo_manual_export",
+            "source_type": "gasgoo_manual_export",
+            "source_title": "盖世汽车人工获取候选",
+            "source_reference": f"gasgoo:{link.get('_id')}",
+            "source_references": [f"文件：{link.get('source_file', '')}", f"品类：{category}"],
+            "source_updated_at": profile.get("updated_at"),
+            "match_reasons": reasons,
+            "identity_status": "pending_tianyancha_review",
+            "verification_status": "pending_tianyancha_review",
+            "verification_reasons": ["需通过天眼查核验企业主体与风险信息", "需由采购确认技术能力、认证、产能与报价"],
+        })
+    return stage_external_candidates(request_id, candidates)
+
+
+def _search_internal_history_candidates(req_doc: dict[str, Any], limit: int = 10) -> list[dict[str, Any]]:
+    """Recall prior supplier relationships by exact material number or material-name term."""
+    material_query = str(req_doc.get("spec") or "").strip()
+    if not material_query:
+        return []
+
+    from app.db.mongo import get_db
+
+    query: dict[str, Any]
+    if material_query.isdigit():
+        query = {"material_number": material_query}
+    else:
+        escaped = re.escape(material_query)
+        query = {"material_name": {"$regex": escaped, "$options": "i"}}
+    rows = list(get_db()["internal_supplier_material_relations"].find(query).limit(limit * 10))
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(str(row["supplier_code"]), []).append(row)
+
+    candidates: list[dict[str, Any]] = []
+    for supplier_code, supplier_rows in grouped.items():
+        first = supplier_rows[0]
+        material_items = list(dict.fromkeys(
+            f"{row['material_number']} {row['material_name']}" for row in supplier_rows
+        ))
+        base_codes = list(dict.fromkeys(str(row["base_code"]) for row in supplier_rows))
+        candidates.append({
+            "supplier_id": None,
+            "supplier_code": supplier_code,
+            "supplier_name": first["supplier_name"],
+            "match_score": 1.0,
+            "match_reasons": [
+                f"历史供货物料：{'；'.join(material_items[:3])}",
+                f"历史基地：{'、'.join(base_codes[:5])}",
+            ],
+            "categories": list(dict.fromkeys(str(row["material_name"]) for row in supplier_rows)),
+            "capabilities": [{"category": row["material_name"], "product_name": row["material_name"]} for row in supplier_rows[:3]],
+            "contacts": [],
+            "source": "internal_supplier_material_list",
+            "source_stage": "local_history",
+            "source_reference": ",".join(str(row["_id"]) for row in supplier_rows[:3]),
+            "source_updated_at": first.get("updated_at"),
+            "content": " ".join([first["supplier_name"], *material_items, *base_codes]),
+            "metadata": {"categories": list(dict.fromkeys(str(row["material_name"]) for row in supplier_rows)), "source": "internal_supplier_material_list"},
+        })
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+_GAISHI_CATEGORY_HINTS: tuple[tuple[str, str], ...] = (
+    ("制动", "制动系统"), ("线束", "线束"), ("安全气囊", "安全气囊"),
+    ("座椅", "座椅"), ("轮胎", "轮胎"), ("后视镜", "后视镜总成"),
+    ("车灯", "前照灯"), ("尾灯", "尾灯"), ("电池", "动力电池"),
+)
+
+
+def discover_read_only_sourcing_candidates(requirement: dict[str, Any]) -> dict[str, Any]:
+    """Return internal-history and Gasgoo leads for the read-only Harness path."""
+    material = str(
+        requirement.get("material") or requirement.get("product") or requirement.get("specification") or ""
+    ).strip()
+    category = str(requirement.get("category") or "").strip()
+    history_candidates = _search_internal_history_candidates({"spec": material})
+    category_source = " ".join([category, material, *[
+        str(item.get("categories", [""])[0]) for item in history_candidates if item.get("categories")
+    ]])
+    gaishi_category = next((mapped for hint, mapped in _GAISHI_CATEGORY_HINTS if hint in category_source), category)
+    external_candidates = _stage_gaishi_candidates(
+        {"category": gaishi_category, "region_required": requirement.get("region") or ""}, ""
+    )
+    return {
+        "local_candidates": history_candidates,
+        "external_candidates": external_candidates,
+        "source": "internal_history_and_gasgoo" if history_candidates or external_candidates else "not_found",
+        "source_order": ["internal_history", "gasgoo_manual_export"],
+        "external_status": "gasgoo_manual_export" if external_candidates else "not_found",
+        "gaishi_category": gaishi_category if external_candidates else None,
+    }
 
 
 def _search_terms(query_text: str) -> list[str]:

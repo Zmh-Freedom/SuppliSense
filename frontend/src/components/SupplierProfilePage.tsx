@@ -9,6 +9,7 @@ import BusinessRiskCard from './BusinessRiskCard';
 import { queryKeys } from '../query-keys';
 import type { ProfileBasicInfo, ProfileRiskSnapshotHistory, SupplierProfile } from '../types';
 import { getRiskColor } from '../riskColors';
+import RiskSummary from './RiskSummary';
 
 type ProfileTab = 'overview' | 'risk' | 'financial' | 'relationships' | 'changelog';
 type PendingAction = 'assess' | 'watch' | 'unwatch' | null;
@@ -61,7 +62,6 @@ export default function SupplierProfilePage() {
   if (error || !data) return <ProfileLoadError onBack={() => navigate('/suppliers')} />;
 
   const { basic_info: basicInfo, risk, financial, sentiment, compliance, esg, alerts, relationships, changelog } = data;
-  const riskScore = risk?.risk_score ?? 0;
   const riskLevel = risk?.risk_level ?? '未知';
   const isBusy = assessMutation.isPending || watchMutation.isPending;
 
@@ -79,7 +79,7 @@ export default function SupplierProfilePage() {
   return <div className="max-w-5xl mx-auto py-6 px-4">
     <button onClick={() => navigate('/suppliers')} className="text-sm text-[var(--color-primary-bg)] hover:underline mb-3 inline-block">&larr; 返回供应商列表</button>
     <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm mb-5">
-      <div className="flex items-start justify-between flex-wrap gap-4"><div className="flex-1 min-w-0"><h1 className="text-xl font-bold" style={{ color: '#333' }}>{basicInfo.name}</h1><div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs" style={{ color: '#555' }}>{basicInfo.unified_code && <span>统一社会信用代码：{basicInfo.unified_code}</span>}{basicInfo.legal_person && <span>法定代表人：{basicInfo.legal_person}</span>}{basicInfo.reg_status && <span>经营状态：{basicInfo.reg_status}</span>}</div><div className="flex flex-wrap gap-2 mt-2"><StatusBadge status={basicInfo.status} />{basicInfo.scale && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{basicInfo.scale}</span>}{risk?.in_watchlist && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">监控中</span>}</div></div><div className="flex flex-col items-center shrink-0"><div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md" style={{ background: getRiskColor(riskScore) }}>{riskScore}</div><span className="text-xs mt-1 font-semibold" style={{ color: getRiskColor(riskScore) }}>{riskLevel}</span></div></div>
+      <div className="flex items-start justify-between flex-wrap gap-4"><div className="flex-1 min-w-0"><h1 className="text-xl font-bold" style={{ color: '#333' }}>{basicInfo.name}</h1><div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-xs" style={{ color: '#555' }}>{basicInfo.unified_code && <span>统一社会信用代码：{basicInfo.unified_code}</span>}{basicInfo.legal_person && <span>法定代表人：{basicInfo.legal_person}</span>}{basicInfo.reg_status && <span>经营状态：{basicInfo.reg_status}</span>}</div><div className="flex flex-wrap gap-2 mt-2"><StatusBadge status={basicInfo.status} />{basicInfo.scale && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">{basicInfo.scale}</span>}</div></div><RiskSummary score={risk?.risk_score} level={riskLevel} inWatchlist={risk?.in_watchlist} compact /></div>
       <div className="flex flex-wrap gap-2 mt-4"><button onClick={() => setPendingAction('assess')} className="text-xs px-3 py-1.5 rounded-lg border border-[var(--color-border)] hover:bg-gray-50">重新评估</button><button onClick={() => setPendingAction(risk?.in_watchlist ? 'unwatch' : 'watch')} className="text-xs px-3 py-1.5 rounded-lg bg-[var(--color-primary-bg)] text-white hover:opacity-90">{risk?.in_watchlist ? '移出监控' : '加入监控'}</button></div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-5 pt-4 border-t border-[var(--color-border)]"><InfoCard label="注册资本" value={basicInfo.registered_capital ?? '-'} /><InfoCard label="成立时间" value={formatEstablishTime(basicInfo.establish_time)} /><InfoCard label="行业" value={basicInfo.industry ?? basicInfo.categories?.[0] ?? '-'} meta={formatSource(basicInfo.industry_source, basicInfo.industry_updated_at)} /><InfoCard label="地区" value={basicInfo.regions?.[0] ?? '-'} /></div>
     </section>

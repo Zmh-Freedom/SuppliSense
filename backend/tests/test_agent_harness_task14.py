@@ -29,6 +29,25 @@ def test_harness_requirement_extracts_broad_category_without_inventing_constrain
     assert result["requirement"]["must_have"] == []
 
 
+def test_harness_requirement_extracts_material_number_for_read_only_sourcing(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+
+    result = resolve_harness_requirement("帮我为物料号 23748163 寻找供应商")
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["material"] == "23748163"
+    assert result["requirement"]["specification"] == "23748163"
+
+
+def test_harness_requirement_extracts_history_material_name(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+
+    result = resolve_harness_requirement("后轮制动鼓有哪些历史合作供应商？再补充盖世候选")
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["material"] == "后轮制动鼓"
+
+
 def test_harness_binds_requirement_to_current_task_before_planning(monkeypatch) -> None:
     monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
     context = {

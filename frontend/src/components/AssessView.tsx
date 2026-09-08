@@ -13,6 +13,7 @@ import { useWatchlist } from '../hooks';
 import SentimentPanel from './SentimentPanel';
 import WatchlistPanel from './WatchlistPanel';
 import { getRiskColor, getRiskBg, getRiskLevel } from '../riskColors';
+import RiskSummary from './RiskSummary';
 import Skeleton, { SkeletonChart } from './Skeleton';
 
 const LEVEL_COLOR: Record<string, string> = {
@@ -106,9 +107,6 @@ function AssessContent({ initialName }: { initialName: string }) {
     assessMutation.mutate(name);
   };
 
-  const score = data?.risk_score ?? 0;
-  const color = getRiskColor(score);
-  const bg = getRiskBg(score);
   const rd = data?.risk_detail;
   const fin = data?.financial;
 
@@ -193,20 +191,13 @@ function AssessContent({ initialName }: { initialName: string }) {
       {data && (
         <>
           {/* Score header + Agent button */}
-          <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 mb-4 shadow-sm" style={{ background: bg }}>
-            <div className="flex items-center gap-4 flex-wrap">
-              <div className="w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg shrink-0" style={{ background: color }}>
-                {data.risk_score}
-              </div>
-              <span className="text-lg font-semibold" style={{ color }}>{data.risk_level}</span>
-              {data.is_listed && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-gray-500 shrink-0">上市</span>
-              )}
-              <div className="flex-1 min-w-[120px] bg-[var(--color-border)] h-2 rounded-full">
-                <div className="h-full rounded-full transition-all duration-700" style={{ width: `${data.risk_score}%`, background: color }} />
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
+          <RiskSummary score={data.risk_score} level={data.risk_level} isListed={data.is_listed} meta={meta && (
+            <span className={`text-[10px] whitespace-nowrap ${meta.isStale ? 'text-amber-500' : 'text-gray-400'}`}>
+              {data.cache_age_hours != null && data.cache_age_hours < 1 ? `更新于 ${Math.round(data.cache_age_hours * 60)} 分钟前` : `更新于 ${data.cache_age_hours?.toFixed(1) ?? '?'} 小时前`}
+              {meta.isStale && <button onClick={handleRefresh} disabled={querying === 'background'} className="ml-1 text-amber-600 hover:text-amber-800 underline disabled:opacity-50">{querying === 'background' ? '刷新中…' : '刷新'}</button>}
+            </span>
+          )} actions={(
+            <>
                 <button
                   onClick={() => navigate(`/chat?q=${encodeURIComponent(`请对${name}进行全面深度分析，包括风险评估、ESG、舆情、合规和传染风险`)}`)}
                   className="text-xs border border-[var(--color-primary-bg)]/30 text-[var(--color-primary-bg)] rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-bg)]/10 transition-colors inline-flex items-center gap-1 min-h-[36px]"
@@ -214,26 +205,12 @@ function AssessContent({ initialName }: { initialName: string }) {
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
                   Agent 分析
                 </button>
-                {meta && (
-                  <span className={`text-[10px] whitespace-nowrap ${meta.isStale ? 'text-amber-500' : 'text-gray-400'}`}>
-                    {data.cache_age_hours != null && data.cache_age_hours < 1
-                      ? `更新于 ${Math.round(data.cache_age_hours * 60)} 分钟前`
-                      : `更新于 ${data.cache_age_hours?.toFixed(1) ?? '?'} 小时前`}
-                    {meta.isStale && (
-                      <button onClick={handleRefresh} disabled={querying === 'background'}
-                        className="ml-1 text-amber-600 hover:text-amber-800 underline disabled:opacity-50">
-                        {querying === 'background' ? '刷新中…' : '刷新'}
-                      </button>
-                    )}
-                  </span>
-                )}
                 <a href={`/api/v1/report/excel/${encodeURIComponent(name)}`}
                   className="text-xs bg-[#16a34a] text-white rounded-lg px-3 py-1.5 hover:bg-green-700 transition-colors no-underline inline-flex items-center min-h-[36px]">导出 Excel</a>
                 <a href={`/api/v1/report/html/${encodeURIComponent(name)}`} target="_blank" rel="noopener noreferrer"
                   className="text-xs bg-[var(--color-primary-bg)] text-white rounded-lg px-3 py-1.5 hover:bg-[var(--color-primary-hover)] transition-colors no-underline inline-flex items-center min-h-[36px]">导出报告</a>
-              </div>
-            </div>
-          </div>
+            </>
+          )} />
 
           {/* Sub-tabs */}
           <div className="flex gap-1 mb-4 border-b border-[var(--color-border)]">

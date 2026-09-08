@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactNode } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import AuthGuard from './components/AuthGuard';
 import LoginPage from './components/LoginPage';
@@ -7,7 +7,6 @@ import LoginPage from './components/LoginPage';
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const AssessView = lazy(() => import('./components/AssessView'));
 const ChatView = lazy(() => import('./components/ChatView'));
-const ContagionView = lazy(() => import('./components/ContagionView'));
 const Settings = lazy(() => import('./components/Settings'));
 const SourcingPage = lazy(() => import('./components/SourcingPage'));
 const SupplierLibraryPage = lazy(() => import('./components/SupplierLibraryPage'));
@@ -44,8 +43,8 @@ export const router = createBrowserRouter([
       { path: 'suppliers', element: <Lazy><SupplierLibraryPage /></Lazy> },
       { path: 'suppliers/:id', element: <Lazy><SupplierProfilePage /></Lazy> },
       { path: 'chat', element: <Lazy><ChatView /></Lazy> },
-      { path: 'contagion', element: <Lazy><ContagionView /></Lazy> },
       { path: 'settings', element: <Lazy><Settings /></Lazy> },
     ],
   },
+  { path: '*', element: <Navigate to="/chat" replace /> },
 ]);

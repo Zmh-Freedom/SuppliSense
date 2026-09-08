@@ -156,12 +156,16 @@ def test_tool_evidence_formats_review_claims_for_business_users() -> None:
             "settlement_share": 0.00001057,
             "latest_actual_settlement_amount": 60430.19,
             "latest_received_record_count": 0,
+            "settlement_change_ratio": -0.9991,
+            "missing_month_count": 3,
+            "settlement_without_receipts_month_count": 2,
         },
         tool_name="assess_business_risk",
         entity_id="entity:青岛三祥科技股份有限公司",
         dimension="business_risk",
         claim_fields=[
             "settlement_share", "latest_actual_settlement_amount", "latest_received_record_count",
+            "settlement_change_ratio", "missing_month_count", "settlement_without_receipts_month_count",
         ],
         claim_subject="青岛三祥科技股份有限公司",
     )
@@ -175,6 +179,9 @@ def test_tool_evidence_formats_review_claims_for_business_users() -> None:
         "青岛三祥科技股份有限公司 同月实结算金额占比：<0.1%",
         "青岛三祥科技股份有限公司 最新月实结算金额：60,430.19 元",
         "青岛三祥科技股份有限公司 最新月收货记录数：0 条",
+        "青岛三祥科技股份有限公司 最新月实结算金额环比变化：-99.9%",
+        "青岛三祥科技股份有限公司 最近 12 个月缺失交易月份数：3 个月",
+        "青岛三祥科技股份有限公司 结算与收货记录不一致月份数：2 个月",
     ]
     assert financial["claims"][0]["value"] == 0.0133
     assert business["claims"][0]["fact_path"] == "settlement_share"

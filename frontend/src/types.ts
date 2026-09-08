@@ -79,6 +79,8 @@ export interface AgentClaim {
   dimension: string;
   statement: string;
   value?: string | number | boolean | null;
+  fact_path?: string | null;
+  unit?: string | null;
   evidence_refs: string[];
   confidence: number;
   validation_status: 'supported' | 'partial' | 'conflicting' | 'unsupported';
@@ -348,6 +350,10 @@ export interface SourcingRiskCandidate {
   contact_email_source?: string;
   contact_enrichment_status?: 'partial' | 'not_found' | string;
   identity_status?: string;
+  verification_status?: string;
+  verification_reasons?: string[];
+  risk_score?: number | null;
+  risk_level?: string | null;
   identity_review?: boolean;
   identity_candidates?: SourcingRiskIdentityCandidate[];
   evidence?: SourcingRiskEvidence[];

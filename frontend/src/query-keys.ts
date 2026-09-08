@@ -7,8 +7,6 @@ export const queryKeys = {
   riskTrend: (name: string) => ['trend', 'risk', name] as const,
   sentimentDashboard: ['sentiment', 'dashboard'] as const,
   sentimentDetail: (name: string) => ['sentiment', 'detail', name] as const,
-  contagionSummary: ['p2', 'contagion'] as const,
-  contagionGraph: (name: string) => ['p2', 'contagion', name, 'graph'] as const,
   esgList: ['p2', 'esg'] as const,
   esgDetail: (name: string) => ['p2', 'esg', name] as const,
   pmi: ['analysis', 'macro', 'pmi'] as const,
