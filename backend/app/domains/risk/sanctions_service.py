@@ -173,14 +173,20 @@ def check_sanctions(company_name: str) -> dict:
 
 def get_sanctions_dashboard() -> dict:
     """制裁筛查总览。"""
-    db = get_db()
-    companies = [d["company_name"] for d in db["watchlist"].find()]
+    from app.domains.alert.service import get_watchlist_targets
+
+    targets = get_watchlist_targets()
+    companies = [target.get("company_name", "") for target in targets]
 
     results = []
     for name in companies:
         r = check_sanctions(name)
         results.append({
             "company_name": name,
+            "monitor_target_id": next(
+                (target.get("monitor_target_id") for target in targets if target.get("company_name") == name),
+                None,
+            ),
             "sanctions_score": r["sanctions_score"],
             "sanctions_level": r["sanctions_level"],
             "match_count": r["match_count"],

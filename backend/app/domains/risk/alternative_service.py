@@ -45,20 +45,32 @@ def _same_industry(industry1: str, industry2: str) -> bool:
 def find_alternatives(company_name: str, limit: int = 5) -> dict:
     """为高风险供应商寻找替代企业。"""
     db = get_db()
+    from app.domains.alert.service import get_watchlist_targets
+
+    targets = get_watchlist_targets()
+    targets_by_name = {
+        target.get("company_name"): target
+        for target in targets
+        if target.get("company_name")
+    }
 
     # get company info
     profile = get_baseinfo(company_name)
     source_industry = _get_industry(company_name)
 
     # get current risk score
-    snap = db["alert_snapshots"].find_one(
-        {"company_name": company_name}, sort=[("checked_at", -1)]
+    source_target = targets_by_name.get(company_name, {})
+    snap_query = (
+        {"monitor_target_id": source_target.get("monitor_target_id")}
+        if source_target.get("monitor_target_id")
+        else {"company_name": company_name}
     )
+    snap = db["alert_snapshots"].find_one(snap_query, sort=[("checked_at", -1)])
     source_score = snap.get("risk_score", 0) if snap else None
 
     # find all watchlist companies in same/similar industry
     candidates = []
-    all_watched = [d["company_name"] for d in db["watchlist"].find()]
+    all_watched = list(targets_by_name)
 
     for name in all_watched:
         if name == company_name:
@@ -72,9 +84,13 @@ def find_alternatives(company_name: str, limit: int = 5) -> dict:
             continue
 
         # get risk score
-        s = db["alert_snapshots"].find_one(
-            {"company_name": name}, sort=[("checked_at", -1)]
+        target = targets_by_name.get(name, {})
+        query = (
+            {"monitor_target_id": target.get("monitor_target_id")}
+            if target.get("monitor_target_id")
+            else {"company_name": name}
         )
+        s = db["alert_snapshots"].find_one(query, sort=[("checked_at", -1)])
         score = s.get("risk_score", 50) if s else 50
         level = s.get("risk_level", "未知") if s else "未知"
 
@@ -84,6 +100,8 @@ def find_alternatives(company_name: str, limit: int = 5) -> dict:
             "risk_score": score,
             "risk_level": level,
             "source": "watchlist",
+            "monitor_target_id": target.get("monitor_target_id"),
+            "target_type": target.get("target_type"),
         })
 
     # if not enough candidates, search Tianyancha baseinfo
@@ -136,19 +154,27 @@ def find_alternatives(company_name: str, limit: int = 5) -> dict:
 def get_alternative_dashboard() -> dict:
     """全局替代建议看板：找出所有高风险企业并为它们推荐替代。"""
     db = get_db()
-    companies = [d["company_name"] for d in db["watchlist"].find()]
+    from app.domains.alert.service import get_watchlist_targets
+
+    targets = get_watchlist_targets()
+    companies = [target.get("company_name", "") for target in targets]
 
     high_risk_companies = []
-    for name in companies:
-        snap = db["alert_snapshots"].find_one(
-            {"company_name": name}, sort=[("checked_at", -1)]
+    for target in targets:
+        name = target.get("company_name", "")
+        query = (
+            {"monitor_target_id": target.get("monitor_target_id")}
+            if target.get("monitor_target_id")
+            else {"company_name": name}
         )
+        snap = db["alert_snapshots"].find_one(query, sort=[("checked_at", -1)])
         if snap and snap.get("risk_score", 0) >= 60:
             alt = find_alternatives(name, limit=3)
             high_risk_companies.append({
                 "company_name": name,
                 "risk_score": snap.get("risk_score", 0),
                 "risk_level": snap.get("risk_level", "未知"),
+                "monitor_target_id": target.get("monitor_target_id"),
                 "alternatives": alt["alternatives"],
             })
 

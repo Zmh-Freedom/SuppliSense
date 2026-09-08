@@ -197,12 +197,18 @@ def _get_admin_count(company_name: str) -> int:
 
 def assess_all_esg() -> list[dict]:
     """评估所有监控企业的 ESG 风险。"""
-    db = get_db()
-    companies = [doc["company_name"] for doc in db["watchlist"].find()]
+    from app.domains.alert.service import get_watchlist_targets
+
+    targets = get_watchlist_targets()
     results = []
-    for name in companies:
+    for target in targets:
+        name = target.get("company_name", "")
         r = assess_esg(name)
         if r:
-            results.append(r)
+            results.append({
+                **r,
+                "monitor_target_id": target.get("monitor_target_id"),
+                "target_type": target.get("target_type"),
+            })
     results.sort(key=lambda x: x["total_score"], reverse=True)
     return results

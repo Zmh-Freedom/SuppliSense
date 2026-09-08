@@ -88,9 +88,12 @@ def send_alert_card(company_name: str, severity: str, changes: list[dict]) -> bo
 def send_daily_digest() -> None:
     """生成并发送每日简报"""
     from app.db.mongo import get_db
+    from app.domains.alert.service import get_watchlist_targets
 
     db = get_db()
-    companies = [doc["company_name"] for doc in db["watchlist"].find()]
+    targets = get_watchlist_targets()
+    companies = [target.get("company_name", "") for target in targets if target.get("company_name")]
+    target_ids = [target["monitor_target_id"] for target in targets if target.get("monitor_target_id")]
     if not companies:
         send_text("📊 供应商风险日报\n\n暂无监控企业，请在系统中添加。")
         return
@@ -100,11 +103,18 @@ def send_daily_digest() -> None:
 
     # batch query latest snapshots and sentiments
     snapshots = list(db["alert_snapshots"].aggregate([
-        {"$match": {"company_name": {"$in": companies}}},
+        {"$match": {"$or": [
+            {"monitor_target_id": {"$in": target_ids}},
+            {"company_name": {"$in": companies}},
+        ]}},
         {"$sort": {"checked_at": -1}},
-        {"$group": {"_id": "$company_name", "doc": {"$first": "$$ROOT"}}},
+        {"$group": {"_id": {"$ifNull": ["$monitor_target_id", "$company_name"]}, "doc": {"$first": "$$ROOT"}}},
     ]))
-    snapshot_map = {s["_id"]: s["doc"] for s in snapshots}
+    snapshot_map = {
+        key: value
+        for item in snapshots
+        for key, value in ((str(item["_id"]), item["doc"]), (item["doc"].get("company_name", ""), item["doc"]))
+    }
 
     sentiments = list(db["sentiment_results"].aggregate([
         {"$match": {"company_name": {"$in": companies}}},

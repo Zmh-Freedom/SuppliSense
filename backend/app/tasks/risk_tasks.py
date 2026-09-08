@@ -28,18 +28,23 @@ def assess_risk_async(company_name: str) -> dict:
         }
 
 
-def refresh_company_async(company_name: str) -> dict:
+def refresh_company_async(
+    company_name: str,
+    *,
+    monitor_target_id: str | None = None,
+) -> dict:
     """Run Tianyancha refresh in background (paid)."""
     from app.domains.alert.service import detect_changes
     from app.services.tianyancha_client import fetch_company
 
     try:
         fetch_company(company_name)
-        changes = detect_changes(company_name)
+        changes = detect_changes(company_name, monitor_target_id=monitor_target_id)
 
         return {
             "status": "success",
             "company_name": company_name,
+            "monitor_target_id": monitor_target_id,
             "changes": changes,
         }
     except Exception as e:
@@ -53,16 +58,19 @@ def refresh_company_async(company_name: str) -> dict:
 
 def batch_refresh_all() -> dict:
     """Batch refresh all watched companies (paid)."""
-    from app.domains.alert.service import get_watchlist
+    from app.domains.alert.service import get_watchlist_targets
 
-    companies = get_watchlist()
+    targets = get_watchlist_targets()
     results = []
-    for company in companies:
-        results.append(refresh_company_async(company))
+    for target in targets:
+        results.append(refresh_company_async(
+            target.get("company_name", ""),
+            monitor_target_id=target.get("monitor_target_id"),
+        ))
 
     return {
         "status": "completed",
-        "total": len(companies),
+        "total": len(targets),
         "results": results,
     }
 
