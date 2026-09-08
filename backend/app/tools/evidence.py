@@ -14,6 +14,7 @@ def attach_tool_evidence(
     dimension: str,
     source_type: str = "domain_service_result",
     claim_fields: list[str] | None = None,
+    claim_subject: str | None = None,
 ) -> dict[str, Any]:
     """Attach auditable evidence without changing the domain service contract.
 
@@ -56,7 +57,7 @@ def attach_tool_evidence(
             source_type=source_type,
             fallback_collected_at=now,
         )
-        _append_claims(result, claim_fields, result["evidence_records"])
+        _append_claims(result, claim_fields, result["evidence_records"], claim_subject)
         return result
     from app.graphs.agent_core.evidence_ledger import build_evidence_record
 
@@ -75,7 +76,7 @@ def attach_tool_evidence(
             if key not in {"evidence_records", "claims", "evidence", "evidence_refs"}
         },
     ).model_dump(mode="json")]
-    _append_claims(result, claim_fields, result["evidence_records"])
+    _append_claims(result, claim_fields, result["evidence_records"], claim_subject)
     return result
 
 
@@ -160,7 +161,10 @@ def _parse_datetime(value: Any) -> datetime:
 
 
 def _append_claims(
-    result: dict[str, Any], claim_fields: list[str] | None, records: list[dict[str, Any]]
+    result: dict[str, Any],
+    claim_fields: list[str] | None,
+    records: list[dict[str, Any]],
+    claim_subject: str | None = None,
 ) -> None:
     """Create field-bound claims only for facts present in the same evidence."""
     if not claim_fields or not records:
@@ -171,7 +175,13 @@ def _append_claims(
     if not isinstance(claims, list):
         claims = []
         result["claims"] = claims
-    subject = str(result.get("company_name") or result.get("supplier_reference") or "企业")
+    subject = str(
+        claim_subject
+        or result.get("company_name")
+        or result.get("supplier_name")
+        or result.get("supplier_reference")
+        or "企业"
+    )
     for path in claim_fields:
         value = _read_path(facts, path)
         if value is _MISSING or value is None:
@@ -180,13 +190,64 @@ def _append_claims(
             "claim_id": f"{record['evidence_id']}:claim:{path}",
             "entity_id": record["entity_id"],
             "dimension": record["dimension"],
-            "statement": f"{subject} {path} 为 {value}",
+            "statement": _claim_statement(subject, path, value),
             "value": value,
             "fact_path": path,
             "operator": "eq",
             "evidence_refs": [record["evidence_id"]],
             "confidence": 0.85,
         })
+
+
+_CLAIM_LABELS = {
+    "risk_score": "综合风险评分",
+    "risk_level": "风险等级",
+    "revenue_growth": "营业收入同比增长率",
+    "net_profit_growth": "净利润同比增长率",
+    "debt_ratio": "资产负债率",
+    "cash_flow": "每股经营现金流",
+    "roe": "净资产收益率",
+    "net_profit_margin": "净利率",
+    "current_ratio": "流动比率",
+    "quick_ratio": "速动比率",
+    "exposure_level": "内部采购敞口等级",
+    "settlement_share": "同月实结算金额占比",
+    "latest_actual_settlement_amount": "最新月实结算金额",
+    "latest_received_record_count": "最新月收货记录数",
+    "comparison_supplier_count": "同月可比较供应商数量",
+}
+_PERCENTAGE_CLAIMS = {
+    "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",
+}
+
+
+def _claim_statement(subject: str, path: str, value: Any) -> str:
+    label = _CLAIM_LABELS.get(path, path)
+    return f"{subject} {label}：{_format_claim_value(path, value)}"
+
+
+def _format_claim_value(path: str, value: Any) -> str:
+    if path in _PERCENTAGE_CLAIMS and isinstance(value, (int, float)):
+        return f"{value * 100:.1f}%"
+    if path == "settlement_share" and isinstance(value, (int, float)):
+        return "<0.1%" if 0 < value < 0.001 else f"{value * 100:.1f}%"
+    if path == "latest_actual_settlement_amount" and isinstance(value, (int, float)):
+        return f"{value:,.2f} 元"
+    if path == "latest_received_record_count" and isinstance(value, (int, float)):
+        return f"{value:,.0f} 条"
+    if path == "comparison_supplier_count" and isinstance(value, (int, float)):
+        return f"{value:,.0f} 家"
+    if path in {"current_ratio", "quick_ratio"} and isinstance(value, (int, float)):
+        return f"{value:.2f}"
+    if path == "cash_flow" and isinstance(value, (int, float)):
+        return f"{value:.2f} 元/股"
+    if path == "exposure_level":
+        return {"high": "高敞口", "medium": "中敞口", "low": "低敞口", "unknown": "暂无法判断"}.get(
+            str(value), str(value)
+        )
+    if path == "risk_score" and isinstance(value, (int, float)):
+        return f"{value:g}/100"
+    return str(value)
 
 
 _MISSING = object()

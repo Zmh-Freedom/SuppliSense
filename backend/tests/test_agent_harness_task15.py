@@ -138,6 +138,48 @@ def test_tool_evidence_is_complete_and_claim_is_supported() -> None:
     assert all(item.claim.validation_status == "supported" for item in validation)
 
 
+def test_tool_evidence_formats_review_claims_for_business_users() -> None:
+    financial = attach_tool_evidence(
+        {
+            "company_name": "青岛三祥科技股份有限公司",
+            "revenue_growth": 0.0133,
+            "net_profit_growth": -0.181,
+            "debt_ratio": 0.4302,
+        },
+        tool_name="query_financials",
+        entity_id="entity:青岛三祥科技股份有限公司",
+        dimension="financial",
+        claim_fields=["revenue_growth", "net_profit_growth", "debt_ratio"],
+    )
+    business = attach_tool_evidence(
+        {
+            "settlement_share": 0.00001057,
+            "latest_actual_settlement_amount": 60430.19,
+            "latest_received_record_count": 0,
+        },
+        tool_name="assess_business_risk",
+        entity_id="entity:青岛三祥科技股份有限公司",
+        dimension="business_risk",
+        claim_fields=[
+            "settlement_share", "latest_actual_settlement_amount", "latest_received_record_count",
+        ],
+        claim_subject="青岛三祥科技股份有限公司",
+    )
+
+    assert [item["statement"] for item in financial["claims"]] == [
+        "青岛三祥科技股份有限公司 营业收入同比增长率：1.3%",
+        "青岛三祥科技股份有限公司 净利润同比增长率：-18.1%",
+        "青岛三祥科技股份有限公司 资产负债率：43.0%",
+    ]
+    assert [item["statement"] for item in business["claims"]] == [
+        "青岛三祥科技股份有限公司 同月实结算金额占比：<0.1%",
+        "青岛三祥科技股份有限公司 最新月实结算金额：60,430.19 元",
+        "青岛三祥科技股份有限公司 最新月收货记录数：0 条",
+    ]
+    assert financial["claims"][0]["value"] == 0.0133
+    assert business["claims"][0]["fact_path"] == "settlement_share"
+
+
 def test_harness_entity_id_is_used_for_domain_tool_evidence() -> None:
     def risk_tool(company_name: str) -> dict:
         return attach_tool_evidence(

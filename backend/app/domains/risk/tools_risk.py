@@ -21,6 +21,7 @@ def assess_risk(company_name: str) -> dict:
         dimension="risk",
         source_type="risk_service_result",
         claim_fields=["risk_score", "risk_level"],
+        claim_subject=company_name,
     )
 
 
@@ -88,7 +89,7 @@ def assess_business_risk(supplier_reference: str, category_code: str = "") -> di
     ), tool_name="assess_business_risk", entity_id=f"entity:{supplier_reference}", dimension="business_risk", claim_fields=[
         "exposure_level", "settlement_share", "latest_actual_settlement_amount",
         "latest_received_record_count", "comparison_supplier_count",
-    ])
+    ], claim_subject=supplier_reference)
 
 
 @tool
