@@ -1895,11 +1895,11 @@
 ## ISS-20260908-036 监控清单仍以企业名称作为主键，未对齐 Agent 稳定实体
 
 - 发现日期：2026-09-08
-- 状态：已修复（待提交）
+- 状态：已修复
 - 优先级：P0
 - 现象：风险监控清单、快照比较和 Agent 监控写操作仍以 `company_name` 作为主要输入和关联条件；`/alert/watchlist` 只返回企业名称，外部候选的 `candidate_id`、正式供应商的 `supplier_id` 与企业 `company_id` 没有进入统一监控对象。
 - 影响：企业更名或名称歧义会断开历史；外部待核验候选无法安全进入监控；Agent、供应商库、风险快照和告警无法共享稳定实体；监控范围和数据覆盖也无法被准确展示。
 - 根因：监控清单先于企业主数据和 Harness 实体契约设计，旧链路把企业名称、企业主体、供应商关系和监控订阅混为一体。
 - 修复方案：在兼容保留旧 `companies` 字段和旧名称参数的前提下，引入 `monitor_target_id`、`target_type`、`supplier_id`、`candidate_id`、`company_id` 等字段；后端返回完整监控对象；Agent 监控写操作使用稳定实体 ID 并继续经过审批；风险快照、告警和 Agent 证据带上监控对象引用；旧名称接口仅作为兼容适配。
 - 验证结果：新增 `backend/tests/test_monitor_target_migration.py` 覆盖稳定监控对象写入、按 `monitor_target_id` 分隔快照版本、告警身份回传和 Supervisor Agent 证据引用；该文件 4 项通过。后端全量 858 项中 857 项通过，另 1 项既有 outbox 时间窗口测试首次运行偶发越界，单独重跑通过；前端 59 项测试、lint、TypeScript、build、`git diff --check` 通过。
-- 关联提交：待处理。
+- 关联提交：`883038b1 feat: migrate monitoring to stable target identities`。
