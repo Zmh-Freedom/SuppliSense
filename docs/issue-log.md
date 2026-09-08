@@ -1914,7 +1914,7 @@
 - 根因：开发环境的 WatchFiles 热重载未拾取本轮跨文件变更，旧进程退出后没有重新提供 8002 服务；不是监控摘要代码导入错误。
 - 修复方案：手动重启后端并以非热重载方式完成本轮真实验收；保留后续开发环境热重载稳定性排查作为独立运维改进。
 - 验证结果：后端在 `127.0.0.1:8002/health/ready` 返回 200，MongoDB、Redis、PostgreSQL 和 Agent Checkpointer 均为 `ok`；登录后总览正常加载。
-- 关联提交：待处理。
+- 关联提交：`4877db25 feat: turn risk monitoring into procurement review workbench`。
 
 ## ISS-20260908-039 监控对象身份覆盖状态与身份明细不一致
 
@@ -1926,7 +1926,7 @@
 - 根因：数据覆盖计算把 `target_type=company` 直接视为身份可用，没有遵循 `identity_status` 的实际状态。
 - 修复方案：主体身份只有在 `identity_status=verified` 时计入可用覆盖；未解析和候选状态分别显示待核验，不再提高覆盖率。
 - 验证结果：主体身份只有 `identity_status=verified` 时计入数据覆盖；真实旧企业对象返回“主体身份：待核验”、覆盖率 `3/5`，下一步为“完成主体核验”。定向测试和后端全量测试通过。
-- 关联提交：待处理。
+- 关联提交：`4877db25 feat: turn risk monitoring into procurement review workbench`。
 
 ## ISS-20260908-037 风险监控仍停留在企业名称清单，缺少采购复核工作台语义
 
@@ -1938,4 +1938,4 @@
 - 根因：稳定身份迁移完成了数据关联层，但没有同步完成监控对象的产品语义、状态模型和总览工作台交互；部分旧消费者仍围绕企业名称组织结果。
 - 修复方案：为监控对象补齐可计算的数据覆盖、数据新鲜度和风险变化状态；将监控清单改为采购复核工作台，展示对象类型、身份状态、数据覆盖、风险变化和下一步动作；将“数据不足”与“稳定”分开；保留旧字段兼容，但新界面只使用完整监控对象。
 - 验证结果：`/api/v1/alert/dashboard` 和 `/api/v1/alert/watchlist` 已返回完整监控对象摘要，包含 `identity_status`、`data_coverage`、`risk_change`、`last_checked_at` 和 `next_action`；无历史快照对象返回“暂无快照”，单条快照返回“数据不足”。总览页面已改为“采购复核工作台”，真实浏览器显示 19 个监控对象及身份、覆盖和动作摘要；后端全量 864 项通过，前端测试 59 项、lint、TypeScript、build 和 `git diff --check` 通过。
-- 关联提交：待处理。
+- 关联提交：`4877db25 feat: turn risk monitoring into procurement review workbench`。
