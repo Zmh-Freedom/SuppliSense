@@ -447,6 +447,53 @@ DDL_STATEMENTS = [
             REFERENCES agent_action_proposals (run_id, id) ON DELETE CASCADE
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS monitor_review_tasks (
+        id UUID PRIMARY KEY,
+        monitor_target_id TEXT NOT NULL,
+        task_type VARCHAR(64) NOT NULL,
+        status VARCHAR(32) NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+        requested_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        approval_comment TEXT,
+        agent_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+        proposal_id UUID,
+        payload JSONB NOT NULL DEFAULT '{}',
+        result JSONB,
+        evidence_refs JSONB NOT NULL DEFAULT '[]',
+        error_code VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        approved_at TIMESTAMPTZ,
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        CHECK (status IN ('pending_approval', 'approved', 'rejected', 'executing', 'completed', 'needs_review', 'failed', 'cancelled'))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS monitor_review_task_events (
+        id UUID PRIMARY KEY,
+        task_id UUID NOT NULL REFERENCES monitor_review_tasks(id) ON DELETE CASCADE,
+        actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        event_type VARCHAR(64) NOT NULL,
+        from_status VARCHAR(32),
+        to_status VARCHAR(32),
+        payload JSONB NOT NULL DEFAULT '{}',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS monitor_review_task_evidence (
+        id UUID PRIMARY KEY,
+        task_id UUID NOT NULL REFERENCES monitor_review_tasks(id) ON DELETE CASCADE,
+        monitor_target_id TEXT NOT NULL,
+        evidence_id VARCHAR(255) NOT NULL,
+        evidence JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (task_id, evidence_id)
+    )
+    """,
 ]
 
 VERIFIED_EVIDENCE_CONDITION = """
@@ -626,6 +673,10 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_action_proposals_pending_execution "
     "ON agent_action_proposals (execution_state, created_at) WHERE execution_state = 'pending'",
     "CREATE INDEX IF NOT EXISTS idx_agent_approval_decisions_run ON agent_approval_decisions (run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_monitor_review_tasks_target_created ON monitor_review_tasks (monitor_target_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_monitor_review_tasks_status_updated ON monitor_review_tasks (status, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_monitor_review_task_events_task_created ON monitor_review_task_events (task_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_monitor_review_task_evidence_task_created ON monitor_review_task_evidence (task_id, created_at)",
 ]
 
 

@@ -70,6 +70,46 @@ export interface WatchlistData {
   targets?: MonitorTarget[];
 }
 
+export type ReviewTaskStatus =
+  | 'pending_approval'
+  | 'approved'
+  | 'rejected'
+  | 'executing'
+  | 'completed'
+  | 'needs_review'
+  | 'failed'
+  | 'cancelled'
+  | string;
+
+export interface MonitorReviewTask {
+  id: string;
+  monitor_target_id: string;
+  task_type: string;
+  status: ReviewTaskStatus;
+  version: number;
+  requested_by?: string | null;
+  approved_by?: string | null;
+  approval_comment?: string | null;
+  result?: {
+    summary?: string;
+    status?: string;
+    risk_score?: number | null;
+    risk_level?: string | null;
+    missing_dimensions?: string[];
+    [key: string]: unknown;
+  } | null;
+  evidence_refs?: string[];
+  evidence_count?: number;
+  evidence?: AgentEvidenceRecord[];
+  events?: Array<Record<string, unknown>>;
+  created_at: string;
+  updated_at: string;
+  approved_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_code?: string | null;
+}
+
 export interface MonitorTarget {
   monitor_target_id: string;
   target_type: 'formal_supplier' | 'external_candidate' | 'company' | string;
@@ -98,6 +138,7 @@ export interface MonitorTarget {
     priority: 'high' | 'medium' | 'low' | string;
     reason: string;
   };
+  review_task?: MonitorReviewTask | null;
 }
 
 export interface ChatMessage {

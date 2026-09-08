@@ -254,6 +254,13 @@ def get_watchlist_target_summaries() -> list[dict]:
         coverage = _data_coverage(db, target, latest)
         next_action = _next_action(target, latest, risk_change, coverage)
         enriched = dict(target)
+        try:
+            from app.domains.alert.review_tasks import get_latest_review_task
+            review_task = get_latest_review_task(target.get("monitor_target_id"))
+        except Exception:
+            # The monitoring dashboard remains readable while PostgreSQL is
+            # unavailable; task details will appear once the store recovers.
+            review_task = None
         enriched.update({
             "risk_score": latest.get("risk_score") if latest else None,
             "risk_level": latest.get("risk_level") if latest else None,
@@ -261,6 +268,7 @@ def get_watchlist_target_summaries() -> list[dict]:
             "data_coverage": coverage,
             "last_checked_at": latest.get("checked_at") if latest else None,
             "next_action": next_action,
+            "review_task": review_task,
         })
         summaries.append(enriched)
     return summaries

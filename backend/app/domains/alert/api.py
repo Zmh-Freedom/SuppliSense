@@ -1,15 +1,24 @@
 import asyncio
+from typing import Any, Literal
 
 from bson import ObjectId
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile
 
 from app.core.deps import get_current_user
 from app.db.mongo import get_db
 from app.domains.alert.rules import get_rules, set_rules
+from app.domains.alert.review_tasks import (
+    create_review_task,
+    decide_review_task,
+    execute_review_task,
+    get_review_task,
+    list_review_tasks,
+)
 from app.domains.risk.predictor import predict_all, predict_company
+from app.schemas.user import UserInDB
 from app.domains.alert.service import (
     add_to_watchlist,
     detect_changes,
@@ -53,6 +62,22 @@ class RulesRequest(BaseModel):
 class BatchRequest(BaseModel):
     companies: list[str] = []
     targets: list[WatchRequest] = []
+
+
+class ReviewTaskCreateRequest(BaseModel):
+    monitor_target_id: str
+    task_type: Literal["verify_identity", "assess", "review", "supplement_data", "continue_monitoring"]
+    payload: dict[str, Any] = {}
+
+
+class ReviewTaskDecisionRequest(BaseModel):
+    expected_version: int
+    decision: Literal["approved", "rejected"]
+    comment: str | None = None
+
+
+class ReviewTaskExecuteRequest(BaseModel):
+    expected_version: int
 
 
 @router.get(
@@ -163,6 +188,7 @@ async def alert_dashboard():
             "risk_change": risk_change,
             "data_coverage": target.get("data_coverage"),
             "next_action": target.get("next_action"),
+            "review_task": target.get("review_task"),
             "last_checked": last_checked,
         })
 
@@ -177,6 +203,113 @@ async def alert_dashboard():
         "targets": targets,
         "alert_count": alert_count,
     }
+
+
+@router.post(
+    "/review-tasks",
+    summary="创建采购复核任务",
+    description="为监控对象创建持久化复核任务，任务必须经过审批后才能执行。",
+)
+async def create_monitor_review_task(
+    req: ReviewTaskCreateRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(
+            create_review_task,
+            req.monitor_target_id,
+            req.task_type,
+            req.payload,
+            current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/review-tasks",
+    summary="查询采购复核任务",
+    description="按监控对象查询当前用户可访问的复核任务及任务结果。",
+)
+async def list_monitor_review_tasks(
+    monitor_target_id: str | None = Query(None, description="监控对象 ID"),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    return {
+        "tasks": await asyncio.to_thread(
+            list_review_tasks, monitor_target_id, current_user.id, current_user.role.value
+        )
+    }
+
+
+@router.get(
+    "/review-tasks/{task_id}",
+    summary="查看采购复核任务详情",
+    description="返回任务状态变更、审批、执行、证据和结果。",
+)
+async def get_monitor_review_task(
+    task_id: str = Path(..., description="复核任务 ID"),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        task = await asyncio.to_thread(
+            get_review_task, task_id, current_user.id, current_user.role.value
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if task is None:
+        raise HTTPException(status_code=404, detail="复核任务不存在")
+    return task
+
+
+@router.post(
+    "/review-tasks/{task_id}/decision",
+    summary="审批采购复核任务",
+    description="审批通过后任务进入可执行状态；拒绝会留下审批记录。",
+)
+async def decide_monitor_review_task(
+    req: ReviewTaskDecisionRequest,
+    task_id: str = Path(..., description="复核任务 ID"),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(
+            decide_review_task,
+            task_id,
+            req.expected_version,
+            req.decision,
+            req.comment,
+            current_user.id,
+            current_user.role.value,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
+    "/review-tasks/{task_id}/execute",
+    summary="执行采购复核任务",
+    description="仅执行已审批任务，并将证据和结果写回任务记录。",
+)
+async def execute_monitor_review_task(
+    req: ReviewTaskExecuteRequest,
+    task_id: str = Path(..., description="复核任务 ID"),
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(
+            execute_review_task,
+            task_id,
+            req.expected_version,
+            current_user.id,
+            current_user.role.value,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get(

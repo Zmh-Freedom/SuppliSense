@@ -15,6 +15,9 @@ interface MonitoringWorkbenchProps {
   onRefresh: () => void;
   onAnalyze: (target: MonitorTarget) => void;
   onAction: (target: MonitorTarget) => void;
+  onApprove: (target: MonitorTarget) => void;
+  onReject: (target: MonitorTarget) => void;
+  onExecuteTask: (target: MonitorTarget) => void;
   onOpen: (target: MonitorTarget) => void;
   onRemove: (target: MonitorTarget) => void;
   isAdding: boolean;
@@ -75,6 +78,9 @@ export default function MonitoringWorkbench({
   onRefresh,
   onAnalyze,
   onAction,
+  onApprove,
+  onReject,
+  onExecuteTask,
   onOpen,
   onRemove,
   isAdding,
@@ -161,7 +167,8 @@ export default function MonitoringWorkbench({
                   <th className="px-3 py-3 font-medium">身份状态</th>
                   <th className="px-3 py-3 font-medium">风险变化</th>
                   <th className="px-3 py-3 font-medium">数据覆盖</th>
-                  <th className="px-3 py-3 font-medium">下一步</th>
+              <th className="px-3 py-3 font-medium">下一步</th>
+              <th className="px-3 py-3 font-medium">复核任务</th>
                   <th className="px-3 py-3 font-medium">操作</th>
                 </tr>
               </thead>
@@ -202,8 +209,16 @@ export default function MonitoringWorkbench({
                         {coverage.missing_dimensions && coverage.missing_dimensions.length > 0 && <div className="mt-1 max-w-[150px] text-[10px] leading-4 text-gray-400">缺少：{coverage.missing_dimensions.slice(0, 2).join('、')}</div>}
                       </td>
                       <td className="px-3 py-3">
-                        <button type="button" onClick={() => onAction(target)} className={`text-left text-xs font-medium hover:underline ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</button>
+                        <button type="button" onClick={() => onAction(target)} disabled={target.review_task?.status === 'pending_approval' || target.review_task?.status === 'executing'} className={`text-left text-xs font-medium hover:underline disabled:cursor-not-allowed disabled:no-underline ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</button>
                         <div className="mt-1 max-w-[170px] text-[10px] leading-4 text-gray-400">{target.next_action?.reason || '等待更多监控数据'}</div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <TaskStatusBadge target={target} />
+                          {target.review_task?.status === 'pending_approval' && <><button type="button" onClick={() => onApprove(target)} className="rounded-md bg-emerald-600 px-2 py-1 text-[11px] text-white">批准</button><button type="button" onClick={() => onReject(target)} className="rounded-md border border-red-200 px-2 py-1 text-[11px] text-red-600">拒绝</button></>}
+                          {target.review_task?.status === 'approved' && <button type="button" onClick={() => onExecuteTask(target)} className="rounded-md bg-[var(--color-primary-bg)] px-2 py-1 text-[11px] text-white">执行</button>}
+                        </div>
+                        {target.review_task?.result?.summary && <div className="mt-1 max-w-[180px] text-[10px] leading-4 text-gray-400">{target.review_task.result.summary}</div>}
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-2 whitespace-nowrap">
@@ -221,4 +236,11 @@ export default function MonitoringWorkbench({
       </div>}
     </section>
   );
+}
+
+function TaskStatusBadge({ target }: { target: MonitorTarget }) {
+  const status = target.review_task?.status;
+  const labels: Record<string, string> = { pending_approval: '待审批', approved: '已审批', executing: '执行中', completed: '已完成', needs_review: '待人工复核', rejected: '已拒绝', failed: '执行失败', cancelled: '已取消' };
+  const tone = status === 'completed' ? 'bg-emerald-50 text-emerald-700' : status === 'failed' ? 'bg-red-50 text-red-700' : status ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-500';
+  return <span className={`rounded-full px-2 py-1 text-[11px] ${tone}`}>{labels[status || ''] || '未创建'}</span>;
 }

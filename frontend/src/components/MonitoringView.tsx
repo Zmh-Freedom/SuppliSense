@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { useDashboard, useWatchlist } from '../hooks';
-import type { MonitorTarget } from '../types';
+import type { MonitorReviewTask, MonitorTarget } from '../types';
 import MonitoringWorkbench from './MonitoringWorkbench';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
 
@@ -67,11 +67,17 @@ export default function MonitoringView() {
   const selectedTarget = monitorTargetId
     ? targets.find(target => target.monitor_target_id === decodeURIComponent(monitorTargetId))
     : undefined;
+  const detailTaskQuery = useQuery({
+    queryKey: ['monitor-review-task', selectedTarget?.review_task?.id],
+    queryFn: () => api.get<MonitorReviewTask>(`/alert/review-tasks/${selectedTarget?.review_task?.id}`),
+    enabled: Boolean(selectedTarget?.review_task?.id),
+  });
 
   const invalidateMonitoring = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
+    queryClient.invalidateQueries({ queryKey: ['monitor-review-task'] });
   };
 
   const addMutation = useMutation({
@@ -92,6 +98,36 @@ export default function MonitoringView() {
     onError: () => setToast('风险快照检查失败，请稍后重试'),
   });
 
+  const createTaskMutation = useMutation({
+    mutationFn: (target: MonitorTarget) => api.post<MonitorReviewTask>('/alert/review-tasks', {
+      monitor_target_id: target.monitor_target_id,
+      task_type: target.next_action?.code || 'review',
+      payload: {
+        target_type: target.target_type,
+        data_coverage: target.data_coverage,
+        risk_change: target.risk_change,
+      },
+    }),
+    onSuccess: () => { invalidateMonitoring(); setToast('复核任务已创建，等待审批'); },
+    onError: () => setToast('创建复核任务失败，请重试'),
+  });
+
+  const taskDecisionMutation = useMutation({
+    mutationFn: ({ task, decision }: { task: MonitorReviewTask; decision: 'approved' | 'rejected' }) => api.post<MonitorReviewTask>(`/alert/review-tasks/${task.id}/decision`, {
+      expected_version: task.version,
+      decision,
+      comment: decision === 'approved' ? '采购人员批准执行复核' : '采购人员拒绝本次复核',
+    }),
+    onSuccess: (_, variables) => { invalidateMonitoring(); setToast(variables.decision === 'approved' ? '任务已批准，可执行复核' : '任务已拒绝'); },
+    onError: () => setToast('审批失败，任务可能已被其他人更新'),
+  });
+
+  const executeTaskMutation = useMutation({
+    mutationFn: (task: MonitorReviewTask) => api.post<MonitorReviewTask>(`/alert/review-tasks/${task.id}/execute`, { expected_version: task.version }),
+    onSuccess: () => { invalidateMonitoring(); setToast('复核已执行，证据和结果已回写'); },
+    onError: () => setToast('复核执行失败，请查看任务详情'),
+  });
+
   const removeTarget = (target: MonitorTarget) => {
     const params: Record<string, string> = target.monitor_target_id.startsWith('legacy:')
       ? { company_name: target.company_name }
@@ -103,7 +139,21 @@ export default function MonitoringView() {
 
   const openTarget = (target: MonitorTarget) => navigate(`/assess/${encodeURIComponent(target.monitor_target_id)}`);
   const openAgent = (target: MonitorTarget) => navigate(`/chat?q=${encodeURIComponent(actionPrompt(target))}`);
-  const executeNextAction = (target: MonitorTarget) => openAgent(target);
+  const executeNextAction = (target: MonitorTarget) => {
+    const current = target.review_task;
+    if (current?.status === 'pending_approval' || current?.status === 'executing') return;
+    if (current?.status === 'approved') {
+      executeTaskMutation.mutate(current);
+      return;
+    }
+    createTaskMutation.mutate(target);
+  };
+  const approveTask = (target: MonitorTarget) => {
+    if (target.review_task?.status === 'pending_approval') taskDecisionMutation.mutate({ task: target.review_task, decision: 'approved' });
+  };
+  const rejectTask = (target: MonitorTarget) => {
+    if (target.review_task?.status === 'pending_approval') taskDecisionMutation.mutate({ task: target.review_task, decision: 'rejected' });
+  };
 
   const isLoading = dashboardQuery.isLoading || watchlistQuery.isLoading;
   if (isLoading) {
@@ -123,8 +173,12 @@ export default function MonitoringView() {
       {selectedTarget ? (
         <MonitoringTargetDetail
           target={selectedTarget}
+          task={detailTaskQuery.data || selectedTarget.review_task}
           onBack={() => navigate('/assess')}
           onAction={executeNextAction}
+          onApprove={approveTask}
+          onReject={rejectTask}
+          onExecuteTask={executeNextAction}
           onAnalyze={openAgent}
           onRemove={removeTarget}
           onRefresh={() => checkMutation.mutate()}
@@ -145,7 +199,10 @@ export default function MonitoringView() {
             onUpload={file => uploadMutation.mutate(file)}
             onRefresh={() => checkMutation.mutate()}
             onAnalyze={openAgent}
-            onAction={executeNextAction}
+          onAction={executeNextAction}
+          onApprove={approveTask}
+          onReject={rejectTask}
+          onExecuteTask={executeNextAction}
             onOpen={openTarget}
             onRemove={removeTarget}
             isAdding={addMutation.isPending}
@@ -163,16 +220,24 @@ export default function MonitoringView() {
 
 function MonitoringTargetDetail({
   target,
+  task,
   onBack,
   onAction,
+  onApprove,
+  onReject,
+  onExecuteTask,
   onAnalyze,
   onRemove,
   onRefresh,
   isRefreshing,
 }: {
   target: MonitorTarget;
+  task?: MonitorReviewTask | null;
   onBack: () => void;
   onAction: (target: MonitorTarget) => void;
+  onApprove: (target: MonitorTarget) => void;
+  onReject: (target: MonitorTarget) => void;
+  onExecuteTask: (target: MonitorTarget) => void;
   onAnalyze: (target: MonitorTarget) => void;
   onRemove: (target: MonitorTarget) => void;
   onRefresh: () => void;
@@ -191,7 +256,7 @@ function MonitoringTargetDetail({
             <h1 className="truncate text-xl font-semibold text-[var(--color-text)]">{target.display_name || target.company_name}</h1>
             <p className="mt-2 break-all text-xs text-gray-400">监控对象 ID：{target.monitor_target_id}</p>
           </div>
-          <div className="flex flex-wrap gap-2"><button type="button" onClick={() => onAction(target)} className="rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">{action?.label || '发起复核'}</button><button type="button" onClick={() => onAnalyze(target)} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-surface-hover)]">Agent 复核</button><button type="button" onClick={onRefresh} disabled={isRefreshing} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-secondary)] disabled:opacity-50">{isRefreshing ? '检查中…' : '重新检查'}</button></div>
+          <div className="flex flex-wrap gap-2"><TaskActionButton target={target} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} /><button type="button" onClick={() => onAnalyze(target)} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-surface-hover)]">Agent 复核</button><button type="button" onClick={onRefresh} disabled={isRefreshing} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-secondary)] disabled:opacity-50">{isRefreshing ? '检查中…' : '重新检查'}</button></div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-4"><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={action?.label || '继续观察'} /></div>
       </section>
@@ -200,9 +265,35 @@ function MonitoringTargetDetail({
 
       <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{action?.reason || '等待更多监控数据后再安排复核。'}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{action?.label || '继续观察'}</span><span>优先级：{action?.priority || 'low'}</span></div></section>
 
+      <ReviewTaskPanel target={target} task={task} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} />
+
       <button type="button" onClick={() => onRemove(target)} className="text-xs text-gray-400 hover:text-red-600">移出监控</button>
     </div>
   );
+}
+
+function taskStatusLabel(status?: string): string {
+  return ({ pending_approval: '待审批', approved: '已审批', executing: '执行中', completed: '已完成', needs_review: '待人工复核', rejected: '已拒绝', failed: '执行失败', cancelled: '已取消' } as Record<string, string>)[status || ''] || '未创建';
+}
+
+function taskTypeLabel(taskType?: string): string {
+  return ({ verify_identity: '主体核验', assess: '首次风险评估', review: '采购风险复核', supplement_data: '补充资料', continue_monitoring: '继续观察' } as Record<string, string>)[taskType || ''] || taskType || '复核任务';
+}
+
+function evidenceLabel(value?: string): string {
+  return ({ identity: '主体身份', risk_monitoring: '风险监控', risk_assessment: '风险评估', supported: '已支持', partial: '部分支持', conflicting: '存在冲突', unsupported: '不支持', monitoring_workbench: '监控工作台', cached_risk_evidence: '已有风险证据', watchlist_identity: '监控对象身份', risk_snapshot: '风险快照', coverage_snapshot: '数据覆盖快照', monitoring_observation: '监控观察' } as Record<string, string>)[value || ''] || value || '已记录';
+}
+
+function TaskActionButton({ target, onAction, onApprove, onReject, onExecute }: { target: MonitorTarget; onAction: (target: MonitorTarget) => void; onApprove: (target: MonitorTarget) => void; onReject: (target: MonitorTarget) => void; onExecute: (target: MonitorTarget) => void }) {
+  const task = target.review_task;
+  if (!task || ['completed', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(task.status)) return <button type="button" onClick={() => onAction(target)} className="rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">{task ? '再次发起复核' : target.next_action?.label || '发起复核'}</button>;
+  if (task.status === 'pending_approval') return <><button type="button" onClick={() => onApprove(target)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs text-white hover:bg-emerald-700">批准任务</button><button type="button" onClick={() => onReject(target)} className="rounded-lg border border-red-200 px-3 py-2 text-xs text-red-600 hover:bg-red-50">拒绝</button></>;
+  if (task.status === 'approved') return <button type="button" onClick={() => onExecute(target)} className="rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">执行复核</button>;
+  return <span className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-gray-500">{taskStatusLabel(task.status)}</span>;
+}
+
+function ReviewTaskPanel({ target, task, onAction, onApprove, onReject, onExecute }: { target: MonitorTarget; task?: MonitorReviewTask | null; onAction: (target: MonitorTarget) => void; onApprove: (target: MonitorTarget) => void; onReject: (target: MonitorTarget) => void; onExecute: (target: MonitorTarget) => void }) {
+  return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">复核任务闭环</h2><p className="mt-1 text-xs text-gray-400">任务 → 审批 → 执行 → 证据 → 结果</p></div><span className={`rounded-full px-2 py-1 text-[11px] ${task?.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : task?.status === 'failed' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{taskStatusLabel(task?.status)}</span></div>{task ? <><div className="mt-4 grid grid-cols-2 gap-3 text-xs md:grid-cols-4"><DetailMetric label="任务类型" value={taskTypeLabel(task.task_type)} /><DetailMetric label="任务版本" value={`v${task.version}`} /><DetailMetric label="证据条数" value={`${task.evidence_count || task.evidence_refs?.length || 0} 条`} /><DetailMetric label="更新时间" value={new Date(task.updated_at).toLocaleString('zh-CN')} /></div><p className="mt-4 text-sm leading-6 text-[var(--color-text-secondary)]">{task.result?.summary || task.approval_comment || '任务已创建，等待审批。'}</p>{task.evidence?.length ? <div className="mt-4 space-y-2"><div className="text-xs font-medium text-[var(--color-text-secondary)]">证据回写</div>{task.evidence.map(item => <div key={item.evidence_id} className="rounded-lg bg-[var(--color-background)] px-3 py-2 text-xs"><div className="flex flex-wrap justify-between gap-2"><span className="font-medium text-[var(--color-text)]">{evidenceLabel(item.dimension)}</span><span className="text-gray-400">{evidenceLabel(item.status)}</span></div><div className="mt-1 text-gray-500">{evidenceLabel(item.provider)} · {evidenceLabel(item.source_type)}</div></div>)}</div> : null}<div className="mt-4 flex flex-wrap gap-2"><TaskActionButton target={{ ...target, review_task: task }} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecute} /></div></> : <p className="mt-4 text-sm text-gray-400">还没有持久化复核任务，使用页面顶部动作发起后需要审批才会执行。</p>}</section>;
 }
 
 function DetailMetric({ label, value }: { label: string; value: string }) {
