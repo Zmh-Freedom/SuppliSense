@@ -83,8 +83,10 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             {"date": s["checked_at"].strftime("%Y-%m-%d"), "risk_score": s.get("risk_score", 0), "risk_level": s.get("risk_level", "")}
             for s in snapshots
         ]
-        trend = "稳定"
-        if len(data) >= 2:
+        trend = "暂无数据"
+        if len(data) == 1:
+            trend = "数据不足"
+        elif len(data) >= 2:
             delta = data[-1]["risk_score"] - data[0]["risk_score"]
             trend = "恶化" if delta > 10 else "改善" if delta < -10 else "稳定"
 
@@ -96,6 +98,7 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             "candidate_id": target.get("candidate_id"),
             "company_id": target.get("company_id"),
             "trend": trend,
+            "trend_data_points": len(data),
             "latest_score": data[-1]["risk_score"] if data else None,
             "latest_level": data[-1]["risk_level"] if data else None,
             "data": data,

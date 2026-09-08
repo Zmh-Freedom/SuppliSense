@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
+import MonitoringWorkbench from './MonitoringWorkbench';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
 import { getRiskColor, getRiskBg } from '../riskColors';
 import { useDashboard, useWatchlist } from '../hooks';
@@ -39,14 +40,11 @@ export default function Dashboard() {
   const error = dashQuery.error;
 
   // Watchlist management
-  const [newName, setNewName] = useState('');
   const [toast, setToast] = useState('');
-  const [watchlistOpen, setWatchlistOpen] = useState(false);
 
   const addMutation = useMutation({
     mutationFn: (name: string) => api.post('/alert/watch', { company_name: name }),
     onSuccess: () => {
-      setNewName('');
       queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
       queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     },
@@ -83,16 +81,17 @@ export default function Dashboard() {
 
   const busy = checkAllMutation.isPending;
 
-  const add = () => {
-    const name = newName.trim();
-    if (!name || addMutation.isPending) return;
-    addMutation.mutate(name);
-  };
-
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    uploadMutation.mutate(file);
+  const removeTarget = (target: MonitorTarget) => {
+    if (target.monitor_target_id.startsWith('legacy:')) {
+      removeMutation.mutate(target.company_name);
+      return;
+    }
+    api.delete('/alert/watch', { monitor_target_id: target.monitor_target_id })
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+      })
+      .catch(() => setToast('移除失败，请重试'));
   };
 
   if (error) {
@@ -155,7 +154,7 @@ export default function Dashboard() {
 
       {/* summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <SummaryCard label="监控企业" value={data.total} color="#333" />
+        <SummaryCard label="监控对象" value={data.total} color="#333" />
         <SummaryCard label="告警" value={data.alert_count} color={getRiskColor(61)} />
         <SummaryCard label="高风险" value={data.distribution['高风险'] || 0} color={getRiskColor(61)} />
         <SummaryCard label="低风险" value={data.distribution['低风险'] || 0} color={getRiskColor(0)} />
@@ -229,7 +228,7 @@ export default function Dashboard() {
           {levels.filter(l => l.key !== '未知').map(l => (
             <span key={l.key} className="flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-full" style={{ background: l.color }} />
-              {l.key} {data.distribution[l.key] || 0} 家
+              {l.key} {data.distribution[l.key] || 0} 个
             </span>
           ))}
         </div>
@@ -265,101 +264,18 @@ export default function Dashboard() {
       {/* sentiment overview */}
       <SentimentPanel />
 
-      {/* watchlist management */}
-      <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl shadow-sm">
-        <button type="button" onClick={() => setWatchlistOpen(open => !open)} aria-expanded={watchlistOpen} className="flex w-full items-center justify-between gap-3 p-5 text-left">
-          <span><span className="text-sm font-medium text-[var(--color-text-secondary)]">监控清单管理</span><span className="ml-2 text-xs text-gray-400">{watchlist.length} 家企业</span></span>
-          <span aria-hidden="true" className={`text-gray-400 transition-transform ${watchlistOpen ? 'rotate-180' : ''}`}>⌄</span>
-        </button>
-        {watchlistOpen && <div className="border-t border-[var(--color-border)] p-5">
-
-        {/* add form */}
-        <form onSubmit={e => { e.preventDefault(); add(); }} className="flex gap-2 mb-3">
-          <input
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            placeholder="添加企业名称…"
-            className="flex-1 border border-[var(--color-border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-border-focus)] bg-[var(--color-input-bg)] placeholder-gray-300 min-h-[44px]"
-          />
-          <button
-            type="submit"
-            disabled={addMutation.isPending || !newName.trim()}
-            className="bg-[var(--color-primary-bg)] text-white rounded-lg px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-30 transition-opacity shrink-0 min-h-[44px] inline-flex items-center"
-          >
-            {addMutation.isPending ? '...' : '添加'}
-          </button>
-        </form>
-
-        {/* actions bar */}
-        <div className="flex gap-2 mb-3">
-          <label className="flex-1 flex items-center justify-center gap-1.5 text-xs text-gray-500 cursor-pointer hover:text-gray-600 transition-colors border border-dashed border-[var(--color-border)] rounded-lg py-2 min-h-[44px]">
-            <span>Excel 批量导入</span>
-            <input type="file" accept=".xlsx" onChange={handleFile} className="hidden" />
-          </label>
-          <button
-            disabled={busy}
-            onClick={() => checkAllMutation.mutate()}
-            className="flex-1 border border-[var(--color-border)] bg-[var(--color-surface)] rounded-lg py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors disabled:opacity-50 min-h-[44px] inline-flex items-center justify-center"
-          >
-            {busy ? '巡检中…' : '免费巡检'}
-          </button>
-        </div>
-
-        {/* company table */}
-        {watchlist.length === 0 ? (
-          <p className="text-sm text-gray-300 text-center py-4">暂无监控企业，在上方输入名称添加</p>
-        ) : (
-          <div className="space-y-1">
-            {monitoringTargets.map(target => {
-              const name = target.display_name || target.company_name;
-              const company = data.companies.find(c => c.name === name);
-              const score = company?.score;
-              const level = company?.level || '未知';
-              const levelColor = level === '未知' ? '#999' : getRiskColor(level === '高风险' ? 61 : level === '中风险' ? 31 : 0);
-              return (
-                <div key={target.monitor_target_id} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
-                  <button
-                    className="text-sm text-[var(--color-text)] truncate flex-1 text-left hover:text-[var(--color-primary-bg)] transition-colors"
-                    onClick={() => navigate(`/assess/${encodeURIComponent(name)}`)}
-                  >
-                    <span className="truncate">{name}</span>
-                    {target.supplier_code && <span className="ml-2 text-[10px] text-gray-400">{target.supplier_code}</span>}
-                  </button>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {score != null ? (
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${levelColor}15`, color: levelColor }}>
-                        {level} {score}/100
-                      </span>
-                    ) : (
-                      <span className="text-xs text-gray-400">未评估</span>
-                    )}
-                    <button
-                      onClick={() => navigate(`/chat?q=${encodeURIComponent(`对${name}进行全面的风险评估`)}`)}
-                      className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors"
-                      title="Agent 分析"
-                    >
-                      分析
-                    </button>
-                    <button
-                      onClick={() => target.monitor_target_id.startsWith('legacy:')
-                        ? removeMutation.mutate(name)
-                        : api.delete('/alert/watch', { monitor_target_id: target.monitor_target_id }).then(() => {
-                            queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-                            queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-                          }).catch(() => setToast('移除失败，请重试'))}
-                      className="text-gray-300 hover:text-red-400 text-sm transition-colors p-1"
-                      title="移除"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-        </div>}
-      </section>
+      <MonitoringWorkbench
+        targets={data.targets?.length ? data.targets : monitoringTargets}
+        onAdd={name => addMutation.mutate(name)}
+        onUpload={file => uploadMutation.mutate(file)}
+        onRefresh={() => checkAllMutation.mutate()}
+        onAnalyze={target => navigate(`/chat?q=${encodeURIComponent(`对${target.display_name || target.company_name}进行采购风险复核`)}`)}
+        onOpen={target => navigate(`/assess/${encodeURIComponent(target.display_name || target.company_name)}`)}
+        onRemove={removeTarget}
+        isAdding={addMutation.isPending}
+        isUploading={uploadMutation.isPending}
+        isRefreshing={busy}
+      />
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-xs text-red-600 z-30 shadow-md">

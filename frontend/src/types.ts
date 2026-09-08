@@ -84,6 +84,20 @@ export interface MonitorTarget {
   added_at?: string | null;
   last_checked_at?: string | null;
   data_coverage?: Record<string, unknown>;
+  risk_score?: number | null;
+  risk_level?: string | null;
+  risk_change?: {
+    status: 'no_data' | 'insufficient_data' | 'stable' | 'improving' | 'deteriorating' | string;
+    label: string;
+    delta?: number | null;
+    previous_score?: number | null;
+  };
+  next_action?: {
+    code: 'verify_identity' | 'assess' | 'review' | 'supplement_data' | 'continue_monitoring' | string;
+    label: string;
+    priority: 'high' | 'medium' | 'low' | string;
+    reason: string;
+  };
 }
 
 export interface ChatMessage {

@@ -117,6 +117,155 @@ def _find_watchlist_target(
     return target
 
 
+def _target_snapshots(db: object, target: dict, limit: int = 2) -> list[dict]:
+    """Load the latest snapshots for one monitor target without mixing identities."""
+    target_id = target.get("monitor_target_id")
+    company_name = target.get("company_name")
+    query = {"monitor_target_id": target_id} if target_id else {"company_name": company_name}
+    snapshots = list(
+        db["alert_snapshots"]
+        .find(query)
+        .sort([("checked_at", -1), ("snapshot_version", -1)])
+        .limit(limit)
+    )
+    if not snapshots and target_id and company_name:
+        # Compatibility only for snapshots written before monitor_target_id existed.
+        snapshots = list(
+            db["alert_snapshots"]
+            .find({"company_name": company_name})
+            .sort([("checked_at", -1), ("snapshot_version", -1)])
+            .limit(limit)
+        )
+    return [snapshot for snapshot in snapshots if isinstance(snapshot, dict)]
+
+
+def _has_transaction_data(db: object, target: dict) -> bool:
+    """Check whether a formal supplier has current internal transaction evidence."""
+    supplier_code = target.get("supplier_code")
+    supplier_id = target.get("supplier_id")
+    if not supplier_code and not supplier_id:
+        return False
+    query: dict = {"sync_status": "current"}
+    query["supplier_code" if supplier_code else "supplier_id"] = supplier_code or supplier_id
+    try:
+        return db["supplier_transaction_snapshots"].find_one(query) is not None
+    except Exception:
+        return False
+
+
+def _data_coverage(db: object, target: dict, snapshot: dict | None) -> dict:
+    """Build user-facing coverage semantics without treating missing data as low risk."""
+    risk_detail = (snapshot or {}).get("risk_detail") or {}
+    snapshot_coverage = risk_detail.get("data_coverage") if isinstance(risk_detail, dict) else {}
+    available_dimensions = set((snapshot_coverage or {}).get("available_dimensions") or [])
+    identity_status = target.get("identity_status") or "unresolved"
+    transaction_available = _has_transaction_data(db, target)
+    try:
+        sentiment_available = db["sentiment_results"].find_one({"company_name": target.get("company_name")}) is not None
+    except Exception:
+        sentiment_available = False
+    dimensions = [
+        {
+            "key": "identity",
+            "label": "主体身份",
+            "status": "available" if identity_status == "verified" else "pending",
+            "detail": "已核验" if identity_status == "verified" else "待核验",
+        },
+        {
+            "key": "risk_snapshot",
+            "label": "风险快照",
+            "status": "available" if snapshot else "missing",
+            "detail": "已有评估快照" if snapshot else "尚未完成首次评估",
+        },
+        {
+            "key": "financial",
+            "label": "财务/公开信息",
+            "status": "available" if (snapshot or "financial" in available_dimensions) and ((snapshot or {}).get("financial") or "financial" in available_dimensions) else "missing",
+            "detail": "已获取" if (snapshot or {}).get("financial") or "financial" in available_dimensions else "需补充资料",
+        },
+        {
+            "key": "transaction",
+            "label": "内部交易",
+            "status": "available" if transaction_available else "missing",
+            "detail": "已有供应商月度数据" if transaction_available else "暂无内部交易数据",
+        },
+        {
+            "key": "sentiment",
+            "label": "舆情",
+            "status": "available" if sentiment_available else "missing",
+            "detail": "已有舆情分析" if sentiment_available else "尚未形成舆情分析",
+        },
+    ]
+    available_count = sum(item["status"] == "available" for item in dimensions)
+    ratio = round(available_count / len(dimensions), 2) if dimensions else 0.0
+    status = "complete" if available_count == len(dimensions) else "partial" if available_count else "insufficient"
+    return {
+        "status": status,
+        "available_count": available_count,
+        "total_count": len(dimensions),
+        "coverage_ratio": ratio,
+        "summary": f"{available_count}/{len(dimensions)} 个数据域可用",
+        "dimensions": dimensions,
+        "missing_dimensions": [item["label"] for item in dimensions if item["status"] != "available"],
+    }
+
+
+def _risk_change(snapshots: list[dict]) -> dict:
+    """Return an explicit trend state; no history is never labelled stable."""
+    if not snapshots:
+        return {"status": "no_data", "label": "暂无快照", "delta": None, "previous_score": None}
+    current_score = snapshots[0].get("risk_score")
+    if len(snapshots) < 2 or current_score is None or snapshots[1].get("risk_score") is None:
+        return {"status": "insufficient_data", "label": "数据不足", "delta": None, "previous_score": None}
+    previous_score = snapshots[1].get("risk_score")
+    delta = round(float(current_score) - float(previous_score), 1)
+    if delta >= 10:
+        status, label = "deteriorating", "风险恶化"
+    elif delta <= -10:
+        status, label = "improving", "风险改善"
+    else:
+        status, label = "stable", "变化不明显"
+    return {"status": status, "label": label, "delta": delta, "previous_score": previous_score}
+
+
+def _next_action(target: dict, snapshot: dict | None, risk_change: dict, coverage: dict) -> dict:
+    """Translate evidence state into a procurement review action."""
+    if target.get("identity_status") != "verified":
+        priority = "high" if target.get("target_type") == "external_candidate" else "medium"
+        reason = "外部候选尚未完成主体确认" if target.get("target_type") == "external_candidate" else "监控对象尚未完成主体确认"
+        return {"code": "verify_identity", "label": "完成主体核验", "priority": priority, "reason": reason}
+    if not snapshot:
+        return {"code": "assess", "label": "执行首次评估", "priority": "high", "reason": "暂无风险快照，不能判断风险变化"}
+    if risk_change["status"] == "deteriorating" or snapshot.get("risk_level") == "高风险":
+        return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": "风险分数上升或当前处于高风险"}
+    if coverage["status"] != "complete":
+        return {"code": "supplement_data", "label": "补充资料后复核", "priority": "medium", "reason": "部分数据域缺失，当前结论覆盖不完整"}
+    return {"code": "continue_monitoring", "label": "继续观察", "priority": "low", "reason": "当前已有完整覆盖且未发现明显恶化"}
+
+
+def get_watchlist_target_summaries() -> list[dict]:
+    """Return monitor targets enriched for the procurement review workbench."""
+    db = get_db()
+    summaries = []
+    for target in get_watchlist_targets():
+        snapshots = _target_snapshots(db, target)
+        latest = snapshots[0] if snapshots else None
+        risk_change = _risk_change(snapshots)
+        coverage = _data_coverage(db, target, latest)
+        next_action = _next_action(target, latest, risk_change, coverage)
+        enriched = dict(target)
+        enriched.update({
+            "risk_score": latest.get("risk_score") if latest else None,
+            "risk_level": latest.get("risk_level") if latest else None,
+            "risk_change": risk_change,
+            "data_coverage": coverage,
+            "last_checked_at": latest.get("checked_at") if latest else None,
+            "next_action": next_action,
+        })
+        summaries.append(enriched)
+    return summaries
+
+
 def _broadcast_alert_update() -> None:
     """Notify all WebSocket clients that alert data changed."""
     try:

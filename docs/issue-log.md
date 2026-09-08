@@ -1903,3 +1903,39 @@
 - 修复方案：在兼容保留旧 `companies` 字段和旧名称参数的前提下，引入 `monitor_target_id`、`target_type`、`supplier_id`、`candidate_id`、`company_id` 等字段；后端返回完整监控对象；Agent 监控写操作使用稳定实体 ID 并继续经过审批；风险快照、告警和 Agent 证据带上监控对象引用；旧名称接口仅作为兼容适配。
 - 验证结果：新增 `backend/tests/test_monitor_target_migration.py` 覆盖稳定监控对象写入、按 `monitor_target_id` 分隔快照版本、告警身份回传和 Supervisor Agent 证据引用；该文件 4 项通过。后端全量 858 项中 857 项通过，另 1 项既有 outbox 时间窗口测试首次运行偶发越界，单独重跑通过；前端 59 项测试、lint、TypeScript、build、`git diff --check` 通过。
 - 关联提交：`883038b1 feat: migrate monitoring to stable target identities`、`18675d6c refactor: resolve monitoring consumers by target identity`、`fd85bb86 fix: preserve existing target identity on reactivation`。
+
+## ISS-20260908-038 监控工作台改动触发后端热重载退出
+
+- 发现日期：2026-09-08
+- 状态：已修复
+- 优先级：P0
+- 现象：前端总览切换到新监控工作台后显示“加载失败，请检查后端服务”，8002 端口后端进程已退出。
+- 影响：风险看板和采购复核工作台无法访问，浏览器验收被阻断。
+- 根因：开发环境的 WatchFiles 热重载未拾取本轮跨文件变更，旧进程退出后没有重新提供 8002 服务；不是监控摘要代码导入错误。
+- 修复方案：手动重启后端并以非热重载方式完成本轮真实验收；保留后续开发环境热重载稳定性排查作为独立运维改进。
+- 验证结果：后端在 `127.0.0.1:8002/health/ready` 返回 200，MongoDB、Redis、PostgreSQL 和 Agent Checkpointer 均为 `ok`；登录后总览正常加载。
+- 关联提交：待处理。
+
+## ISS-20260908-039 监控对象身份覆盖状态与身份明细不一致
+
+- 发现日期：2026-09-08
+- 状态：已修复
+- 优先级：P1
+- 现象：真实 `/alert/dashboard` 返回的旧企业对象 `identity_status=unresolved`，但 `data_coverage` 将“主体身份”统计为 `available`，明细却显示“待核验”。
+- 影响：采购复核工作台的覆盖数量可能高估，用户无法判断主体身份是否真正完成核验。
+- 根因：数据覆盖计算把 `target_type=company` 直接视为身份可用，没有遵循 `identity_status` 的实际状态。
+- 修复方案：主体身份只有在 `identity_status=verified` 时计入可用覆盖；未解析和候选状态分别显示待核验，不再提高覆盖率。
+- 验证结果：主体身份只有 `identity_status=verified` 时计入数据覆盖；真实旧企业对象返回“主体身份：待核验”、覆盖率 `3/5`，下一步为“完成主体核验”。定向测试和后端全量测试通过。
+- 关联提交：待处理。
+
+## ISS-20260908-037 风险监控仍停留在企业名称清单，缺少采购复核工作台语义
+
+- 发现日期：2026-09-08
+- 状态：已修复
+- 优先级：P0
+- 现象：监控对象底层已支持正式供应商、外部候选和企业主体，但总览页面仍以“几家企业”“添加企业名称”呈现；监控结果没有统一展示身份状态、数据覆盖、风险变化和下一步采购动作。趋势数据不足时默认返回“稳定”。
+- 影响：采购人员无法区分监控对象类型和数据边界，容易把“暂无数据”误解为“风险稳定”；风险监控仍像企业名单管理，未形成从 Agent 识别、风险证据到采购复核的闭环。
+- 根因：稳定身份迁移完成了数据关联层，但没有同步完成监控对象的产品语义、状态模型和总览工作台交互；部分旧消费者仍围绕企业名称组织结果。
+- 修复方案：为监控对象补齐可计算的数据覆盖、数据新鲜度和风险变化状态；将监控清单改为采购复核工作台，展示对象类型、身份状态、数据覆盖、风险变化和下一步动作；将“数据不足”与“稳定”分开；保留旧字段兼容，但新界面只使用完整监控对象。
+- 验证结果：`/api/v1/alert/dashboard` 和 `/api/v1/alert/watchlist` 已返回完整监控对象摘要，包含 `identity_status`、`data_coverage`、`risk_change`、`last_checked_at` 和 `next_action`；无历史快照对象返回“暂无快照”，单条快照返回“数据不足”。总览页面已改为“采购复核工作台”，真实浏览器显示 19 个监控对象及身份、覆盖和动作摘要；后端全量 864 项通过，前端测试 59 项、lint、TypeScript、build 和 `git diff --check` 通过。
+- 关联提交：待处理。

@@ -15,8 +15,7 @@ from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
     get_snapshot_history,
-    get_watchlist,
-    get_watchlist_targets,
+    get_watchlist_target_summaries,
     refresh_company,
     remove_from_watchlist,
 )
@@ -127,97 +126,44 @@ async def alert_check(req: CompanyRequest):
 @router.get(
     "/dashboard",
     summary="预警总览面板",
-    description="返回所有监控企业的风险分布统计、评分排名和告警数量汇总。使用聚合查询一次性获取所有最新快照。",
+    description="返回所有监控对象的风险分布、数据覆盖、变化状态和采购复核动作。",
     responses={
         500: {"description": "服务器内部错误"},
     },
 )
 async def alert_dashboard():
     db = get_db()
-    targets = get_watchlist_targets()
+    targets = get_watchlist_target_summaries()
     companies = [target["company_name"] for target in targets if target.get("company_name")]
 
     distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
     details = []
 
-    # 使用聚合查询一次性获取所有企业的最新快照（替代 N+1 循环查询）
-    snap_map: dict = {}
-    target_ids = [str(target.get("monitor_target_id")) for target in targets if target.get("monitor_target_id")]
-    if companies:
-        pipeline = [
-            {"$match": {"$or": [
-                {"monitor_target_id": {"$in": target_ids}},
-                {"company_name": {"$in": companies}},
-            ]}},
-            {"$sort": {"checked_at": -1}},
-            {"$group": {
-                "_id": {"$ifNull": ["$monitor_target_id", "$company_name"]},
-                "doc": {"$first": "$$ROOT"},
-            }},
-        ]
-        for doc in db["alert_snapshots"].aggregate(pipeline):
-            snap = doc["doc"]
-            snap_map[str(doc["_id"])] = snap
-            snap_map[snap.get("company_name", "")] = snap
-
-    # 计算每个企业的风险变化趋势（近30天分数变动）
-    trend_map: dict = {}
-    if companies:
-        from datetime import datetime, timedelta, timezone
-        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
-        for name in companies:
-            prev_snaps = list(db["alert_snapshots"].find(
-                {"company_name": name, "checked_at": {"$lt": thirty_days_ago}},
-                {"risk_score": 1, "checked_at": 1},
-            ).sort("checked_at", -1).limit(1))
-            if prev_snaps:
-                trend_map[name] = prev_snaps[0].get("risk_score", 0)
-            else:
-                # fallback: use the second-latest snapshot if no 30-day-old data
-                all_snaps = list(db["alert_snapshots"].find(
-                    {"company_name": name},
-                    {"risk_score": 1},
-                ).sort("checked_at", -1).limit(2))
-                if len(all_snaps) >= 2:
-                    trend_map[name] = all_snaps[1].get("risk_score", 0)
-
     for target in targets:
         name = target.get("company_name", "")
-        snap = snap_map.get(str(target.get("monitor_target_id"))) or snap_map.get(name)
-        if snap:
-            level = snap.get("risk_level", "未知")
-            distribution[level] = distribution.get(level, 0) + 1
-            current_score = snap.get("risk_score", 0)
-            prev_score = trend_map.get(name)
-            risk_trend = round(current_score - prev_score, 1) if prev_score is not None else 0
-            details.append({
-                "name": name,
-                "monitor_target_id": target.get("monitor_target_id"),
-                "target_type": target.get("target_type"),
-                "supplier_id": target.get("supplier_id"),
-                "candidate_id": target.get("candidate_id"),
-                "company_id": target.get("company_id"),
-                "supplier_code": target.get("supplier_code"),
-                "score": current_score,
-                "level": level,
-                "risk_trend": risk_trend,
-                "last_checked": snap["checked_at"].isoformat() if snap.get("checked_at") else None,
-            })
-        else:
-            distribution["未知"] += 1
-            details.append({
-                "name": name,
-                "monitor_target_id": target.get("monitor_target_id"),
-                "target_type": target.get("target_type"),
-                "supplier_id": target.get("supplier_id"),
-                "candidate_id": target.get("candidate_id"),
-                "company_id": target.get("company_id"),
-                "supplier_code": target.get("supplier_code"),
-                "score": None,
-                "level": "未知",
-                "risk_trend": 0,
-                "last_checked": None,
-            })
+        level = target.get("risk_level") or "未知"
+        distribution[level] = distribution.get(level, 0) + 1
+        risk_change = target.get("risk_change") or {}
+        last_checked = target.get("last_checked_at")
+        if hasattr(last_checked, "isoformat"):
+            last_checked = last_checked.isoformat()
+        details.append({
+            "name": name,
+            "monitor_target_id": target.get("monitor_target_id"),
+            "target_type": target.get("target_type"),
+            "identity_status": target.get("identity_status"),
+            "supplier_id": target.get("supplier_id"),
+            "candidate_id": target.get("candidate_id"),
+            "company_id": target.get("company_id"),
+            "supplier_code": target.get("supplier_code"),
+            "score": target.get("risk_score"),
+            "level": level,
+            "risk_trend": risk_change.get("delta"),
+            "risk_change": risk_change,
+            "data_coverage": target.get("data_coverage"),
+            "next_action": target.get("next_action"),
+            "last_checked": last_checked,
+        })
 
     details.sort(key=lambda d: d["score"] if d["score"] is not None else -1, reverse=True)
 
@@ -313,21 +259,22 @@ async def clear_alerts():
 
 @router.get(
     "/watchlist",
-    summary="获取监控列表",
-    description="返回当前所有被监控的企业名称列表。",
+    summary="获取监控对象工作台数据",
+    description="返回当前所有监控对象及其身份、数据覆盖、风险变化和下一步采购动作；保留 companies 字段兼容旧客户端。",
     responses={
         500: {"description": "服务器内部错误"},
     },
 )
 async def list_watchlist():
-    companies = get_watchlist()
-    return {"count": len(companies), "companies": companies, "targets": get_watchlist_targets()}
+    targets = get_watchlist_target_summaries()
+    companies = [target["company_name"] for target in targets if target.get("company_name")]
+    return {"count": len(companies), "companies": companies, "targets": targets}
 
 
 @router.post(
     "/watch",
-    summary="添加企业到监控列表",
-    description="将指定企业添加到预警监控列表，系统将定期检查该企业的风险变化。",
+    summary="添加监控对象",
+    description="将指定供应商、寻源候选或企业主体添加到风险监控，系统将定期检查其风险变化。",
     responses={
         400: {"description": "请求参数错误"},
         500: {"description": "服务器内部错误"},

@@ -117,6 +117,34 @@ def test_alert_change_keeps_monitor_target_identity(monkeypatch):
     assert db["alerts"].insert_one.call_args.args[0]["monitor_target_id"] == "monitor-1"
 
 
+def test_risk_change_does_not_treat_missing_history_as_stable():
+    assert alert_service._risk_change([]) == {
+        "status": "no_data",
+        "label": "暂无快照",
+        "delta": None,
+        "previous_score": None,
+    }
+    assert alert_service._risk_change([{"risk_score": 22}])["status"] == "insufficient_data"
+
+
+def test_monitor_target_summary_exposes_procurement_next_action(monkeypatch):
+    target = {
+        "monitor_target_id": "monitor-candidate-1",
+        "company_name": "外部候选有限公司",
+        "display_name": "外部候选有限公司",
+        "target_type": "external_candidate",
+        "identity_status": "candidate",
+    }
+    monkeypatch.setattr(alert_service, "get_db", lambda: object())
+    monkeypatch.setattr(alert_service, "get_watchlist_targets", lambda: [target])
+    monkeypatch.setattr(alert_service, "_target_snapshots", lambda *_args, **_kwargs: [])
+
+    summaries = alert_service.get_watchlist_target_summaries()
+
+    assert summaries[0]["risk_change"]["status"] == "no_data"
+    assert summaries[0]["next_action"]["code"] == "verify_identity"
+
+
 @pytest.mark.asyncio
 async def test_supervisor_risk_evidence_carries_monitor_target_id(monkeypatch):
     assessment = SimpleNamespace(

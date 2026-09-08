@@ -1,19 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
+import type { MonitorTarget } from '../types';
 
-interface CompanySnap {
+export interface MonitoringTargetSummary extends MonitorTarget {
   name: string;
   score: number | null;
   level: string;
-  risk_trend: number;
+  risk_trend: number | null;
   last_checked: string | null;
 }
 
-interface DashboardData {
+export interface DashboardData {
   total: number;
   distribution: Record<string, number>;
-  companies: CompanySnap[];
+  companies: MonitoringTargetSummary[];
+  targets: MonitorTarget[];
   alert_count: number;
 }
 
