@@ -51,7 +51,8 @@ class RulesRequest(BaseModel):
 
 
 class BatchRequest(BaseModel):
-    companies: list[str]
+    companies: list[str] = []
+    targets: list[WatchRequest] = []
 
 
 @router.get(
@@ -294,25 +295,33 @@ async def watch_company(req: WatchRequest):
 
 @router.post(
     "/watch/batch",
-    summary="批量添加企业到监控列表",
-    description="一次性将多个企业添加到预警监控列表。",
+    summary="批量添加监控对象",
+    description="优先接受带稳定身份的 targets；companies 仅作为旧名称批量接口兼容。",
     responses={
         400: {"description": "请求参数错误"},
         500: {"description": "服务器内部错误"},
     },
 )
 async def watch_batch(req: BatchRequest):
-    results = []
-    for name in req.companies:
-        r = add_to_watchlist(name.strip())
-        results.append(r)
+    if req.targets:
+        results = [add_to_watchlist(
+            target.company_name,
+            target_type=target.target_type,
+            monitor_target_id=target.monitor_target_id,
+            supplier_id=target.supplier_id,
+            candidate_id=target.candidate_id,
+            company_id=target.company_id,
+            supplier_code=target.supplier_code,
+        ) for target in req.targets]
+    else:
+        results = [add_to_watchlist(name.strip()) for name in req.companies if name.strip()]
     return {"added": len(results), "results": results}
 
 
 @router.post(
     "/watch/upload",
-    summary="上传 Excel 批量导入监控企业",
-    description="从上传的 Excel 文件中解析企业名称，批量添加到预警监控列表。",
+    summary="上传 Excel 批量导入监控对象",
+    description="优先读取监控对象稳定身份字段；兼容只包含企业名称的旧模板，并将其标记为待核验企业主体。",
     responses={
         400: {"description": "文件格式错误或解析失败"},
         500: {"description": "服务器内部错误"},
@@ -323,16 +332,49 @@ async def watch_upload(file: UploadFile):
 
     wb = openpyxl.load_workbook(file.file, read_only=True)
     ws = wb.active
-
-    names = []
-    for row in ws.iter_rows(min_row=1, values_only=True):
-        for cell in row:
-            val = str(cell).strip() if cell else ""
-            if val and len(val) > 2 and not val.startswith("#"):
-                names.append(val)
-
+    rows = list(ws.iter_rows(values_only=True))
     wb.close()
-    results = [add_to_watchlist(n) for n in names]
+
+    def clean(value: object) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text or None
+
+    aliases = {
+        "monitor_target_id": {"monitor_target_id", "监控对象id", "监控对象 ID"},
+        "target_type": {"target_type", "对象类型", "监控对象类型"},
+        "supplier_id": {"supplier_id", "供应商id", "供应商 ID"},
+        "candidate_id": {"candidate_id", "候选id", "候选 ID"},
+        "company_id": {"company_id", "企业id", "企业 ID", "主体id"},
+        "supplier_code": {"supplier_code", "供应商代码"},
+        "company_name": {"company_name", "供应商名称", "企业名称", "公司名称", "主体名称"},
+    }
+    header = [clean(value) or "" for value in (rows[0] if rows else ())]
+    header_lookup = {value.lower(): index for index, value in enumerate(header) if value}
+    field_indexes: dict[str, int] = {}
+    for field, field_aliases in aliases.items():
+        for alias in field_aliases:
+            if alias.lower() in header_lookup:
+                field_indexes[field] = header_lookup[alias.lower()]
+                break
+
+    results = []
+    if field_indexes:
+        for row in rows[1:]:
+            if not any(clean(value) for value in row):
+                continue
+            payload = {
+                field: clean(row[index]) if index < len(row) else None
+                for field, index in field_indexes.items()
+            }
+            if not any(payload.get(field) for field in ("company_name", "supplier_id", "candidate_id", "company_id", "monitor_target_id")):
+                continue
+            results.append(add_to_watchlist(**payload))
+    else:
+        for row in rows:
+            for cell in row:
+                value = clean(cell)
+                if value and len(value) > 2 and not value.startswith("#"):
+                    results.append(add_to_watchlist(value))
     return {"total": len(results), "results": results}
 
 

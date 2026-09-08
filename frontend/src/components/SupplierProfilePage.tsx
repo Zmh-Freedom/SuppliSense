@@ -47,8 +47,8 @@ export default function SupplierProfilePage() {
   const watchMutation = useMutation({
     mutationFn: ({ companyName, inWatchlist }: { companyName: string; inWatchlist: boolean }) => (
       inWatchlist
-        ? api.delete('/alert/watch', { company_name: companyName })
-        : api.post('/alert/watch', { company_name: companyName })
+        ? api.delete('/alert/watch', { supplier_id: id!, company_name: companyName })
+        : api.post('/alert/watch', { supplier_id: id!, target_type: 'formal_supplier', company_name: companyName })
     ),
     onSuccess: (_, variables) => {
       invalidateProfile();

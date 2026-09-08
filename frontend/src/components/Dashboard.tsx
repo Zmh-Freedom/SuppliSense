@@ -1,28 +1,17 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
-import MonitoringWorkbench from './MonitoringWorkbench';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
 import { getRiskColor, getRiskBg } from '../riskColors';
-import { useDashboard, useWatchlist } from '../hooks';
+import { useDashboard } from '../hooks';
 import { queryKeys } from '../query-keys';
-import type { MonitorTarget, Prediction } from '../types';
+import type { Prediction } from '../types';
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const dashQuery = useDashboard();
-  const { companies: watchlist, targets: watchTargets } = useWatchlist();
-  const monitoringTargets: MonitorTarget[] = watchTargets.length > 0
-    ? watchTargets
-    : watchlist.map(name => ({
-        monitor_target_id: `legacy:${name}`,
-        target_type: 'company',
-        company_name: name,
-      }));
   const predQuery = useQuery({
     queryKey: queryKeys.predictions,
     queryFn: () => api.get<Prediction[]>('/alert/predict'),
@@ -38,61 +27,6 @@ export default function Dashboard() {
   const isLoading = dashQuery.isLoading;
   const isRefreshing = dashQuery.isFetching && !dashQuery.isLoading;
   const error = dashQuery.error;
-
-  // Watchlist management
-  const [toast, setToast] = useState('');
-
-  const addMutation = useMutation({
-    mutationFn: (name: string) => api.post('/alert/watch', { company_name: name }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-    },
-    onError: () => setToast('添加失败，请重试'),
-  });
-
-  const removeMutation = useMutation({
-    mutationFn: (name: string) => api.delete('/alert/watch', { company_name: name }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-    },
-    onError: () => setToast('移除失败，请重试'),
-  });
-
-  const uploadMutation = useMutation({
-    mutationFn: (file: File) => api.upload('/alert/watch/upload', file),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-    },
-    onError: () => setToast('导入失败，请重试'),
-  });
-
-  const checkAllMutation = useMutation({
-    mutationFn: () => api.post('/alert/check-all'),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-      queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-    },
-    onError: () => setToast('巡检失败，请重试'),
-  });
-
-  const busy = checkAllMutation.isPending;
-
-  const removeTarget = (target: MonitorTarget) => {
-    if (target.monitor_target_id.startsWith('legacy:')) {
-      removeMutation.mutate(target.company_name);
-      return;
-    }
-    api.delete('/alert/watch', { monitor_target_id: target.monitor_target_id })
-      .then(() => {
-        queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
-        queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
-      })
-      .catch(() => setToast('移除失败，请重试'));
-  };
 
   if (error) {
     return (
@@ -264,25 +198,16 @@ export default function Dashboard() {
       {/* sentiment overview */}
       <SentimentPanel />
 
-      <MonitoringWorkbench
-        targets={data.targets?.length ? data.targets : monitoringTargets}
-        onAdd={name => addMutation.mutate(name)}
-        onUpload={file => uploadMutation.mutate(file)}
-        onRefresh={() => checkAllMutation.mutate()}
-        onAnalyze={target => navigate(`/chat?q=${encodeURIComponent(`对${target.display_name || target.company_name}进行采购风险复核`)}`)}
-        onOpen={target => navigate(`/assess/${encodeURIComponent(target.display_name || target.company_name)}`)}
-        onRemove={removeTarget}
-        isAdding={addMutation.isPending}
-        isUploading={uploadMutation.isPending}
-        isRefreshing={busy}
-      />
-
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-xs text-red-600 z-30 shadow-md">
-          {toast}
-          <button onClick={() => setToast('')} className="ml-2 text-red-400 hover:text-red-600">&times;</button>
+      <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">采购复核工作台</h3>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">监控对象的身份、数据覆盖、风险变化和下一步动作集中在风险监控模块管理。</p>
+          </div>
+          <button type="button" onClick={() => navigate('/assess')} className="shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">打开工作台</button>
         </div>
-      )}
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center"><DashboardMiniMetric label="监控对象" value={data.total} /><DashboardMiniMetric label="优先复核" value={data.targets?.filter(target => target.next_action?.priority === 'high').length ?? 0} /><DashboardMiniMetric label="数据待补充" value={data.targets?.filter(target => target.data_coverage?.status !== 'complete').length ?? 0} /></div>
+      </section>
 
     </div>
   );
@@ -295,4 +220,8 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
       <div className="text-xs text-gray-400 mt-1">{label}</div>
     </div>
   );
+}
+
+function DashboardMiniMetric({ label, value }: { label: string; value: number }) {
+  return <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"><div className="text-lg font-semibold text-[var(--color-text)]">{value}</div><div className="text-[11px] text-gray-400">{label}</div></div>;
 }

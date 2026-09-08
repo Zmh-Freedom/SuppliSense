@@ -133,7 +133,7 @@ function AlertBell() {
                     </p>
                     {isExpanded && (
                       <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); setOpen(false); setExpandedIdx(null); navigate(`/assess/${encodeURIComponent(doc.company_name)}`); }}
+                        <button onClick={(e) => { e.stopPropagation(); setOpen(false); setExpandedIdx(null); navigate(doc.monitor_target_id ? `/assess/${encodeURIComponent(doc.monitor_target_id)}` : `/assess`); }}
                           className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors">
                           查看详情
                         </button>

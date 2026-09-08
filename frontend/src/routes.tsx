@@ -5,7 +5,7 @@ import AuthGuard from './components/AuthGuard';
 import LoginPage from './components/LoginPage';
 
 const Dashboard = lazy(() => import('./components/Dashboard'));
-const AssessView = lazy(() => import('./components/AssessView'));
+const MonitoringView = lazy(() => import('./components/MonitoringView'));
 const ChatView = lazy(() => import('./components/ChatView'));
 const Settings = lazy(() => import('./components/Settings'));
 const SourcingPage = lazy(() => import('./components/SourcingPage'));
@@ -38,7 +38,7 @@ export const router = createBrowserRouter([
     element: <AuthGuard><Layout /></AuthGuard>,
     children: [
       { index: true, element: <Lazy><Dashboard /></Lazy> },
-      { path: 'assess/:companyName?', element: <Lazy><AssessView /></Lazy> },
+      { path: 'assess/:monitorTargetId?', element: <Lazy><MonitoringView /></Lazy> },
       { path: 'sourcing', element: <Lazy><SourcingPage /></Lazy> },
       { path: 'suppliers', element: <Lazy><SupplierLibraryPage /></Lazy> },
       { path: 'suppliers/:id', element: <Lazy><SupplierProfilePage /></Lazy> },

@@ -10,15 +10,17 @@ interface CoverageSummary {
 
 interface MonitoringWorkbenchProps {
   targets: MonitorTarget[];
-  onAdd: (name: string) => void;
+  onAdd: (target: { company_name: string; target_type: 'company' }) => void;
   onUpload: (file: File) => void;
   onRefresh: () => void;
   onAnalyze: (target: MonitorTarget) => void;
+  onAction: (target: MonitorTarget) => void;
   onOpen: (target: MonitorTarget) => void;
   onRemove: (target: MonitorTarget) => void;
   isAdding: boolean;
   isUploading: boolean;
   isRefreshing: boolean;
+  defaultOpen?: boolean;
 }
 
 const TARGET_TYPE_LABELS: Record<string, string> = {
@@ -72,14 +74,16 @@ export default function MonitoringWorkbench({
   onUpload,
   onRefresh,
   onAnalyze,
+  onAction,
   onOpen,
   onRemove,
   isAdding,
   isUploading,
   isRefreshing,
+  defaultOpen = false,
 }: MonitoringWorkbenchProps) {
   const [newName, setNewName] = useState('');
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const activeTargets = targets.filter(target => target.monitor_status !== 'removed');
   const reviewCount = activeTargets.filter(target => target.next_action?.priority === 'high').length;
   const insufficientCount = activeTargets.filter(target => coverageOf(target).status !== 'complete').length;
@@ -89,7 +93,7 @@ export default function MonitoringWorkbench({
     event.preventDefault();
     const name = newName.trim();
     if (!name || isAdding) return;
-    onAdd(name);
+    onAdd({ company_name: name, target_type: 'company' });
     setNewName('');
   };
 
@@ -128,7 +132,7 @@ export default function MonitoringWorkbench({
           <input
             value={newName}
             onChange={event => setNewName(event.target.value)}
-            placeholder="补充企业主体名称（候选优先从 Agent 加入）"
+            placeholder="添加待核验企业主体（候选优先从 Agent 加入）"
             className="min-h-[44px] flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm placeholder-gray-300 focus:border-[var(--color-border-focus)] focus:outline-none"
           />
           <button type="submit" disabled={isAdding || !newName.trim()} className="min-h-[44px] shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-4 py-2 text-sm text-white transition-opacity hover:bg-[var(--color-primary-hover)] disabled:opacity-30">
@@ -142,7 +146,7 @@ export default function MonitoringWorkbench({
             <input type="file" accept=".xlsx" onChange={event => { const file = event.target.files?.[0]; if (file) onUpload(file); }} className="hidden" disabled={isUploading} />
           </label>
           <button type="button" disabled={isRefreshing} onClick={onRefresh} className="min-h-[40px] flex-1 rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] disabled:opacity-50">
-            {isRefreshing ? '更新中…' : '更新监控数据'}
+            {isRefreshing ? '检查中…' : '重新检查风险快照'}
           </button>
         </div>
 
@@ -198,7 +202,7 @@ export default function MonitoringWorkbench({
                         {coverage.missing_dimensions && coverage.missing_dimensions.length > 0 && <div className="mt-1 max-w-[150px] text-[10px] leading-4 text-gray-400">缺少：{coverage.missing_dimensions.slice(0, 2).join('、')}</div>}
                       </td>
                       <td className="px-3 py-3">
-                        <div className={`text-xs font-medium ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</div>
+                        <button type="button" onClick={() => onAction(target)} className={`text-left text-xs font-medium hover:underline ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</button>
                         <div className="mt-1 max-w-[170px] text-[10px] leading-4 text-gray-400">{target.next_action?.reason || '等待更多监控数据'}</div>
                       </td>
                       <td className="px-3 py-3">

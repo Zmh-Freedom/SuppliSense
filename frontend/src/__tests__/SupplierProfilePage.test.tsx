@@ -92,7 +92,7 @@ describe('SupplierProfilePage', () => {
     await user.click(screen.getByRole('button', { name: '加入监控' }));
     expect(mocks.post).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: '确认执行' }));
-    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/alert/watch', { company_name: '测试供应商有限公司' }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/alert/watch', { company_name: '测试供应商有限公司', supplier_id: 'supplier-1', target_type: 'formal_supplier' }));
   });
 
   it('keeps the Feishu supplier master view read-only', async () => {
