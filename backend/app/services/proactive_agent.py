@@ -14,7 +14,7 @@ from app.core.logging import get_logger
 from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
-    get_watchlist,
+    get_watchlist_targets,
 )
 from app.graphs import build_shared_llm
 
@@ -35,13 +35,13 @@ ANALYSIS_PROMPT = """你是采购风险分析专家。请根据以下供应商�
 [{"company": "企业名", "status": "稳定|上升|下降", "analysis": "分析文本", "suggestion": "继续监控|需要关注|建议替换"}]"""
 
 
-def _build_company_context(company_name: str) -> str:
+def _build_company_context(company_name: str, monitor_target_id: str | None = None) -> str:
     """构建单个公司的分析上下文。"""
-    snapshot = get_latest_snapshot(company_name)
+    snapshot = get_latest_snapshot(company_name, monitor_target_id=monitor_target_id)
     if not snapshot:
         return f"企业：{company_name}\n无快照数据"
 
-    changes = detect_changes(company_name)
+    changes = detect_changes(company_name, monitor_target_id=monitor_target_id)
 
     lines = [
         f"企业：{company_name}",
@@ -61,16 +61,17 @@ def run_proactive_analysis() -> dict:
     Returns:
         {"analyzed": int, "results": list[dict], "pushed": bool}
     """
-    companies = get_watchlist()
-    if not companies:
+    targets = get_watchlist_targets()
+    if not targets:
         logger.info("proactive_agent: empty watchlist, skipping")
         return {"analyzed": 0, "results": [], "pushed": False}
 
     # 只分析有快照数据的公司（已在监控中）
     contexts: list[str] = []
     valid_companies: list[str] = []
-    for name in companies:
-        ctx = _build_company_context(name)
+    for target in targets:
+        name = target.get("company_name", "")
+        ctx = _build_company_context(name, target.get("monitor_target_id"))
         if "无快照数据" not in ctx:
             contexts.append(ctx)
             valid_companies.append(name)

@@ -146,6 +146,7 @@ def _collect_normalized_references(value: Any, source: str) -> list[dict[str, An
             item.get(field)
             for field in (
                 "supplier_id", "company_id", "candidate_id", "result_id", "supplier_code",
+                "monitor_target_id", "target_type",
             )
         ):
             continue

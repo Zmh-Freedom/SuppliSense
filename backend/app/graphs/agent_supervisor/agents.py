@@ -31,6 +31,7 @@ class AgentTaskContext:
     user_query: str
     intent: dict[str, Any]
     dependency_results: dict[str, AgentResult]
+    supplier_references: list[dict[str, Any]] | None = None
 
 
 AgentHandler = Callable[[AgentTaskContext], Awaitable[AgentResult]]
@@ -64,6 +65,24 @@ def _company_names(context: AgentTaskContext) -> list[str]:
     ))
 
 
+def _target_reference(context: AgentTaskContext, company_name: str) -> dict[str, Any]:
+    """Resolve the stable monitor identity retained for one supplier mention."""
+    references = context.supplier_references or []
+    for reference in references:
+        if isinstance(reference, dict) and reference.get("name") == company_name:
+            return reference
+    return {}
+
+
+def _target_fields(context: AgentTaskContext, company_name: str) -> dict[str, Any]:
+    reference = _target_reference(context, company_name)
+    return {
+        field: reference[field]
+        for field in ("monitor_target_id", "target_type")
+        if reference.get(field)
+    }
+
+
 def _sourcing_evidence(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     evidence = []
     for index, candidate in enumerate(candidates):
@@ -87,6 +106,11 @@ def _sourcing_evidence(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
             "source_type": source_type,
             "freshness": "fresh",
             "confidence": confidence,
+            "monitor_target_id": candidate.get("monitor_target_id"),
+            "target_type": candidate.get("target_type") or (
+                "external_candidate" if candidate.get("candidate_id") and candidate_type == "external"
+                else "formal_supplier" if candidate.get("supplier_id") else None
+            ),
             "company_id": str(candidate.get("supplier_id") or "") or None,
             "dimension": "sourcing",
             "claim": f"匹配供应商：{candidate.get('supplier_name') or '未命名供应商'}",
@@ -95,7 +119,12 @@ def _sourcing_evidence(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]
     return evidence
 
 
-def _risk_evidence(company_name: str, assessment: Any) -> list[dict[str, Any]]:
+def _risk_evidence(
+    company_name: str,
+    assessment: Any,
+    *,
+    target_fields: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     if assessment is None:
         return []
     payload = assessment.model_dump() if hasattr(assessment, "model_dump") else dict(assessment)
@@ -118,6 +147,7 @@ def _risk_evidence(company_name: str, assessment: Any) -> list[dict[str, Any]]:
         "source_type": "internal",
         "freshness": "fresh",
         "confidence": 0.85 if scope == "完整" else 0.65,
+        **(target_fields or {}),
         "company_id": company_name,
         "dimension": "risk",
         "claim": claim,
@@ -134,6 +164,7 @@ def _evidence(
     *,
     freshness: str = "fresh",
     confidence: float = 0.8,
+    target_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "evidence_id": f"{dimension}:{company_name}",
@@ -141,6 +172,7 @@ def _evidence(
         "source_type": "internal",
         "freshness": freshness,
         "confidence": confidence,
+        **(target_fields or {}),
         "company_id": company_name,
         "dimension": dimension,
         "claim": claim,
@@ -212,7 +244,8 @@ async def _run_risk(context: AgentTaskContext) -> AgentResult:
         for name in company_names
     ]
     evidence = [
-        item for name, risk_info in risk_records for item in _risk_evidence(name, risk_info)
+        item for name, risk_info in risk_records
+        for item in _risk_evidence(name, risk_info, target_fields=_target_fields(context, name))
     ]
     findings = [
         {
@@ -271,6 +304,7 @@ async def _run_compliance(context: AgentTaskContext) -> AgentResult:
             name, "compliance", "制裁与黑名单筛查",
             "未命中制裁或黑名单记录。" if result.get("clean") else f"命中 {result.get('match_count', 0)} 条制裁或合规记录。",
             {"compliance": result}, confidence=0.8,
+            target_fields=_target_fields(context, name),
         )
         for name, result in results
     ]
@@ -326,6 +360,7 @@ async def _run_sentiment(context: AgentTaskContext) -> AgentResult:
             {"sentiment": result},
             freshness="stale" if result.get("is_stale") else "fresh",
             confidence=0.65 if result.get("is_stale") else 0.8,
+            target_fields=_target_fields(context, name),
         )
         for name, result, refreshed in results
         if result is not None and result.get("has_data") is not False
@@ -370,6 +405,7 @@ async def _run_esg(context: AgentTaskContext) -> AgentResult:
                 else f"ESG 数据不足（覆盖度 {result.get('data_coverage', {}).get('coverage_ratio', 0):.0%}），不能判定为低风险。"
             ),
             {"esg": result}, confidence=0.75,
+            target_fields=_target_fields(context, name),
         )
         for name, result in results if result is not None
     ]
@@ -445,6 +481,11 @@ async def run_agent_task(task: PlannerTask, state: AgentTaskState) -> AgentResul
         user_query=state.get("user_query", ""),
         intent=dict(state.get("intent", {})),
         dependency_results={dependency: previous[dependency] for dependency in task.depends_on if dependency in previous},
+        supplier_references=[
+            dict(reference)
+            for reference in state.get("supplier_references", [])
+            if isinstance(reference, dict)
+        ],
     )
     handler = AGENT_HANDLERS[task.agent]
     started_at = time.monotonic()

@@ -16,6 +16,7 @@ from app.domains.alert.service import (
     get_latest_snapshot,
     get_snapshot_history,
     get_watchlist,
+    get_watchlist_targets,
     refresh_company,
     remove_from_watchlist,
 )
@@ -26,6 +27,16 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 
 class CompanyRequest(BaseModel):
     company_name: str
+
+
+class WatchRequest(BaseModel):
+    company_name: str | None = None
+    target_type: str | None = None
+    monitor_target_id: str | None = None
+    supplier_id: str | None = None
+    candidate_id: str | None = None
+    company_id: str | None = None
+    supplier_code: str | None = None
 
 
 class RuleItem(BaseModel):
@@ -123,25 +134,31 @@ async def alert_check(req: CompanyRequest):
 )
 async def alert_dashboard():
     db = get_db()
-    companies = [doc["company_name"] for doc in db["watchlist"].find()]
+    targets = get_watchlist_targets()
+    companies = [target["company_name"] for target in targets if target.get("company_name")]
 
     distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
     details = []
 
     # 使用聚合查询一次性获取所有企业的最新快照（替代 N+1 循环查询）
     snap_map: dict = {}
+    target_ids = [str(target.get("monitor_target_id")) for target in targets if target.get("monitor_target_id")]
     if companies:
         pipeline = [
-            {"$match": {"company_name": {"$in": companies}}},
+            {"$match": {"$or": [
+                {"monitor_target_id": {"$in": target_ids}},
+                {"company_name": {"$in": companies}},
+            ]}},
             {"$sort": {"checked_at": -1}},
             {"$group": {
-                "_id": "$company_name",
+                "_id": {"$ifNull": ["$monitor_target_id", "$company_name"]},
                 "doc": {"$first": "$$ROOT"},
             }},
         ]
         for doc in db["alert_snapshots"].aggregate(pipeline):
             snap = doc["doc"]
-            snap_map[snap["company_name"]] = snap
+            snap_map[str(doc["_id"])] = snap
+            snap_map[snap.get("company_name", "")] = snap
 
     # 计算每个企业的风险变化趋势（近30天分数变动）
     trend_map: dict = {}
@@ -164,8 +181,9 @@ async def alert_dashboard():
                 if len(all_snaps) >= 2:
                     trend_map[name] = all_snaps[1].get("risk_score", 0)
 
-    for name in companies:
-        snap = snap_map.get(name)
+    for target in targets:
+        name = target.get("company_name", "")
+        snap = snap_map.get(str(target.get("monitor_target_id"))) or snap_map.get(name)
         if snap:
             level = snap.get("risk_level", "未知")
             distribution[level] = distribution.get(level, 0) + 1
@@ -174,6 +192,12 @@ async def alert_dashboard():
             risk_trend = round(current_score - prev_score, 1) if prev_score is not None else 0
             details.append({
                 "name": name,
+                "monitor_target_id": target.get("monitor_target_id"),
+                "target_type": target.get("target_type"),
+                "supplier_id": target.get("supplier_id"),
+                "candidate_id": target.get("candidate_id"),
+                "company_id": target.get("company_id"),
+                "supplier_code": target.get("supplier_code"),
                 "score": current_score,
                 "level": level,
                 "risk_trend": risk_trend,
@@ -181,7 +205,19 @@ async def alert_dashboard():
             })
         else:
             distribution["未知"] += 1
-            details.append({"name": name, "score": None, "level": "未知", "risk_trend": 0, "last_checked": None})
+            details.append({
+                "name": name,
+                "monitor_target_id": target.get("monitor_target_id"),
+                "target_type": target.get("target_type"),
+                "supplier_id": target.get("supplier_id"),
+                "candidate_id": target.get("candidate_id"),
+                "company_id": target.get("company_id"),
+                "supplier_code": target.get("supplier_code"),
+                "score": None,
+                "level": "未知",
+                "risk_trend": 0,
+                "last_checked": None,
+            })
 
     details.sort(key=lambda d: d["score"] if d["score"] is not None else -1, reverse=True)
 
@@ -191,6 +227,7 @@ async def alert_dashboard():
         "total": len(companies),
         "distribution": distribution,
         "companies": details,
+        "targets": targets,
         "alert_count": alert_count,
     }
 
@@ -284,7 +321,7 @@ async def clear_alerts():
 )
 async def list_watchlist():
     companies = get_watchlist()
-    return {"count": len(companies), "companies": companies}
+    return {"count": len(companies), "companies": companies, "targets": get_watchlist_targets()}
 
 
 @router.post(
@@ -296,8 +333,16 @@ async def list_watchlist():
         500: {"description": "服务器内部错误"},
     },
 )
-async def watch_company(req: CompanyRequest):
-    return add_to_watchlist(req.company_name)
+async def watch_company(req: WatchRequest):
+    return add_to_watchlist(
+        req.company_name,
+        target_type=req.target_type,
+        monitor_target_id=req.monitor_target_id,
+        supplier_id=req.supplier_id,
+        candidate_id=req.candidate_id,
+        company_id=req.company_id,
+        supplier_code=req.supplier_code,
+    )
 
 
 @router.post(
@@ -447,8 +492,20 @@ async def predict_one(company_name: str):
         500: {"description": "服务器内部错误"},
     },
 )
-async def unwatch_company(company_name: str = Query(..., description="企业名称")):
-    return remove_from_watchlist(company_name)
+async def unwatch_company(
+    company_name: str | None = Query(None, description="企业名称（兼容参数）"),
+    monitor_target_id: str | None = Query(None, description="监控对象 ID"),
+    supplier_id: str | None = Query(None, description="正式供应商 ID"),
+    candidate_id: str | None = Query(None, description="外部候选 ID"),
+    company_id: str | None = Query(None, description="企业主体 ID"),
+):
+    return remove_from_watchlist(
+        company_name,
+        monitor_target_id=monitor_target_id,
+        supplier_id=supplier_id,
+        candidate_id=candidate_id,
+        company_id=company_id,
+    )
 
 
 @router.get(

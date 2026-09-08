@@ -82,6 +82,8 @@ class OperationalRiskOutput(StrictToolOutput):
 
 class AlertCheckOutput(StrictToolOutput):
     company_name: str
+    monitor_target_id: str | None = None
+    target_type: str | None = None
     changed: bool = False
     severity: str | None = None
     changes: list[dict[str, Any]] = Field(default_factory=list)
@@ -91,7 +93,14 @@ class AlertCheckOutput(StrictToolOutput):
 
 class WatchlistOutput(StrictToolOutput):
     company_name: str | None = None
+    monitor_target_id: str | None = None
+    target_type: str | None = None
+    identity_status: str | None = None
     supplier_id: str | None = None
+    candidate_id: str | None = None
+    company_id: str | None = None
+    supplier_code: str | None = None
+    targets: list[dict[str, Any]] = Field(default_factory=list)
     companies: list[Any] = Field(default_factory=list)
     count: int | None = Field(default=None, ge=0)
     operation: str | None = None

@@ -53,6 +53,11 @@ export interface RiskResult {
 export interface AlertDoc {
   _id: string;
   company_name: string;
+  monitor_target_id?: string | null;
+  target_type?: string | null;
+  supplier_id?: string | null;
+  candidate_id?: string | null;
+  company_id?: string | null;
   created_at: string;
   changes: { field: string; old: number | boolean; new: number | boolean }[];
   severity: 'warning' | 'critical';
@@ -62,6 +67,23 @@ export interface AlertDoc {
 export interface WatchlistData {
   count: number;
   companies: string[];
+  targets?: MonitorTarget[];
+}
+
+export interface MonitorTarget {
+  monitor_target_id: string;
+  target_type: 'formal_supplier' | 'external_candidate' | 'company' | string;
+  identity_status?: 'verified' | 'candidate' | 'unresolved' | string;
+  company_name: string;
+  display_name?: string;
+  supplier_id?: string | null;
+  candidate_id?: string | null;
+  company_id?: string | null;
+  supplier_code?: string | null;
+  monitor_status?: 'active' | 'paused' | 'removed' | string;
+  added_at?: string | null;
+  last_checked_at?: string | null;
+  data_coverage?: Record<string, unknown>;
 }
 
 export interface ChatMessage {
@@ -100,6 +122,7 @@ export interface AgentAnswer {
 export interface AgentEvidenceRecord {
   evidence_id: string;
   entity_id: string;
+  monitor_target_id?: string | null;
   dimension: string;
   provider: string;
   source_type: string;
@@ -318,6 +341,7 @@ export interface SourcingRiskIdentityCandidate {
 
 export interface SourcingRiskEvidence {
   evidence_id?: string;
+  monitor_target_id?: string | null;
   dimension?: string;
   freshness_status?: 'fresh' | 'stale' | 'unknown' | string;
   conflict_status?: 'clear' | 'conflicting' | 'unknown' | string;

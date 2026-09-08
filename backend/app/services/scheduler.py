@@ -13,7 +13,7 @@ from app.services.scheduler_leadership import SchedulerLeadership
 from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
-    get_watchlist,
+    get_watchlist_targets,
     save_snapshot,
 )
 
@@ -25,12 +25,14 @@ _scheduler_leadership = SchedulerLeadership()
 
 def run_financial_check() -> dict:
     """Free: only check AkShare financial data, no Tianyancha API."""
-    companies = get_watchlist()
-    if not companies:
+    targets = get_watchlist_targets()
+    if not targets:
         return {"checked": 0, "alerts": []}
 
     results = []
-    for name in companies:
+    for target in targets:
+        name = target.get("company_name", "")
+        monitor_target_id = target.get("monitor_target_id")
         try:
             profile = get_baseinfo(name)
             if not profile or not profile.is_listed:
@@ -42,7 +44,7 @@ def run_financial_check() -> dict:
                 results.append({"company": name, "changed": False, "reason": "无财报数据"})
                 continue
 
-            prev = get_latest_snapshot(name)
+            prev = get_latest_snapshot(name, monitor_target_id=monitor_target_id)
             prev_fin = (prev.get("financial") or {}) if prev else {}
             changed = (
                 prev_fin.get("revenue_growth") != financial.revenue_growth
@@ -62,9 +64,17 @@ def run_financial_check() -> dict:
                     financial=financial,
                     risk_detail=old_detail,
                 )
-                save_snapshot(name, response)
+                save_snapshot(
+                    name,
+                    response,
+                    monitor_target_id=monitor_target_id,
+                    target_type=target.get("target_type"),
+                    supplier_id=target.get("supplier_id"),
+                    candidate_id=target.get("candidate_id"),
+                    company_id=target.get("company_id"),
+                )
 
-            changes = detect_changes(name)
+            changes = detect_changes(name, monitor_target_id=monitor_target_id)
             if changes["changed"]:
                 logger.warning("Financial alert for %s: %s", name, changes["changes"])
             results.append({
@@ -76,7 +86,7 @@ def run_financial_check() -> dict:
             logger.error("Financial check failed for %s: %s", name, e)
             results.append({"company": name, "error": str(e)})
 
-    return {"checked": len(companies), "channel": "free", "alerts": results}
+    return {"checked": len(targets), "channel": "free", "alerts": results}
 
 
 def run_refresh_all() -> dict:
@@ -85,16 +95,18 @@ def run_refresh_all() -> dict:
     from app.schemas import RiskAssessRequest
     from app.domains.risk.service import assess_risk
 
-    companies = get_watchlist()
-    if not companies:
+    targets = get_watchlist_targets()
+    if not targets:
         return {"checked": 0, "alerts": []}
 
     results = []
-    for name in companies:
+    for target in targets:
+        name = target.get("company_name", "")
+        monitor_target_id = target.get("monitor_target_id")
         try:
             fetch_company(name)
             assess_risk(RiskAssessRequest(company_name=name))
-            changes = detect_changes(name)
+            changes = detect_changes(name, monitor_target_id=monitor_target_id)
             if changes["changed"]:
                 logger.warning("Full refresh alert for %s: %s", name, changes["changes"])
             results.append({
@@ -106,7 +118,7 @@ def run_refresh_all() -> dict:
             logger.error("Full refresh failed for %s: %s", name, e)
             results.append({"company": name, "error": str(e)})
 
-    return {"checked": len(companies), "channel": "paid", "alerts": results}
+    return {"checked": len(targets), "channel": "paid", "alerts": results}
 
 
 def _scheduled_financial() -> None:

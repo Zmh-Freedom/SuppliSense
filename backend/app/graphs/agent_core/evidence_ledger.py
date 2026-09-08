@@ -28,6 +28,7 @@ class EvidenceRecord(BaseModel):
 
     evidence_id: str = Field(min_length=1, max_length=255)
     entity_id: str = Field(min_length=1, max_length=255)
+    monitor_target_id: str | None = Field(default=None, max_length=255)
     dimension: str = Field(min_length=1, max_length=64)
     provider: str = Field(min_length=1, max_length=128)
     source_type: str = Field(min_length=1, max_length=64)
@@ -345,14 +346,24 @@ def build_evidence_record(
     endpoint: str | None = None,
     query: dict[str, Any] | None = None,
     raw_payload_ref: str | None = None,
+    monitor_target_id: str | None = None,
 ) -> EvidenceRecord:
     """Normalize provider payload and derive a stable content hash."""
     content_hash = hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
+    if monitor_target_id is None:
+        try:
+            from app.tools.executor import get_active_tool_context
+
+            context = get_active_tool_context()
+            monitor_target_id = context.monitor_target_id if context else None
+        except Exception:
+            monitor_target_id = None
     return EvidenceRecord(
         evidence_id=evidence_id,
         entity_id=entity_id,
+        monitor_target_id=monitor_target_id,
         dimension=dimension,
         provider=provider,
         source_type=source_type,

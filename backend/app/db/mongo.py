@@ -70,7 +70,15 @@ def ensure_indexes() -> None:
         db = get_db()
         # baseinfo: 按企业名查询
         db["baseinfo"].create_index([("name", 1)], unique=True, background=True)
-        # alert_snapshots: 按企业+时间查询
+        # alert_snapshots: stable monitoring target + time; company_name remains compatibility
+        db["alert_snapshots"].create_index(
+            [("monitor_target_id", 1), ("checked_at", -1)],
+            background=True,
+        )
+        db["alert_snapshots"].create_index(
+            [("monitor_target_id", 1), ("snapshot_version", -1)],
+            background=True,
+        )
         db["alert_snapshots"].create_index(
             [("company_name", 1), ("checked_at", -1)],
             background=True,
@@ -79,8 +87,12 @@ def ensure_indexes() -> None:
             [("company_name", 1), ("snapshot_version", -1)],
             background=True,
         )
-        # watchlist: 按企业名查询
-        db["watchlist"].create_index([("company_name", 1)], unique=True, background=True)
+        # watchlist: stable monitoring target identities; company_name remains a compatibility index
+        db["watchlist"].create_index([("monitor_target_id", 1)], unique=True, sparse=True, background=True)
+        db["watchlist"].create_index([("supplier_id", 1)], background=True)
+        db["watchlist"].create_index([("candidate_id", 1)], background=True)
+        db["watchlist"].create_index([("company_id", 1)], background=True)
+        db["watchlist"].create_index([("company_name", 1)], background=True)
         # V2 approved actions: durable external side-effect idempotency
         db["suppliers"].create_index(
             [("agent_action_key", 1)], unique=True, sparse=True, background=True
@@ -175,7 +187,8 @@ def ensure_indexes() -> None:
                 db[col].create_index([("name", 1)], background=True)
             except Exception:
                 pass
-        # alerts: 按企业名+时间
+        # alerts: stable monitoring target + time; company_name remains a compatibility field
+        db["alerts"].create_index([("monitor_target_id", 1), ("created_at", -1)], background=True)
         db["alerts"].create_index([("company_name", 1), ("created_at", -1)], background=True)
         # api_call_logs: 按日期+时间
         db["api_call_logs"].create_index([("date", 1), ("created_at", -1)], background=True)

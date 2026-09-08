@@ -241,13 +241,34 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
     ]
     intent = state.get("intent", {})
     target_names = intent.get("target_supplier_names", []) if isinstance(intent, dict) else []
+    references = state.get("supplier_references", [])
+
+    def monitor_target(company_name: str) -> dict[str, Any]:
+        target: dict[str, Any] = {
+            "company_name": company_name,
+            "target_source": "conversation_state",
+        }
+        for reference in references if isinstance(references, list) else []:
+            if not isinstance(reference, dict) or reference.get("name") != company_name:
+                continue
+            for field in (
+                "monitor_target_id", "target_type", "supplier_id", "candidate_id",
+                "company_id", "supplier_code", "identity_status",
+            ):
+                value = reference.get(field)
+                if value:
+                    target[field] = value
+            break
+        if target.get("candidate_id") and not target.get("supplier_id"):
+            target.setdefault("target_type", "external_candidate")
+        elif target.get("supplier_id"):
+            target.setdefault("target_type", "formal_supplier")
+        return target
+
     if isinstance(intent, dict) and intent.get("request_watchlist") and isinstance(target_names, list):
         recommendations.extend({
             "action_type": "add_watchlist",
-            "target": {
-                "company_name": company_name,
-                "target_source": "conversation_state",
-            },
+            "target": monitor_target(company_name),
             "reason": "用户要求对该供应商持续进行风险监控。",
             "impact": "加入本地风险监控清单，后续定时检查风险与舆情变化。",
             "requires_approval": True,

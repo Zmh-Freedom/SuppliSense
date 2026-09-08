@@ -57,12 +57,22 @@ def _entity_id(name: str, context: Mapping[str, Any]) -> str:
         if not isinstance(reference, dict) or reference.get("name") != name:
             continue
         return str(
-            reference.get("supplier_id")
+            reference.get("monitor_target_id")
+            or reference.get("supplier_id")
             or reference.get("company_id")
             or reference.get("candidate_id")
             or f"entity:{name}"
         )
     return f"entity:{name}"
+
+
+def _monitor_target_id(name: str, context: Mapping[str, Any]) -> str | None:
+    for reference in context.get("references", []):
+        if not isinstance(reference, dict) or reference.get("name") != name:
+            continue
+        value = reference.get("monitor_target_id")
+        return str(value) if value else None
+    return None
 
 
 def _input_hash(arguments: dict[str, Any]) -> str:
@@ -549,6 +559,15 @@ def build_harness_graph(
                     run_id=state["run_id"],
                     user_id=state.get("user_id"),
                     entity_id=task.entity_id,
+                    monitor_target_id=_monitor_target_id(
+                        str(
+                            task.arguments.get("company_name")
+                            or task.arguments.get("supplier_name")
+                            or task.arguments.get("supplier_reference")
+                            or ""
+                        ),
+                        state.get("execution_context") or {},
+                    ),
                     tool_call_count=count + index,
                     max_tool_calls=budget.max_tool_calls,
                 )

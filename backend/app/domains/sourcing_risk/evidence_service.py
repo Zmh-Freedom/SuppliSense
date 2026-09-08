@@ -37,6 +37,7 @@ class EvidenceRecord(BaseModel):
 
     evidence_id: UUID
     run_id: UUID
+    monitor_target_id: str | None = None
     company_id: UUID
     dimension: Literal[
         "company", "financial", "judicial", "sentiment", "sanctions", "esg", "continuity"
@@ -54,7 +55,13 @@ class EvidenceRecord(BaseModel):
 
 
 def normalize_evidence(
-    run_id: str, company_id: str, dimension: str, provider_result: dict, *, policy: dict
+    run_id: str,
+    company_id: str,
+    dimension: str,
+    provider_result: dict,
+    *,
+    policy: dict,
+    monitor_target_id: str | None = None,
 ) -> EvidenceRecord:
     """Normalize provider input; raw payload persistence belongs to the snapshot compensation seam."""
     run_uuid = _require_uuid(run_id, "run_id")
@@ -70,6 +77,7 @@ def normalize_evidence(
     record = EvidenceRecord(
         evidence_id=uuid4(),
         run_id=run_uuid,
+        monitor_target_id=monitor_target_id or provider_result.get("monitor_target_id"),
         company_id=company_uuid,
         dimension=dimension,
         claim_code=str(provider_result.get("claim_code") or "unknown"),
@@ -147,6 +155,7 @@ def raw_payload_document(record: EvidenceRecord, provider_result: dict) -> dict:
     return {
         "raw_payload_ref": record.raw_payload_ref,
         "run_id": str(record.run_id),
+        "monitor_target_id": record.monitor_target_id,
         "company_id": str(record.company_id),
         "dimension": record.dimension,
         "collected_at": record.collected_at,

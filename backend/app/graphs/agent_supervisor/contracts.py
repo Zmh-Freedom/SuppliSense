@@ -40,6 +40,8 @@ class EvidenceItem(BaseModel):
     collected_at: str | None = None
     freshness: EvidenceFreshness = "unknown"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    monitor_target_id: str | None = None
+    target_type: str | None = None
     company_id: str | None = None
     dimension: str | None = None
     claim: str | None = None

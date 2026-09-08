@@ -478,14 +478,19 @@ def insert_evidence(
     evidence_snapshot: dict[str, Any],
     source_reference: str | None = None,
     cur: PgCursor | None = None,
+    monitor_target_id: str | None = None,
 ) -> dict[str, Any]:
     if cur is not None:
         return _insert_evidence_with_cursor(
-            cur, run_id, company_id, evidence_type, source, evidence_snapshot, source_reference
+            cur, run_id, company_id, evidence_type, source, evidence_snapshot,
+            source_reference, monitor_target_id,
         )
     return _insert_returning(
         "agent_evidence",
-        {"id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id, "evidence_type": evidence_type, "source": source, "source_reference": source_reference, "evidence_snapshot": evidence_snapshot},
+        {"id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id,
+         "evidence_type": evidence_type, "source": source,
+         "source_reference": source_reference, "evidence_snapshot": evidence_snapshot,
+         "monitor_target_id": monitor_target_id},
         {"evidence_snapshot"},
     )
 
@@ -493,11 +498,13 @@ def insert_evidence(
 def _insert_evidence_with_cursor(
     cur: PgCursor, run_id: str, company_id: str, evidence_type: str, source: str,
     evidence_snapshot: dict[str, Any], source_reference: str | None,
+    monitor_target_id: str | None = None,
 ) -> dict[str, Any]:
     values = {
         "id": str(uuid.uuid4()), "run_id": run_id, "company_id": company_id,
         "evidence_type": evidence_type, "source": source, "source_reference": source_reference,
         "evidence_snapshot": evidence_snapshot,
+        "monitor_target_id": monitor_target_id,
     }
     columns = list(values)
     cur.execute(
@@ -623,7 +630,14 @@ def persist_run_snapshot(
             candidate_ids[str(company_id)] = persisted["id"]
     for company_id, evidence_items in (evidence_by_company_id or {}).items():
         for evidence in evidence_items:
-            _upsert_evidence(run_id, str(company_id), evidence, candidate_ids.get(str(company_id)), cur)
+            _upsert_evidence(
+                run_id,
+                str(company_id),
+                evidence,
+                candidate_ids.get(str(company_id)),
+                cur,
+                monitor_target_id=evidence.get("monitor_target_id"),
+            )
     for company_id, review in (evidence_reviews or {}).items():
         upsert_evidence_review(run_id, str(company_id), dict(review), cur=cur)
     for index, decision in enumerate(decisions or []):
@@ -744,6 +758,7 @@ def _evidence_by_company(evidence: list[dict[str, Any]]) -> dict[str, list[dict[
             "dimension": snapshot.get("dimension") or item.get("evidence_type"),
             "source": snapshot.get("source_type") or item.get("source"),
             "source_reference": snapshot.get("source_reference") or item.get("source_reference"),
+            "monitor_target_id": snapshot.get("monitor_target_id") or item.get("monitor_target_id"),
         })
     return grouped
 
@@ -789,7 +804,13 @@ def _candidate_status(candidate: dict[str, Any]) -> str:
 
 
 def _upsert_evidence(
-    run_id: str, company_id: str, evidence: dict[str, Any], candidate_id: str | None, cur: PgCursor,
+    run_id: str,
+    company_id: str,
+    evidence: dict[str, Any],
+    candidate_id: str | None,
+    cur: PgCursor,
+    *,
+    monitor_target_id: str | None = None,
 ) -> None:
     evidence_key = _evidence_key(evidence)
     evidence_id = _stable_id(
@@ -799,20 +820,23 @@ def _upsert_evidence(
     cur.execute(
         """
         INSERT INTO agent_evidence (
-            id, run_id, company_id, candidate_id, evidence_type, source, source_reference, evidence_snapshot
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            id, run_id, company_id, candidate_id, evidence_type, source, source_reference, evidence_snapshot,
+            monitor_target_id
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id) DO UPDATE SET
             candidate_id = EXCLUDED.candidate_id,
             evidence_type = EXCLUDED.evidence_type,
             source = EXCLUDED.source,
             source_reference = EXCLUDED.source_reference,
-            evidence_snapshot = EXCLUDED.evidence_snapshot
+            evidence_snapshot = EXCLUDED.evidence_snapshot,
+            monitor_target_id = EXCLUDED.monitor_target_id
         """,
         (
             evidence_id, run_id, company_id, candidate_id,
             str(evidence.get("dimension") or "unknown"),
             str(evidence.get("source_type") or evidence.get("source") or "unknown"),
             evidence.get("source_reference"), Json(evidence),
+            monitor_target_id or evidence.get("monitor_target_id"),
         ),
     )
 

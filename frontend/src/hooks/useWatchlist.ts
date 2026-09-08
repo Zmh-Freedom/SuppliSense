@@ -12,6 +12,7 @@ export function useWatchlist() {
 
   return {
     companies: query.data?.companies ?? [],
+    targets: query.data?.targets ?? [],
     count: query.data?.count ?? 0,
     isLoading: query.isLoading,
     error: query.error,

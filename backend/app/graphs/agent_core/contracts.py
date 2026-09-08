@@ -41,6 +41,8 @@ class SupplierReference(BaseModel):
     candidate_id: str | None = None
     candidate_type: str | None = None
     identity_status: str | None = None
+    monitor_target_id: str | None = None
+    target_type: str | None = None
     company_id: str | None = None
     website_url: str | None = None
     website_status: str | None = None

@@ -407,6 +407,9 @@ def _aliases_to_entities(entities: list[EntityMemoryEntry]) -> dict[str, EntityM
 
 
 def _reference_entity_id(reference: dict[str, Any], name: str) -> str:
+    monitor_target_id = reference.get("monitor_target_id")
+    if monitor_target_id:
+        return f"monitor:{monitor_target_id}"
     stable_id = reference.get("supplier_id") or reference.get("company_id")
     if stable_id:
         return f"supplier:{stable_id}"
@@ -441,7 +444,10 @@ def _reference_sources(reference: dict[str, Any]) -> list[str]:
 
 
 def _reference_attributes(reference: dict[str, Any]) -> dict[str, Any]:
-    keys = ("candidate_id", "result_id", "candidate_type", "identity_status", "company_id", "supplier_id", "website_url")
+    keys = (
+        "monitor_target_id", "target_type", "candidate_id", "result_id", "candidate_type",
+        "identity_status", "company_id", "supplier_id", "supplier_code", "website_url",
+    )
     return {key: reference[key] for key in keys if reference.get(key)}
 
 

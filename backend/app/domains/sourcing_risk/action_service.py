@@ -293,13 +293,27 @@ def import_external_supplier(payload: dict[str, Any]) -> str:
 def add_watchlist(payload: dict[str, Any]) -> None:
     from app.domains.alert.service import add_to_watchlist as add_to_watchlist_service
 
-    add_to_watchlist_service(_required_event_value(payload, "company_name"))
+    add_to_watchlist_service(
+        payload.get("company_name"),
+        target_type=payload.get("target_type"),
+        monitor_target_id=payload.get("monitor_target_id"),
+        supplier_id=payload.get("supplier_id"),
+        candidate_id=payload.get("candidate_id"),
+        company_id=payload.get("company_id"),
+        supplier_code=payload.get("supplier_code"),
+    )
 
 
 def remove_watchlist(payload: dict[str, Any]) -> None:
     from app.domains.alert.service import remove_from_watchlist as remove_from_watchlist_service
 
-    remove_from_watchlist_service(_required_event_value(payload, "company_name"))
+    remove_from_watchlist_service(
+        payload.get("company_name"),
+        monitor_target_id=payload.get("monitor_target_id"),
+        supplier_id=payload.get("supplier_id"),
+        candidate_id=payload.get("candidate_id"),
+        company_id=payload.get("company_id"),
+    )
 
 
 def submit_access_application(payload: dict[str, Any]) -> str:
@@ -407,11 +421,17 @@ def _bind_action_target(
 
     if action_type in {"add_watchlist", "remove_watchlist"} and candidate_id is None:
         company_name = payload.get("company_name")
+        has_stable_target = any(
+            isinstance(payload.get(field), str) and payload.get(field).strip()
+            for field in ("monitor_target_id", "supplier_id", "candidate_id", "company_id")
+        )
         if (
             not isinstance(company_name, str)
-            or not company_name.strip()
-            or payload.get("target_source") != "conversation_state"
+            or (not company_name.strip() and not has_stable_target)
+            or (not has_stable_target and payload.get("target_source") != "conversation_state")
         ):
+            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "加入监控必须绑定稳定实体 ID；兼容旧会话时必须绑定当前任务企业", 422)
+        if not has_stable_target and payload.get("target_source") != "conversation_state":
             raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "加入监控必须绑定当前任务企业", 422)
         return dict(payload)
 
@@ -426,7 +446,17 @@ def _bind_action_target(
         if candidate_company_id is not None and payload.get("company_id") not in {None, candidate_company_id}:
             raise DomainError("AGENT_ACTION_COMPANY_INVALID", "企业标识与候选企业不一致", 422)
         if candidate_company_id is not None:
-            return {**dict(payload), "company_id": candidate_company_id}
+            return {
+                **dict(payload),
+                "candidate_id": candidate_id,
+                "company_id": candidate_company_id,
+                "target_type": payload.get("target_type") or "external_candidate",
+            }
+        return {
+            **dict(payload),
+            "candidate_id": candidate_id,
+            "target_type": payload.get("target_type") or "external_candidate",
+        }
     company_id = payload.get("company_id")
     if company_id is not None:
         if not isinstance(company_id, str) or not company_id.strip():

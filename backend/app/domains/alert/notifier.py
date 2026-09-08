@@ -15,20 +15,22 @@ def check_and_notify() -> dict:
     """检查监控列表企业风险变化，触发 WebSocket 推送。
     当风险评分变化 >= SCORE_THRESHOLD 或等级升级时，同时触发寻源替代建议（24h 限频）。
     """
-    from app.domains.alert.service import detect_changes, get_watchlist
+    from app.domains.alert.service import detect_changes, get_watchlist_targets
     from app.services.ws_manager import ws_manager
 
-    companies = get_watchlist()
-    if not companies:
+    targets = get_watchlist_targets()
+    if not targets:
         return {"checked": 0, "alerts": []}
 
     db = get_db()
     alerts = []
     suggestions_sent = 0
 
-    for company_name in companies:
+    for target in targets:
+        company_name = target.get("company_name", "")
+        monitor_target_id = target.get("monitor_target_id")
         try:
-            changes = detect_changes(company_name)
+            changes = detect_changes(company_name, monitor_target_id=monitor_target_id)
             if not changes.get("changed"):
                 continue
 
@@ -55,6 +57,12 @@ def check_and_notify() -> dict:
             # ---- risk_alert notification ----
             alert_doc = {
                 "company": company_name,
+                "company_name": company_name,
+                "monitor_target_id": monitor_target_id,
+                "target_type": target.get("target_type"),
+                "supplier_id": target.get("supplier_id"),
+                "candidate_id": target.get("candidate_id"),
+                "company_id": target.get("company_id"),
                 "score_delta": score_delta,
                 "changes": changes.get("changes", []),
                 "timestamp": datetime.now(timezone.utc),

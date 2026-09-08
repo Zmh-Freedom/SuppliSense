@@ -10,7 +10,11 @@ from app.domains.risk.repo_company import get_baseinfo
 from app.domains.risk.repo_financial import get_financial_metrics
 
 
-def predict_company(company_name: str) -> dict | None:
+def predict_company(
+    company_name: str,
+    *,
+    monitor_target_id: str | None = None,
+) -> dict | None:
     """Predict deterioration risk for a single company."""
     profile = get_baseinfo(company_name)
     if not profile:
@@ -60,12 +64,25 @@ def predict_company(company_name: str) -> dict | None:
 
     # ---- trend from snapshot history ----
     db = get_db()
+    snapshot_query = (
+        {"monitor_target_id": monitor_target_id}
+        if monitor_target_id
+        else {"company_name": company_name}
+    )
     snaps = list(
         db["alert_snapshots"]
-        .find({"company_name": company_name})
+        .find(snapshot_query)
         .sort("checked_at", -1)
         .limit(5)
     )
+    if not snaps and monitor_target_id:
+        # Compatibility for snapshots written before the monitor target migration.
+        snaps = list(
+            db["alert_snapshots"]
+            .find({"company_name": company_name})
+            .sort("checked_at", -1)
+            .limit(5)
+        )
     if len(snaps) >= 2:
         scores = [s.get("risk_score", 0) for s in snaps]
         if len(scores) >= 3 and all(scores[i] >= scores[i+1] for i in range(len(scores)-1)):
@@ -109,14 +126,27 @@ def predict_company(company_name: str) -> dict | None:
 
 def predict_all() -> list[dict]:
     """Predict for all companies in watchlist."""
-    db = get_db()
-    companies = [doc["company_name"] for doc in db["watchlist"].find()]
+    from app.domains.alert.service import get_watchlist_targets
+
+    targets = get_watchlist_targets()
     results = []
-    for name in companies:
-        pred = predict_company(name)
+    for target in targets:
+        name = target.get("company_name", "")
+        pred = predict_company(name, monitor_target_id=target.get("monitor_target_id"))
         if pred:
-            results.append(pred)
+            results.append({
+                **pred,
+                "monitor_target_id": target.get("monitor_target_id"),
+                "target_type": target.get("target_type"),
+            })
         else:
-            results.append({"company_name": name, "probability": "unknown", "label": "无数据", "has_data": False})
+            results.append({
+                "company_name": name,
+                "monitor_target_id": target.get("monitor_target_id"),
+                "target_type": target.get("target_type"),
+                "probability": "unknown",
+                "label": "无数据",
+                "has_data": False,
+            })
     results.sort(key=lambda r: r.get("warning_score", 0), reverse=True)
     return results

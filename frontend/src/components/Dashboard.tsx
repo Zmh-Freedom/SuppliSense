@@ -8,13 +8,20 @@ import { SkeletonCard, SkeletonChart } from './Skeleton';
 import { getRiskColor, getRiskBg } from '../riskColors';
 import { useDashboard, useWatchlist } from '../hooks';
 import { queryKeys } from '../query-keys';
-import type { Prediction } from '../types';
+import type { MonitorTarget, Prediction } from '../types';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const dashQuery = useDashboard();
-  const { companies: watchlist } = useWatchlist();
+  const { companies: watchlist, targets: watchTargets } = useWatchlist();
+  const monitoringTargets: MonitorTarget[] = watchTargets.length > 0
+    ? watchTargets
+    : watchlist.map(name => ({
+        monitor_target_id: `legacy:${name}`,
+        target_type: 'company',
+        company_name: name,
+      }));
   const predQuery = useQuery({
     queryKey: queryKeys.predictions,
     queryFn: () => api.get<Prediction[]>('/alert/predict'),
@@ -303,18 +310,20 @@ export default function Dashboard() {
           <p className="text-sm text-gray-300 text-center py-4">暂无监控企业，在上方输入名称添加</p>
         ) : (
           <div className="space-y-1">
-            {watchlist.map(name => {
+            {monitoringTargets.map(target => {
+              const name = target.display_name || target.company_name;
               const company = data.companies.find(c => c.name === name);
               const score = company?.score;
               const level = company?.level || '未知';
               const levelColor = level === '未知' ? '#999' : getRiskColor(level === '高风险' ? 61 : level === '中风险' ? 31 : 0);
               return (
-                <div key={name} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
+                <div key={target.monitor_target_id} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-[var(--color-surface-hover)] transition-colors min-h-[44px]">
                   <button
                     className="text-sm text-[var(--color-text)] truncate flex-1 text-left hover:text-[var(--color-primary-bg)] transition-colors"
                     onClick={() => navigate(`/assess/${encodeURIComponent(name)}`)}
                   >
-                    {name}
+                    <span className="truncate">{name}</span>
+                    {target.supplier_code && <span className="ml-2 text-[10px] text-gray-400">{target.supplier_code}</span>}
                   </button>
                   <div className="flex items-center gap-2 shrink-0">
                     {score != null ? (
@@ -332,7 +341,12 @@ export default function Dashboard() {
                       分析
                     </button>
                     <button
-                      onClick={() => removeMutation.mutate(name)}
+                      onClick={() => target.monitor_target_id.startsWith('legacy:')
+                        ? removeMutation.mutate(name)
+                        : api.delete('/alert/watch', { monitor_target_id: target.monitor_target_id }).then(() => {
+                            queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
+                            queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
+                          }).catch(() => setToast('移除失败，请重试'))}
                       className="text-gray-300 hover:text-red-400 text-sm transition-colors p-1"
                       title="移除"
                     >
