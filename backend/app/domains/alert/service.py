@@ -413,6 +413,13 @@ def add_to_watchlist(
         company_id=company_id,
         company_name=name or None,
     )
+    if existing:
+        name = name or existing.get("company_name", "")
+        sid = sid or existing.get("supplier_id")
+        candidate_id = candidate_id or existing.get("candidate_id")
+        company_id = company_id or existing.get("company_id")
+        supplier_code = supplier_code or existing.get("supplier_code")
+        resolved_type = target_type or existing.get("target_type") or resolved_type
     target_id = monitor_target_id or (existing or {}).get("monitor_target_id") or str(uuid.uuid4())
     identity_status = "candidate" if resolved_type == "external_candidate" else (
         "verified" if sid or company_id else "unresolved"
