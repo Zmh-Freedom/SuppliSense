@@ -1950,7 +1950,7 @@
 - 根因：监控对象写入、主体解析、寻源核验与风险复核任务各自独立，缺少持久化的“调查中间态”及统一的来源状态模型。修复后补充发现：首版 Intake 候选检索仍只读取旧 `suppliers` 集合，遗漏了当前权威的 `supplier_master_snapshots` 飞书快照；候选归一化也只读取旧 `_id`，没有读取飞书快照中的 `supplier_id`。
 - 修复方案：新增监控调查 Intake：先并行查询本地主体、供应商、交易、历史合作与可用天眼查资料，输出候选、资料覆盖、发现与缺口；仅在用户选择主体并确认后创建监控对象和首次风险基线。监控页和 Harness Agent 使用同一调查结果。
 - 验证结果：新增 `/alert/intakes` 调查、候选选择、读取和确认接口；监控页输入线索后先展示主体候选、资料覆盖和调查结论，确认后才创建监控对象与首次基线。Harness 已注册同一只读调查工具。后端调查测试现为 5 项通过；前端监控页测试 3 项、TypeScript、Lint、生产构建和 `git diff --check` 通过。对当前 MongoDB 实例以“青岛三祥科技股份有限公司”实测，正式飞书供应商快照可返回稳定 ID `supplier:feishu:5840e49a-6289-45f7-9a82-97a05dfd3540`、代码 `8370069`，来源标记为“飞书正式供应商主数据”。后端已重启，`/openapi.json` 返回 200。实际两家案例的数据覆盖取决于本地快照与已配置的天眼查权限，待管理员用演示账号完成最终验收。
-- 关联提交：`26f1f06e feat: investigate suppliers before monitoring`。
+- 关联提交：`26f1f06e feat: investigate suppliers before monitoring`、`cd1ba963 fix: resolve Feishu suppliers in monitoring intake`。
 
 ## ISS-20260909-049 监控页仍加载旧版“添加对象”入口
 
