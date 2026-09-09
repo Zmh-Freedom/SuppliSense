@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from app.core.deps import get_current_user, require_admin
 from app.core.logging import get_logger
 from app.schemas.sourcing import ApproveRejectRequest
+from app.schemas.user import UserInDB
 
 logger = get_logger(__name__)
 router = APIRouter(
@@ -37,12 +38,16 @@ async def list_applications(
     "/{application_id}/approve",
     summary="通过准入申请",
 )
-async def approve(application_id: str, _body: ApproveRejectRequest, request: Request):
+async def approve(
+    application_id: str,
+    _body: ApproveRejectRequest,
+    _request: Request,
+    current_user: UserInDB = Depends(require_admin),
+):
     from app.domains.sourcing.service import approve_application
 
-    reviewer_id = getattr(request.state, "user_id", "admin")
     try:
-        return await asyncio.to_thread(approve_application, application_id, reviewer_id)
+        return await asyncio.to_thread(approve_application, application_id, current_user.id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -51,11 +56,15 @@ async def approve(application_id: str, _body: ApproveRejectRequest, request: Req
     "/{application_id}/reject",
     summary="拒绝准入申请",
 )
-async def reject(application_id: str, _body: ApproveRejectRequest, request: Request):
+async def reject(
+    application_id: str,
+    _body: ApproveRejectRequest,
+    _request: Request,
+    current_user: UserInDB = Depends(require_admin),
+):
     from app.domains.sourcing.service import reject_application
 
-    reviewer_id = getattr(request.state, "user_id", "admin")
     try:
-        return await asyncio.to_thread(reject_application, application_id, reviewer_id)
+        return await asyncio.to_thread(reject_application, application_id, current_user.id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

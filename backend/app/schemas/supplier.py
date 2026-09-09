@@ -64,6 +64,12 @@ class SupplierMasterResponse(BaseModel):
     updated_at: datetime | None = None
 
 
+class SupplierAssignmentUpdate(BaseModel):
+    """Administrator-maintained purchaser responsibilities for one supplier."""
+
+    user_ids: list[str] = []
+
+
 class SupplierListResponse(BaseModel):
     """供应商分页列表。"""
 

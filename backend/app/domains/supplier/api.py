@@ -2,13 +2,22 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_admin
 from app.core.logging import get_logger
 from app.schemas.supplier import (
     SupplierListResponse,
     SupplierMasterResponse,
     SupplierProfileResponse,
+    SupplierAssignmentUpdate,
     SupplierUpdateInput,
+)
+from app.schemas.user import UserInDB
+from app.domains.supplier.access import (
+    can_access_supplier,
+    is_admin,
+    list_assigned_supplier_ids,
+    list_supplier_assignments,
+    replace_supplier_assignments,
 )
 
 logger = get_logger()
@@ -30,6 +39,7 @@ async def list_suppliers_endpoint(
     status: str = Query("", description="供应商状态筛选"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=200, description="每页数量"),
+    current_user: UserInDB = Depends(get_current_user),
 ):
     """List suppliers with pagination and optional filters."""
     import asyncio
@@ -42,6 +52,9 @@ async def list_suppliers_endpoint(
         page=page,
         page_size=page_size,
         hide_bare=False,  # profile endpoint shows all suppliers
+        supplier_ids=None if is_admin(current_user.role.value) else await asyncio.to_thread(
+            list_assigned_supplier_ids, current_user.id
+        ),
     )
 
     return SupplierListResponse(
@@ -58,7 +71,10 @@ async def list_suppliers_endpoint(
     description="获取单个供应商的完整主数据记录。",
     responses={404: {"description": "供应商不存在"}},
 )
-async def get_supplier_master(supplier_id: str):
+async def get_supplier_master(
+    supplier_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
     """Get the full master data record for a supplier."""
     import asyncio
     from app.domains.supplier.repo import get_supplier
@@ -66,6 +82,9 @@ async def get_supplier_master(supplier_id: str):
     doc = await asyncio.to_thread(get_supplier, supplier_id)
     if not doc:
         raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
+    stable_id = str(doc.get("supplier_id") or doc.get("_id"))
+    if not await asyncio.to_thread(can_access_supplier, stable_id, current_user.id, current_user.role.value):
+        raise HTTPException(status_code=403, detail="无权查看该供应商")
 
     doc["_id"] = str(doc["_id"])
     return doc
@@ -77,7 +96,11 @@ async def get_supplier_master(supplier_id: str):
     description="部分更新供应商字段，自动记录变更历史。",
     responses={404: {"description": "供应商不存在"}},
 )
-async def update_supplier_master(supplier_id: str, body: SupplierUpdateInput):
+async def update_supplier_master(
+    supplier_id: str,
+    body: SupplierUpdateInput,
+    _current_user: UserInDB = Depends(require_admin),
+):
     """Update supplier master data (partial update)."""
     import asyncio
     from app.domains.supplier.repo import get_supplier, update_supplier
@@ -99,16 +122,65 @@ async def update_supplier_master(supplier_id: str, body: SupplierUpdateInput):
     return updated
 
 
+@router.get("/{supplier_id}/assignments", summary="查看供应商采购负责人")
+async def get_supplier_assignments(
+    supplier_id: str,
+    _current_user: UserInDB = Depends(require_admin),
+):
+    import asyncio
+    from app.domains.supplier.repo import get_supplier
+
+    supplier = await asyncio.to_thread(get_supplier, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
+    stable_id = str(supplier.get("supplier_id") or supplier.get("_id"))
+    assignments = await asyncio.to_thread(list_supplier_assignments, stable_id)
+    return {"supplier_id": stable_id, "assignments": assignments}
+
+
+@router.put("/{supplier_id}/assignments", summary="设置供应商采购负责人")
+async def set_supplier_assignments(
+    supplier_id: str,
+    body: SupplierAssignmentUpdate,
+    current_user: UserInDB = Depends(require_admin),
+):
+    import asyncio
+    from app.domains.supplier.repo import get_supplier
+
+    supplier = await asyncio.to_thread(get_supplier, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
+    stable_id = str(supplier.get("supplier_id") or supplier.get("_id"))
+    try:
+        assignments = await asyncio.to_thread(
+            replace_supplier_assignments, stable_id, body.user_ids, current_user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"supplier_id": stable_id, "assignments": assignments}
+
+
 @router.get(
     "/{supplier_id}/profile",
     summary="供应商画像",
     description="聚合所有领域数据（风险、财务、舆情、合规、ESG、告警、关系、变更日志），构建统一供应商画像。",
     responses={404: {"description": "供应商不存在"}},
 )
-async def get_supplier_profile(supplier_id: str):
+async def get_supplier_profile(
+    supplier_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
     """Get the complete aggregated supplier profile."""
     import asyncio
     from app.domains.supplier.service import build_supplier_profile
+    from app.domains.supplier.repo import get_supplier
+
+    supplier = await asyncio.to_thread(get_supplier, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
+    stable_id = str(supplier.get("supplier_id") or supplier.get("_id"))
+    if not await asyncio.to_thread(can_access_supplier, stable_id, current_user.id, current_user.role.value):
+        raise HTTPException(status_code=403, detail="无权查看该供应商")
 
     try:
         profile = await asyncio.to_thread(build_supplier_profile, supplier_id)
@@ -127,6 +199,7 @@ async def get_supplier_profile(supplier_id: str):
 async def get_supplier_changelog(
     supplier_id: str,
     limit: int = Query(20, ge=1, le=200, description="返回条数"),
+    current_user: UserInDB = Depends(get_current_user),
 ):
     """Get the change log for a supplier."""
     import asyncio
@@ -135,6 +208,9 @@ async def get_supplier_changelog(
     existing = await asyncio.to_thread(get_supplier, supplier_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
+    stable_id = str(existing.get("supplier_id") or existing.get("_id"))
+    if not await asyncio.to_thread(can_access_supplier, stable_id, current_user.id, current_user.role.value):
+        raise HTTPException(status_code=403, detail="无权查看该供应商")
 
     changelog = await asyncio.to_thread(get_changelog, supplier_id, limit)
     total = await asyncio.to_thread(count_changelog, supplier_id)

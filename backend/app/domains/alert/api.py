@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile
 
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_admin
 from app.db.mongo import get_db
 from app.domains.alert.rules import get_rules, set_rules
 from app.domains.alert.review_tasks import (
@@ -193,9 +193,11 @@ async def alert_check(req: CompanyRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def alert_dashboard():
+async def alert_dashboard(current_user: UserInDB = Depends(get_current_user)):
     db = get_db()
-    targets = get_watchlist_target_summaries()
+    targets = await asyncio.to_thread(
+        get_watchlist_target_summaries, current_user.id, current_user.role.value
+    )
     companies = [target["company_name"] for target in targets if target.get("company_name")]
 
     distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
@@ -360,6 +362,7 @@ async def execute_monitor_review_task(
 async def alert_history(
     limit: int = Query(50, description="最大返回数"),
     unread_only: bool = Query(False, description="仅返回未读告警"),
+    _current_user: UserInDB = Depends(require_admin),
 ):
     db = get_db()
     filter_q = {"read": False} if unread_only else {}
@@ -387,7 +390,10 @@ async def alert_history(
         500: {"description": "服务器内部错误"},
     },
 )
-async def mark_alert_read(alert_id: str = Path(..., description="告警 ID")):
+async def mark_alert_read(
+    alert_id: str = Path(..., description="告警 ID"),
+    _current_user: UserInDB = Depends(require_admin),
+):
     db = get_db()
     result = db["alerts"].update_one(
         {"_id": ObjectId(alert_id)},
@@ -407,7 +413,7 @@ async def mark_alert_read(alert_id: str = Path(..., description="告警 ID")):
         500: {"description": "服务器内部错误"},
     },
 )
-async def mark_all_alerts_read():
+async def mark_all_alerts_read(_current_user: UserInDB = Depends(require_admin)):
     db = get_db()
     db["alerts"].update_many({"read": False}, {"$set": {"read": True}})
     return {"status": "all_read", "unread_count": 0}
@@ -421,7 +427,7 @@ async def mark_all_alerts_read():
         500: {"description": "服务器内部错误"},
     },
 )
-async def clear_alerts():
+async def clear_alerts(_current_user: UserInDB = Depends(require_admin)):
     db = get_db()
     db["alerts"].delete_many({})
     return {"status": "cleared", "unread_count": 0}
@@ -435,8 +441,10 @@ async def clear_alerts():
         500: {"description": "服务器内部错误"},
     },
 )
-async def list_watchlist():
-    targets = get_watchlist_target_summaries()
+async def list_watchlist(current_user: UserInDB = Depends(get_current_user)):
+    targets = await asyncio.to_thread(
+        get_watchlist_target_summaries, current_user.id, current_user.role.value
+    )
     companies = [target["company_name"] for target in targets if target.get("company_name")]
     return {"count": len(companies), "companies": companies, "targets": targets}
 
@@ -447,8 +455,13 @@ async def list_watchlist():
     description="按稳定监控对象 ID 返回最新风险快照、维度依据和评分历史；不将单条快照解释为趋势。",
     responses={404: {"description": "监控对象不存在"}},
 )
-async def monitor_target_risk_detail(monitor_target_id: str):
-    detail = await asyncio.to_thread(get_watchlist_target_risk_detail, monitor_target_id)
+async def monitor_target_risk_detail(
+    monitor_target_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    detail = await asyncio.to_thread(
+        get_watchlist_target_risk_detail, monitor_target_id, current_user.id, current_user.role.value
+    )
     if detail is None:
         raise HTTPException(status_code=404, detail="监控对象不存在")
     return _json_safe(detail)
@@ -575,7 +588,17 @@ async def confirm_monitor_identity(
         500: {"description": "服务器内部错误"},
     },
 )
-async def watch_company(req: WatchRequest):
+async def watch_company(
+    req: WatchRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    if req.supplier_id:
+        from app.domains.supplier.access import can_access_supplier
+        allowed = await asyncio.to_thread(
+            can_access_supplier, req.supplier_id, current_user.id, current_user.role.value
+        )
+        if not allowed:
+            raise HTTPException(status_code=403, detail="无权将该供应商加入个人监控")
     return add_to_watchlist(
         req.company_name,
         target_type=req.target_type,
@@ -584,6 +607,7 @@ async def watch_company(req: WatchRequest):
         candidate_id=req.candidate_id,
         company_id=req.company_id,
         supplier_code=req.supplier_code,
+        owner_user_id=current_user.id,
     )
 
 
@@ -596,19 +620,32 @@ async def watch_company(req: WatchRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def watch_batch(req: BatchRequest):
+async def watch_batch(
+    req: BatchRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
     if req.targets:
-        results = [add_to_watchlist(
-            target.company_name,
-            target_type=target.target_type,
-            monitor_target_id=target.monitor_target_id,
-            supplier_id=target.supplier_id,
-            candidate_id=target.candidate_id,
-            company_id=target.company_id,
-            supplier_code=target.supplier_code,
-        ) for target in req.targets]
+        results = []
+        for target in req.targets:
+            if target.supplier_id:
+                from app.domains.supplier.access import can_access_supplier
+                allowed = await asyncio.to_thread(
+                    can_access_supplier, target.supplier_id, current_user.id, current_user.role.value
+                )
+                if not allowed:
+                    raise HTTPException(status_code=403, detail="包含无权监控的供应商")
+            results.append(add_to_watchlist(
+                target.company_name,
+                target_type=target.target_type,
+                monitor_target_id=target.monitor_target_id,
+                supplier_id=target.supplier_id,
+                candidate_id=target.candidate_id,
+                company_id=target.company_id,
+                supplier_code=target.supplier_code,
+                owner_user_id=current_user.id,
+            ))
     else:
-        results = [add_to_watchlist(name.strip()) for name in req.companies if name.strip()]
+        results = [add_to_watchlist(name.strip(), owner_user_id=current_user.id) for name in req.companies if name.strip()]
     return {"added": len(results), "results": results}
 
 

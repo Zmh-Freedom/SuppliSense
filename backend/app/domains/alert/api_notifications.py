@@ -26,7 +26,7 @@ async def list_notifications(
     from app.db.mongo import get_db
 
     db = get_db()
-    query: dict = {}
+    query: dict = {"recipient_user_id": current_user.id}
     if read is not None:
         query["read"] = read
     notifs = list(db["notifications"].find(query).sort("created_at", -1).limit(limit))
@@ -36,7 +36,7 @@ async def list_notifications(
             n["created_at"] = n["created_at"].isoformat()
     return {
         "notifications": notifs,
-        "unread_count": db["notifications"].count_documents({"read": False}),
+        "unread_count": db["notifications"].count_documents({"recipient_user_id": current_user.id, "read": False}),
     }
 
 
@@ -57,7 +57,7 @@ async def mark_read(
 
     db = get_db()
     db["notifications"].update_one(
-        {"_id": ObjectId(notif_id)}, {"$set": {"read": True}}
+        {"_id": ObjectId(notif_id), "recipient_user_id": current_user.id}, {"$set": {"read": True}}
     )
     return {"status": "ok"}
 
@@ -75,5 +75,7 @@ async def mark_all_read(
     from app.db.mongo import get_db
 
     db = get_db()
-    db["notifications"].update_many({"read": False}, {"$set": {"read": True}})
+    db["notifications"].update_many(
+        {"recipient_user_id": current_user.id, "read": False}, {"$set": {"read": True}}
+    )
     return {"status": "ok"}

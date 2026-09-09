@@ -32,6 +32,19 @@ DDL_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS supplier_assignments (
+        supplier_id VARCHAR(255) NOT NULL,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        assignment_role VARCHAR(32) NOT NULL DEFAULT 'primary',
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        assigned_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (supplier_id, user_id),
+        CHECK (assignment_role IN ('primary', 'backup'))
+    )
+    """,
 
     # Audit logs
     """
@@ -646,6 +659,7 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_users_is_active ON users (is_active)",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs (user_id, created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_supplier_assignments_user_active ON supplier_assignments (user_id, is_active, supplier_id)",
     "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name ON companies (normalized_name)",
     "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name_pattern ON companies (normalized_name text_pattern_ops)",
     "CREATE INDEX IF NOT EXISTS idx_companies_merged_into_id ON companies (merged_into_id)",

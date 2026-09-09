@@ -63,12 +63,14 @@ def check_and_notify() -> dict:
                 "supplier_id": target.get("supplier_id"),
                 "candidate_id": target.get("candidate_id"),
                 "company_id": target.get("company_id"),
+                "recipient_user_id": target.get("owner_user_id"),
                 "score_delta": score_delta,
                 "changes": changes.get("changes", []),
                 "timestamp": datetime.now(timezone.utc),
                 "notified": True,
             }
-            db["notifications"].insert_one(alert_doc)
+            if alert_doc["recipient_user_id"]:
+                db["notifications"].insert_one(alert_doc)
 
             loop = asyncio.get_event_loop()
             if loop.is_running():
@@ -95,6 +97,7 @@ def check_and_notify() -> dict:
                 existing = db["notifications"].find_one({
                     "company": company_name,
                     "type": "sourcing_suggestion",
+                    "recipient_user_id": target.get("owner_user_id"),
                     "timestamp": {"$gte": cutoff},
                 })
                 if not existing:
@@ -108,8 +111,10 @@ def check_and_notify() -> dict:
                                 "alternatives": alternatives,
                                 "timestamp": now,
                                 "read": False,
+                                "recipient_user_id": target.get("owner_user_id"),
                             }
-                            db["notifications"].insert_one(suggestion_doc)
+                            if suggestion_doc["recipient_user_id"]:
+                                db["notifications"].insert_one(suggestion_doc)
 
                             if loop.is_running():
                                 loop.create_task(ws_manager.broadcast("sourcing_suggestion", {
@@ -134,7 +139,7 @@ def check_and_notify() -> dict:
         except Exception as e:
             logger.error("alert_check_failed", company=company_name, error=str(e))
 
-    return {"checked": len(companies), "alerts": alerts, "suggestions_sent": suggestions_sent}
+    return {"checked": len(targets), "alerts": alerts, "suggestions_sent": suggestions_sent}
 
 
 def get_notifications(limit: int = 20) -> list[dict]:

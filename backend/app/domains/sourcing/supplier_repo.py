@@ -612,6 +612,7 @@ def list_suppliers(
     page: int = 1,
     page_size: int = 20,
     hide_bare: bool = True,
+    supplier_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     db = get_db()
     collection = _supplier_read_collection(db)
@@ -620,6 +621,16 @@ def list_suppliers(
         filt["name"] = {"$regex": keyword, "$options": "i"}
     if status:
         filt["status"] = status
+    if supplier_ids is not None:
+        allowed_ids = list(supplier_ids)
+        if not allowed_ids:
+            return {"items": [], "total": 0}
+        filt["$and"] = [{
+            "$or": [
+                {"supplier_id": {"$in": allowed_ids}},
+                {"_id": {"$in": allowed_ids}},
+            ]
+        }]
     if hide_bare:
         filt["$or"] = [
             {"source": {"$ne": "auto"}},

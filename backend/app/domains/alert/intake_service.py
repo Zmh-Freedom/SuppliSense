@@ -289,6 +289,7 @@ def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
         supplier_id=candidate.get("supplier_id"),
         company_id=candidate.get("company_id"),
         supplier_code=candidate.get("supplier_code"),
+        owner_user_id=user_id,
     )
     baseline_status = "not_available"
     try:
@@ -298,6 +299,6 @@ def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
             baseline_status = "created"
     except Exception:
         baseline_status = "partial"
-    summary = next((item for item in get_watchlist_target_summaries() if item.get("monitor_target_id") == target["monitor_target_id"]), target)
+    summary = next((item for item in get_watchlist_target_summaries(user_id, "analyst") if item.get("monitor_target_id") == target["monitor_target_id"]), target)
     get_db()[INTAKE_COLLECTION].update_one({"_id": document["_id"]}, {"$set": {"status": "confirmed", "monitor_target_id": target["monitor_target_id"], "baseline_status": baseline_status, "confirmed_at": _now(), "updated_at": _now()}})
     return _serialize({"status": "confirmed", "monitor_target": summary, "baseline_status": baseline_status})

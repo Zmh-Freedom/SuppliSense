@@ -53,7 +53,31 @@ def _target_from_document(document: dict) -> dict:
     return target
 
 
-def get_watchlist_targets() -> list[dict]:
+def _can_access_target(target: dict, user_id: str | None, user_role: str | None) -> bool:
+    """Enforce purchaser visibility for a monitoring object.
+
+    Legacy rows without a supplier identity are administrator-only until an
+    owner is explicitly backfilled.  This is deliberately fail-closed.
+    """
+    # Internal schedulers call without an actor and must retain their global
+    # operational view. Every user-facing API passes both values explicitly.
+    if user_id is None and user_role is None:
+        return True
+    if user_role == "admin":
+        return True
+    if not user_id:
+        return False
+    if str(target.get("owner_user_id") or "") == str(user_id):
+        return True
+    supplier_id = str(target.get("supplier_id") or "")
+    if not supplier_id:
+        return False
+    from app.domains.supplier.access import can_access_supplier
+
+    return can_access_supplier(supplier_id, str(user_id), str(user_role or ""))
+
+
+def get_watchlist_targets(user_id: str | None = None, user_role: str | None = None) -> list[dict]:
     """Return complete monitoring objects and lazily backfill legacy rows."""
     db = get_db()
     targets: list[dict] = []
@@ -75,7 +99,8 @@ def get_watchlist_targets() -> list[dict]:
                     "display_name": target["display_name"],
                 }},
             )
-        targets.append(target)
+        if _can_access_target(target, user_id, user_role):
+            targets.append(target)
     return targets
 
 
@@ -243,11 +268,19 @@ def _next_action(target: dict, snapshot: dict | None, risk_change: dict, coverag
     return {"code": "continue_monitoring", "label": "继续观察", "priority": "low", "reason": "当前已有完整覆盖且未发现明显恶化"}
 
 
-def get_watchlist_target_summaries() -> list[dict]:
+def get_watchlist_target_summaries(
+    user_id: str | None = None,
+    user_role: str | None = None,
+) -> list[dict]:
     """Return monitor targets enriched for the procurement review workbench."""
     db = get_db()
     summaries = []
-    for target in get_watchlist_targets():
+    targets = (
+        get_watchlist_targets()
+        if user_id is None and user_role is None
+        else get_watchlist_targets(user_id, user_role)
+    )
+    for target in targets:
         snapshots = _target_snapshots(db, target)
         latest = snapshots[0] if snapshots else None
         risk_change = _risk_change(snapshots)
@@ -274,10 +307,16 @@ def get_watchlist_target_summaries() -> list[dict]:
     return summaries
 
 
-def get_watchlist_target_risk_detail(monitor_target_id: str) -> dict | None:
+def get_watchlist_target_risk_detail(
+    monitor_target_id: str,
+    user_id: str | None = None,
+    user_role: str | None = None,
+) -> dict | None:
     """Return the latest auditable risk snapshot for one stable monitor target."""
     target = _find_watchlist_target(monitor_target_id=monitor_target_id)
     if target is None:
+        return None
+    if not _can_access_target(target, user_id, user_role):
         return None
 
     db = get_db()
@@ -580,6 +619,7 @@ def add_to_watchlist(
     candidate_id: str | None = None,
     company_id: str | None = None,
     supplier_code: str | None = None,
+    owner_user_id: str | None = None,
 ) -> dict:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
@@ -651,6 +691,7 @@ def add_to_watchlist(
         "company_id": company_id,
         "supplier_code": supplier_code,
         "monitor_status": "active",
+        "owner_user_id": owner_user_id or (existing or {}).get("owner_user_id"),
         "added_at": datetime.now(timezone.utc),
     }
     identity_filter = _target_query(
