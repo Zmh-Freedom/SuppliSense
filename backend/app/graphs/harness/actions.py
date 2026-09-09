@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
 from app.tools.executor import ToolContext, ToolError, ToolExecutor, ToolOutcome
+from app.tools.registry import ToolRegistry
 
 
 class ActionProposal(BaseModel):
@@ -77,7 +78,12 @@ class ActionGate:
             raise ValueError("操作提案必须绑定 session_id、run_id 和 user_id")
         if ttl_seconds <= 0:
             raise ValueError("操作提案有效期必须为正数")
-        action_hash = build_action_hash(tool_name, arguments)
+        normalized_arguments = normalize_action_arguments(
+            tool_name,
+            arguments,
+            registry=self.executor.registry,
+        )
+        action_hash = build_action_hash(tool_name, normalized_arguments)
         proposal_id = str(uuid5(NAMESPACE_URL, f"supplisense:harness:{context.run_id}:{action_hash}"))
         current = now or datetime.now(timezone.utc)
         expires_at = current + timedelta(seconds=ttl_seconds)
@@ -87,7 +93,7 @@ class ActionGate:
             run_id=context.run_id,
             user_id=context.user_id,
             tool_name=tool_name,
-            arguments=dict(arguments),
+            arguments=normalized_arguments,
             action_hash=action_hash,
             idempotency_key=f"harness:{context.run_id}:{action_hash}",
             expires_at=expires_at,
@@ -171,6 +177,27 @@ def build_action_hash(tool_name: str, arguments: dict[str, Any]) -> str:
         default=str,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def normalize_action_arguments(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    registry: ToolRegistry | None = None,
+) -> dict[str, Any]:
+    """Validate and canonicalize arguments before hashing an approved action."""
+    active_registry = registry
+    if active_registry is None:
+        from app.tools import TOOL_REGISTRY
+
+        active_registry = TOOL_REGISTRY
+    definition = active_registry.get(tool_name)
+    if definition is None:
+        raise ValueError(f"工具未注册，不能规范化操作参数: {tool_name}")
+    try:
+        return definition.input_model.model_validate(arguments).model_dump(mode="json")
+    except Exception as exc:
+        raise ValueError(f"操作参数无效，不能生成操作提案: {exc}") from exc
 
 
 def issue_approval_token(
@@ -301,6 +328,7 @@ __all__ = [
     "ActionGate",
     "ActionProposal",
     "build_action_hash",
+    "normalize_action_arguments",
     "issue_approval_token",
     "verify_approval_token_for_action",
     "verify_approval_token",

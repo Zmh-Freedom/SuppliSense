@@ -36,6 +36,38 @@ def _context() -> ToolContext:
     return ToolContext(session_id="session-1", run_id="run-1", user_id="requester")
 
 
+def _watchlist_like_executor() -> ToolExecutor:
+    @tool
+    def add_to_watchlist(
+        company_name: str = "",
+        target_source: str = "conversation_state",
+        target_type: str | None = None,
+        monitor_target_id: str | None = None,
+        supplier_id: str | None = None,
+        candidate_id: str | None = None,
+        company_id: str | None = None,
+        supplier_code: str | None = None,
+    ) -> dict:
+        """Add a supplier to the monitoring list."""
+        return {
+            "company_name": company_name,
+            "target_type": target_type,
+            "side_effect_receipt": {"receipt_id": "r-watchlist"},
+        }
+
+    registry = ToolRegistry()
+    registry.register(
+        add_to_watchlist,
+        ToolSpec(
+            name="add_to_watchlist",
+            capability="risk_monitoring",
+            side_effect="write",
+            approval_policy="required",
+        ),
+    )
+    return ToolExecutor(registry)
+
+
 def test_action_gate_creates_stable_proposal_without_calling_tool() -> None:
     called = False
     executor = _write_executor({"side_effect_receipt": {"receipt_id": "r-1"}})
@@ -63,6 +95,24 @@ def test_action_gate_binds_approval_to_proposal_and_returns_receipt() -> None:
 
     assert outcome.status == "success"
     assert outcome.side_effect_receipt == {"receipt_id": "r-1"}
+
+
+def test_action_gate_normalizes_optional_arguments_before_approval_hash() -> None:
+    executor = _watchlist_like_executor()
+    gate = ActionGate(executor, secret_key="test-secret")
+    proposal = gate.propose(
+        "add_to_watchlist",
+        {"company_name": "北京经纬恒润科技股份有限公司", "target_source": "conversation_state"},
+        _context(),
+    )
+
+    assert proposal.arguments["target_type"] is None
+    approved, token = gate.approve(proposal, "approver-1")
+    outcome = asyncio.run(gate.execute(approved, token, approver_id="approver-1"))
+
+    assert outcome.status == "success"
+    assert outcome.error is None
+    assert outcome.side_effect_receipt == {"receipt_id": "r-watchlist"}
 
 
 def test_action_gate_rejects_tampered_or_wrong_approver_token() -> None:

@@ -642,12 +642,13 @@ def create_supervisor_action_proposals(
         action_payload = dict(target)
         action_payload.pop("expires_at", None)
         if action_type in {"add_watchlist", "remove_watchlist"}:
-            from app.graphs.harness.actions import build_action_hash
+            from app.graphs.harness.actions import build_action_hash, normalize_action_arguments
 
             tool_name = {
                 "add_watchlist": "add_to_watchlist",
                 "remove_watchlist": "remove_from_watchlist",
             }[action_type]
+            action_payload = normalize_action_arguments(tool_name, action_payload)
             action_payload["_harness_action"] = {
                 "tool_name": tool_name,
                 "action_hash": build_action_hash(tool_name, dict(action_payload)),
