@@ -83,11 +83,15 @@ def build_agent_supervisor_graph_input(
     context = validate_execution_context(
         execution_context, source="agent_supervisor_graph_input"
     )
+    intent: dict[str, Any] = {"current_task": context["current_task"]}
+    llm_intent = context.get("llm_intent")
+    if isinstance(llm_intent, dict) and "requested_action" in llm_intent:
+        intent["requested_action"] = llm_intent.get("requested_action") or "none"
     return {
         "run_id": run_id,
         "user_query": user_message,
         "supplier_references": context["references"],
-        "intent": {"current_task": context["current_task"]},
+        "intent": intent,
         "conversation_state": context["conversation_state"],
     }
 
@@ -249,7 +253,11 @@ def apply_extracted_conversation_intent(
         references=execution_context.get("references") or [],
         llm_candidates=target_names,
     )
-    target_names = resolved.target_supplier_names or target_names
+    # LLM-extracted explicit names are the validated source of truth for this
+    # turn. The deterministic resolver is still used for pronouns/aliases,
+    # but must not prepend conversational verbs such as “将” to a company
+    # name and then violate the shared context contract.
+    target_names = target_names or resolved.target_supplier_names
     if target_names:
         current_task["target_supplier_names"] = target_names
         conversation_state["selected_supplier_names"] = target_names

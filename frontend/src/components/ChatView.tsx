@@ -96,6 +96,23 @@ function createWorkflowSnapshot(): AgentWorkflowSnapshot {
   };
 }
 
+function normalizeApprovalAnswer(answer: string, approved?: boolean): string {
+  const waitingText = /已生成\s*\d+\s*项加入监控操作，等待人工确认后才会写入监控清单。?/;
+  if (approved === true) {
+    return waitingText.test(answer)
+      ? answer.replace(waitingText, '加入监控操作已获批准，服务端已返回执行结果。')
+      : answer;
+  }
+  if (approved === false) {
+    return waitingText.test(answer)
+      ? answer.replace(waitingText, '加入监控操作已拒绝，系统未写入监控清单。')
+      : answer;
+  }
+  return waitingText.test(answer)
+    ? answer.replace(waitingText, '分析已完成；如需执行加入监控，请在下方“执行详情”中确认。')
+    : answer;
+}
+
 function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierReference; onAnalyze: (name: string) => void }) {
   return <article className="rounded-xl border border-amber-100 bg-amber-50/60 p-2.5 text-xs text-amber-950 space-y-1.5">
     <button onClick={() => onAnalyze(reference.name)} className="font-medium text-left hover:underline">{reference.name}</button>
@@ -730,6 +747,7 @@ export default function ChatView() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
+  const approvalAccRef = useRef<ApprovalData | null>(null);
   const referencesAccRef = useRef<SupplierReference[]>([]);
   const agentAnswerAccRef = useRef<AgentAnswer | undefined>(undefined);
   const evidenceAccRef = useRef<AgentEvidenceRecord[]>([]);
@@ -784,6 +802,7 @@ export default function ChatView() {
     workflowAccRef.current = initialWorkflow;
     setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], agentAnswer: null, evidence: [], workflowStatus: initialWorkflow });
     answerAccRef.current = '';
+    approvalAccRef.current = null;
     referencesAccRef.current = [];
     agentAnswerAccRef.current = undefined;
     evidenceAccRef.current = [];
@@ -896,18 +915,20 @@ export default function ChatView() {
           } : null);
         },
         onDone: (data) => {
-          const finalAnswer = answerAccRef.current || data.answer;
+          const pendingApproval = approvalAccRef.current;
+          const rawAnswer = answerAccRef.current || data.answer;
+          const finalAnswer = normalizeApprovalAnswer(rawAnswer);
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
           const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
-            status: (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
-            stage: hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
-            message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : '本轮 Agent 工作流已完成',
+            status: pendingApproval ? 'waiting_approval' : (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
+            stage: pendingApproval ? 'approval' : hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
+            message: pendingApproval ? '分析已完成，等待人工确认写操作' : !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
-          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow }];
+          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow, approval: pendingApproval ? { ...pendingApproval, status: 'pending' } : undefined }];
           answerAccRef.current = '';
           persist(sid, completedMsgs);
           setStreamState(null);
@@ -948,6 +969,7 @@ export default function ChatView() {
           setLoading(false);
         },
         onApprovalRequired: (data) => {
+          approvalAccRef.current = { ...data, status: 'pending' };
           const waiting = { ...workflowAccRef.current, status: 'waiting_approval' as const, stage: 'approval', message: '等待人工确认后继续执行' };
           workflowAccRef.current = waiting;
           setStreamState(prev => prev ? { ...prev, approval: data, workflowStatus: waiting } : null);
@@ -982,22 +1004,35 @@ export default function ChatView() {
   }, [input, loading, activeSid, msgs, persist]);
 
   const handleApproval = useCallback(async (approved: boolean) => {
-    if (!streamState?.approval) return;
-    const { session_id: approvalSid, tool, args, message } = streamState.approval;
+    const persistedApprovalIndex = [...msgs].map((message, index) => ({ message, index })).reverse().find(
+      item => item.message.role === 'assistant' && item.message.approval && !['approved', 'rejected'].includes(item.message.approval.status || ''),
+    )?.index;
+    const persistedApproval = persistedApprovalIndex === undefined ? null : msgs[persistedApprovalIndex].approval;
+    const approval = streamState?.approval || persistedApproval;
+    if (!approval || ['approved', 'rejected'].includes(approval.status || '')) return;
+    const { session_id: approvalSid } = approval;
 
-    // 记录审批结果到消息历史
-    const statusText = approved ? '⏳ 已提交审批请求，等待服务端确认' : '⏳ 已提交拒绝请求，等待服务端确认';
-    const approvalMsg: ChatMessage = {
-      role: 'assistant',
-      content: `${message}\n\n${statusText}：${tool}(${JSON.stringify(args)})`,
-    };
-    const updatedMsgs = [...msgs, approvalMsg];
-    persist(approvalSid, updatedMsgs);
+    // Persist the pending approval before resuming so a refresh does not lose
+    // the only place where the user can confirm the write action.
+    const submittingApproval: ApprovalData = { ...approval, status: 'submitting' };
+    let resumeMsgs: ChatMessage[];
+    if (persistedApprovalIndex !== undefined) {
+      resumeMsgs = msgs.map((item, index) => index === persistedApprovalIndex ? { ...item, approval: submittingApproval } : item);
+    } else {
+      resumeMsgs = [...msgs, {
+        role: 'assistant',
+        content: approval.message,
+        approval: submittingApproval,
+        workflow: { ...workflowAccRef.current, status: 'waiting_approval', stage: 'approval', message: '等待人工确认后继续执行' },
+      }];
+    }
+    persist(approvalSid, resumeMsgs);
+    setLoading(true);
 
     // 保留审批内容并标记提交中，恢复 loading 状态继续流式输出
     setStreamState(prev => prev ? {
       ...prev,
-      approval: prev.approval,
+      approval: submittingApproval,
       approvalSubmitting: true,
       thinking: '正在执行操作...',
       toolCalls: [],
@@ -1010,8 +1045,6 @@ export default function ChatView() {
     answerAccRef.current = '';
     agentAnswerAccRef.current = undefined;
     evidenceAccRef.current = [];
-
-    const resumeMsgs: ChatMessage[] = [...updatedMsgs];
 
     try {
       await resumeChat(approvalSid, approved, {
@@ -1071,7 +1104,8 @@ export default function ChatView() {
           } : null);
         },
         onDone: (data) => {
-          const finalAnswer = answerAccRef.current || data.answer;
+          const rawAnswer = answerAccRef.current || data.answer;
+          const finalAnswer = normalizeApprovalAnswer(rawAnswer, approved);
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
           const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed'].includes(serverStatus);
@@ -1082,8 +1116,13 @@ export default function ChatView() {
             message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
-          const completedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow }];
+          const resolvedApproval: ApprovalData = { ...approval, status: approved ? 'approved' : 'rejected' };
+          const completedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => {
+            if (index !== (persistedApprovalIndex ?? resumeMsgs.length - 1)) return item;
+            return { ...item, content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow, approval: resolvedApproval };
+          });
           answerAccRef.current = '';
+          approvalAccRef.current = null;
           persist(approvalSid, completedMsgs);
           setStreamState(null);
           setLoading(false);
@@ -1099,7 +1138,10 @@ export default function ChatView() {
         onError: (data) => {
           const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
           workflowAccRef.current = failedWorkflow;
-          const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: `错误：${data.message}`, workflow: failedWorkflow }];
+          const failedApproval: ApprovalData = { ...approval, status: 'failed' };
+          const failedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => index === (persistedApprovalIndex ?? resumeMsgs.length - 1)
+            ? { ...item, content: `错误：${data.message}`, workflow: failedWorkflow, approval: failedApproval }
+            : item);
           persist(approvalSid, failedMsgs);
           setStreamState(prev => prev ? { ...prev, error: data.message, workflowStatus: failedWorkflow, approvalSubmitting: false } : null);
           setLoading(false);
@@ -1107,7 +1149,10 @@ export default function ChatView() {
       });
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-      const failedMsgs: ChatMessage[] = [...resumeMsgs, { role: 'assistant', content: isTimeout ? '请求超时，请重试' : '操作失败，请重试' }];
+      const failedApproval: ApprovalData = { ...approval, status: 'failed' };
+      const failedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => index === (persistedApprovalIndex ?? resumeMsgs.length - 1)
+        ? { ...item, content: isTimeout ? '请求超时，请重试' : '操作失败，请重试', approval: failedApproval }
+        : item);
       persist(approvalSid, failedMsgs);
       setStreamState(prev => prev ? { ...prev, error: isTimeout ? '请求超时，请重试' : '操作失败，请重试', approvalSubmitting: false } : null);
       setLoading(false);
@@ -1127,11 +1172,13 @@ export default function ChatView() {
   const newChat = () => {
     setActiveSid('');
     setStreamState(null);
+    setLoading(false);
   };
 
   const switchSession = (sid: string) => {
     setActiveSid(sid);
     setStreamState(null);
+    setLoading(false);
   };
 
   const deleteSession = (sid: string, e: React.MouseEvent) => {
@@ -1281,7 +1328,7 @@ export default function ChatView() {
                 </details>
               )}
               {m.role === 'assistant' && <StructuredAgentResult answer={m.agentAnswer} evidence={m.evidence} />}
-              {m.role === 'assistant' && m.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: null, approvalSubmitting: false, workflowStatus: m.workflow }} onApproval={handleApproval} />}
+              {m.role === 'assistant' && m.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: m.approval ?? null, approvalSubmitting: m.approval?.status === 'submitting', workflowStatus: m.workflow }} onApproval={handleApproval} />}
             </div>
           </div>
         ))}

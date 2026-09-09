@@ -135,6 +135,14 @@ def extract_conversation_intent(
             extracted.target_supplier_names, supplier_references
         ),
         "task_type": inferred_task_type if inferred_task_type != "none" else extracted.task_type,
+        # The model may over-read the word “监控” in a read-only identity
+        # request. A write action is allowed only when the current message
+        # contains an explicit add/monitor instruction.
+        "requested_action": (
+            extracted.requested_action
+            if _has_explicit_watchlist_request(message)
+            else "none"
+        ),
     })
     logger.info(
         "conversation_intent_extracted",
@@ -145,6 +153,15 @@ def extract_conversation_intent(
         confidence=validated.confidence,
     )
     return validated
+
+
+def _has_explicit_watchlist_request(message: str) -> bool:
+    """Return whether the user explicitly asked to add a target to monitoring."""
+    normalized = "".join(str(message or "").strip().lower().split())
+    return any(token in normalized for token in (
+        "加入监控", "加入风险监控", "纳入监控", "纳入风险监控",
+        "持续监控", "开始监控", "建立监控",
+    ))
 
 
 def infer_task_type(message: str) -> Literal["sourcing", "analysis", "none"]:

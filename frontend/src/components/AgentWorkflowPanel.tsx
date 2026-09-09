@@ -147,6 +147,19 @@ function stageLabel(stage?: string): string {
   return labels[stage || ''] || stage || '执行中';
 }
 
+function approvalStatusLabel(status?: ApprovalData['status']): string {
+  if (status === 'approved') return '已批准';
+  if (status === 'rejected') return '已拒绝';
+  if (status === 'failed') return '执行失败';
+  if (status === 'submitting') return '提交中';
+  return '待人工确认';
+}
+
+function approvalHeadingLabel(status?: ApprovalData['status']): string {
+  if (!status || status === 'pending' || status === 'submitting') return '需要人工确认';
+  return approvalStatusLabel(status);
+}
+
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
   const [expanded, setExpanded] = useState(() => {
     const lifecycle = state.workflowStatus?.status;
@@ -171,7 +184,11 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
         <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
           <span aria-hidden="true" className="text-[var(--color-primary-bg)]">◇</span>
           <span className="truncate">执行详情</span>
-          {state.approval && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-800">待人工确认</span>}
+          {state.approval && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+            state.approval.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+              state.approval.status === 'rejected' || state.approval.status === 'failed' ? 'bg-red-100 text-red-800' :
+                'bg-amber-100 text-amber-800'
+          }`}>{approvalStatusLabel(state.approval.status)}</span>}
         </span>
         <span aria-hidden="true" className="shrink-0 text-lg text-gray-400">{expanded ? '⌃' : '⌄'}</span>
       </button>
@@ -256,21 +273,25 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
               <div className="flex items-start gap-2">
                 <span aria-hidden="true" className="mt-0.5 text-amber-700">!</span>
                 <div className="min-w-0 space-y-1">
-                  <h3 className="text-sm font-semibold text-amber-950">需要人工确认</h3>
+                  <h3 className="text-sm font-semibold text-amber-950">{approvalHeadingLabel(state.approval.status)}</h3>
                   <p className="break-words text-xs text-amber-900">{state.approval.message}</p>
                   <p className="break-words font-mono text-[11px] text-amber-800">动作：{state.approval.tool}</p>
                   <pre className="max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words text-[11px] text-amber-800">目标/参数：{compactJson(state.approval.args)}</pre>
                 </div>
               </div>
-              <p className="text-[11px] text-amber-900">影响：批准后将执行上述动作；拒绝则停止该写操作。</p>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={state.approvalSubmitting} onClick={() => handleApproval(true)} className="min-h-[44px] rounded-lg bg-emerald-600 px-4 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
-                  {state.approvalSubmitting && (approvalTarget === 'approve' || approvalTarget === null) ? '批准提交中…' : '批准动作'}
-                </button>
-                <button type="button" disabled={state.approvalSubmitting} onClick={() => handleApproval(false)} className="min-h-[44px] rounded-lg border border-gray-300 bg-white px-4 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
-                  {state.approvalSubmitting && (approvalTarget === 'reject' || approvalTarget === null) ? '拒绝提交中…' : '拒绝动作'}
-                </button>
-              </div>
+              {state.approval.status === 'approved' ? <p className="text-[11px] text-emerald-800">该操作已获批准，执行结果见本轮回答。</p> :
+                state.approval.status === 'rejected' ? <p className="text-[11px] text-red-800">该操作已拒绝，系统未执行写入。</p> :
+                  state.approval.status === 'failed' ? <p className="text-[11px] text-red-800">该操作执行失败，请查看工作流异常并重试。</p> : <>
+                    <p className="text-[11px] text-amber-900">影响：批准后将执行上述动作；拒绝则停止该写操作。</p>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={state.approvalSubmitting || state.approval.status === 'submitting'} onClick={() => handleApproval(true)} className="min-h-[44px] rounded-lg bg-emerald-600 px-4 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+                        {state.approvalSubmitting && (approvalTarget === 'approve' || approvalTarget === null) ? '批准提交中…' : '批准动作'}
+                      </button>
+                      <button type="button" disabled={state.approvalSubmitting || state.approval.status === 'submitting'} onClick={() => handleApproval(false)} className="min-h-[44px] rounded-lg border border-gray-300 bg-white px-4 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
+                        {state.approvalSubmitting && (approvalTarget === 'reject' || approvalTarget === null) ? '拒绝提交中…' : '拒绝动作'}
+                      </button>
+                    </div>
+                  </>}
             </div>
           )}
 

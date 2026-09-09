@@ -71,6 +71,34 @@ def test_llm_extractor_runs_for_entity_only_follow_up(monkeypatch):
     assert calls[0]["messages"][0]["role"] == "system"
 
 
+def test_llm_extractor_rejects_watchlist_action_for_identity_verification(monkeypatch):
+    """The word monitoring in a target description is not a write request."""
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                    "target_supplier_names": ["北京经纬恒润科技股份有限公司"],
+                    "analysis_dimensions": ["risk"],
+                    "requested_action": "add_watchlist",
+                })))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "请核验监控对象北京经纬恒润科技股份有限公司的主体身份",
+        [],
+    )
+
+    assert result is not None
+    assert result.requested_action == "none"
+
+
 def test_small_talk_does_not_call_llm():
     assert intent_extractor.should_extract_conversation_intent("你好") is False
     assert intent_extractor.should_extract_conversation_intent("谢谢") is False
@@ -106,6 +134,22 @@ def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix()
     assert result["current_task"]["analysis_dimensions"] == ["risk", "esg", "sentiment", "compliance"]
     assert len(result["current_task"]["subtasks"]) == 4
     assert result["conversation_state"]["selected_supplier_names"] == ["四川建安工业有限责任公司"]
+
+
+def test_llm_intent_overlay_keeps_explicit_company_name_without_action_prefix():
+    extraction = intent_extractor.ConversationIntentExtraction(
+        target_supplier_names=["北京经纬恒润科技股份有限公司"],
+        requested_action="add_watchlist",
+        confidence=1.0,
+    )
+    context = adapter.build_execution_context(
+        session_id="session-1",
+        user_message="请将北京经纬恒润科技股份有限公司加入监控",
+    )
+
+    result = adapter.apply_extracted_conversation_intent(context, extraction)
+
+    assert result["current_task"]["target_supplier_names"] == ["北京经纬恒润科技股份有限公司"]
 
 
 def test_entity_only_follow_up_inherits_previous_analysis_dimensions():

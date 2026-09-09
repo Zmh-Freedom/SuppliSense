@@ -159,7 +159,18 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
         ]
         if reference_names:
             intent["target_supplier_names"] = list(dict.fromkeys(reference_names))
-    intent["request_watchlist"] = "监控" in state.get("user_query", "")
+    # Keep write intent tied to the validated structured action.  A request to
+    # verify the identity of a monitoring target may contain the word
+    # “监控”, but it is read-only and must not create an add-watchlist proposal.
+    requested_action = intent.get("requested_action")
+    if requested_action not in {"add_watchlist", "none"}:
+        requested_action = "none"
+    if requested_action == "none" and intent.get("request_watchlist") is True:
+        # Compatibility for persisted supervisor states created before the
+        # structured requested_action field existed.
+        requested_action = "add_watchlist"
+    intent["requested_action"] = requested_action
+    intent["request_watchlist"] = requested_action == "add_watchlist"
     if "requirement" not in intent:
         from app.domains.sourcing_risk.requirement_service import parse_requirement
 

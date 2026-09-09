@@ -106,6 +106,7 @@ export interface ApprovalData {
   tool: string;
   args: Record<string, unknown>;
   session_id: string;
+  status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
 }
 
 export interface StreamCallbacks {

@@ -269,6 +269,33 @@ def test_supervisor_creates_one_watchlist_proposal_per_structured_target(
     assert all(item["target"]["target_source"] == "conversation_state" for item in result["recommendations"])
 
 
+def test_identity_verification_does_not_create_watchlist_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mentioning a monitoring target is read-only unless add_watchlist is explicit."""
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {"risk": AgentResult(agent="risk", status="completed", summary="主体核验资料待补充")}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks(
+            {
+                "run_id": "identity-review-run",
+                "plan": {"tasks": [{"task_id": "risk", "agent": "risk"}]},
+                "intent": {
+                    "requested_action": "none",
+                    "target_supplier_names": ["北京经纬恒润科技股份有限公司"],
+                },
+                "user_query": "请核验监控对象的主体身份",
+            }
+        )
+    )
+
+    assert not any(item["action_type"] == "add_watchlist" for item in result["recommendations"])
+
+
 def test_supervisor_final_answer_lists_worker_evidence_and_pending_monitoring() -> None:
     """The chat result must expose each dimension instead of a generic completion sentence."""
     answer = supervisor_graph._format_final_answer(

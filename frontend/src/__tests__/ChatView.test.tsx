@@ -200,6 +200,58 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
   })
 
+  it('persists the approval card so it can be confirmed from chat history', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onApprovalRequired?.({
+        message: '确认执行加入监控动作？',
+        tool: 'agent_supervisor',
+        args: { pending_approvals: [{ approval_id: 'approval-1', action_type: 'add_watchlist' }] },
+        session_id: sessionId,
+      })
+      handlers.onDone?.({ answer: '已生成 1 项加入监控操作，等待人工确认后才会写入监控清单。', status: 'needs_review' })
+      return '已生成 1 项加入监控操作，等待人工确认后才会写入监控清单。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '请复核并加入监控')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
+    const sessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]')
+    expect(sessions[0].msgs.at(-1).approval.status).toBe('pending')
+  })
+
+  it('shows the resolved approval result after confirming a persisted action', async () => {
+    let resumeHandlers: StreamCallbacks | undefined
+    mocks.chatStream.mockImplementation(async (_message: string, sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onApprovalRequired?.({
+        message: '确认执行加入监控动作？',
+        tool: 'agent_supervisor',
+        args: { pending_approvals: [{ approval_id: 'approval-2', action_type: 'add_watchlist' }] },
+        session_id: sessionId,
+      })
+      handlers.onDone?.({ answer: '已生成 1 项加入监控操作，等待人工确认后才会写入监控清单。', status: 'needs_review' })
+      return '等待确认'
+    })
+    mocks.resumeChat.mockImplementation(async (_sessionId: string, _approved: boolean, handlers: StreamCallbacks) => {
+      resumeHandlers = handlers
+      handlers.onDone?.({ answer: '已生成 1 项加入监控操作，等待人工确认后才会写入监控清单。', status: 'completed' })
+      return '已完成'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '请复核并加入监控')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await user.click(await screen.findByRole('button', { name: '批准动作' }))
+
+    await waitFor(() => expect(mocks.resumeChat).toHaveBeenCalledOnce())
+    expect(resumeHandlers).toBeDefined()
+    expect(await screen.findByText('加入监控操作已获批准，服务端已返回执行结果。')).toBeInTheDocument()
+    expect(screen.getAllByText('已批准').length).toBeGreaterThan(0)
+  })
+
   it('translates internal fields and lists the covered risk items', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({

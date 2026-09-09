@@ -167,6 +167,13 @@ export interface ChatMessage {
   workflow?: AgentWorkflowSnapshot;
   agentAnswer?: AgentAnswer;
   evidence?: AgentEvidenceRecord[];
+  approval?: {
+    message: string;
+    tool: string;
+    args: Record<string, unknown>;
+    session_id: string;
+    status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
+  };
 }
 
 export interface AgentClaim {
