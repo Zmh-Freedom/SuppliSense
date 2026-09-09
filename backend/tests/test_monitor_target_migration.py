@@ -35,6 +35,68 @@ def test_add_watchlist_persists_full_stable_monitor_target(monkeypatch):
     assert watchlist.update_one.call_args.args[0] == {"supplier_id": "supplier-1"}
 
 
+def test_resolve_watchlist_identity_reuses_company_identity_search(monkeypatch):
+    target = {
+        "monitor_target_id": "monitor-identity-1",
+        "company_name": "待确认供应商有限公司",
+        "display_name": "待确认供应商有限公司",
+    }
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_: target)
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {
+            "resolution": "candidates",
+            "exact": None,
+            "candidates": [{"company_id": "company-1", "legal_name": query, "confidence": 0.91}],
+        },
+    )
+
+    result = alert_service.resolve_watchlist_identity("monitor-identity-1")
+
+    assert result["monitor_target_id"] == "monitor-identity-1"
+    assert result["query"] == "待确认供应商有限公司"
+    assert result["candidates"][0]["company_id"] == "company-1"
+
+
+def test_confirm_watchlist_identity_binds_verified_company_and_audit(monkeypatch):
+    target = {
+        "monitor_target_id": "monitor-identity-1",
+        "company_name": "待确认供应商有限公司",
+        "display_name": "待确认供应商有限公司",
+        "target_type": "company",
+        "identity_status": "unresolved",
+    }
+    db = {"watchlist": MagicMock()}
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_: target)
+    monkeypatch.setattr(alert_service, "get_db", lambda: db)
+    monkeypatch.setattr(alert_service, "_broadcast_alert_update", lambda: None)
+    monkeypatch.setattr(
+        "app.domains.company.service.get_company",
+        lambda company_id: {
+            "id": company_id,
+            "legal_name": "已核验供应商有限公司",
+            "verification_status": "verified",
+            "identity_source": "tianyancha",
+            "source_reference": "https://example.test/company-1",
+        },
+    )
+
+    result = alert_service.confirm_watchlist_identity(
+        "monitor-identity-1",
+        "company-1",
+        "user-1",
+        source_reference="采购人员确认",
+        comment="名称与统一社会信用代码一致",
+    )
+
+    update = db["watchlist"].update_one.call_args.args[1]["$set"]
+    assert update["company_id"] == "company-1"
+    assert update["identity_status"] == "verified"
+    assert update["display_name"] == "已核验供应商有限公司"
+    assert update["identity_confirmation"]["confirmed_by"] == "user-1"
+    assert result["status"] == "verified"
+
+
 def test_save_snapshot_versions_are_scoped_to_monitor_target(monkeypatch):
     db = {name: MagicMock() for name in ("suppliers", "watchlist", "alert_snapshots")}
     suppliers = db["suppliers"]

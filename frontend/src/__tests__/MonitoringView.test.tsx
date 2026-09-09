@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import MonitoringView from '../components/MonitoringView';
 import type { MonitorTarget } from '../types';
+import { api } from '../api';
 
 const target: MonitorTarget = {
   monitor_target_id: 'monitor-1',
@@ -24,7 +25,7 @@ const target: MonitorTarget = {
   next_action: { code: 'verify_identity', label: '完成主体核验', priority: 'high', reason: '外部候选尚未完成主体确认' },
 };
 
-vi.mock('../api', () => ({ api: { post: vi.fn(), delete: vi.fn(), upload: vi.fn() } }));
+vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), upload: vi.fn() } }));
 vi.mock('../hooks', () => ({
   useDashboard: () => ({ data: { total: 1, alert_count: 0, distribution: {}, targets: [target] }, isLoading: false, error: null, refetch: vi.fn() }),
   useWatchlist: () => ({ companies: [], targets: [target], isLoading: false, error: null, refetch: vi.fn() }),
@@ -49,5 +50,26 @@ describe('MonitoringView', () => {
     expect(await screen.findByText('监控对象 ID：monitor-1')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '完成主体核验' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('/assess/monitor-1');
+  });
+
+  it('shows automatically resolved identity candidates for confirmation', async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      monitor_target_id: 'monitor-1',
+      query: '待核验候选有限公司',
+      resolution: 'candidates',
+      exact: null,
+      candidates: [{
+        company_id: 'company-1',
+        legal_name: '待核验候选有限公司',
+        unified_social_credit_code: '91310000TEST000001',
+        verification_status: 'verified',
+        match_type: 'legal_name',
+        confidence: 0.96,
+      }],
+    });
+    renderView('/assess/monitor-1');
+    expect(await screen.findByText('主体候选（自动检索）')).toBeInTheDocument();
+    expect(await screen.findByText('主体已核验，可绑定')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '确认此主体' })).toBeInTheDocument();
   });
 });

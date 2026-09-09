@@ -25,6 +25,8 @@ from app.domains.alert.service import (
     get_latest_snapshot,
     get_snapshot_history,
     get_watchlist_target_summaries,
+    resolve_watchlist_identity,
+    confirm_watchlist_identity,
     refresh_company,
     remove_from_watchlist,
 )
@@ -78,6 +80,12 @@ class ReviewTaskDecisionRequest(BaseModel):
 
 class ReviewTaskExecuteRequest(BaseModel):
     expected_version: int
+
+
+class MonitorIdentityConfirmationRequest(BaseModel):
+    company_id: str
+    source_reference: str | None = None
+    comment: str | None = None
 
 
 @router.get(
@@ -403,6 +411,51 @@ async def list_watchlist():
     targets = get_watchlist_target_summaries()
     companies = [target["company_name"] for target in targets if target.get("company_name")]
     return {"count": len(companies), "companies": companies, "targets": targets}
+
+
+@router.get(
+    "/watch/{monitor_target_id}/identity-candidates",
+    summary="检索监控对象主体候选",
+    description="复用寻源主体解析能力，根据监控对象名称返回企业主体候选；只检索，不自动绑定主体。",
+    responses={404: {"description": "监控对象不存在"}},
+)
+async def monitor_identity_candidates(
+    monitor_target_id: str,
+    limit: int = Query(10, ge=1, le=20, description="最大候选数"),
+):
+    try:
+        return await asyncio.to_thread(resolve_watchlist_identity, monitor_target_id, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/watch/{monitor_target_id}/identity-confirmation",
+    summary="确认并绑定监控对象主体",
+    description="由采购人员选择已核验企业主体并绑定到监控对象，记录确认来源和操作人。",
+    responses={
+        400: {"description": "主体未核验或请求无效"},
+        404: {"description": "监控对象或企业主体不存在"},
+    },
+)
+async def confirm_monitor_identity(
+    monitor_target_id: str,
+    req: MonitorIdentityConfirmationRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(
+            confirm_watchlist_identity,
+            monitor_target_id,
+            req.company_id,
+            str(current_user.id),
+            source_reference=req.source_reference,
+            comment=req.comment,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message in {"监控对象不存在", "企业主体不存在"} else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc
 
 
 @router.post(

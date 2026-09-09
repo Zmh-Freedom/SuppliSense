@@ -141,6 +141,25 @@ export interface MonitorTarget {
   review_task?: MonitorReviewTask | null;
 }
 
+export interface MonitorIdentityCandidate {
+  company_id: string;
+  legal_name: string;
+  unified_social_credit_code?: string | null;
+  registration_status?: string | null;
+  verification_status: 'verified' | 'pending_verification' | string;
+  match_type: 'credit_code' | 'legal_name' | 'alias' | 'prefix' | string;
+  confidence: number;
+  redirected_from?: string | null;
+}
+
+export interface MonitorIdentityResolution {
+  monitor_target_id: string;
+  query: string;
+  resolution: 'exact' | 'candidates' | 'pending_verification' | string;
+  exact?: MonitorIdentityCandidate | null;
+  candidates: MonitorIdentityCandidate[];
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;

@@ -24,3 +24,16 @@ def test_alert_check_requires_auth(client):
 def test_alert_unwatch_requires_auth(client):
     resp = client.delete("/api/v1/alert/watch", params={"company_name": "测试公司"})
     assert resp.status_code == 401
+
+
+def test_monitor_identity_candidates_requires_auth(client):
+    resp = client.get("/api/v1/alert/watch/monitor-1/identity-candidates")
+    assert resp.status_code == 401
+
+
+def test_monitor_identity_confirmation_requires_auth(client):
+    resp = client.post(
+        "/api/v1/alert/watch/monitor-1/identity-confirmation",
+        json={"company_id": "company-1"},
+    )
+    assert resp.status_code == 401

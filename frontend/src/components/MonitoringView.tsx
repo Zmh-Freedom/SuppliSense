@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { useDashboard, useWatchlist } from '../hooks';
-import type { MonitorReviewTask, MonitorTarget } from '../types';
+import type { MonitorIdentityResolution, MonitorReviewTask, MonitorTarget } from '../types';
 import MonitoringWorkbench from './MonitoringWorkbench';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
 
@@ -72,6 +72,11 @@ export default function MonitoringView() {
     queryFn: () => api.get<MonitorReviewTask>(`/alert/review-tasks/${selectedTarget?.review_task?.id}`),
     enabled: Boolean(selectedTarget?.review_task?.id),
   });
+  const identityResolutionQuery = useQuery<MonitorIdentityResolution>({
+    queryKey: ['monitor-identity-candidates', selectedTarget?.monitor_target_id],
+    queryFn: () => api.get<MonitorIdentityResolution>(`/alert/watch/${encodeURIComponent(selectedTarget!.monitor_target_id)}/identity-candidates`),
+    enabled: Boolean(selectedTarget && selectedTarget.identity_status !== 'verified'),
+  });
 
   const invalidateMonitoring = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
@@ -128,6 +133,16 @@ export default function MonitoringView() {
     onError: () => setToast('复核执行失败，请查看任务详情'),
   });
 
+  const confirmIdentityMutation = useMutation({
+    mutationFn: ({ target, companyId, sourceReference, comment }: { target: MonitorTarget; companyId: string; sourceReference?: string; comment?: string }) => api.post(`/alert/watch/${encodeURIComponent(target.monitor_target_id)}/identity-confirmation`, {
+      company_id: companyId,
+      source_reference: sourceReference,
+      comment,
+    }),
+    onSuccess: () => { invalidateMonitoring(); identityResolutionQuery.refetch(); setToast('主体已确认并绑定到监控对象'); },
+    onError: error => setToast(error instanceof Error ? error.message : '主体确认失败，请重试'),
+  });
+
   const removeTarget = (target: MonitorTarget) => {
     const params: Record<string, string> = target.monitor_target_id.startsWith('legacy:')
       ? { company_name: target.company_name }
@@ -180,6 +195,12 @@ export default function MonitoringView() {
           onReject={rejectTask}
           onExecuteTask={executeNextAction}
           onAnalyze={openAgent}
+          identityResolution={identityResolutionQuery.data}
+          isIdentityLoading={identityResolutionQuery.isLoading}
+          identityError={identityResolutionQuery.error instanceof Error ? identityResolutionQuery.error.message : ''}
+          onRetryIdentity={() => identityResolutionQuery.refetch()}
+          onConfirmIdentity={(companyId, sourceReference, comment) => confirmIdentityMutation.mutate({ target: selectedTarget, companyId, sourceReference, comment })}
+          isConfirmingIdentity={confirmIdentityMutation.isPending}
           onRemove={removeTarget}
           onRefresh={() => checkMutation.mutate()}
           isRefreshing={checkMutation.isPending}
@@ -199,10 +220,10 @@ export default function MonitoringView() {
             onUpload={file => uploadMutation.mutate(file)}
             onRefresh={() => checkMutation.mutate()}
             onAnalyze={openAgent}
-          onAction={executeNextAction}
-          onApprove={approveTask}
-          onReject={rejectTask}
-          onExecuteTask={executeNextAction}
+            onAction={executeNextAction}
+            onApprove={approveTask}
+            onReject={rejectTask}
+            onExecuteTask={executeNextAction}
             onOpen={openTarget}
             onRemove={removeTarget}
             isAdding={addMutation.isPending}
@@ -227,6 +248,12 @@ function MonitoringTargetDetail({
   onReject,
   onExecuteTask,
   onAnalyze,
+  identityResolution,
+  isIdentityLoading,
+  identityError,
+  onRetryIdentity,
+  onConfirmIdentity,
+  isConfirmingIdentity,
   onRemove,
   onRefresh,
   isRefreshing,
@@ -239,6 +266,12 @@ function MonitoringTargetDetail({
   onReject: (target: MonitorTarget) => void;
   onExecuteTask: (target: MonitorTarget) => void;
   onAnalyze: (target: MonitorTarget) => void;
+  identityResolution?: MonitorIdentityResolution;
+  isIdentityLoading: boolean;
+  identityError?: string;
+  onRetryIdentity: () => void;
+  onConfirmIdentity: (companyId: string, sourceReference?: string, comment?: string) => void;
+  isConfirmingIdentity: boolean;
   onRemove: (target: MonitorTarget) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
@@ -261,6 +294,16 @@ function MonitoringTargetDetail({
         <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-4"><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={action?.label || '继续观察'} /></div>
       </section>
 
+      <IdentityResolutionPanel
+        target={target}
+        resolution={identityResolution}
+        isLoading={isIdentityLoading}
+        error={identityError}
+        onRetry={onRetryIdentity}
+        onConfirm={onConfirmIdentity}
+        isConfirming={isConfirmingIdentity}
+      />
+
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-[var(--color-text)]">数据覆盖与复核依据</h2><span className="text-xs text-gray-400">缺口不会被解释为稳定</span></div>{coverage.dimensions?.length ? <div className="divide-y divide-[var(--color-border)]">{coverage.dimensions.map(dimension => <div key={dimension.key} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><div><span className="font-medium text-[var(--color-text)]">{dimension.label}</span><span className="ml-2 text-xs text-gray-400">{dimension.detail}</span></div><span className={`rounded-full px-2 py-1 text-[11px] ${dimension.status === 'available' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{dimension.status === 'available' ? '可用' : '待补充'}</span></div>)}</div> : <p className="text-sm text-gray-400">暂无数据覆盖明细。</p>}</section>
 
       <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{action?.reason || '等待更多监控数据后再安排复核。'}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{action?.label || '继续观察'}</span><span>优先级：{action?.priority || 'low'}</span></div></section>
@@ -274,6 +317,59 @@ function MonitoringTargetDetail({
 
 function taskStatusLabel(status?: string): string {
   return ({ pending_approval: '待审批', approved: '已审批', executing: '执行中', completed: '已完成', needs_review: '待人工复核', rejected: '已拒绝', failed: '执行失败', cancelled: '已取消' } as Record<string, string>)[status || ''] || '未创建';
+}
+
+const MATCH_TYPE_LABELS: Record<string, string> = {
+  credit_code: '统一社会信用代码匹配',
+  legal_name: '法定名称匹配',
+  alias: '别名匹配',
+  prefix: '名称前缀匹配',
+};
+
+function IdentityResolutionPanel({
+  target,
+  resolution,
+  isLoading,
+  error,
+  onRetry,
+  onConfirm,
+  isConfirming,
+}: {
+  target: MonitorTarget;
+  resolution?: MonitorIdentityResolution;
+  isLoading: boolean;
+  error?: string;
+  onRetry: () => void;
+  onConfirm: (companyId: string, sourceReference?: string, comment?: string) => void;
+  isConfirming: boolean;
+}) {
+  const [sourceReference, setSourceReference] = useState('');
+  const [comment, setComment] = useState('');
+  if (target.identity_status === 'verified') return null;
+  const candidates = resolution?.exact ? [resolution.exact] : (resolution?.candidates || []);
+  return <section className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-5 shadow-sm">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 className="text-sm font-semibold text-indigo-950">主体候选（自动检索）</h2>
+        <p className="mt-1 text-xs leading-5 text-indigo-800">系统已复用寻源主体解析能力检索候选；只有你确认后才会绑定到监控对象。</p>
+      </div>
+      <span className="rounded-full bg-white px-2 py-1 text-[11px] text-indigo-700">当前：待确认</span>
+    </div>
+    {isLoading && <p className="mt-4 text-sm text-indigo-800">正在根据企业名称检索主体候选…</p>}
+    {error && <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-red-700"><span>{error}</span><button type="button" onClick={onRetry} className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs">重新检索</button></div>}
+    {!isLoading && !error && candidates.length === 0 && <div className="mt-4 rounded-xl border border-dashed border-indigo-200 bg-white/70 px-4 py-4 text-sm text-indigo-800">暂未找到可确认的主体候选，请补充统一社会信用代码、天眼查链接或供应商代码。</div>}
+    {candidates.length > 0 && <div className="mt-4 space-y-3">{candidates.map(candidate => {
+      const canConfirm = candidate.verification_status === 'verified';
+      return <div key={candidate.company_id} className="rounded-xl border border-indigo-100 bg-white px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0"><div className="font-medium text-[var(--color-text)]">{candidate.legal_name}</div><div className="mt-1 text-xs text-gray-500">{candidate.unified_social_credit_code || '未提供统一社会信用代码'} · {MATCH_TYPE_LABELS[candidate.match_type] || '名称匹配'}</div></div>
+          <div className="text-right"><div className="text-sm font-semibold text-indigo-700">{Math.round(candidate.confidence * 100)}%</div><div className="text-[10px] text-gray-400">匹配置信度</div></div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className={`rounded-full px-2 py-1 text-[11px] ${canConfirm ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{canConfirm ? '主体已核验，可绑定' : '主体尚未核验，不能绑定'}</span>{canConfirm && <button type="button" disabled={isConfirming} onClick={() => onConfirm(candidate.company_id, sourceReference.trim() || undefined, comment.trim() || undefined)} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs text-white hover:bg-indigo-800 disabled:opacity-50">{isConfirming ? '确认中…' : '确认此主体'}</button>}</div>
+      </div>;
+    })}</div>}
+    {candidates.some(candidate => candidate.verification_status === 'verified') && <div className="mt-4 grid gap-2 md:grid-cols-2"><input value={sourceReference} onChange={event => setSourceReference(event.target.value)} placeholder="核验依据或外部链接（可选）" className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" /><input value={comment} onChange={event => setComment(event.target.value)} placeholder="确认说明（可选）" className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200" /></div>}
+  </section>;
 }
 
 function taskTypeLabel(taskType?: string): string {

@@ -648,6 +648,87 @@ def remove_from_watchlist(
     }
 
 
+def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
+    """Resolve a monitoring target name to verified company candidates.
+
+    This deliberately reuses the deterministic identity resolver used by sourcing.
+    It returns candidates for a human decision and never changes the watchlist.
+    """
+    target = _find_watchlist_target(monitor_target_id=monitor_target_id)
+    if target is None:
+        raise ValueError("监控对象不存在")
+    from app.domains.company.service import search_identity
+
+    query = str(target.get("display_name") or target.get("company_name") or "").strip()
+    if not query:
+        return {
+            "monitor_target_id": monitor_target_id,
+            "query": query,
+            "resolution": "pending_verification",
+            "exact": None,
+            "candidates": [],
+        }
+    result = search_identity(query, limit=max(1, min(limit, 20)))
+    return {
+        "monitor_target_id": monitor_target_id,
+        "query": query,
+        **result,
+    }
+
+
+def confirm_watchlist_identity(
+    monitor_target_id: str,
+    company_id: str,
+    user_id: str,
+    *,
+    source_reference: str | None = None,
+    comment: str | None = None,
+) -> dict:
+    """Bind a verified canonical company to a monitoring target after user confirmation."""
+    target = _find_watchlist_target(monitor_target_id=monitor_target_id)
+    if target is None:
+        raise ValueError("监控对象不存在")
+
+    from app.domains.company.service import get_company
+
+    company = get_company(str(company_id))
+    if company is None:
+        raise ValueError("企业主体不存在")
+    if company.get("verification_status") != "verified":
+        raise ValueError("只能绑定已核验的企业主体")
+
+    canonical_id = str(company.get("id") or company.get("company_id") or company_id)
+    canonical_name = str(company.get("legal_name") or target.get("company_name") or "").strip()
+    now = datetime.now(timezone.utc)
+    db = get_db()
+    confirmation = {
+        "company_id": canonical_id,
+        "confirmed_by": str(user_id),
+        "confirmed_at": now,
+        "source_reference": source_reference or company.get("source_reference"),
+        "comment": comment,
+    }
+    db["watchlist"].update_one(
+        {"monitor_target_id": monitor_target_id},
+        {"$set": {
+            "company_id": canonical_id,
+            "company_name": canonical_name,
+            "display_name": canonical_name,
+            "identity_status": "verified",
+            "identity_source": company.get("identity_source"),
+            "identity_confirmation": confirmation,
+            "updated_at": now,
+        }},
+    )
+    _broadcast_alert_update()
+    updated = _find_watchlist_target(monitor_target_id=monitor_target_id) or target
+    return {
+        **updated,
+        "identity_confirmation": confirmation,
+        "status": "verified",
+    }
+
+
 def get_watchlist() -> list[str]:
     return [target["company_name"] for target in get_watchlist_targets() if target.get("company_name")]
 
