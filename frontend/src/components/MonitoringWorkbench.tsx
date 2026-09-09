@@ -10,7 +10,7 @@ interface CoverageSummary {
 
 interface MonitoringWorkbenchProps {
   targets: MonitorTarget[];
-  onAdd: (target: { company_name: string; target_type: 'company' }) => void;
+  onInvestigate: (query: string) => void;
   onUpload: (file: File) => void;
   onRefresh: () => void;
   onAnalyze: (target: MonitorTarget) => void;
@@ -20,7 +20,7 @@ interface MonitoringWorkbenchProps {
   onExecuteTask: (target: MonitorTarget) => void;
   onOpen: (target: MonitorTarget) => void;
   onRemove: (target: MonitorTarget) => void;
-  isAdding: boolean;
+  isInvestigating: boolean;
   isUploading: boolean;
   isRefreshing: boolean;
   defaultOpen?: boolean;
@@ -73,7 +73,7 @@ function trendTone(status?: string): { color: string; background: string } {
 
 export default function MonitoringWorkbench({
   targets,
-  onAdd,
+  onInvestigate,
   onUpload,
   onRefresh,
   onAnalyze,
@@ -83,7 +83,7 @@ export default function MonitoringWorkbench({
   onExecuteTask,
   onOpen,
   onRemove,
-  isAdding,
+  isInvestigating,
   isUploading,
   isRefreshing,
   defaultOpen = false,
@@ -98,9 +98,8 @@ export default function MonitoringWorkbench({
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const name = newName.trim();
-    if (!name || isAdding) return;
-    onAdd({ company_name: name, target_type: 'company' });
-    setNewName('');
+    if (!name || isInvestigating) return;
+    onInvestigate(name);
   };
 
   return (
@@ -138,11 +137,11 @@ export default function MonitoringWorkbench({
           <input
             value={newName}
             onChange={event => setNewName(event.target.value)}
-            placeholder="添加待核验企业主体（候选优先从 Agent 加入）"
+            placeholder="输入供应商名称、代码或统一社会信用代码"
             className="min-h-[44px] flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm placeholder-gray-300 focus:border-[var(--color-border-focus)] focus:outline-none"
           />
-          <button type="submit" disabled={isAdding || !newName.trim()} className="min-h-[44px] shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-4 py-2 text-sm text-white transition-opacity hover:bg-[var(--color-primary-hover)] disabled:opacity-30">
-            {isAdding ? '添加中…' : '添加对象'}
+          <button type="submit" disabled={isInvestigating || !newName.trim()} className="min-h-[44px] shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-4 py-2 text-sm text-white transition-opacity hover:bg-[var(--color-primary-hover)] disabled:opacity-30">
+            {isInvestigating ? '调查中…' : '开始调查'}
           </button>
         </form>
 
@@ -157,7 +156,7 @@ export default function MonitoringWorkbench({
         </div>
 
         {activeTargets.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-gray-400">暂无监控对象，可从 Agent 分析结果中加入供应商或候选。</div>
+          <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-gray-400">暂无监控对象。输入供应商线索后，系统会先自动调查主体和资料覆盖。</div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
             <table className="w-full min-w-[820px] border-collapse text-left">

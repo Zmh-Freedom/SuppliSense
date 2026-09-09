@@ -4,8 +4,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { useDashboard, useWatchlist } from '../hooks';
-import type { MonitorIdentityResolution, MonitorReviewTask, MonitorTarget } from '../types';
+import type { MonitorIdentityResolution, MonitorIntake, MonitorIntakeConfirmation, MonitorReviewTask, MonitorTarget } from '../types';
 import MonitoringWorkbench from './MonitoringWorkbench';
+import MonitoringIntakePanel from './MonitoringIntakePanel';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
 
 interface CoverageDimension {
@@ -53,6 +54,7 @@ export default function MonitoringView() {
   const dashboardQuery = useDashboard();
   const watchlistQuery = useWatchlist();
   const [toast, setToast] = useState('');
+  const [intake, setIntake] = useState<MonitorIntake | null>(null);
 
   const targets = useMemo<MonitorTarget[]>(() => {
     if (dashboardQuery.data?.targets?.length) return dashboardQuery.data.targets;
@@ -85,10 +87,27 @@ export default function MonitoringView() {
     queryClient.invalidateQueries({ queryKey: ['monitor-review-task'] });
   };
 
-  const addMutation = useMutation({
-    mutationFn: (target: { company_name: string; target_type: 'company' }) => api.post('/alert/watch', target),
-    onSuccess: () => { invalidateMonitoring(); setToast('已加入待核验监控对象'); },
-    onError: () => setToast('添加监控对象失败，请重试'),
+  const intakeMutation = useMutation({
+    mutationFn: (query: string) => api.post<MonitorIntake>('/alert/intakes', { query }),
+    onSuccess: result => { setIntake(result); },
+    onError: error => setToast(error instanceof Error ? error.message : '自动调查失败，请重试'),
+  });
+
+  const selectIntakeMutation = useMutation({
+    mutationFn: (candidateId: string) => api.post<MonitorIntake>(`/alert/intakes/${encodeURIComponent(intake!.intake_id)}/selection`, { candidate_id: candidateId }),
+    onSuccess: result => setIntake(result),
+    onError: error => setToast(error instanceof Error ? error.message : '主体选择失败，请重试'),
+  });
+
+  const confirmIntakeMutation = useMutation({
+    mutationFn: () => api.post<MonitorIntakeConfirmation>(`/alert/intakes/${encodeURIComponent(intake!.intake_id)}/confirmation`),
+    onSuccess: result => {
+      invalidateMonitoring();
+      setIntake(null);
+      setToast(result.baseline_status === 'created' ? '已加入监控并建立首次风险基线' : '已加入监控；首次风险基线待资料补全');
+      if (result.monitor_target?.monitor_target_id) navigate(`/assess/${encodeURIComponent(result.monitor_target.monitor_target_id)}`);
+    },
+    onError: error => setToast(error instanceof Error ? error.message : '加入监控失败，请重试'),
   });
 
   const uploadMutation = useMutation({
@@ -216,7 +235,7 @@ export default function MonitoringView() {
           </div>
           <MonitoringWorkbench
             targets={targets}
-            onAdd={target => addMutation.mutate(target)}
+            onInvestigate={query => intakeMutation.mutate(query)}
             onUpload={file => uploadMutation.mutate(file)}
             onRefresh={() => checkMutation.mutate()}
             onAnalyze={openAgent}
@@ -226,11 +245,20 @@ export default function MonitoringView() {
             onExecuteTask={executeNextAction}
             onOpen={openTarget}
             onRemove={removeTarget}
-            isAdding={addMutation.isPending}
+            isInvestigating={intakeMutation.isPending}
             isUploading={uploadMutation.isPending}
             isRefreshing={checkMutation.isPending}
             defaultOpen
           />
+          {(intake || intakeMutation.isPending) && <MonitoringIntakePanel
+            intake={intake}
+            isLoading={intakeMutation.isPending}
+            isConfirming={confirmIntakeMutation.isPending}
+            error={intakeMutation.error instanceof Error ? intakeMutation.error.message : ''}
+            onSelect={candidateId => selectIntakeMutation.mutate(candidateId)}
+            onConfirm={() => confirmIntakeMutation.mutate()}
+            onClose={() => setIntake(null)}
+          />}
         </>
       )}
 

@@ -295,12 +295,23 @@ class DiscoveryOutput(StrictToolOutput):
     failure_reasons: list[Any] = Field(default_factory=list)
 
 
+class MonitoringInvestigationOutput(StrictToolOutput):
+    query: str
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    selected_candidate_id: str | None = None
+    external_profile: dict[str, Any] | None = None
+    data_coverage: dict[str, Any] = Field(default_factory=dict)
+    findings: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_summary: list[dict[str, Any]] = Field(default_factory=list)
+
+
 TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "search_company": CompanySearchOutput,
     "assess_risk": RiskAssessmentOutput,
     "assess_business_risk": BusinessRiskOutput,
     "assess_operational_risk": OperationalRiskOutput,
     "check_alert": AlertCheckOutput,
+    "investigate_supplier_monitoring": MonitoringInvestigationOutput,
     "get_watchlist": WatchlistOutput,
     "analyze_watchlist_trend": WatchlistTrendOutput,
     "add_to_watchlist": WatchlistOutput,

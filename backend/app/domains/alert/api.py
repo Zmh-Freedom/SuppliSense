@@ -17,6 +17,12 @@ from app.domains.alert.review_tasks import (
     get_review_task,
     list_review_tasks,
 )
+from app.domains.alert.intake_service import (
+    confirm_monitor_intake,
+    create_monitor_intake,
+    get_monitor_intake,
+    select_monitor_intake_candidate,
+)
 from app.domains.risk.predictor import predict_all, predict_company
 from app.schemas.user import UserInDB
 from app.domains.alert.service import (
@@ -86,6 +92,14 @@ class MonitorIdentityConfirmationRequest(BaseModel):
     company_id: str
     source_reference: str | None = None
     comment: str | None = None
+
+
+class MonitorIntakeRequest(BaseModel):
+    query: str
+
+
+class MonitorIntakeSelectionRequest(BaseModel):
+    candidate_id: str
 
 
 @router.get(
@@ -411,6 +425,73 @@ async def list_watchlist():
     targets = get_watchlist_target_summaries()
     companies = [target["company_name"] for target in targets if target.get("company_name")]
     return {"count": len(companies), "companies": companies, "targets": targets}
+
+
+@router.post(
+    "/intakes",
+    summary="发起供应商监控调查",
+    description="先查询主体候选、内部交易、历史零件关系和可用外部资料；不会在此步骤写入监控清单。",
+    responses={400: {"description": "查询线索无效"}},
+)
+async def create_monitor_intake_endpoint(
+    req: MonitorIntakeRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(create_monitor_intake, req.query, str(current_user.id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get(
+    "/intakes/{intake_id}",
+    summary="读取供应商监控调查",
+    description="读取当前用户发起的调查结果及资料覆盖状态。",
+    responses={404: {"description": "调查不存在"}},
+)
+async def get_monitor_intake_endpoint(
+    intake_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    result = await asyncio.to_thread(get_monitor_intake, intake_id, str(current_user.id))
+    if result is None:
+        raise HTTPException(status_code=404, detail="调查不存在或无权访问")
+    return result
+
+
+@router.post(
+    "/intakes/{intake_id}/selection",
+    summary="选择监控调查主体",
+    description="选择本次调查返回的候选主体后，按该主体重新关联交易和历史合作资料。",
+    responses={400: {"description": "候选主体无效"}, 404: {"description": "调查不存在"}},
+)
+async def select_monitor_intake_candidate_endpoint(
+    intake_id: str,
+    req: MonitorIntakeSelectionRequest,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(select_monitor_intake_candidate, intake_id, req.candidate_id, str(current_user.id))
+    except ValueError as exc:
+        status_code = 404 if "调查不存在" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
+@router.post(
+    "/intakes/{intake_id}/confirmation",
+    summary="确认调查并加入监控",
+    description="确认所选主体后创建稳定监控对象，并尽可能保存首次风险评估基线。",
+    responses={400: {"description": "尚未选择主体"}, 404: {"description": "调查不存在"}},
+)
+async def confirm_monitor_intake_endpoint(
+    intake_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    try:
+        return await asyncio.to_thread(confirm_monitor_intake, intake_id, str(current_user.id))
+    except ValueError as exc:
+        status_code = 404 if "调查不存在" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @router.get(

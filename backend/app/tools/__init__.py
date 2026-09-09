@@ -13,7 +13,7 @@ from app.domains.risk.tools_analysis import (
     query_financials,
 )
 from app.domains.risk.tools_report import generate_report, manage_scheduled_report
-from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist, analyze_watchlist_trend
+from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist, analyze_watchlist_trend, investigate_supplier_monitoring
 from app.domains.sourcing.tools import (
     list_formal_suppliers,
     create_sourcing_request,
@@ -31,6 +31,7 @@ TOOLS_LIST = [
     assess_business_risk,
     assess_operational_risk,
     check_alert,
+    investigate_supplier_monitoring,
     get_watchlist,
     analyze_watchlist_trend,
     add_to_watchlist,

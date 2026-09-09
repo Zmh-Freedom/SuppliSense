@@ -123,12 +123,12 @@ _EVIDENCE_TOOLS = {
     "assess_risk", "assess_business_risk", "assess_operational_risk", "check_alert", "esg_assessment",
     "contagion_analysis", "sentiment_analysis", "check_sanctions", "compare_companies",
     "analyze_trend", "query_financials", "predict_risk", "macro_risk", "find_alternatives",
-    "scenario_simulate", "list_formal_suppliers", "search_suppliers", "discover_supplier_candidates", "discover_web_suppliers",
+    "scenario_simulate", "list_formal_suppliers", "search_suppliers", "discover_supplier_candidates", "discover_web_suppliers", "investigate_supplier_monitoring",
 }
 _CAPABILITIES = {
     "search_company": "company_lookup", "assess_risk": "risk", "assess_business_risk": "business_risk",
     "assess_operational_risk": "operational_risk",
-    "check_alert": "risk_monitoring", "get_watchlist": "risk_monitoring", "analyze_watchlist_trend": "risk_monitoring",
+    "check_alert": "risk_monitoring", "investigate_supplier_monitoring": "risk_monitoring", "get_watchlist": "risk_monitoring", "analyze_watchlist_trend": "risk_monitoring",
     "add_to_watchlist": "risk_monitoring", "remove_from_watchlist": "risk_monitoring", "esg_assessment": "esg",
     "contagion_analysis": "risk_network", "sentiment_analysis": "sentiment", "predict_risk": "risk_prediction",
     "macro_risk": "macro_risk", "find_alternatives": "sourcing", "scenario_simulate": "scenario",

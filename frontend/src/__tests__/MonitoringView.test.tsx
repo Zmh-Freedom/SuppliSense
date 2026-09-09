@@ -42,6 +42,32 @@ function renderView(initialEntry: string) {
 }
 
 describe('MonitoringView', () => {
+  it('investigates a supplier before adding it to monitoring', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.post).mockResolvedValueOnce({
+      intake_id: 'intake-1',
+      query: '青岛三祥',
+      status: 'ready_for_selection',
+      candidates: [{
+        candidate_id: 'supplier:s-1', candidate_type: 'supplier', supplier_id: 's-1', supplier_code: 'SUP-001',
+        legal_name: '青岛三祥科技股份有限公司', verification_status: 'verified', match_type: 'legal_name', confidence: 1, source: '内部供应商库',
+      }],
+      selected_candidate_id: 'supplier:s-1',
+      data_coverage: { dimensions: [{ key: 'transaction', label: '内部月度交易', status: 'available', detail: '已关联 12 条月度快照' }], missing_dimensions: [] },
+      findings: [{ title: '已关联内部交易', evidence: '最新月度快照：2026-08。', status: 'supported' }],
+    });
+    renderView('/assess');
+
+    await user.type(screen.getByPlaceholderText('输入供应商名称、代码或统一社会信用代码'), '青岛三祥');
+    await user.click(screen.getByRole('button', { name: '开始调查' }));
+
+    expect(await screen.findByRole('heading', { name: '供应商自动调查' })).toBeInTheDocument();
+    expect(screen.getByText('青岛三祥科技股份有限公司')).toBeInTheDocument();
+    expect(screen.getByText(/发现了什么：已关联内部交易/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认主体并加入监控' })).toBeEnabled();
+    expect(vi.mocked(api.post)).toHaveBeenCalledWith('/alert/intakes', { query: '青岛三祥' });
+  });
+
   it('opens a monitor target by stable monitor_target_id', async () => {
     const user = userEvent.setup();
     renderView('/assess');

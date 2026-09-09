@@ -160,6 +160,54 @@ export interface MonitorIdentityResolution {
   candidates: MonitorIdentityCandidate[];
 }
 
+export type MonitorIntakeDimensionStatus = 'available' | 'missing' | 'failed' | 'unavailable' | 'not_queried' | string;
+
+export interface MonitorIntakeCandidate {
+  candidate_id: string;
+  candidate_type: 'company' | 'supplier' | string;
+  company_id?: string | null;
+  supplier_id?: string | null;
+  supplier_code?: string | null;
+  legal_name: string;
+  unified_social_credit_code?: string | null;
+  registration_status?: string | null;
+  verification_status: string;
+  match_type: string;
+  confidence: number;
+  source: string;
+}
+
+export interface MonitorIntake {
+  intake_id: string;
+  query: string;
+  status: 'ready_for_selection' | 'ready_for_confirmation' | 'needs_identity_confirmation' | 'confirmed' | string;
+  candidates: MonitorIntakeCandidate[];
+  selected_candidate_id?: string | null;
+  external_profile?: {
+    company_name?: string;
+    unified_social_credit_code?: string | null;
+    registration_status?: string | null;
+    legal_person?: string | null;
+    industry?: string | null;
+    source_reference?: string | null;
+  } | null;
+  data_coverage: {
+    dimensions: Array<{ key: string; label: string; status: MonitorIntakeDimensionStatus; detail: string }>;
+    missing_dimensions: string[];
+  };
+  findings: Array<{ title: string; evidence: string; status: 'supported' | 'partial' | string }>;
+  evidence_summary?: Array<Record<string, unknown>>;
+  monitor_target_id?: string | null;
+  baseline_status?: 'created' | 'partial' | 'not_available' | string;
+}
+
+export interface MonitorIntakeConfirmation {
+  status: string;
+  monitor_target?: MonitorTarget;
+  monitor_target_id?: string;
+  baseline_status?: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;

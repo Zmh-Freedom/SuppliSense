@@ -165,6 +165,7 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
     names = [str(item).strip() for item in current_task.get("target_supplier_names", []) if str(item).strip()]
     dimensions = [str(item).strip() for item in current_task.get("analysis_dimensions", []) if str(item).strip()]
     result: list[HarnessTask] = []
+    user_message = str(current_task.get("user_message") or "")
     if current_task.get("task_type") == "sourcing":
         requirement = current_task.get("requirement") or {}
         request_id = str(requirement.get("request_id") or "").strip() if isinstance(requirement, dict) else ""
@@ -195,6 +196,19 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                 )
             )
     for name in dict.fromkeys(names):
+        if "监控" in user_message and any(token in user_message for token in ("调查", "补全", "资料", "加入", "添加")):
+            result.append(
+                HarnessTask(
+                    task_id=f"{current_task.get('task_id', 'task')}:{name}:monitoring_intake",
+                    tool_name="investigate_supplier_monitoring",
+                    arguments={"query": name},
+                    entity_id=_entity_id(name, context),
+                    dimension="risk_monitoring",
+                    resource_key=_entity_id(name, context),
+                    required=True,
+                    evidence_requirements=["risk_monitoring"],
+                )
+            )
         for dimension in dict.fromkeys(dimensions):
             mapping = _DIMENSION_TO_TOOL.get(dimension)
             if not mapping:

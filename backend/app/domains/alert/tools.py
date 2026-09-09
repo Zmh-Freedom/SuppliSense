@@ -3,6 +3,25 @@ from langchain_core.tools import tool
 
 
 @tool
+def investigate_supplier_monitoring(query: str) -> dict:
+    """调查一个供应商是否适合加入风险监控。
+
+    自动查询主体候选、内部月度交易、历史零件合作、可用公开财务和
+    天眼查资料覆盖。只读，不会加入监控；用户确认后才应调用加入监控。
+    """
+    from app.domains.alert.intake_service import investigate_supplier_monitoring as _investigate
+    from app.tools.evidence import attach_tool_evidence
+
+    result = _investigate(query)
+    return attach_tool_evidence(
+        result,
+        tool_name="investigate_supplier_monitoring",
+        entity_id=f"investigation:{query}",
+        dimension="risk_monitoring",
+    )
+
+
+@tool
 def check_alert(
     company_name: str,
     monitor_target_id: str | None = None,
