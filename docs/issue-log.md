@@ -1974,7 +1974,7 @@
 - 根因：MongoDB `insert_one` 会向传入的调查文档补充 BSON `_id`，服务随后直接返回该对象；`ObjectId` 无法作为 JSON 响应序列化，接口在写入后返回 500，前端结束 loading 后收起临时卡片。
 - 修复方案：调查服务对 BSON `ObjectId` 显式序列化，并让前端在调查失败时保留调查面板与错误提示。
 - 验证结果：调查服务已将 `ObjectId` 转为字符串；前端将调查面板打开状态与请求状态分离，失败时保留错误面板。后端调查测试 4 项通过，前端监控页测试 3 项、TypeScript、Lint 和 `git diff --check` 通过；重启 8002 后健康检查返回 ready。
-- 关联提交：待处理。
+- 关联提交：`21ecd87e fix: retain supplier investigation results`。
 
 ## ISS-20260909-043 Agent 批准加入监控后动作被错误判定为失败
 
