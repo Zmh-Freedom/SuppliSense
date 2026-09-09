@@ -19,7 +19,7 @@
 - 根因：监控工作台摘要接口只组装 `risk_score`、`risk_level`、`risk_change` 和 `data_coverage`；前端详情也只消费这些摘要字段。`alert_snapshots` 中的 `score_breakdown`、`financial` 和 `risk_detail` 没有通过面向 `monitor_target_id` 的详情接口返回。
 - 修复方案：为监控对象增加稳定 ID 查询的风险详情接口，返回最新快照、维度评分依据和简明历史；详情页新增“风险结论与依据”区块，以表格呈现维度、判断和证据，并明确单条快照不能推断趋势。
 - 验证结果：新增稳定 ID 风险详情接口与前端“风险结论与依据”表格。对真实监控对象 `dd56b04b-f171-4630-9639-cf0718c4564d` 验证，返回低风险 `7/100`、净利下降 `6.6分（增长率 -18.1%）` 和重大诉讼 `10分` 等原始依据；新接口已出现在 OpenAPI。后端监控定向测试 9 项通过（另 1 个既有 async Supervisor 测试因环境缺少 `pytest-asyncio` 排除）、调查测试 5 项通过；前端 TypeScript、Lint、生产构建与 `git diff --check` 通过。
-- 关联提交：待处理。
+- 关联提交：`a328fb2d feat: show risk evidence in monitoring detail`。
 
 ## ISS-20260901-013 Task 3 寻源主链路仍缺少统一收口
 
