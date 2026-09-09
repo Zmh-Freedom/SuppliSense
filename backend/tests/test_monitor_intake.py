@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+from bson import ObjectId
+
 from app.domains.alert import intake_service
 
 
@@ -51,3 +53,9 @@ def test_monitor_intake_api_requires_auth(client):
     assert client.get("/api/v1/alert/intakes/intake-1").status_code == 401
     assert client.post("/api/v1/alert/intakes/intake-1/selection", json={"candidate_id": "supplier:s-1"}).status_code == 401
     assert client.post("/api/v1/alert/intakes/intake-1/confirmation").status_code == 401
+
+
+def test_monitor_intake_serializes_mongo_object_id():
+    assert intake_service._serialize({"_id": ObjectId("64b64c6a2f1f2d3e4a5b6c7d")}) == {
+        "_id": "64b64c6a2f1f2d3e4a5b6c7d"
+    }

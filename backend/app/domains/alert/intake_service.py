@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from bson import ObjectId
+
 from app.core.config import settings
 from app.db.mongo import get_db
 
@@ -193,6 +195,8 @@ def _data_coverage(candidate: dict | None, query: str, enterprise_state: dict) -
 
 
 def _serialize(value: Any) -> Any:
+    if isinstance(value, ObjectId):
+        return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):

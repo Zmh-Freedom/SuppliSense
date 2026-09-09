@@ -55,6 +55,7 @@ export default function MonitoringView() {
   const watchlistQuery = useWatchlist();
   const [toast, setToast] = useState('');
   const [intake, setIntake] = useState<MonitorIntake | null>(null);
+  const [isIntakeOpen, setIsIntakeOpen] = useState(false);
 
   const targets = useMemo<MonitorTarget[]>(() => {
     if (dashboardQuery.data?.targets?.length) return dashboardQuery.data.targets;
@@ -104,6 +105,7 @@ export default function MonitoringView() {
     onSuccess: result => {
       invalidateMonitoring();
       setIntake(null);
+      setIsIntakeOpen(false);
       setToast(result.baseline_status === 'created' ? '已加入监控并建立首次风险基线' : '已加入监控；首次风险基线待资料补全');
       if (result.monitor_target?.monitor_target_id) navigate(`/assess/${encodeURIComponent(result.monitor_target.monitor_target_id)}`);
     },
@@ -235,7 +237,7 @@ export default function MonitoringView() {
           </div>
           <MonitoringWorkbench
             targets={targets}
-            onInvestigate={query => intakeMutation.mutate(query)}
+            onInvestigate={query => { setIntake(null); setIsIntakeOpen(true); intakeMutation.mutate(query); }}
             onUpload={file => uploadMutation.mutate(file)}
             onRefresh={() => checkMutation.mutate()}
             onAnalyze={openAgent}
@@ -250,14 +252,14 @@ export default function MonitoringView() {
             isRefreshing={checkMutation.isPending}
             defaultOpen
           />
-          {(intake || intakeMutation.isPending) && <MonitoringIntakePanel
+          {isIntakeOpen && <MonitoringIntakePanel
             intake={intake}
             isLoading={intakeMutation.isPending}
             isConfirming={confirmIntakeMutation.isPending}
             error={intakeMutation.error instanceof Error ? intakeMutation.error.message : ''}
             onSelect={candidateId => selectIntakeMutation.mutate(candidateId)}
             onConfirm={() => confirmIntakeMutation.mutate()}
-            onClose={() => setIntake(null)}
+            onClose={() => { setIntake(null); setIsIntakeOpen(false); intakeMutation.reset(); }}
           />}
         </>
       )}
