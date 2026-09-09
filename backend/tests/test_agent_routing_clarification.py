@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from uuid import uuid4
 
 from app.api import chat as chat_api
 from app.graphs.router import Intent, IntentRouter
@@ -25,6 +26,57 @@ def test_all_read_only_chat_modes_use_harness() -> None:
 
 def test_write_action_keeps_durable_approval_entry() -> None:
     assert chat_api._select_chat_stream("auto", requested_action="add_watchlist") is chat_api._langgraph_agent_supervisor_stream
+
+
+def test_supervisor_session_parent_is_created_for_new_uuid_session(monkeypatch) -> None:
+    calls: list[tuple[str, str, str]] = []
+
+    class FakeSessionStore:
+        def get_session(self, session_id):
+            calls.append(("get", session_id, ""))
+            return None
+
+        def create_session(self, user_id, *, session_id):
+            calls.append(("create", session_id, user_id))
+
+    monkeypatch.setattr("app.domains.agent_run.state_store.session_state_store", FakeSessionStore())
+    session_id = str(uuid4())
+    user_id = str(uuid4())
+
+    chat_api._ensure_agent_session(session_id, user_id)
+
+    assert calls == [("get", session_id, ""), ("create", session_id, user_id)]
+
+
+def test_chat_stream_converts_supervisor_exception_to_sse_error(monkeypatch) -> None:
+    context = {
+        "history": [],
+        "references": [{"name": "甲公司"}],
+        "conversation_state": {"selected_supplier_names": ["甲公司"]},
+        "current_task": {"target_supplier_names": ["甲公司"]},
+        "llm_intent": {"target_supplier_names": ["甲公司"], "requested_action": "none"},
+    }
+    monkeypatch.setattr("app.graphs.agent_core.adapter.load_execution_context", lambda *_args: context)
+
+    async def broken_stream(*_args, **_kwargs):
+        raise RuntimeError("simulated stream failure")
+        yield "unreachable"
+
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", broken_stream)
+    monkeypatch.setattr("app.services.agent_session_guard.acquire_agent_session_run", lambda _sid: "token")
+    monkeypatch.setattr("app.services.agent_session_guard.release_agent_session_run", lambda *_args: None)
+    monkeypatch.setattr("app.services.agent_session_guard.renew_agent_session_run", lambda *_args: None)
+
+    response = asyncio.run(
+        chat_api.chat_stream_endpoint(
+            chat_api.ChatRequest(message="分析甲公司的风险", session_id="stream-error", mode="auto"),
+            SimpleNamespace(state=SimpleNamespace(user_id="")),
+        )
+    )
+    events = _collect_events(response)
+
+    assert any(event.startswith("event: error") for event in events)
+    assert any("Agent 工作流执行失败，请重试" in event for event in events)
 
 
 def test_structured_context_suppresses_company_clarification() -> None:

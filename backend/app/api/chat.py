@@ -33,6 +33,18 @@ def _normalize_session_id(session_id: str, user_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"supplisense:chat-session:{user_id}:{session_id}"))
 
 
+def _ensure_agent_session(session_id: str, user_id: str) -> None:
+    """Ensure the Supervisor compatibility path has a durable session parent."""
+    from app.domains.agent_run.state_store import session_state_store
+
+    session = session_state_store.get_session(session_id)
+    if session is None:
+        session_state_store.create_session(user_id, session_id=session_id)
+        return
+    if str(session.user_id or "") != user_id:
+        raise PermissionError("Agent 会话不属于当前用户")
+
+
 async def _langgraph_agent_supervisor_stream(
     session_id: str,
     message: str,
@@ -86,6 +98,9 @@ async def _langgraph_agent_supervisor_stream(
     else:
         from app.domains.agent_run.schemas import CreateSourcingRiskRunRequest
         from app.domains.agent_run.service import create_sourcing_risk_run
+
+        if _is_uuid(session_id) and _is_uuid(agent_user_id):
+            await asyncio.to_thread(_ensure_agent_session, session_id, agent_user_id)
 
         try:
             run = await asyncio.to_thread(
@@ -358,14 +373,18 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 }
 
             # Stream the chat response
-            async for event in stream_fn(
-                sid,
-                req.message,
-                pref_ctx,
-                execution_context=execution_context,
-            ):
-                await asyncio.to_thread(renew_agent_session_run, sid, run_token)
-                yield event
+            try:
+                async for event in stream_fn(
+                    sid,
+                    req.message,
+                    pref_ctx,
+                    execution_context=execution_context,
+                ):
+                    await asyncio.to_thread(renew_agent_session_run, sid, run_token)
+                    yield event
+            except Exception as exc:
+                logger.exception("chat_stream_failed", error=str(exc), session_id=sid)
+                yield f"event: error\ndata: {json.dumps({'message': 'Agent 工作流执行失败，请重试。'}, ensure_ascii=False)}\n\n"
         finally:
             await asyncio.to_thread(release_agent_session_run, sid, run_token)
 
