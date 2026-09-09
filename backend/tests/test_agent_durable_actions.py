@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from langchain_core.tools import tool
 
@@ -205,3 +207,56 @@ def test_watchlist_delivery_uses_tool_executor_and_approver_binding(
     assert isinstance(context, ToolContext)
     assert context.approval_actor_id == "approver-1"
     assert context.approval_proposal_id == proposal.proposal_id
+
+
+def test_watchlist_delivery_accepts_full_domain_target_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production tool contract must preserve the complete monitor target receipt."""
+    from app.tools import TOOL_REGISTRY
+
+    monkeypatch.setattr(action_service.settings, "SECRET_KEY", "test-secret")
+    proposal = ActionGate(ToolExecutor(TOOL_REGISTRY), secret_key="test-secret").propose(
+        "add_to_watchlist",
+        {"company_name": "甲公司", "target_source": "conversation_state"},
+        ToolContext(session_id="session-1", run_id="run-1", user_id="requester"),
+    )
+    row = {
+        "id": proposal.proposal_id,
+        "run_id": proposal.run_id,
+        "status": "approved",
+        "idempotency_key": proposal.idempotency_key,
+        "payload": {
+            **proposal.arguments,
+            "_harness_action": {
+                "tool_name": proposal.tool_name,
+                "action_hash": proposal.action_hash,
+                "session_id": proposal.session_id,
+                "expires_at": proposal.expires_at.isoformat(),
+            },
+        },
+    }
+    monkeypatch.setattr(
+        action_service,
+        "get_run",
+        lambda *_: {"id": "run-1", "session_id": "session-1", "user_id": "requester"},
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.service.add_to_watchlist",
+        lambda *_args, **_kwargs: {
+            "monitor_target_id": "monitor-1",
+            "target_type": "company",
+            "identity_status": "unresolved",
+            "company_name": "甲公司",
+            "display_name": "甲公司",
+            "monitor_status": "active",
+            "added_at": datetime.now(timezone.utc),
+            "status": "watching",
+        },
+    )
+
+    action_service._execute_watchlist_action(
+        {"payload": {"run_id": "run-1", "proposal_id": proposal.proposal_id, "approver_id": "approver-1"}},
+        row,
+        {**row["payload"], "idempotency_key": proposal.idempotency_key},
+    )

@@ -134,6 +134,25 @@ describe('ChatView session lifecycle', () => {
       expect.any(Object),
       'auto',
     )
+    expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
+  })
+
+  it('starts each demo case review in a new conversation', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已完成复核。', status: 'completed' })
+      return '已完成复核。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.click(screen.getByRole('button', { name: '复核青岛三祥科技股份有限公司' }))
+    await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
+    await user.click(screen.getByRole('button', { name: '复核上海汽车制动系统有限公司' }))
+
+    const calls = mocks.chatStream.mock.calls
+    expect(calls).toHaveLength(2)
+    expect(calls[0][1]).not.toBe('old-session')
+    expect(calls[1][1]).not.toBe(calls[0][1])
   })
 
   it('persists the completed Agent workflow summary with the answer', async () => {

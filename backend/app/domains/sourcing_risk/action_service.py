@@ -629,9 +629,14 @@ def _execute_watchlist_action(
     except (ValueError, TypeError) as exc:
         raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", str(exc), 409) from exc
     if result.status != "success" or not result.side_effect_receipt:
+        detail = ""
+        if result.error is not None:
+            detail = f"（{result.error.code}: {result.error.message}）"
+        elif result.status:
+            detail = f"（状态：{result.status}）"
         raise DomainError(
             "AGENT_ACTION_EXECUTION_FAILED",
-            f"{harness_proposal.tool_name} 未返回有效副作用回执",
+            f"{harness_proposal.tool_name} 未返回有效副作用回执{detail}",
             502,
         )
 

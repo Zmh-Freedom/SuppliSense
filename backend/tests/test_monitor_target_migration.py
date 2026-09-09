@@ -35,6 +35,36 @@ def test_add_watchlist_persists_full_stable_monitor_target(monkeypatch):
     assert watchlist.update_one.call_args.args[0] == {"supplier_id": "supplier-1"}
 
 
+def test_add_watchlist_reuses_legacy_name_row_before_supplier_resolution(monkeypatch):
+    """A retry must update the existing name-keyed row instead of colliding with its unique index."""
+    db = {name: MagicMock() for name in ("suppliers", "watchlist", "alerts")}
+    existing = {
+        "monitor_target_id": "monitor-1",
+        "company_name": "北京经纬恒润科技股份有限公司",
+        "target_type": "company",
+        "identity_status": "unresolved",
+    }
+    monkeypatch.setattr(alert_service, "get_db", lambda: db)
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_: existing)
+    monkeypatch.setattr(alert_service, "_broadcast_alert_update", lambda: None)
+
+    def unexpected_resolution(*_args, **_kwargs):
+        raise AssertionError("legacy monitor row should be reused before resolving the supplier name")
+
+    monkeypatch.setattr(
+        "app.domains.sourcing.supplier_repo.resolve_supplier_id",
+        unexpected_resolution,
+    )
+
+    result = alert_service.add_to_watchlist("北京经纬恒润科技股份有限公司")
+
+    assert result["monitor_target_id"] == "monitor-1"
+    assert result["identity_status"] == "unresolved"
+    assert db["watchlist"].update_one.call_args.args[0] == {
+        "company_name": "北京经纬恒润科技股份有限公司"
+    }
+
+
 def test_resolve_watchlist_identity_reuses_company_identity_search(monkeypatch):
     target = {
         "monitor_target_id": "monitor-identity-1",

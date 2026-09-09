@@ -768,13 +768,13 @@ export default function ChatView() {
     setSessions(list);
   }, []);
 
-  const send = useCallback(async (msg?: string) => {
+  const send = useCallback(async (msg?: string, forceNewSession = false) => {
     const text = (msg ?? input).trim();
     if (!text || loading) return;
     setInput('');
 
-    const isNewSession = !activeSid;
-    const sid = activeSid || crypto.randomUUID();
+    const isNewSession = forceNewSession || !activeSid;
+    const sid = isNewSession ? crypto.randomUUID() : activeSid;
     if (isNewSession) setActiveSid(sid);
 
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
@@ -1119,7 +1119,9 @@ export default function ChatView() {
   };
 
   const handleRecommendedClick = (question: string) => {
-    send(question);
+    // Demo cases and Agent review entry points are standalone workflows. Do
+    // not append them to whichever conversation happens to be selected.
+    send(question, true);
   };
 
   const newChat = () => {

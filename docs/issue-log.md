@@ -1419,7 +1419,7 @@
 - 根因：当前测试环境未安装或未加载 pytest-asyncio，而项目未在测试依赖和 pytest 配置中提供该异步测试插件。
 - 修复方案：将异步 E2E 所需测试插件纳入明确的后端开发/CI 测试依赖，并增加插件可用性探针；重新运行完整真实集成集合。
 - 验证结果：本轮已确认 PostgreSQL 5432、MongoDB 27017、Redis 6379 均可连接；`pytest -m integration` 结果为 231 passed、2 failed、604 deselected。浏览器验收继续执行；本问题尚未修复。
-- 关联提交：待处理。
+- 关联提交：`75deb207 fix: isolate agent reviews and complete watchlist receipts`。
 
 ### ISS-20260908-034 验证期间补充
 
@@ -1939,6 +1939,18 @@
 - 修复方案：Supervisor 入口创建持久化 Agent Run 前确保对应 `agent_sessions` 存在并绑定当前用户；聊天 SSE 对运行时异常统一发送结构化 `error` 事件并结束前端 loading 状态。
 - 验证结果：新增会话初始化和 SSE 异常收口回归测试；聊天、Supervisor、审批和持久化动作定向测试 66 项通过，后端全量 874 项通过。真实浏览器重启 8002/5173 后重新发起“复核并加入监控”，页面从“分析您的问题”推进到“需人工复核”，数据库新 Run 状态为 `PARTIAL`，对应 `agent_sessions` 已创建，`/health/ready` 返回 200。
 - 关联提交：`ea8319f2 fix: initialize supervisor chat sessions`。
+
+## ISS-20260909-045 Agent 复核入口复用旧会话且批准后回执仍失败
+
+- 发现日期：2026-09-09
+- 状态：已解决
+- 优先级：P0
+- 现象：点击 Agent 复核案例后，消息继续追加在当前旧对话，没有新建会话；批准 `add_to_watchlist` 后仍提示 `未返回有效副作用回执`。
+- 影响：案例演示上下文被旧对话污染；加入监控审批闭环仍无法确认成功。
+- 根因：推荐案例入口直接调用 `send`，而 `send` 默认复用当前 `activeSid`；审批执行侧先按名称解析出供应商 ID，绕过了已有按 `company_name` 唯一索引的旧监控行，触发 MongoDB 重复键；修复该冲突后，领域服务返回的完整监控对象又被严格 `WatchlistOutput` 契约拒绝了 `display_name`、`monitor_status`、`added_at` 字段，最终被包装成“未返回有效副作用回执”。
+- 修复方案：推荐案例调用 `send(question, true)` 强制生成新会话；监控写入先复用已有稳定对象再做主体解析；扩充监控工具输出契约并保留执行错误码与具体原因。
+- 验证结果：前端 ChatView 定向测试 10 项通过，`typecheck`、`lint`、`build` 通过；后端全量测试 875 通过，另有 1 个 outbox 时间边界测试首次运行因约 0.0001 秒超时失败，单独重跑通过；真实浏览器创建新“加入监控”会话、点击批准后，数据库最新提案状态为 `succeeded/succeeded`，outbox `attempt_count=0` 且已发布，未再出现回执异常。
+- 关联提交：待处理。
 
 ## ISS-20260909-042 监控对象缺少自动主体检索与用户确认入口
 

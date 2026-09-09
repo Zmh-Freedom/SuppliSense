@@ -540,10 +540,28 @@ def add_to_watchlist(
     if target_type and target_type not in MONITOR_TARGET_TYPES:
         raise ValueError(f"不支持的监控对象类型: {target_type}")
 
+    # Look up the existing monitor object before resolving a name to a
+    # supplier identity. Legacy rows are uniquely indexed by company_name;
+    # resolving the same name to a supplier first would change the upsert
+    # query and attempt to insert a duplicate legacy row.
+    existing = _find_watchlist_target(
+        monitor_target_id=monitor_target_id,
+        supplier_id=supplier_id,
+        candidate_id=candidate_id,
+        company_id=company_id,
+        company_name=name or None,
+    )
+
     # Resolve existing identities only. Monitoring must never create a supplier.
     sid = supplier_id
     supplier_doc = None
-    if sid:
+    if existing:
+        name = name or existing.get("company_name", "")
+        sid = sid or existing.get("supplier_id")
+        candidate_id = candidate_id or existing.get("candidate_id")
+        company_id = company_id or existing.get("company_id")
+        supplier_code = supplier_code or existing.get("supplier_code")
+    elif sid:
         supplier_doc = db["suppliers"].find_one({"_id": sid})
         name = name or (supplier_doc or {}).get("name", "")
     elif not candidate_id and not company_id and name:
@@ -562,13 +580,6 @@ def add_to_watchlist(
     resolved_type = target_type or (
         "external_candidate" if candidate_id else
         "formal_supplier" if sid else "company"
-    )
-    existing = _find_watchlist_target(
-        monitor_target_id=monitor_target_id,
-        supplier_id=sid,
-        candidate_id=candidate_id,
-        company_id=company_id,
-        company_name=name or None,
     )
     if existing:
         name = name or existing.get("company_name", "")

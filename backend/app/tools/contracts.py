@@ -8,6 +8,7 @@ Task 13 adds field-level Claim/Evidence validation.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -93,9 +94,12 @@ class AlertCheckOutput(StrictToolOutput):
 
 class WatchlistOutput(StrictToolOutput):
     company_name: str | None = None
+    display_name: str | None = None
     monitor_target_id: str | None = None
     target_type: str | None = None
     identity_status: str | None = None
+    monitor_status: str | None = None
+    added_at: datetime | str | None = None
     supplier_id: str | None = None
     candidate_id: str | None = None
     company_id: str | None = None
