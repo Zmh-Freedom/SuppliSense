@@ -1419,7 +1419,7 @@
 - 根因：当前测试环境未安装或未加载 pytest-asyncio，而项目未在测试依赖和 pytest 配置中提供该异步测试插件。
 - 修复方案：将异步 E2E 所需测试插件纳入明确的后端开发/CI 测试依赖，并增加插件可用性探针；重新运行完整真实集成集合。
 - 验证结果：本轮已确认 PostgreSQL 5432、MongoDB 27017、Redis 6379 均可连接；`pytest -m integration` 结果为 231 passed、2 failed、604 deselected。浏览器验收继续执行；本问题尚未修复。
-- 关联提交：`75deb207 fix: isolate agent reviews and complete watchlist receipts`。
+- 关联提交：`ed419d61 fix: isolate agent reviews and complete watchlist receipts`。
 
 ### ISS-20260908-034 验证期间补充
 
