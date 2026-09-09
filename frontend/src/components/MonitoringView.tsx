@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { useDashboard, useWatchlist } from '../hooks';
-import type { MonitorIdentityResolution, MonitorIntake, MonitorIntakeConfirmation, MonitorReviewTask, MonitorTarget } from '../types';
+import type { MonitorIdentityResolution, MonitorIntake, MonitorIntakeConfirmation, MonitorReviewTask, MonitorRiskDetail, MonitorTarget } from '../types';
 import MonitoringWorkbench from './MonitoringWorkbench';
 import MonitoringIntakePanel from './MonitoringIntakePanel';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
@@ -79,6 +79,11 @@ export default function MonitoringView() {
     queryKey: ['monitor-identity-candidates', selectedTarget?.monitor_target_id],
     queryFn: () => api.get<MonitorIdentityResolution>(`/alert/watch/${encodeURIComponent(selectedTarget!.monitor_target_id)}/identity-candidates`),
     enabled: Boolean(selectedTarget && selectedTarget.identity_status !== 'verified'),
+  });
+  const riskDetailQuery = useQuery<MonitorRiskDetail>({
+    queryKey: ['monitor-risk-detail', selectedTarget?.monitor_target_id],
+    queryFn: () => api.get<MonitorRiskDetail>(`/alert/watch/${encodeURIComponent(selectedTarget!.monitor_target_id)}/risk-detail`),
+    enabled: Boolean(selectedTarget?.monitor_target_id),
   });
 
   const invalidateMonitoring = () => {
@@ -222,6 +227,9 @@ export default function MonitoringView() {
           onRetryIdentity={() => identityResolutionQuery.refetch()}
           onConfirmIdentity={(companyId, sourceReference, comment) => confirmIdentityMutation.mutate({ target: selectedTarget, companyId, sourceReference, comment })}
           isConfirmingIdentity={confirmIdentityMutation.isPending}
+          riskDetail={riskDetailQuery.data}
+          isRiskDetailLoading={riskDetailQuery.isLoading}
+          riskDetailError={riskDetailQuery.error instanceof Error ? riskDetailQuery.error.message : ''}
           onRemove={removeTarget}
           onRefresh={() => checkMutation.mutate()}
           isRefreshing={checkMutation.isPending}
@@ -284,6 +292,9 @@ function MonitoringTargetDetail({
   onRetryIdentity,
   onConfirmIdentity,
   isConfirmingIdentity,
+  riskDetail,
+  isRiskDetailLoading,
+  riskDetailError,
   onRemove,
   onRefresh,
   isRefreshing,
@@ -302,6 +313,9 @@ function MonitoringTargetDetail({
   onRetryIdentity: () => void;
   onConfirmIdentity: (companyId: string, sourceReference?: string, comment?: string) => void;
   isConfirmingIdentity: boolean;
+  riskDetail?: MonitorRiskDetail;
+  isRiskDetailLoading: boolean;
+  riskDetailError?: string;
   onRemove: (target: MonitorTarget) => void;
   onRefresh: () => void;
   isRefreshing: boolean;
@@ -334,6 +348,8 @@ function MonitoringTargetDetail({
         isConfirming={isConfirmingIdentity}
       />
 
+      <RiskConclusionPanel detail={riskDetail} isLoading={isRiskDetailLoading} error={riskDetailError} />
+
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-[var(--color-text)]">数据覆盖与复核依据</h2><span className="text-xs text-gray-400">缺口不会被解释为稳定</span></div>{coverage.dimensions?.length ? <div className="divide-y divide-[var(--color-border)]">{coverage.dimensions.map(dimension => <div key={dimension.key} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><div><span className="font-medium text-[var(--color-text)]">{dimension.label}</span><span className="ml-2 text-xs text-gray-400">{dimension.detail}</span></div><span className={`rounded-full px-2 py-1 text-[11px] ${dimension.status === 'available' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{dimension.status === 'available' ? '可用' : '待补充'}</span></div>)}</div> : <p className="text-sm text-gray-400">暂无数据覆盖明细。</p>}</section>
 
       <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{action?.reason || '等待更多监控数据后再安排复核。'}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{action?.label || '继续观察'}</span><span>优先级：{action?.priority || 'low'}</span></div></section>
@@ -343,6 +359,33 @@ function MonitoringTargetDetail({
       <button type="button" onClick={() => onRemove(target)} className="text-xs text-gray-400 hover:text-red-600">移出监控</button>
     </div>
   );
+}
+
+function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRiskDetail; isLoading: boolean; error?: string }) {
+  if (isLoading) return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-3 text-sm text-gray-400">正在读取本轮风险快照…</p></section>;
+  if (error) return <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">风险结论与依据</h2><p className="mt-2 text-sm text-amber-900">风险快照暂时无法读取，请稍后重新检查。</p></section>;
+  if (!detail?.has_snapshot || !detail.latest_snapshot) return <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">风险结论与依据</h2><p className="mt-2 text-sm text-amber-900">尚未完成首次风险评估，因此不能给出具体风险结论。</p></section>;
+
+  const snapshot = detail.latest_snapshot;
+  const rows = Object.entries(snapshot.score_breakdown || {})
+    .filter(([dimension]) => !['总计', '权重', '行业'].includes(dimension))
+    .map(([dimension, raw]) => {
+      const data = raw as Record<string, unknown>;
+      const details = data['明细'] as Record<string, unknown> | undefined;
+      const evidence = details && Object.keys(details).length
+        ? Object.entries(details).map(([label, value]) => `${label}：${String(value)}`).join('；')
+        : String(data['数据状态'] || '本轮未发现该维度的可解释风险项');
+      const score = typeof data['归一化'] === 'number' ? data['归一化'] : data['原始分'];
+      return { dimension, score: score == null ? '—' : String(score), evidence, attention: Number(score || 0) > 0 ? '需关注' : '未见异常信号' };
+    });
+  const singleSnapshot = detail.history.length < 2;
+
+  return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-1 text-xs text-gray-400">本轮快照：{snapshot.checked_at ? new Date(snapshot.checked_at).toLocaleString('zh-CN', { hour12: false }) : '时间未知'} · 评分体系 {snapshot.scoring_version || '—'}</p></div><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{snapshot.risk_level || '未知'} · {snapshot.risk_score ?? '—'}/100</span></div>
+    <p className="mt-4 text-sm leading-6 text-[var(--color-text-secondary)]">本轮结论基于已关联的公开财务、司法与内部供应商数据形成。评分较低不表示无需关注：下表列出本轮被识别到的风险信号及其原始依据。</p>
+    <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-[var(--color-border)] text-xs text-gray-500"><tr><th className="pb-2 pr-4 font-medium">风险维度</th><th className="pb-2 pr-4 font-medium">本轮得分</th><th className="pb-2 pr-4 font-medium">判断</th><th className="pb-2 font-medium">依据</th></tr></thead><tbody className="divide-y divide-[var(--color-border)]">{rows.map(row => <tr key={row.dimension} className="align-top"><td className="py-3 pr-4 font-medium text-[var(--color-text)]">{row.dimension}</td><td className="py-3 pr-4 text-[var(--color-text-secondary)]">{row.score}</td><td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-[11px] ${row.attention === '需关注' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>{row.attention}</span></td><td className="py-3 leading-5 text-[var(--color-text-secondary)]">{row.evidence}</td></tr>)}</tbody></table></div>
+    {singleSnapshot && <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">目前仅有 1 条风险快照，因此系统只能展示本轮结论，尚不能判断风险是在改善、恶化还是保持稳定。</p>}
+  </section>;
 }
 
 function taskStatusLabel(status?: string): string {

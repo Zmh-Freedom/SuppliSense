@@ -141,6 +141,31 @@ export interface MonitorTarget {
   review_task?: MonitorReviewTask | null;
 }
 
+export interface MonitorRiskDetail {
+  monitor_target_id: string;
+  company_name: string;
+  has_snapshot: boolean;
+  risk_change: MonitorTarget['risk_change'];
+  latest_snapshot: {
+    snapshot_id?: string;
+    snapshot_version?: number;
+    checked_at?: string;
+    risk_score?: number | null;
+    risk_level?: string | null;
+    scoring_version?: string;
+    score_breakdown?: Record<string, unknown>;
+    risk_detail?: Record<string, unknown>;
+    financial?: Record<string, unknown>;
+  } | null;
+  history: Array<{
+    snapshot_id?: string;
+    snapshot_version?: number;
+    checked_at?: string;
+    risk_score?: number | null;
+    risk_level?: string | null;
+  }>;
+}
+
 export interface MonitorIdentityCandidate {
   company_id: string;
   legal_name: string;

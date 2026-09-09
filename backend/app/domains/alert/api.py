@@ -30,6 +30,7 @@ from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
     get_snapshot_history,
+    get_watchlist_target_risk_detail,
     get_watchlist_target_summaries,
     resolve_watchlist_identity,
     confirm_watchlist_identity,
@@ -100,6 +101,19 @@ class MonitorIntakeRequest(BaseModel):
 
 class MonitorIntakeSelectionRequest(BaseModel):
     candidate_id: str
+
+
+def _json_safe(value: Any) -> Any:
+    """Serialize MongoDB and datetime values used by monitoring detail responses."""
+    if isinstance(value, ObjectId):
+        return str(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 @router.get(
@@ -425,6 +439,19 @@ async def list_watchlist():
     targets = get_watchlist_target_summaries()
     companies = [target["company_name"] for target in targets if target.get("company_name")]
     return {"count": len(companies), "companies": companies, "targets": targets}
+
+
+@router.get(
+    "/watch/{monitor_target_id}/risk-detail",
+    summary="获取监控对象风险结论与依据",
+    description="按稳定监控对象 ID 返回最新风险快照、维度依据和评分历史；不将单条快照解释为趋势。",
+    responses={404: {"description": "监控对象不存在"}},
+)
+async def monitor_target_risk_detail(monitor_target_id: str):
+    detail = await asyncio.to_thread(get_watchlist_target_risk_detail, monitor_target_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="监控对象不存在")
+    return _json_safe(detail)
 
 
 @router.post(

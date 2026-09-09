@@ -274,6 +274,54 @@ def get_watchlist_target_summaries() -> list[dict]:
     return summaries
 
 
+def get_watchlist_target_risk_detail(monitor_target_id: str) -> dict | None:
+    """Return the latest auditable risk snapshot for one stable monitor target."""
+    target = _find_watchlist_target(monitor_target_id=monitor_target_id)
+    if target is None:
+        return None
+
+    db = get_db()
+    snapshots = _target_snapshots(db, target, limit=20)
+    latest = snapshots[0] if snapshots else None
+    history = [
+        {
+            "snapshot_id": snapshot.get("snapshot_id"),
+            "snapshot_version": snapshot.get("snapshot_version"),
+            "checked_at": snapshot.get("checked_at"),
+            "risk_score": snapshot.get("risk_score"),
+            "risk_level": snapshot.get("risk_level"),
+        }
+        for snapshot in snapshots
+    ]
+    if latest is None:
+        return {
+            "monitor_target_id": monitor_target_id,
+            "company_name": target.get("company_name"),
+            "has_snapshot": False,
+            "risk_change": _risk_change(snapshots),
+            "latest_snapshot": None,
+            "history": history,
+        }
+    return {
+        "monitor_target_id": monitor_target_id,
+        "company_name": target.get("company_name"),
+        "has_snapshot": True,
+        "risk_change": _risk_change(snapshots),
+        "latest_snapshot": {
+            "snapshot_id": latest.get("snapshot_id"),
+            "snapshot_version": latest.get("snapshot_version"),
+            "checked_at": latest.get("checked_at"),
+            "risk_score": latest.get("risk_score"),
+            "risk_level": latest.get("risk_level"),
+            "scoring_version": latest.get("scoring_version"),
+            "score_breakdown": latest.get("score_breakdown") or {},
+            "risk_detail": latest.get("risk_detail") or {},
+            "financial": latest.get("financial") or {},
+        },
+        "history": history,
+    }
+
+
 def _broadcast_alert_update() -> None:
     """Notify all WebSocket clients that alert data changed."""
     try:

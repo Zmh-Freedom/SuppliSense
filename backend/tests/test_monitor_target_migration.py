@@ -65,6 +65,25 @@ def test_add_watchlist_reuses_legacy_name_row_before_supplier_resolution(monkeyp
     }
 
 
+def test_monitor_target_risk_detail_returns_auditable_snapshot(monkeypatch):
+    target = {"monitor_target_id": "monitor-risk-1", "company_name": "青岛三祥科技股份有限公司"}
+    snapshot = {
+        "snapshot_id": "snapshot-1", "snapshot_version": 1, "risk_score": 7, "risk_level": "低风险",
+        "checked_at": "2026-09-09T08:00:00+00:00", "score_breakdown": {"财务风险": {"归一化": 3.4}},
+        "risk_detail": {"lawsuit_count": 20}, "financial": {"net_profit_growth": -0.181},
+    }
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_: target)
+    monkeypatch.setattr(alert_service, "get_db", lambda: {})
+    monkeypatch.setattr(alert_service, "_target_snapshots", lambda *_args, **_kwargs: [snapshot])
+
+    result = alert_service.get_watchlist_target_risk_detail("monitor-risk-1")
+
+    assert result is not None
+    assert result["has_snapshot"] is True
+    assert result["latest_snapshot"]["score_breakdown"]["财务风险"]["归一化"] == 3.4
+    assert result["history"] == [{"snapshot_id": "snapshot-1", "snapshot_version": 1, "checked_at": "2026-09-09T08:00:00+00:00", "risk_score": 7, "risk_level": "低风险"}]
+
+
 def test_resolve_watchlist_identity_reuses_company_identity_search(monkeypatch):
     target = {
         "monitor_target_id": "monitor-identity-1",
