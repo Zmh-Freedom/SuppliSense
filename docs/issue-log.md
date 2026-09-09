@@ -1928,6 +1928,18 @@
 - 验证结果：新增可选字段与真实 `add_to_watchlist` 输入形态一致的回归测试；审批、持久化动作和 Agent Run API 定向测试 35 项通过，扩展回归 87 项通过；使用真实 `TOOL_REGISTRY` 模拟监控写入返回 `success` 和副作用回执。后端全量回归 871 项通过，另有 1 个 outbox 重试时间窗口测试首轮因时序抖动失败、单独重跑通过；`git diff --check` 通过。
 - 关联提交：`ea689db0 fix: normalize approved agent action arguments`。
 
+## ISS-20260909-044 Agent 复核请求停留在“分析您的问题”
+
+- 发现日期：2026-09-09
+- 状态：已修复
+- 优先级：P0
+- 现象：用户从聊天页发起 Agent 复核后，界面长期停留在“分析您的问题”，没有进入分析结果或人工审批状态。
+- 影响：核心复核流程无法完成，用户无法获得风险结论或继续审批。
+- 根因：加入监控请求会进入 Agent Supervisor，但聊天入口只有只读 Harness 分支会创建 `agent_sessions`。新会话直接创建 `agent_runs` 时触发 `agent_runs_session_id_fkey` 外键错误；异常发生在 SSE 200 响应之后且没有转换成 `error` 事件，前端因此一直保留“分析您的问题”状态。此前的 8002 热重载未加载上一条审批修复是复核过程中发现的独立运行态问题。
+- 修复方案：Supervisor 入口创建持久化 Agent Run 前确保对应 `agent_sessions` 存在并绑定当前用户；聊天 SSE 对运行时异常统一发送结构化 `error` 事件并结束前端 loading 状态。
+- 验证结果：新增会话初始化和 SSE 异常收口回归测试；聊天、Supervisor、审批和持久化动作定向测试 66 项通过，后端全量 874 项通过。真实浏览器重启 8002/5173 后重新发起“复核并加入监控”，页面从“分析您的问题”推进到“需人工复核”，数据库新 Run 状态为 `PARTIAL`，对应 `agent_sessions` 已创建，`/health/ready` 返回 200。
+- 关联提交：`ea8319f2 fix: initialize supervisor chat sessions`。
+
 ## ISS-20260909-042 监控对象缺少自动主体检索与用户确认入口
 
 - 发现日期：2026-09-09
