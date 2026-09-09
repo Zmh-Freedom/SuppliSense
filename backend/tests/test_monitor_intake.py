@@ -59,3 +59,22 @@ def test_monitor_intake_serializes_mongo_object_id():
     assert intake_service._serialize({"_id": ObjectId("64b64c6a2f1f2d3e4a5b6c7d")}) == {
         "_id": "64b64c6a2f1f2d3e4a5b6c7d"
     }
+
+
+def test_monitor_intake_reads_current_feishu_supplier_master(monkeypatch):
+    db = {"supplier_master_snapshots": MagicMock(), "suppliers": MagicMock()}
+    snapshots = db["supplier_master_snapshots"]
+    snapshots.find.return_value.limit.return_value = [{
+        "supplier_id": "supplier:feishu:tri-sam", "supplier_code": "8370069",
+        "name": "青岛三祥科技股份有限公司", "source": "feishu_bitable", "sync_status": "current",
+    }]
+    monkeypatch.setattr(intake_service, "get_db", lambda: db)
+    monkeypatch.setattr("app.domains.company.service.search_identity", lambda *_args, **_kwargs: {"exact": None, "candidates": []})
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.has_current_feishu_supplier_snapshot", lambda database: True)
+
+    candidates = intake_service._load_local_candidates("青岛三祥科技股份有限公司")
+
+    assert candidates[0]["supplier_id"] == "supplier:feishu:tri-sam"
+    assert candidates[0]["supplier_code"] == "8370069"
+    assert candidates[0]["source"] == "飞书正式供应商主数据"
+    assert snapshots.find.called

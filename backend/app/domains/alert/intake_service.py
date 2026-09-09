@@ -58,7 +58,7 @@ def _company_candidate(company: dict) -> dict:
 
 
 def _supplier_candidate(supplier: dict, query: str) -> dict:
-    supplier_id = _text(supplier.get("_id"))
+    supplier_id = _text(supplier.get("supplier_id") or supplier.get("_id"))
     name = _text(supplier.get("name"))
     exact = name == query
     return {
@@ -73,7 +73,7 @@ def _supplier_candidate(supplier: dict, query: str) -> dict:
         "verification_status": "verified" if supplier_id else "pending_verification",
         "match_type": "supplier_code" if query == _text(supplier.get("supplier_code")) else "legal_name" if exact else "name_contains",
         "confidence": 1.0 if exact or query == _text(supplier.get("supplier_code")) else 0.82,
-        "source": "内部供应商库",
+        "source": "飞书正式供应商主数据" if supplier.get("source") == "feishu_bitable" else "内部供应商库",
     }
 
 
@@ -93,13 +93,20 @@ def _load_local_candidates(query: str) -> list[dict]:
         pass
 
     escaped = re.escape(query)
-    supplier_rows = list(db["suppliers"].find({
+    from app.domains.sourcing.supplier_repo import has_current_feishu_supplier_snapshot
+
+    use_feishu_snapshot = has_current_feishu_supplier_snapshot(db)
+    supplier_collection = db["supplier_master_snapshots"] if use_feishu_snapshot else db["suppliers"]
+    supplier_filter: dict[str, Any] = {
         "$or": [
             {"name": query},
             {"supplier_code": query},
             {"name": {"$regex": escaped, "$options": "i"}},
         ],
-    }).limit(10))
+    }
+    if use_feishu_snapshot:
+        supplier_filter.update({"source": "feishu_bitable", "sync_status": "current"})
+    supplier_rows = list(supplier_collection.find(supplier_filter).limit(10))
     candidates.extend(_supplier_candidate(row, query) for row in supplier_rows)
 
     unique: dict[str, dict] = {}
