@@ -2603,3 +2603,15 @@
 - 修复方案：将结构化结果相关实现整体迁移到 `StructuredAgentResult.tsx`，由 `ChatView.tsx` 仅导入并组合。
 - 验证结果：`ChatView.tsx` 降至约 742 行，`StructuredAgentResult.tsx` 约 446 行；前端 68 项测试、Lint、TypeScript 与生产构建全部通过。
 - 关联提交：待提交。
+
+## ISS-20260910-082 后端全量回归存在 outbox 测试状态污染
+
+- 发现日期：2026-09-10
+- 状态：待处理
+- 优先级：P2
+- 现象：后端全量运行至 `tests/test_outbox_service.py::test_process_outbox_batch_retries_unknown_event_type_without_publishing` 时出现 `claimed=0, failed=0`，同一测试单独运行可通过。
+- 影响：全量回归结果不稳定，可能掩盖与 outbox 消费状态相关的真实回归。
+- 根因：测试之间共享 outbox 数据或领取状态，未在批量测试边界可靠清理。
+- 修复方案：隔离该测试的 outbox fixture/数据库状态，确保未知事件测试每次从可领取状态开始。
+- 验证结果：单测重跑通过；待单独修复测试隔离后再确认全量稳定性。
+- 关联提交：待处理。
