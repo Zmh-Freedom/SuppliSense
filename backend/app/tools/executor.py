@@ -126,6 +126,16 @@ class ToolExecutor:
             await self._record(outcome)
             return outcome
 
+        denied_name = _unauthorized_formal_supplier_name(validated.model_dump(), context)
+        if denied_name:
+            outcome = self._outcome(
+                context, tool_name, "denied",
+                error=("supplier_scope_denied", f"无权访问正式供应商：{denied_name}", False),
+                version=spec.version,
+            )
+            await self._record(outcome)
+            return outcome
+
         if spec.side_effect == "write":
             try:
                 from app.graphs.harness.actions import verify_approval_token_for_action
@@ -297,6 +307,33 @@ class ToolExecutor:
             side_effect_receipt=side_effect_receipt,
             metrics=ToolMetrics(attempts=attempts, duration_ms=duration_ms),
         )
+
+
+def _unauthorized_formal_supplier_name(arguments: dict[str, Any], context: ToolContext) -> str | None:
+    """Fail closed for formal suppliers before any tool reads their data."""
+    if not context.user_id:
+        return None
+    names = []
+    for key in ("company_name", "supplier_name"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            names.append(value.strip())
+    value = arguments.get("company_names")
+    if isinstance(value, list):
+        names.extend(str(item).strip() for item in value if str(item).strip())
+    if not names:
+        return None
+    from app.domains.auth.service import get_user_by_id
+    from app.domains.supplier.access import can_access_formal_supplier_name
+
+    user = get_user_by_id(context.user_id)
+    if user is None:
+        return names[0]
+    for name in names:
+        allowed = can_access_formal_supplier_name(name, context.user_id, user.role.value)
+        if allowed is False:
+            return name
+    return None
 
 
 def _status_from_payload(payload: dict[str, Any]) -> Literal["success", "partial", "not_found", "unavailable", "invalid", "denied", "failed"]:

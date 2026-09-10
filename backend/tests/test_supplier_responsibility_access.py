@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 
 from app.domains.supplier import access
+from app.tools.executor import ToolContext, _unauthorized_formal_supplier_name
 
 
 def test_unlinked_user_has_no_formal_supplier_scope(monkeypatch):
@@ -37,3 +38,19 @@ def test_manager_scope_uses_department_and_purchaser_open_id(monkeypatch):
 
 def test_admin_bypasses_formal_supplier_scope():
     assert access.can_access_supplier("supplier-a", "admin-user", "admin") is True
+
+
+def test_tool_scope_rejects_unassigned_formal_supplier(monkeypatch):
+    class User:
+        class role:
+            value = "analyst"
+
+    monkeypatch.setattr("app.domains.auth.service.get_user_by_id", lambda _user_id: User())
+    monkeypatch.setattr(
+        "app.domains.supplier.access.can_access_formal_supplier_name",
+        lambda _name, _user_id, _role: False,
+    )
+
+    assert _unauthorized_formal_supplier_name(
+        {"company_name": "未授权供应商"}, ToolContext(user_id="user-1")
+    ) == "未授权供应商"

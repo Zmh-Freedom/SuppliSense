@@ -56,6 +56,30 @@ def can_access_supplier(supplier_id: str, user_id: str, role: str) -> bool:
     return is_admin(role) or supplier_id in list_assigned_supplier_ids(user_id, role)
 
 
+def formal_supplier_id_by_name(name: str) -> str | None:
+    """Resolve only current formal suppliers; external candidates stay outside this gate."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT supplier_id FROM supplier_responsibility_snapshots
+            WHERE source_active = TRUE AND sync_status = 'current'
+              AND supplier_name = %s AND supplier_id IS NOT NULL
+            LIMIT 1
+            """,
+            (name.strip(),),
+        )
+        row = cur.fetchone()
+    return str(row[0]) if row else None
+
+
+def can_access_formal_supplier_name(name: str, user_id: str, role: str) -> bool | None:
+    """Return None when a name is not a formal supplier, otherwise enforce scope."""
+    supplier_id = formal_supplier_id_by_name(name)
+    if not supplier_id:
+        return None
+    return can_access_supplier(supplier_id, user_id, role)
+
+
 def list_supplier_assignments(supplier_id: str) -> list[dict]:
     """Return the current read-only Feishu responsibility record for admins."""
     with get_cursor() as (_, cur):
