@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -117,8 +118,7 @@ def production_harness_context():
         cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
 
 
-@pytest.mark.asyncio(loop_scope="module")
-async def test_production_harness_sourcing_persists_real_run_artifacts(production_harness_context) -> None:
+async def _test_production_harness_sourcing_persists_real_run_artifacts(production_harness_context) -> None:
     context = production_harness_context
     checkpointer = await get_sourcing_risk_checkpointer()
     events: list[tuple[str, dict]] = []
@@ -168,8 +168,11 @@ async def test_production_harness_sourcing_persists_real_run_artifacts(productio
     cache_client.delete(redis_key)
 
 
-@pytest.mark.asyncio(loop_scope="module")
-async def test_production_harness_missing_data_finishes_needs_review(
+def test_production_harness_sourcing_persists_real_run_artifacts(production_harness_context) -> None:
+    asyncio.run(_test_production_harness_sourcing_persists_real_run_artifacts(production_harness_context))
+
+
+async def _test_production_harness_missing_data_finishes_needs_review(
     production_harness_context,
 ) -> None:
     """A real production tool gap must persist as needs_review, never low risk."""
@@ -220,6 +223,10 @@ async def test_production_harness_missing_data_finishes_needs_review(
     assert metrics.evidence_coverage_ratio == 0.0
     assert metrics.claim_count == 0
     assert metrics.artifact_consistent is True
+
+
+def test_production_harness_missing_data_finishes_needs_review(production_harness_context) -> None:
+    asyncio.run(_test_production_harness_missing_data_finishes_needs_review(production_harness_context))
 
 
 def test_production_harness_http_sse_persists_server_terminal_state(

@@ -1628,14 +1628,14 @@
 ## ISS-20260904-010 真实集成测试的异步 E2E 缺少 pytest 异步插件
 
 - 发现日期：2026-09-04
-- 状态：待修复（验收阻塞）
+- 状态：已修复
 - 优先级：P1
 - 现象：执行 `pytest -m integration` 时，真实 PostgreSQL/MongoDB/Redis 集成集合中 `test_agent_harness_production_e2e.py` 的两个 `async def` 测试报 `async def functions are not natively supported`；同文件的 `pytest.mark.asyncio` 同时产生 UnknownMark 警告。
 - 影响：真实集成集合无法完整通过；除这两个异步 E2E 外，其余 231 项真实集成测试通过。
 - 根因：当前测试环境未安装或未加载 pytest-asyncio，而项目未在测试依赖和 pytest 配置中提供该异步测试插件。
-- 修复方案：将异步 E2E 所需测试插件纳入明确的后端开发/CI 测试依赖，并增加插件可用性探针；重新运行完整真实集成集合。
-- 验证结果：本轮已确认 PostgreSQL 5432、MongoDB 27017、Redis 6379 均可连接；`pytest -m integration` 结果为 231 passed、2 failed、604 deselected。浏览器验收继续执行；本问题尚未修复。
-- 关联提交：`ed419d61 fix: isolate agent reviews and complete watchlist receipts`。
+- 修复方案：将生产 Harness 异步 E2E 改为标准库 `asyncio.run` 的同步 pytest 包装，避免测试执行依赖未安装的 `pytest-asyncio` 插件；保留异步实现本身和集成标记。
+- 验证结果：`pytest tests/test_agent_harness_production_e2e.py --collect-only -q` 成功收集 4 项；监控迁移与 Harness 契约回归 16 项通过。完整真实集成集合仍需在目标环境运行，但不再因 async test/plugin 缺失而无法收集。
+- 关联提交：待提交。
 
 ### ISS-20260908-034 验证期间补充
 
@@ -1655,14 +1655,14 @@
 ## ISS-20260909-048 单元测试环境未加载 pytest-asyncio
 
 - 发现日期：2026-09-09
-- 状态：待处理
+- 状态：已修复
 - 优先级：P3
 - 现象：执行 `tests/test_monitor_target_migration.py` 时，既有的 `@pytest.mark.asyncio` 测试报“async def functions are not natively supported”，当前 pytest 环境没有加载对应插件。
 - 影响：该既有异步回归无法在当前本地单元测试命令中执行；不影响本轮同步监控调查测试。
 - 根因：测试依赖或 pytest 插件配置缺失，属于现有测试环境问题。
-- 修复方案：后续在测试依赖与 pytest 配置中显式加入并启用 `pytest-asyncio`，再恢复该异步用例的常规执行。
-- 验证结果：本轮新增监控调查测试 3 项通过；原异步用例未纳入本轮通过统计。
-- 关联提交：`f27f9787 feat: sync supplier responsibility assignments`。
+- 修复方案：将该异步回归改为同步包装并通过 `asyncio.run` 执行，避免在当前测试环境强依赖 `pytest-asyncio`。
+- 验证结果：`tests/test_monitor_target_migration.py` 与 `tests/test_agent_harness_task12.py` 共 16 项通过。
+- 关联提交：待提交。
 
 ## ISS-20260909-046 主体核验回答混入监控审批且审批入口无法恢复
 
