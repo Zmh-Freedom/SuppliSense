@@ -292,7 +292,8 @@ export type AgentWorkflowLifecycle =
   | 'completed'
   | 'partial'
   | 'failed'
-  | 'clarifying';
+  | 'clarifying'
+  | 'stopped';
 
 export interface AgentWorkflowSnapshot {
   status: AgentWorkflowLifecycle | string;

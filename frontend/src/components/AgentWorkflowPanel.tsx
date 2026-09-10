@@ -67,7 +67,7 @@ function phaseStatus(state: AgentWorkflowState, index: number): PhaseStatus {
   if (lifecycle === 'failed') return index >= (stageIndex[currentStage || ''] ?? 2) ? 'error' : 'complete';
   if (lifecycle === 'partial') return index >= (stageIndex[currentStage || ''] ?? 3) ? 'error' : 'complete';
   if (lifecycle === 'waiting_approval') return index < 4 ? 'complete' : index === 4 ? 'running' : 'pending';
-  if (lifecycle === 'clarifying') return index === 0 ? 'running' : 'pending';
+  if (lifecycle === 'stopped' || lifecycle === 'clarifying') return index === 0 ? 'complete' : 'pending';
   if (lifecycle === 'running' && currentStage && currentStage in stageIndex) {
     const currentIndex = stageIndex[currentStage];
     if (index < currentIndex) return 'complete';
@@ -130,6 +130,7 @@ function lifecycleLabel(status: string): string {
     needs_review: '需人工复核',
     failed: '失败',
     clarifying: '等待澄清',
+    stopped: '已停止',
   };
   return labels[status] || status;
 }

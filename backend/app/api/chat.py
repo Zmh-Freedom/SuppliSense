@@ -354,7 +354,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 req.message,
             )
             if scope_clarification:
-                yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing}, ensure_ascii=False)}\n\n"
+                yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
             external_clarification = await asyncio.to_thread(
                 external_assessment_clarification,
@@ -363,7 +363,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 req.message,
             )
             if external_clarification:
-                yield f"event: clarification\ndata: {json.dumps({'message': external_clarification.message, 'missing': external_clarification.missing, 'missing_fields': external_clarification.missing}, ensure_ascii=False)}\n\n"
+                yield f"event: clarification\ndata: {json.dumps({'message': external_clarification.message, 'missing': external_clarification.missing, 'missing_fields': external_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
             has_structured_context = bool(
                 supplier_references or conversation_state.get("active_suppliers")
@@ -375,7 +375,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 has_structured_context=has_structured_context,
             )
             if clar:
-                yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing}, ensure_ascii=False)}\n\n"
+                yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
 
             # Resolve mode only after target resolution and fallback clarification.

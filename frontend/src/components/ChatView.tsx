@@ -1002,7 +1002,7 @@ export default function ChatView() {
         },
         onClarification: (data) => {
           receivedTerminalEvent = true;
-          const clarificationWorkflow = { ...workflowAccRef.current, status: 'clarifying' as const, stage: 'understand', message: data.message };
+          const clarificationWorkflow = { ...workflowAccRef.current, status: 'stopped' as const, stage: data.stage || 'understand', message: data.message };
           workflowAccRef.current = clarificationWorkflow;
           const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, workflow: clarificationWorkflow }];
           persist(sid, clarifiedMsgs);
