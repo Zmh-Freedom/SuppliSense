@@ -183,6 +183,26 @@ describe('ChatView session lifecycle', () => {
     expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
   })
 
+  it('still sends on a plain HTTP client without crypto.randomUUID', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已收到。', status: 'completed' })
+      return '已收到。'
+    })
+    const randomUuid = vi.spyOn(globalThis.crypto, 'randomUUID').mockImplementation(() => {
+      throw new TypeError('randomUUID is unavailable in this context')
+    })
+    const user = userEvent.setup()
+    renderChat()
+    await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '复核青岛三祥科技股份有限公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][1]).toMatch(/^session-/)
+    randomUuid.mockRestore()
+  })
+
   it('starts each demo case review in a new conversation', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onDone?.({ answer: '已完成复核。', status: 'completed' })

@@ -48,6 +48,16 @@ interface Session {
 
 const STORAGE_KEY = 'chat_sessions';
 
+function createSessionId(): string {
+  try {
+    const randomUuid = globalThis.crypto?.randomUUID;
+    if (typeof randomUuid === 'function') return randomUuid.call(globalThis.crypto);
+  } catch {
+    // LAN demos may run over plain HTTP where randomUUID is unavailable.
+  }
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function agentFromTool(tool: string): string | null {
   const match = tool.match(/^(sourcing|risk|compliance|sentiment)_agent$/);
   return match ? match[1] : null;
@@ -793,7 +803,7 @@ export default function ChatView() {
     setInput('');
 
     const isNewSession = forceNewSession || !activeSid;
-    const sid = isNewSession ? crypto.randomUUID() : activeSid;
+    const sid = isNewSession ? createSessionId() : activeSid;
     if (isNewSession) setActiveSid(sid);
 
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
