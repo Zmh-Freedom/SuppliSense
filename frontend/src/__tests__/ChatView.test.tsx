@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -143,6 +143,24 @@ describe('ChatView session lifecycle', () => {
 
     expect(await screen.findByText('已从持久化事件恢复结果。')).toBeInTheDocument()
     expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object))
+  })
+
+  it('sends the current input value when Chinese IME composition has not updated React state', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已收到。', status: 'completed' })
+      return '已收到。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+    const input = screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险') as HTMLInputElement
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input, '复核青岛三祥科技股份有限公司')
+    fireEvent.compositionStart(input)
+
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][0]).toBe('复核青岛三祥科技股份有限公司')
   })
 
   it('starts the verified listed supplier review from the demo case entry', async () => {

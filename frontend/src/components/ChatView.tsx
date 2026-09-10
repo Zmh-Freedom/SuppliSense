@@ -745,6 +745,7 @@ export default function ChatView() {
   const [loading, setLoading] = useState(false);
   const [streamState, setStreamState] = useState<StreamState | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
   const approvalAccRef = useRef<ApprovalData | null>(null);
@@ -787,7 +788,7 @@ export default function ChatView() {
   }, []);
 
   const send = useCallback(async (msg?: string, forceNewSession = false) => {
-    const text = (msg ?? input).trim();
+    const text = (msg ?? inputRef.current?.value ?? input).trim();
     if (!text || loading) return;
     setInput('');
 
@@ -1393,9 +1394,15 @@ export default function ChatView() {
       <div className="px-4 pb-6 pt-2">
         <div className="flex items-center gap-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-1 focus-within:border-[var(--color-border-focus)] focus-within:shadow-sm transition-shadow">
           <input
+            ref={inputRef}
             value={input}
             onChange={e => { setInput(e.target.value); }}
-            onKeyDown={e => e.key === 'Enter' && send()}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
+            }}
             placeholder="输入问题，如：对比海康威视和宝钢的风险"
             className="flex-1 border-none outline-none py-2.5 text-sm bg-transparent placeholder-gray-300"
           />
