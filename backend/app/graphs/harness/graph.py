@@ -940,8 +940,8 @@ def _procurement_action_proposals(answer: AgentAnswer) -> list[dict[str, Any]]:
     if answer.limitations:
         return [{
             "action_type": "supplement_data",
-            "label": "先补充缺失资料，再决定采购动作",
-            "reason": "当前存在证据覆盖不足，不能直接做暂停或切换供应商的决定。",
+            "label": "当前不建议变更采购策略",
+            "reason": "系统已完成现有数据核验，但部分维度当前未覆盖，不能直接做暂停或切换供应商的决定。",
             "requires_approval": False,
         }]
     risky = any(

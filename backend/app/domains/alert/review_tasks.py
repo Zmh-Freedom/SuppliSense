@@ -290,7 +290,7 @@ def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, 
                 source_type="risk_snapshot", status="partial", data_mode="formal",
                 facts={"company_name": name, "reason": "缺少可用的主体或风险基础数据"},
             )
-            return "needs_review", {"summary": "风险评估未完成，需补充主体或风险资料", "status": "needs_review"}, [evidence]
+            return "needs_review", {"summary": "风险评估未形成结论，主体或风险数据当前未覆盖", "status": "needs_review"}, [evidence]
         result = preview.model_dump(mode="json") if hasattr(preview, "model_dump") else dict(preview)
         save_snapshot(name, preview, **common)
         evidence = _evidence(
@@ -305,14 +305,14 @@ def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, 
             status="partial", data_mode="formal",
             facts={"identity_status": target.get("identity_status"), "supplier_id": target.get("supplier_id"), "candidate_id": target.get("candidate_id"), "company_id": target.get("company_id")},
         )
-        return "needs_review", {"summary": "主体核验仍需采购人员补充或确认外部资料", "status": "needs_review"}, [evidence]
+        return "needs_review", {"summary": "主体核验尚未形成可确认结果", "status": "needs_review"}, [evidence]
     if task_type == "supplement_data":
         coverage = task.get("payload", {}).get("data_coverage") or {}
         evidence = _evidence(
             task, dimension="risk_monitoring", provider="monitoring_workbench", source_type="coverage_snapshot",
             status="partial", data_mode="formal", facts={"missing_dimensions": coverage.get("missing_dimensions", []), "coverage": coverage},
         )
-        return "needs_review", {"summary": "数据覆盖不完整，已生成待补充资料清单", "status": "needs_review", "missing_dimensions": coverage.get("missing_dimensions", [])}, [evidence]
+        return "needs_review", {"summary": "数据覆盖不完整，已记录未覆盖的数据域", "status": "needs_review", "missing_dimensions": coverage.get("missing_dimensions", [])}, [evidence]
     evidence = _evidence(
         task, dimension="risk_monitoring", provider="monitoring_workbench", source_type="monitoring_observation",
         status="supported", data_mode="formal", facts={"monitor_status": target.get("monitor_status"), "identity_status": target.get("identity_status")},

@@ -206,7 +206,7 @@ export default function Dashboard() {
           </div>
           <button type="button" onClick={() => navigate('/assess')} className="shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">打开工作台</button>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center"><DashboardMiniMetric label="监控对象" value={data.total} /><DashboardMiniMetric label="优先复核" value={data.targets?.filter(target => target.next_action?.priority === 'high').length ?? 0} /><DashboardMiniMetric label="数据待补充" value={data.targets?.filter(target => target.data_coverage?.status !== 'complete').length ?? 0} /></div>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center"><DashboardMiniMetric label="监控对象" value={data.total} /><DashboardMiniMetric label="优先复核" value={data.targets?.filter(target => target.next_action?.priority === 'high').length ?? 0} /><DashboardMiniMetric label="未覆盖数据域" value={data.targets?.filter(target => target.data_coverage?.status !== 'complete').length ?? 0} /></div>
       </section>
 
     </div>

@@ -349,7 +349,7 @@ function readableEvidenceStatus(status: string): string {
 function readableValidationStatus(status: AgentAnswer['claims'][number]['validation_status']): string {
   const labels: Record<AgentAnswer['claims'][number]['validation_status'], string> = {
     supported: '证据支持',
-    partial: '证据待补充',
+    partial: '证据覆盖不足',
     conflicting: '证据存在冲突',
     unsupported: '暂无证据支持',
   };
@@ -362,7 +362,7 @@ function claimMetric(claim: AgentAnswer['claims'][number]): string {
 
 function claimAssessment(claim: AgentAnswer['claims'][number]): { label: string; className: string } {
   if (claim.validation_status === 'partial' || claim.validation_status === 'unsupported') {
-    return { label: '资料待补充', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+    return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700' };
   }
   if (claim.validation_status === 'conflicting') {
     return { label: '数据有冲突', className: 'border-red-200 bg-red-50 text-red-700' };
@@ -506,8 +506,8 @@ function SupplierReviewConclusion({ answer, evidence, limitations }: { answer: A
   if (financeMissing) {
     findings.push('财务信息覆盖不足，当前无法判断其财务变化。');
     basis.push('本轮未取得可用的财务正式证据；这不是低风险或高风险判断。');
-    checks.push('向供应商索取最近两期财务报表、审计意见或公开信用资料，并确认企业主体名称后再复核。');
-    boundaries.push('未取得财务数据时，系统只提示补充资料，不将数据缺失判定为低风险或高风险。');
+    checks.push('核对本轮已覆盖的数据范围；财务维度未形成结论，不据此判断供应商经营状况。');
+    boundaries.push('未取得财务数据时，系统不形成财务风险结论，也不将数据缺失判定为低风险或高风险。');
   }
   if (settlementChange !== null && settlementChange <= -0.5) {
     findings.push('最新月实结算金额环比显著下降，需要核实交易变化原因。');
@@ -554,10 +554,10 @@ function ActionSummary({ answer, limitations }: { answer: AgentAnswer; limitatio
     : hasClaims ? '已形成初步结论' : '暂未形成结论';
   const explanation = needsReview
     ? '发现了需要人工确认的信号或数据缺口，请先完成下方复核事项。'
-    : hasClaims ? '当前判断已有可追溯证据支持，可结合明细安排后续动作。' : '当前证据不足以支持明确判断，建议补充资料后再分析。';
+    : hasClaims ? '当前判断已有可追溯证据支持，可结合明细安排后续动作。' : '当前证据不足以支持明确判断，已标注本轮未覆盖的数据范围。';
   const nextAction = needsReview
     ? '核对复核事项'
-    : hasClaims ? '查看结论明细' : '补充资料';
+    : hasClaims ? '查看结论明细' : '查看数据范围';
 
   return <ConclusionSummary><section className="border-b border-[var(--color-border)] bg-[var(--color-code-bg)]/40 px-4 py-4 sm:px-5" aria-label="行动结论">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -570,7 +570,7 @@ function ActionSummary({ answer, limitations }: { answer: AgentAnswer; limitatio
     </div>
     <dl className="mt-4 grid divide-y divide-[var(--color-border)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
       <div className="px-3 py-2.5"><dt className="text-[11px] text-[var(--color-text-secondary)]">处理状态</dt><dd className="mt-1 text-sm font-medium text-[var(--color-text)]">{conclusion}</dd></div>
-      <div className="px-3 py-2.5"><dt className="text-[11px] text-[var(--color-text-secondary)]">证据覆盖</dt><dd className="mt-1 text-sm font-medium text-[var(--color-text)]">{hasClaims ? `${supportedCount} / ${answer.claims.length} 条已支持` : '等待补充'}</dd></div>
+      <div className="px-3 py-2.5"><dt className="text-[11px] text-[var(--color-text-secondary)]">证据覆盖</dt><dd className="mt-1 text-sm font-medium text-[var(--color-text)]">{hasClaims ? `${supportedCount} / ${answer.claims.length} 条已支持` : '暂无可用证据'}</dd></div>
       <div className="px-3 py-2.5"><dt className="text-[11px] text-[var(--color-text-secondary)]">下一步</dt><dd className="mt-1 text-sm font-medium text-[var(--color-text)]">{nextAction}</dd></div>
     </dl>
     {answer.action_proposals.length > 0 && <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 text-sm text-indigo-950">
@@ -590,7 +590,7 @@ function answerStatusMeta(answer: AgentAnswer, limitations: string[]) {
   const text = limitations.join(' ');
   if (text.includes('主体')) return { label: '主体待确认', className: 'border-violet-200 bg-violet-50 text-violet-700', icon: '?' };
   if (text.includes('权限')) return { label: '权限不足', className: 'border-red-200 bg-red-50 text-red-700', icon: '×' };
-  if (text.includes('资料') || text.includes('财务')) return { label: '资料待补充', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
+  if (text.includes('资料') || text.includes('财务')) return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   if (answer.status === 'needs_review') return { label: '发现信号，需人工复核', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   return ANSWER_STATUS_META[answer.status] || { label: answer.status, className: 'border-gray-200 bg-gray-50 text-gray-600', icon: '·' };
 }
@@ -655,7 +655,7 @@ function AgentTrendCharts({ evidence, limitations }: { evidence: AgentEvidenceRe
       </div>
     </div>}
     {financialTrendUnavailable && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/65 px-3.5 py-3 text-sm leading-6 text-amber-950">
-      <span className="font-medium">财务趋势资料待补充。</span> 当前仅有最新财务指标或没有财务资料，未取得至少两个报告期的正式财务序列，因此系统不绘制财务趋势图。
+      <span className="font-medium">财务趋势暂未覆盖。</span> 当前仅有最新财务指标或没有财务资料，未取得至少两个报告期的正式财务序列，因此系统不绘制财务趋势图。
     </div>}
   </section></TrendSection>;
 }

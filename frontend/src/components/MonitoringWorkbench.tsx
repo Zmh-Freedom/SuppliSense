@@ -120,7 +120,7 @@ export default function MonitoringWorkbench({
         </div>
         <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2">
           <div className="text-lg font-semibold text-amber-700">{insufficientCount}</div>
-          <div className="text-[11px] text-amber-600">数据待补充</div>
+          <div className="text-[11px] text-amber-600">数据未覆盖</div>
         </div>
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2">
           <div className="text-lg font-semibold text-emerald-700">{readyCount}</div>

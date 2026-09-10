@@ -206,7 +206,7 @@ def _data_coverage(db: object, target: dict, snapshot: dict | None) -> dict:
             "key": "financial",
             "label": "财务/公开信息",
             "status": "available" if (snapshot or "financial" in available_dimensions) and ((snapshot or {}).get("financial") or "financial" in available_dimensions) else "missing",
-            "detail": "已获取" if (snapshot or {}).get("financial") or "financial" in available_dimensions else "需补充资料",
+            "detail": "已获取" if (snapshot or {}).get("financial") or "financial" in available_dimensions else "当前未覆盖",
         },
         {
             "key": "transaction",
@@ -264,7 +264,7 @@ def _next_action(target: dict, snapshot: dict | None, risk_change: dict, coverag
     if risk_change["status"] == "deteriorating" or snapshot.get("risk_level") == "高风险":
         return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": "风险分数上升或当前处于高风险"}
     if coverage["status"] != "complete":
-        return {"code": "supplement_data", "label": "补充资料后复核", "priority": "medium", "reason": "部分数据域缺失，当前结论覆盖不完整"}
+        return {"code": "supplement_data", "label": "核验数据覆盖范围", "priority": "medium", "reason": "部分数据域当前未覆盖，不能形成完整结论"}
     return {"code": "continue_monitoring", "label": "继续观察", "priority": "low", "reason": "当前已有完整覆盖且未发现明显恶化"}
 
 

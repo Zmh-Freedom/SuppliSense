@@ -480,7 +480,7 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('供应商交易连续性趋势')).toBeInTheDocument()
     expect(screen.getByText('实结算金额（元）')).toBeInTheDocument()
     expect(screen.getByText('收货记录数（条）')).toBeInTheDocument()
-    expect(screen.getByText('财务趋势资料待补充。')).toBeInTheDocument()
+    expect(screen.getByText('财务趋势暂未覆盖。')).toBeInTheDocument()
   })
 
   it('trusts the server terminal status instead of turning partial into completed', async () => {

@@ -428,3 +428,21 @@ def test_harness_planner_adds_bounded_trend_and_comparison_dependencies() -> Non
     assert len(trend_tasks) == 2
     assert all(task.depends_on for task in trend_tasks)
     assert set(comparison.depends_on) == {task.task_id for task in tasks if task is not comparison}
+
+
+def test_procurement_action_with_coverage_limit_does_not_request_user_materials() -> None:
+    from app.graphs.harness.graph import _procurement_action_proposals
+    from app.graphs.agent_core.answer_contract import AgentAnswer
+
+    answer = AgentAnswer(
+        status="needs_review",
+        summary="财务维度当前未覆盖。",
+        limitations=["财务数据当前未覆盖"],
+    )
+
+    proposal = _procurement_action_proposals(answer)[0]
+
+    assert proposal["action_type"] == "supplement_data"
+    assert proposal["label"] == "当前不建议变更采购策略"
+    assert "补充" not in proposal["label"]
+    assert "采购人员" not in proposal["reason"]
