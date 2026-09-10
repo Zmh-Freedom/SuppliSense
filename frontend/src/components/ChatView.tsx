@@ -661,28 +661,28 @@ function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evi
         </span>}
       </div>
       <p className="mt-3 max-w-4xl text-sm leading-6 text-[var(--color-text-secondary)]">{overview}</p>
-      {answer.claims.length > 0 && <EvidenceTable><div className="mt-4 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table className="min-w-[820px] w-full border-collapse text-left text-sm">
+      {answer.claims.length > 0 && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table className="w-full table-fixed border-collapse text-left text-sm">
           <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]">
             <tr>
-              <th scope="col" className="w-28 px-3 py-2.5 font-medium">维度</th>
-              <th scope="col" className="w-40 px-3 py-2.5 font-medium">指标/检查项</th>
-              <th scope="col" className="px-3 py-2.5 font-medium">数据与说明</th>
-              <th scope="col" className="w-32 px-3 py-2.5 font-medium">判断</th>
-              <th scope="col" className="w-28 px-3 py-2.5 font-medium">证据状态</th>
-              <th scope="col" className="w-20 px-3 py-2.5 text-right font-medium">可信度</th>
+              <th scope="col" className="w-[18%] px-2 py-2.5 font-medium sm:px-3">维度</th>
+              <th scope="col" className="w-[23%] px-2 py-2.5 font-medium sm:px-3">指标/检查项</th>
+              <th scope="col" className="w-[29%] px-2 py-2.5 font-medium sm:px-3">数据与说明</th>
+              <th scope="col" className="w-[20%] px-2 py-2.5 font-medium sm:px-3">判断</th>
+              <th scope="col" className="hidden w-[10%] px-3 py-2.5 font-medium md:table-cell">证据状态</th>
+              <th scope="col" className="hidden w-[10%] px-3 py-2.5 text-right font-medium md:table-cell">可信度</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
             {answer.claims.map(claim => {
               const assessment = claimAssessment(claim);
               return <tr key={claim.claim_id} className="align-top">
-                <td className="px-3 py-3"><span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td>
-                <td className="px-3 py-3 font-medium leading-6 text-[var(--color-text)]">{claimMetric(claim)}</td>
-                <td className="px-3 py-3 leading-6 text-[var(--color-text)]">{readableClaimDetail(claim)}</td>
-                <td className="px-3 py-3"><span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td>
-                <td className="px-3 py-3 text-xs text-[var(--color-text-secondary)]">{readableValidationStatus(claim.validation_status)}</td>
-                <td className="px-3 py-3 text-right text-xs tabular-nums text-[var(--color-text-secondary)]">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td>
+                <td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td>
+                <td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{claimMetric(claim)}</td>
+                <td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{readableClaimDetail(claim)}</td>
+                <td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td>
+                <td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td>
+                <td className="hidden px-3 py-3 text-right text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td>
               </tr>;
             })}
           </tbody>
