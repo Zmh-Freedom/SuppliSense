@@ -174,66 +174,9 @@ async function _parseSSEStream(
         const dataStr = line.slice(6);
         try {
           const data = JSON.parse(dataStr);
-          switch (currentEvent) {
-            case 'session':
-              callbacks.onSession?.(data);
-              break;
-            case 'run':
-              callbacks.onRun?.(data);
-              break;
-            case 'thinking':
-              callbacks.onThinking?.(data);
-              break;
-            case 'workflow_status':
-              callbacks.onWorkflowStatus?.(data);
-              break;
-            case 'plan':
-              callbacks.onPlan?.(data);
-              break;
-            case 'agent_selection':
-              callbacks.onAgentSelection?.(data);
-              break;
-            case 'agent_start':
-              callbacks.onAgentStart?.(data);
-              break;
-            case 'agent_complete':
-              callbacks.onAgentComplete?.(data);
-              break;
-            case 'tool_call':
-              callbacks.onToolCall?.(data);
-              break;
-            case 'tool_result':
-              callbacks.onToolResult?.(data);
-              break;
-            case 'answer_chunk':
-              fullAnswer += data.text;
-              callbacks.onAnswerChunk?.(data);
-              break;
-            case 'done':
-              callbacks.onDone?.(data);
-              break;
-            case 'agent_answer':
-              callbacks.onAgentAnswer?.(data);
-              break;
-            case 'evidence':
-              callbacks.onEvidence?.(data);
-              break;
-            case 'error':
-              callbacks.onError?.(data);
-              break;
-            case 'clarification':
-              callbacks.onClarification?.(data);
-              break;
-            case 'approval_required':
-              callbacks.onApprovalRequired?.(data);
-              break;
-            case 'chart_data':
-              callbacks.onChartData?.(data);
-              break;
-            case 'references':
-              callbacks.onReferences?.(data);
-              break;
-          }
+          dispatchStreamEvent(currentEvent, data, callbacks, (text) => {
+            fullAnswer += text;
+          });
           if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
           currentEvent = '';
           currentEventId = null;
@@ -245,6 +188,41 @@ async function _parseSSEStream(
   }
 
   return fullAnswer;
+}
+
+/** Dispatch a persisted or live chat SSE event through the shared UI contract. */
+export function dispatchStreamEvent(
+  eventType: string,
+  data: unknown,
+  callbacks: StreamCallbacks,
+  onAnswerChunk?: (text: string) => void,
+): void {
+  switch (eventType) {
+    case 'session': callbacks.onSession?.(typeof data === 'string' ? data : (data as { session_id: string }).session_id); break;
+    case 'run': callbacks.onRun?.(data as { run_id: string }); break;
+    case 'thinking': callbacks.onThinking?.(data as { message: string }); break;
+    case 'workflow_status': callbacks.onWorkflowStatus?.(data as Parameters<NonNullable<StreamCallbacks['onWorkflowStatus']>>[0]); break;
+    case 'plan': callbacks.onPlan?.(data as Parameters<NonNullable<StreamCallbacks['onPlan']>>[0]); break;
+    case 'agent_selection': callbacks.onAgentSelection?.(data as Parameters<NonNullable<StreamCallbacks['onAgentSelection']>>[0]); break;
+    case 'agent_start': callbacks.onAgentStart?.(data as Parameters<NonNullable<StreamCallbacks['onAgentStart']>>[0]); break;
+    case 'agent_complete': callbacks.onAgentComplete?.(data as Parameters<NonNullable<StreamCallbacks['onAgentComplete']>>[0]); break;
+    case 'tool_call': callbacks.onToolCall?.(data as Parameters<NonNullable<StreamCallbacks['onToolCall']>>[0]); break;
+    case 'tool_result': callbacks.onToolResult?.(data as Parameters<NonNullable<StreamCallbacks['onToolResult']>>[0]); break;
+    case 'answer_chunk': {
+      const chunk = data as { text: string };
+      onAnswerChunk?.(chunk.text);
+      callbacks.onAnswerChunk?.(chunk);
+      break;
+    }
+    case 'done': callbacks.onDone?.(data as Parameters<NonNullable<StreamCallbacks['onDone']>>[0]); break;
+    case 'agent_answer': callbacks.onAgentAnswer?.(data as Parameters<NonNullable<StreamCallbacks['onAgentAnswer']>>[0]); break;
+    case 'evidence': callbacks.onEvidence?.(data as Parameters<NonNullable<StreamCallbacks['onEvidence']>>[0]); break;
+    case 'error': callbacks.onError?.(data as { message: string }); break;
+    case 'clarification': callbacks.onClarification?.(data as Parameters<NonNullable<StreamCallbacks['onClarification']>>[0]); break;
+    case 'approval_required': callbacks.onApprovalRequired?.(data as ApprovalData); break;
+    case 'chart_data': callbacks.onChartData?.(data as import('./types').ChartData); break;
+    case 'references': callbacks.onReferences?.(data as { items: import('./types').SupplierReference[] }); break;
+  }
 }
 
 export async function chatStream(
@@ -275,7 +253,25 @@ export async function chatStream(
       throw new Error(`HTTP ${res.status}`);
     }
 
-    return await _parseSSEStream(res, callbacks);
+    let receivedTerminalEvent = false;
+    const trackedCallbacks: StreamCallbacks = {
+      ...callbacks,
+      onDone: (data) => {
+        receivedTerminalEvent = true;
+        callbacks.onDone?.(data);
+      },
+      onError: (data) => {
+        receivedTerminalEvent = true;
+        callbacks.onError?.(data);
+      },
+      onClarification: (data) => {
+        receivedTerminalEvent = true;
+        callbacks.onClarification?.(data);
+      },
+    };
+    const answer = await _parseSSEStream(res, trackedCallbacks);
+    if (!receivedTerminalEvent) throw new Error('SSE 流在收到最终结果前断开');
+    return answer;
   } finally {
     clearTimeout(timeout);
   }

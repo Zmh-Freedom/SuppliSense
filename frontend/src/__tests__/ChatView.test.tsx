@@ -6,12 +6,18 @@ import type { StreamCallbacks } from '../api'
 import ChatView from '../components/ChatView'
 
 const mocks = vi.hoisted(() => ({
+  chatRunEventStream: vi.fn(),
   chatStream: vi.fn(),
   resumeChat: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
+  chatRunEventStream: mocks.chatRunEventStream,
   chatStream: mocks.chatStream,
+  dispatchStreamEvent: (eventType: string, data: unknown, callbacks: StreamCallbacks) => {
+    if (eventType === 'answer_chunk') callbacks.onAnswerChunk?.(data as { text: string })
+    if (eventType === 'done') callbacks.onDone?.(data as { answer: string; status?: string })
+  },
   resumeChat: mocks.resumeChat,
 }))
 
@@ -60,6 +66,7 @@ describe('ChatView session lifecycle', () => {
     localStorage.clear()
     localStorage.setItem('chat_sessions', JSON.stringify([OLD_SESSION]))
     mocks.chatStream.mockReset()
+    mocks.chatRunEventStream.mockReset()
     mocks.resumeChat.mockReset()
   })
 
@@ -115,6 +122,27 @@ describe('ChatView session lifecycle', () => {
     expect(await screen.findByRole('link', { name: '官网（待核验）' })).toHaveAttribute('href', 'https://steel.example.com')
     expect(screen.getByText('电话（待核验）：021-12345678')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '邮箱（待核验）：sales@steel.example.com' })).toHaveAttribute('href', 'mailto:sales@steel.example.com')
+  })
+
+  it('replays persisted run events when the initial SSE stream disconnects', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onRun?.({ run_id: 'run-1' })
+      throw new Error('SSE 流在收到最终结果前断开')
+    })
+    mocks.chatRunEventStream.mockImplementation(async (_runId: string, _lastEventId: number | null, handlers: {
+      onEvent?: (event: { eventId: number; eventType: string; data: unknown }) => void
+    }) => {
+      handlers.onEvent?.({ eventId: 1, eventType: 'answer_chunk', data: { text: '已从持久化事件恢复结果。' } })
+      handlers.onEvent?.({ eventId: 2, eventType: 'done', data: { answer: '已从持久化事件恢复结果。', status: 'completed' } })
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '复核供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('已从持久化事件恢复结果。')).toBeInTheDocument()
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object))
   })
 
   it('starts the verified listed supplier review from the demo case entry', async () => {

@@ -2,8 +2,8 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { chatStream, resumeChat } from '../api';
-import type { ApprovalData } from '../api';
+import { chatRunEventStream, chatStream, dispatchStreamEvent, resumeChat } from '../api';
+import type { ApprovalData, StreamCallbacks } from '../api';
 import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowLifecycle, AgentWorkflowSnapshot, ChatMessage, ChartData, SupplierReference } from '../types';
 import ChartRenderer from './ChartRenderer';
 import AgentWorkflowPanel from './AgentWorkflowPanel';
@@ -807,8 +807,16 @@ export default function ChatView() {
     agentAnswerAccRef.current = undefined;
     evidenceAccRef.current = [];
 
-    try {
-      await chatStream(text, sid, {
+    let runId: string | null = null;
+    let lastEventId: number | null = null;
+    let receivedTerminalEvent = false;
+    const streamCallbacks: StreamCallbacks = {
+        onRun: (data) => {
+          runId = data.run_id;
+        },
+        onEventId: (eventId) => {
+          lastEventId = eventId;
+        },
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
         },
@@ -915,6 +923,7 @@ export default function ChatView() {
           } : null);
         },
         onDone: (data) => {
+          receivedTerminalEvent = true;
           const pendingApproval = approvalAccRef.current;
           const rawAnswer = answerAccRef.current || data.answer;
           const finalAnswer = normalizeApprovalAnswer(rawAnswer);
@@ -943,6 +952,7 @@ export default function ChatView() {
           setStreamState(prev => prev ? { ...prev, evidence: data.records } : null);
         },
         onError: (data) => {
+          receivedTerminalEvent = true;
           console.error('Stream error:', data.message);
           const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
           workflowAccRef.current = failedWorkflow;
@@ -961,6 +971,7 @@ export default function ChatView() {
           setLoading(false);
         },
         onClarification: (data) => {
+          receivedTerminalEvent = true;
           const clarificationWorkflow = { ...workflowAccRef.current, status: 'clarifying' as const, stage: 'understand', message: data.message };
           workflowAccRef.current = clarificationWorkflow;
           const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, workflow: clarificationWorkflow }];
@@ -990,8 +1001,24 @@ export default function ChatView() {
           workflowAccRef.current = next;
           setStreamState(prev => prev ? { ...prev, references: data.items, workflowStatus: next } : null);
         },
-      }, 'auto');
+      };
+
+    try {
+      await chatStream(text, sid, streamCallbacks, 'auto');
     } catch (err) {
+      if (runId && !receivedTerminalEvent) {
+        try {
+          await chatRunEventStream(runId, lastEventId, {
+            onEvent: (event) => {
+              dispatchStreamEvent(event.eventType, event.data, streamCallbacks);
+              lastEventId = event.eventId;
+            },
+          });
+          if (receivedTerminalEvent) return;
+        } catch (replayError) {
+          console.error('Chat event replay failed:', replayError);
+        }
+      }
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       const failureMessage = isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试';
       const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: isTimeout ? '工作流超时，尚未完成' : '工作流执行失败' };
