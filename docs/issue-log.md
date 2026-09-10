@@ -1554,7 +1554,7 @@
 - 修复方案：增加认证区域的通配路由，旧链接统一重定向到 `/chat`。
 - 验证结果：前端 10 个测试文件、59 个测试通过；Lint、TypeScript、生产构建和 `git diff --check` 通过。重启 Vite 后真实 Chrome 验证总览已不再出现风险矩阵，寻源页默认只显示寻源风险工作台，设置页只显示账号安全；访问 `/contagion` 已不再进入旧图谱，通配路由会重定向到 `/chat`。
 - 状态：已修复（待与工作区既有未提交改动隔离后提交）。
-- 关联提交：`4c02d3ed feat: sync supplier responsibility assignments`。
+- 关联提交：`f27f9787 feat: sync supplier responsibility assignments`。
 
 ## ISS-20260909-048 单元测试环境未加载 pytest-asyncio
 
@@ -1566,7 +1566,7 @@
 - 根因：测试依赖或 pytest 插件配置缺失，属于现有测试环境问题。
 - 修复方案：后续在测试依赖与 pytest 配置中显式加入并启用 `pytest-asyncio`，再恢复该异步用例的常规执行。
 - 验证结果：本轮新增监控调查测试 3 项通过；原异步用例未纳入本轮通过统计。
-- 关联提交：`4c02d3ed feat: sync supplier responsibility assignments`。
+- 关联提交：`f27f9787 feat: sync supplier responsibility assignments`。
 
 ## ISS-20260909-046 主体核验回答混入监控审批且审批入口无法恢复
 
@@ -1590,7 +1590,7 @@
 - 根因：`ChatView` 直接将引用列表和 Claim 列表映射为卡片，未区分摘要、关键解读与可扫描明细。
 - 修复方案：供应商引用改为默认折叠的明细区；分析结果增加基于证据状态和风险维度的总括说明，并用结论汇总表呈现全部 Claim，保留状态与数据说明区。
 - 验证结果：总览监控清单默认 `aria-expanded=false`；风险详情与供应商画像均引用共享 `RiskSummary`；ChatView 已使用 `ConclusionSummary`、`EvidenceTable`、`TrendSection`、`ReviewChecklist` 四个展示组件；快速寻源默认收起且 Agent 寻源工作台默认可见。前端 59 项测试通过，lint、TypeScript、build、`git diff --check` 通过；本地浏览器验证总览和智能寻源页面通过。
-- 关联提交：`4c02d3ed feat: sync supplier responsibility assignments`。
+- 关联提交：`f27f9787 feat: sync supplier responsibility assignments`。
 
 ### ISS-20260908-027 验证结果补充
 
