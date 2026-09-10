@@ -93,6 +93,30 @@ def test_harness_recognizes_formal_supplier_directory_query() -> None:
     assert planned[0].tool_name == "list_formal_suppliers"
 
 
+@pytest.mark.parametrize(
+    ("message", "tool_name"),
+    [
+        ("查看监控清单", "get_watchlist"),
+        ("分析我负责的供应商本月风险变化", "analyze_watchlist_trend"),
+        ("查看我科室所有供应商的待复核事项", "get_monitor_review_queue"),
+    ],
+)
+def test_harness_plans_scope_level_procurement_queries(message: str, tool_name: str) -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "scope-query",
+            "task_type": "sourcing",
+            "user_message": message,
+            "target_supplier_names": [],
+            "analysis_dimensions": [],
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert len(planned) == 1
+    assert planned[0].tool_name == tool_name
+
+
 def test_harness_builds_discovery_plan_for_risk_filtered_sourcing() -> None:
     planned = _build_default_plan({
         "current_task": {

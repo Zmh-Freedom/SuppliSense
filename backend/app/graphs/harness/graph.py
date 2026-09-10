@@ -166,6 +166,14 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
     dimensions = [str(item).strip() for item in current_task.get("analysis_dimensions", []) if str(item).strip()]
     result: list[HarnessTask] = []
     user_message = str(current_task.get("user_message") or "")
+
+    # Range-level procurement questions are first-class tasks.  They must not
+    # fall through to the supplier matrix below, otherwise the runtime ends
+    # with an empty plan and the misleading "no evidence" answer.
+    scope_task = _scope_query_task(current_task, context)
+    if scope_task is not None:
+        return [scope_task]
+
     if current_task.get("task_type") == "sourcing":
         requirement = current_task.get("requirement") or {}
         request_id = str(requirement.get("request_id") or "").strip() if isinstance(requirement, dict) else ""
@@ -230,6 +238,41 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                 )
             )
     return _append_derived_tasks(result, current_task, context)
+
+
+def _scope_query_task(
+    current_task: Mapping[str, Any], context: Mapping[str, Any]
+) -> HarnessTask | None:
+    """Map monitoring/ownership questions to explicit read-only tools."""
+    message = str(current_task.get("user_message") or "").strip()
+    if not message:
+        return None
+    task_id = str(current_task.get("task_id") or "task")
+    if any(token in message for token in ("待复核", "待审核", "待处理事项")):
+        return HarnessTask(
+            task_id=f"{task_id}:review_queue",
+            tool_name="get_monitor_review_queue",
+            arguments={},
+            entity_id="review_queue",
+            dimension="risk_monitoring",
+            resource_key="review_queue",
+            required=True,
+            evidence_requirements=["risk_monitoring"],
+        )
+    trend_requested = any(token in message for token in ("风险变化", "风险趋势", "趋势", "变化情况"))
+    monitoring_scope = any(token in message for token in ("监控清单", "监控列表", "我负责的供应商", "我管理的供应商", "我科室", "本部门"))
+    if not monitoring_scope:
+        return None
+    return HarnessTask(
+        task_id=f"{task_id}:watchlist:{'trend' if trend_requested else 'list'}",
+        tool_name="analyze_watchlist_trend" if trend_requested else "get_watchlist",
+        arguments={"period_months": 1} if trend_requested else {},
+        entity_id="watchlist",
+        dimension="risk_monitoring",
+        resource_key="watchlist",
+        required=True,
+        evidence_requirements=["risk_monitoring"],
+    )
 
 
 def _is_formal_directory_query(task: Mapping[str, Any]) -> bool:
@@ -772,11 +815,16 @@ def build_harness_graph(
             required_evidence=_required_evidence_items(tasks),
         )
         if not claims:
+            no_plan = not tasks
+            summary = _no_plan_summary(state) if no_plan else "本轮工具未返回可验证结论。"
             answer = answer.model_copy(
                 update={
                     "status": "needs_review",
-                    "summary": "未形成任何可由证据支持的确定性结论。",
-                    "limitations": list(dict.fromkeys([*answer.limitations, "工具结果未提供可验证 Claim"])),
+                    "summary": summary,
+                    "limitations": list(dict.fromkeys([
+                        *answer.limitations,
+                        "当前请求未形成可执行任务" if no_plan else "工具结果未提供可验证 Claim",
+                    ])),
                 }
             )
         else:
@@ -827,6 +875,16 @@ def build_harness_graph(
     graph.add_edge("render_answer", "persist_turn")
     graph.add_edge("persist_turn", END)
     return graph.compile(checkpointer=checkpointer) if checkpointer is not None else graph.compile()
+
+
+def _no_plan_summary(state: HarnessState) -> str:
+    """Explain missing intent/data instead of mislabeling it as an empty finding."""
+    message = str((state.get("current_task") or {}).get("user_message") or state.get("user_message") or "")
+    if any(token in message for token in ("推荐供应商", "寻找供应商", "找供应商")):
+        return "我还不能开始寻源：请补充物料号、零件名称或采购品类。"
+    if any(token in message for token in ("趋势", "变化", "复核")):
+        return "我还不能形成复核结论：请指定正式供应商或明确的监控范围。"
+    return "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。"
 
 
 async def run_harness(

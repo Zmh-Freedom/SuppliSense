@@ -2,6 +2,22 @@
 from langchain_core.tools import tool
 
 
+def _active_scope() -> tuple[str | None, str | None, bool]:
+    """Return the current user scope without changing direct tool compatibility."""
+    from app.tools.executor import get_active_tool_context
+
+    context = get_active_tool_context()
+    if context is None:
+        return None, None, False
+    user_id = context.user_id
+    if not user_id:
+        return None, None, True
+    from app.domains.auth.service import get_user_by_id
+
+    user = get_user_by_id(user_id)
+    return user_id, user.role.value if user else None, True
+
+
 @tool
 def investigate_supplier_monitoring(query: str) -> dict:
     """调查一个供应商是否适合加入风险监控。
@@ -49,12 +65,35 @@ def get_watchlist() -> dict:
     """获取监控清单。"""
     from app.domains.alert.service import get_watchlist as _get_watchlist
     from app.domains.alert.service import get_watchlist_targets
-    companies = _get_watchlist()
-    targets = get_watchlist_targets()
+
+    user_id, user_role, scoped_call = _active_scope()
+    if scoped_call and not user_id:
+        return {"status": "denied", "message": "当前会话缺少用户身份，无法读取监控清单"}
+    companies = _get_watchlist() if not scoped_call else None
+    targets = get_watchlist_targets(user_id, user_role) if scoped_call else get_watchlist_targets()
+    companies = companies if companies is not None else [
+        target.get("company_name") for target in targets if target.get("company_name")
+    ]
     from app.tools.evidence import attach_tool_evidence
 
     return attach_tool_evidence(
-        {"count": len(companies), "companies": companies, "targets": targets},
+        {
+            "count": len(companies),
+            "companies": companies,
+            "targets": targets,
+            "scope": "当前用户责任范围" if scoped_call else "系统监控清单",
+            "claims": [{
+                "claim_id": "watchlist:count",
+                "entity_id": "watchlist",
+                "dimension": "risk_monitoring",
+                "statement": f"当前可见监控对象共 {len(companies)} 家",
+                "value": len(companies),
+                "fact_path": "count",
+                "operator": "eq",
+                "evidence_refs": ["get_watchlist:watchlist:risk_monitoring"],
+                "confidence": 0.99,
+            }],
+        },
         tool_name="get_watchlist",
         entity_id="watchlist",
         dimension="risk_monitoring",
@@ -75,7 +114,10 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
     from app.db.mongo import get_db
     from app.domains.alert.service import get_watchlist_targets
 
-    targets = get_watchlist_targets()
+    user_id, user_role, scoped_call = _active_scope()
+    if scoped_call and not user_id:
+        return {"status": "denied", "message": "当前会话缺少用户身份，无法分析监控清单趋势"}
+    targets = get_watchlist_targets(user_id, user_role) if scoped_call else get_watchlist_targets()
     if not targets:
         return {"status": "not_found", "count": 0, "message": "监控清单为空", "companies": []}
 
@@ -125,7 +167,68 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
 
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence({"count": len(results), "period_months": period_months, "companies": results}, tool_name="analyze_watchlist_trend", entity_id="watchlist", dimension="risk_monitoring")
+    payload = {"count": len(results), "period_months": period_months, "companies": results, "scope": "当前用户责任范围" if scoped_call else "系统监控清单"}
+    evidence_id = "analyze_watchlist_trend:watchlist:risk_monitoring"
+    payload["claims"] = [{
+        "claim_id": f"{evidence_id}:claim:count",
+        "entity_id": "watchlist",
+        "dimension": "risk_monitoring",
+        "statement": f"当前可见监控对象中有 {len(results)} 家纳入本次趋势分析",
+        "value": len(results),
+        "fact_path": "count",
+        "operator": "eq",
+        "evidence_refs": [evidence_id],
+        "confidence": 0.99,
+    }]
+    for item in results:
+        if not item.get("company_name") or not item.get("trend"):
+            continue
+        payload["claims"].append({
+            "claim_id": f"{evidence_id}:claim:{item['monitor_target_id'] or item['company_name']}",
+            "entity_id": str(item.get("monitor_target_id") or f"entity:{item['company_name']}"),
+            "dimension": "risk_monitoring",
+            "statement": f"{item['company_name']} 最近 {period_months} 个月风险变化：{item['trend']}（{item['trend_data_points']} 个数据点）",
+            "value": item["trend"],
+            "fact_path": "companies",
+            "operator": "eq",
+            "evidence_refs": [evidence_id],
+            "confidence": 0.9 if item["trend_data_points"] >= 2 else 0.65,
+        })
+    return attach_tool_evidence(payload, tool_name="analyze_watchlist_trend", entity_id="watchlist", dimension="risk_monitoring")
+
+
+@tool
+def get_monitor_review_queue() -> dict:
+    """查看当前采购员或管理员可见的待复核事项。"""
+    user_id, user_role, scoped_call = _active_scope()
+    if not scoped_call or not user_id:
+        return {"status": "denied", "message": "查看待复核事项需要已登录的采购员或管理员身份"}
+    from app.domains.alert.review_tasks import list_review_tasks
+
+    tasks = list_review_tasks(None, user_id, user_role or "analyst")
+    pending = [
+        task for task in tasks
+        if str(task.get("status") or "") in {"pending_approval", "approved", "executing", "needs_review"}
+    ]
+    payload = {
+        "status": "success" if pending else "not_found",
+        "count": len(pending),
+        "tasks": pending,
+        "message": "暂无待复核事项" if not pending else f"当前有 {len(pending)} 项待复核事项",
+    }
+    if pending:
+        payload["claims"] = [{
+            "claim_id": "review_queue:count",
+            "entity_id": "review_queue",
+            "dimension": "risk_monitoring",
+            "statement": f"当前责任范围内有 {len(pending)} 项待复核事项",
+            "value": len(pending),
+            "fact_path": "count",
+            "operator": "eq",
+            "evidence_refs": ["get_monitor_review_queue:review_queue:risk_monitoring"],
+            "confidence": 0.99,
+        }]
+    return attach_tool_evidence(payload, tool_name="get_monitor_review_queue", entity_id="review_queue", dimension="risk_monitoring")
 
 
 @tool

@@ -10,6 +10,35 @@ def list_formal_suppliers(limit: int = 20) -> dict:
     该工具只读取当前正式供应商主数据，不创建寻源请求，也不按品类过滤。
     """
     from app.domains.sourcing.supplier_repo import list_formal_suppliers as _list
+    from app.tools.executor import get_active_tool_context
+
+    context = get_active_tool_context()
+    scoped_call = context is not None
+    if scoped_call and not context.user_id:
+        return {"status": "denied", "message": "当前会话缺少用户身份，无法读取正式供应商目录"}
+    user_id = context.user_id if context else None
+    user_role = None
+    if user_id:
+        from app.domains.auth.service import get_user_by_id
+
+        user = get_user_by_id(user_id)
+        user_role = user.role.value if user else None
+    if scoped_call:
+        from app.domains.supplier.access import list_assigned_supplier_ids
+
+        allowed_ids = list_assigned_supplier_ids(user_id, user_role or "analyst")
+        if user_role != "admin" and not allowed_ids:
+            return {"status": "not_found", "count": 0, "items": [], "message": "当前责任范围内暂无正式供应商"}
+        result = _list(limit=limit)
+        if user_role != "admin":
+            result["items"] = [
+                item for item in result.get("items", [])
+                if str(item.get("supplier_id") or "") in allowed_ids
+            ]
+            result["total"] = len(result["items"])
+        result["scope"] = "当前用户责任范围"
+    else:
+        result = _list(limit=limit)
 
     from app.tools.evidence import attach_tool_evidence
 

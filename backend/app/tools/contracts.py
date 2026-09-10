@@ -109,12 +109,19 @@ class WatchlistOutput(StrictToolOutput):
     count: int | None = Field(default=None, ge=0)
     operation: str | None = None
     side_effect_receipt: dict[str, Any] | None = None
+    scope: str | None = None
 
 
 class WatchlistTrendOutput(StrictToolOutput):
     count: int = Field(default=0, ge=0)
     period_months: int | None = None
     companies: list[dict[str, Any]] = Field(default_factory=list)
+    scope: str | None = None
+
+
+class ReviewQueueOutput(StrictToolOutput):
+    count: int = Field(default=0, ge=0)
+    tasks: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ESGOutput(StrictToolOutput):
@@ -314,6 +321,7 @@ TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "investigate_supplier_monitoring": MonitoringInvestigationOutput,
     "get_watchlist": WatchlistOutput,
     "analyze_watchlist_trend": WatchlistTrendOutput,
+    "get_monitor_review_queue": ReviewQueueOutput,
     "add_to_watchlist": WatchlistOutput,
     "remove_from_watchlist": WatchlistOutput,
     "esg_assessment": ESGOutput,

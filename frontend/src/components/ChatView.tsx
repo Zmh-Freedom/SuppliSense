@@ -1278,7 +1278,7 @@ export default function ChatView() {
       </aside>
 
       {/* Main chat */}
-      <div className="flex-1 flex flex-col min-w-0 max-w-3xl mx-auto h-full">
+      <div className="flex-1 flex flex-col min-w-0 w-full max-w-6xl mx-auto h-full">
       {/* messages */}
       <div className="flex-1 overflow-auto px-4 space-y-6 py-6">
         {msgs.length === 0 && !loading && (
@@ -1340,7 +1340,7 @@ export default function ChatView() {
             }`}>
               {m.role === 'user' ? '你' : 'AI'}
             </div>
-            <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
+            <div className={`${m.role === 'user' ? 'max-w-[80%]' : 'min-w-0 flex-1 max-w-5xl'} rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
               m.role === 'user'
                 ? 'bg-[var(--color-code-bg)] text-[var(--color-text)]'
                 : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'
@@ -1373,7 +1373,7 @@ export default function ChatView() {
         {streamState && (loading || streamState.error) && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-[var(--color-surface-selected)] flex items-center justify-center text-xs font-semibold text-[var(--color-text-secondary)] shrink-0">AI</div>
-            <div className="max-w-[80%] space-y-2">
+            <div className="min-w-0 flex-1 max-w-5xl space-y-2">
               <AgentWorkflowPanel state={streamState} onApproval={handleApproval} />
               {/* Auto-injected charts from tool results */}
               {streamState.charts.map((chart, i) => (
