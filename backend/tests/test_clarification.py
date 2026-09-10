@@ -1,4 +1,8 @@
-from app.services.clarification import detect_clarification_needed, ClarificationNeeded
+from app.services.clarification import (
+    detect_clarification_needed,
+    external_assessment_clarification,
+    review_scope_clarification,
+)
 
 
 class TestClarification:
@@ -61,3 +65,42 @@ class TestClarification:
     def test_empty_string_returns_none(self):
         result = detect_clarification_needed("   ")
         assert result is None
+
+    def test_review_outside_formal_and_monitor_scope_returns_external_assessment_hint(self, monkeypatch):
+        monkeypatch.setattr("app.domains.alert.service.get_watchlist_targets", lambda **_: [])
+        monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: False)
+
+        result = review_scope_clarification(
+            ["华为"], [], "user-1", "analyst", "复核华为"
+        )
+
+        assert result is not None
+        assert "监控清单和正式供应商库中均未找到" in result.message
+        assert "评估该企业风险" in result.message
+
+    def test_review_formal_supplier_outside_user_scope_is_denied(self, monkeypatch):
+        monkeypatch.setattr("app.domains.alert.service.get_watchlist_targets", lambda **_: [])
+        monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: True)
+        monkeypatch.setattr("app.domains.supplier.access.can_access_formal_supplier_name", lambda *_: False)
+
+        result = review_scope_clarification(
+            ["其他供应商有限公司"], [], "user-1", "analyst", "复核其他供应商有限公司"
+        )
+
+        assert result is not None
+        assert "不在你当前负责范围内" in result.message
+
+    def test_external_assessment_requires_subject_confirmation(self, monkeypatch):
+        class SearchTool:
+            @staticmethod
+            def invoke(_payload):
+                return {"results": [{"name": "华为技术有限公司", "credit_code": "91440300"}]}
+
+        monkeypatch.setattr("app.domains.risk.tools_search.search_company", SearchTool())
+        monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: False)
+
+        result = external_assessment_clarification(["华为"], [], "评估华为")
+
+        assert result is not None
+        assert "华为技术有限公司" in result.message
+        assert "企业全称" in result.message

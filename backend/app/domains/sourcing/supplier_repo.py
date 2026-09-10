@@ -684,6 +684,22 @@ def list_formal_suppliers(limit: int = 20) -> dict[str, Any]:
     }
 
 
+def formal_supplier_exists_by_name(name: str) -> bool:
+    """Check exact membership in the active formal supplier read model."""
+    value = str(name or "").strip()
+    if not value:
+        return False
+    db = get_db()
+    collection = _supplier_read_collection(db)
+    filters: dict[str, Any] = {
+        "name": {"$regex": f"^{value}$", "$options": "i"},
+        "status": {"$in": ["active", "approved"]},
+    }
+    if collection.name == "supplier_master_snapshots":
+        filters.update({"source": "feishu_bitable", "sync_status": "current"})
+    return collection.count_documents(filters, limit=1) > 0
+
+
 def _enrich_supplier_library_items(db: Any, items: list[dict[str, Any]]) -> None:
     """Merge current capability snapshots into the supplier-library read model."""
     supplier_ids = [

@@ -52,6 +52,131 @@ class ClarificationNeeded:
     missing: list[str] = field(default_factory=list)
 
 
+def review_scope_clarification(
+    target_names: list[str],
+    references: list[dict],
+    user_id: str,
+    user_role: str,
+    message: str,
+) -> ClarificationNeeded | None:
+    """Keep procurement review inside the user's formal supplier scope.
+
+    External enterprise assessment remains available through an explicit
+    ``评估`` request; ``复核`` must refer to a monitored or formal supplier.
+    """
+    if "复核" not in message or not target_names:
+        return None
+
+    known_names: set[str] = set()
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+        name = str(reference.get("name") or "").strip()
+        if name:
+            known_names.add(name.casefold())
+        aliases = reference.get("aliases")
+        if isinstance(aliases, list):
+            known_names.update(str(alias).strip().casefold() for alias in aliases if str(alias).strip())
+
+    from app.domains.alert.service import get_watchlist_targets
+    from app.domains.supplier.access import (
+        can_access_formal_supplier_name,
+        formal_supplier_exists_by_name,
+    )
+
+    visible_monitor_names = {
+        str(item.get("company_name") or item.get("display_name") or "").strip().casefold()
+        for item in get_watchlist_targets(user_id=user_id, user_role=user_role)
+        if isinstance(item, dict)
+    }
+    out_of_scope: list[str] = []
+    missing: list[str] = []
+    for raw_name in target_names:
+        name = str(raw_name).strip()
+        folded = name.casefold()
+        if folded in known_names or folded in visible_monitor_names:
+            continue
+        if formal_supplier_exists_by_name(name):
+            access = can_access_formal_supplier_name(name, user_id, user_role)
+            if access is True or user_role == "admin":
+                continue
+            out_of_scope.append(name)
+            continue
+        missing.append(name)
+
+    if out_of_scope:
+        return ClarificationNeeded(
+            message=(
+                f"“{out_of_scope[0]}”是正式供应商，但不在你当前负责范围内，无法执行采购复核。"
+                "如需查看，请联系所属科室经理或管理员。"
+            ),
+            missing=["supplier_scope"],
+        )
+    if missing:
+        return ClarificationNeeded(
+            message=(
+                f"当前责任范围的监控清单和正式供应商库中均未找到“{missing[0]}”，因此无法按供应商复核流程分析。"
+                "如果你想调查外部企业，请改为“评估该企业风险”，系统会先搜索并确认主体。"
+            ),
+            missing=["formal_supplier_or_monitor_target"],
+        )
+    return None
+
+
+def external_assessment_clarification(
+    target_names: list[str],
+    references: list[dict],
+    message: str,
+) -> ClarificationNeeded | None:
+    """Resolve an external assessment to a concrete company before scoring."""
+    if "评估" not in message or not target_names:
+        return None
+    known_names = {
+        str(reference.get("name") or "").strip().casefold()
+        for reference in references
+        if isinstance(reference, dict) and str(reference.get("name") or "").strip()
+    }
+    from app.domains.supplier.access import formal_supplier_exists_by_name
+    if all(
+        str(name).strip().casefold() in known_names
+        or formal_supplier_exists_by_name(str(name).strip())
+        for name in target_names
+    ):
+        return None
+
+    from app.domains.risk.tools_search import search_company
+
+    target = str(target_names[0]).strip()
+    try:
+        result = search_company.invoke({"keyword": target})
+    except Exception:
+        result = {}
+    candidates = result.get("results") if isinstance(result, dict) else []
+    candidates = [item for item in candidates if isinstance(item, dict)]
+    if not candidates:
+        return ClarificationNeeded(
+            message=(
+                f"暂未找到与“{target}”对应的可确认企业主体，暂不进行风险评分。"
+                "请补充企业全称、统一社会信用代码或天眼查链接。"
+            ),
+            missing=["company_identity"],
+        )
+    preview: list[str] = []
+    for item in candidates[:5]:
+        name = str(item.get("name") or item.get("company_name") or "").strip()
+        if not name:
+            continue
+        credit_code = str(item.get("credit_code") or item.get("unified_code") or "").strip()
+        preview.append(f"{name}{f'（统一社会信用代码：{credit_code}）' if credit_code else ''}")
+    return ClarificationNeeded(
+        message=(
+            f"“{target}”不在当前供应商复核范围内。已找到以下外部主体候选："
+            f"{'；'.join(preview)}。请回复要评估的企业全称或统一社会信用代码，确认后系统再查询公开数据并评分。"
+        ),
+        missing=["company_identity"],
+    )
+
+
 def _has_full_company_name(msg: str) -> bool:
     """消息中是否包含完整企业名（带后缀）。"""
     return any(pat in msg for pat in _COMPANY_PATTERNS)

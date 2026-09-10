@@ -72,6 +72,13 @@ def formal_supplier_id_by_name(name: str) -> str | None:
     return str(row[0]) if row else None
 
 
+def formal_supplier_exists_by_name(name: str) -> bool:
+    """Return whether the active formal-supplier read model contains a name."""
+    from app.domains.sourcing.supplier_repo import formal_supplier_exists_by_name as _exists
+
+    return _exists(name)
+
+
 def can_access_formal_supplier_name(name: str, user_id: str, role: str) -> bool | None:
     """Return None when a name is not a formal supplier, otherwise enforce scope."""
     supplier_id = formal_supplier_id_by_name(name)

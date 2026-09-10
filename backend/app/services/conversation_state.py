@@ -82,9 +82,15 @@ def resolve_supplier_target_selection(
     """Resolve names, aliases and contextual expressions without LLM guessing."""
     references = _normalized_references(supplier_references)
     explicit_company_names = _explicit_company_names(message)
+    short_review_target = _short_review_target(message)
+    short_assessment_target = _short_assessment_target(message)
     if not references:
         if explicit_company_names:
             return TargetResolution(explicit_company_names, 1.0, False, "explicit_full_name")
+        if short_review_target:
+            return TargetResolution([short_review_target], 0.9, False, "explicit_short_review_name")
+        if short_assessment_target:
+            return TargetResolution([short_assessment_target], 0.9, False, "explicit_short_assessment_name")
         needs_clarification = _has_contextual_target_reference(message)
         return TargetResolution([], 0.0, needs_clarification, "missing_context")
 
@@ -97,6 +103,10 @@ def resolve_supplier_target_selection(
         return TargetResolution(explicit, 1.0, False, "explicit_name_or_alias")
     if explicit_company_names:
         return TargetResolution(explicit_company_names, 1.0, False, "explicit_full_name")
+    if short_review_target:
+        return TargetResolution([short_review_target], 0.9, False, "explicit_short_review_name")
+    if short_assessment_target:
+        return TargetResolution([short_assessment_target], 0.9, False, "explicit_short_assessment_name")
 
     names = [reference["name"] for reference in references]
     for token, limit in _ORDINAL_TARGETS:
@@ -115,6 +125,36 @@ def resolve_supplier_target_selection(
     if any(token in message for token in _SINGULAR_REFERENCE_TOKENS):
         return TargetResolution(names[:1], 0.9, False, "singular_reference")
     return TargetResolution([], 0.0, False, "no_target")
+
+
+def _short_review_target(message: str) -> str | None:
+    """Extract a short subject after ``复核`` for deterministic scope gating."""
+    normalized = str(message or "").strip()
+    if not normalized.startswith("复核"):
+        return None
+    candidate = normalized[2:].strip(" ：:，,。？！!?\t")
+    if not 2 <= len(candidate) <= 30:
+        return None
+    if any(token in candidate for token in ("风险", "财务", "商务", "企业", "供应商", "公司", "前两家", "前三家", "前五家", "第一家", "这些", "上述")):
+        return None
+    if not all("一" <= char <= "鿿" or char.isascii() for char in candidate):
+        return None
+    return candidate
+
+
+def _short_assessment_target(message: str) -> str | None:
+    """Extract a short subject after ``评估`` for external identity search."""
+    normalized = str(message or "").strip()
+    if not normalized.startswith("评估"):
+        return None
+    candidate = normalized[2:].strip(" ：:，,。？！!?\t")
+    if not 2 <= len(candidate) <= 30:
+        return None
+    if any(token in candidate for token in ("风险", "财务", "商务", "企业", "供应商", "公司", "前两家", "前三家", "前五家", "第一家", "这些", "上述")):
+        return None
+    if not all("一" <= char <= "鿿" or char.isascii() for char in candidate):
+        return None
+    return candidate
 
 
 def build_conversation_state(

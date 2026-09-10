@@ -303,3 +303,21 @@ def test_target_resolver_requires_clarification_for_contextual_reference_without
     assert result.target_supplier_names == []
     assert result.needs_clarification is True
     assert result.confidence == 0.0
+
+
+def test_target_resolver_keeps_short_review_subject_for_scope_check():
+    from app.services.conversation_state import resolve_supplier_target_selection
+
+    result = resolve_supplier_target_selection("复核华为", [])
+
+    assert result.target_supplier_names == ["华为"]
+    assert result.reason == "explicit_short_review_name"
+
+
+def test_target_resolver_keeps_short_assessment_subject_for_identity_search():
+    from app.services.conversation_state import resolve_supplier_target_selection
+
+    result = resolve_supplier_target_selection("评估华为", [])
+
+    assert result.target_supplier_names == ["华为"]
+    assert result.reason == "explicit_short_assessment_name"

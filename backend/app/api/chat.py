@@ -266,6 +266,15 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
     user_id = getattr(request.state, "user_id", "") or _optional_agent_user_id(request)
+    user_role = ""
+    if user_id:
+        try:
+            from app.domains.auth.service import get_user_by_id
+
+            current_user = get_user_by_id(user_id)
+            user_role = str(getattr(getattr(current_user, "role", None), "value", ""))
+        except Exception as exc:
+            logger.warning("chat_user_role_load_failed", user_id=user_id, error=str(exc))
     sid = _normalize_session_id(sid, user_id)
     from app.domains.auth.preferences import build_preference_context
     pref_ctx = build_preference_context(user_id) if user_id else ""
@@ -332,6 +341,30 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 or conversation_state.get("selected_supplier_names")
                 or []
             )
+            from app.services.clarification import (
+                external_assessment_clarification,
+                review_scope_clarification,
+            )
+            scope_clarification = await asyncio.to_thread(
+                review_scope_clarification,
+                resolved_target_names,
+                supplier_references,
+                user_id,
+                user_role,
+                req.message,
+            )
+            if scope_clarification:
+                yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing}, ensure_ascii=False)}\n\n"
+                return
+            external_clarification = await asyncio.to_thread(
+                external_assessment_clarification,
+                resolved_target_names,
+                supplier_references,
+                req.message,
+            )
+            if external_clarification:
+                yield f"event: clarification\ndata: {json.dumps({'message': external_clarification.message, 'missing': external_clarification.missing, 'missing_fields': external_clarification.missing}, ensure_ascii=False)}\n\n"
+                return
             has_structured_context = bool(
                 supplier_references or conversation_state.get("active_suppliers")
             )
