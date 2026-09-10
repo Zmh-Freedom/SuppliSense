@@ -14,8 +14,20 @@ def predict_company(
     company_name: str,
     *,
     monitor_target_id: str | None = None,
+    user_id: str | None = None,
+    user_role: str | None = None,
 ) -> dict | None:
     """Predict deterioration risk for a single company."""
+    if user_id is not None or user_role is not None:
+        from app.domains.alert.service import get_watchlist_targets
+
+        visible = get_watchlist_targets(user_id, user_role)
+        if not any(
+            str(target.get("company_name") or "") == company_name
+            for target in visible
+        ):
+            return None
+
     profile = get_baseinfo(company_name)
     if not profile:
         return None
@@ -113,6 +125,17 @@ def predict_company(
         probability = "low"
         label = "大概率稳定"
 
+    if not fin and len(snaps) < 2:
+        return {
+            "company_name": company_name,
+            "probability": "unknown",
+            "label": "当前未覆盖",
+            "warning_score": 0,
+            "max_score": 14,
+            "signals": [],
+            "has_data": False,
+        }
+
     return {
         "company_name": company_name,
         "probability": probability,
@@ -124,15 +147,18 @@ def predict_company(
     }
 
 
-def predict_all() -> list[dict]:
+def predict_all(user_id: str | None = None, user_role: str | None = None) -> list[dict]:
     """Predict for all companies in watchlist."""
     from app.domains.alert.service import get_watchlist_targets
 
-    targets = get_watchlist_targets()
+    targets = get_watchlist_targets(user_id, user_role)
     results = []
     for target in targets:
         name = target.get("company_name", "")
-        pred = predict_company(name, monitor_target_id=target.get("monitor_target_id"))
+        pred = predict_company(
+            name,
+            monitor_target_id=target.get("monitor_target_id"),
+        )
         if pred:
             results.append({
                 **pred,

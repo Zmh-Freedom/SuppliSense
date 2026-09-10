@@ -521,9 +521,15 @@ def _trend_direction(trend: list[dict]) -> str:
 
 
 @cached("sentiment_dashboard", ttl=300)  # 5 minutes
-def get_sentiment_dashboard() -> dict:
+def get_sentiment_dashboard(user_id: str | None = None, user_role: str | None = None) -> dict:
     db = get_db()
-    companies = [doc["company_name"] for doc in db["watchlist"].find()]
+    from app.domains.alert.service import get_watchlist_targets
+
+    companies = [
+        target["company_name"]
+        for target in get_watchlist_targets(user_id, user_role)
+        if target.get("company_name")
+    ]
 
     # 使用聚合查询一次性获取所有企业的最新舆情（替代 N+1 循环查询）
     snap_map: dict = {}

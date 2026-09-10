@@ -140,6 +140,10 @@ async def trigger_analysis_all():
         500: {"description": "服务器内部错误"},
     },
 )
-async def sentiment_dashboard():
+async def sentiment_dashboard(current_user=Depends(get_current_user)):
     """舆情总览看板。"""
-    return await asyncio.to_thread(get_sentiment_dashboard)
+    return await asyncio.to_thread(
+        get_sentiment_dashboard,
+        current_user.id,
+        current_user.role.value,
+    )

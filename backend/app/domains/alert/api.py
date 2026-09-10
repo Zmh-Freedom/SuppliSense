@@ -794,8 +794,8 @@ async def update_rules(req: RulesRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def predict_all_companies():
-    return await asyncio.to_thread(predict_all)
+async def predict_all_companies(current_user: UserInDB = Depends(get_current_user)):
+    return await asyncio.to_thread(predict_all, current_user.id, current_user.role.value)
 
 
 @router.get(
@@ -806,8 +806,13 @@ async def predict_all_companies():
         500: {"description": "服务器内部错误"},
     },
 )
-async def predict_one(company_name: str):
-    result = await asyncio.to_thread(predict_company, company_name)
+async def predict_one(company_name: str, current_user: UserInDB = Depends(get_current_user)):
+    result = await asyncio.to_thread(
+        predict_company,
+        company_name,
+        user_id=current_user.id,
+        user_role=current_user.role.value,
+    )
     if result is None:
         return {"company_name": company_name, "probability": "unknown", "label": "未找到"}
     return result

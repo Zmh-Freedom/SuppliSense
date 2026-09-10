@@ -84,13 +84,24 @@ async def risk_trend(
 )
 async def alert_trend(
     days: int = Query(30, description="查询天数（默认 30 天）"),
+    current_user=Depends(get_current_user),
 ):
     """Get alert frequency trend (count per day) over N days."""
     db = get_db()
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
+    from app.domains.alert.service import get_watchlist_targets
+
+    visible_names = [
+        target["company_name"]
+        for target in get_watchlist_targets(current_user.id, current_user.role.value)
+        if target.get("company_name")
+    ]
+    if not visible_names:
+        return {"days": days, "data": []}
+
     pipeline = [
-        {"$match": {"created_at": {"$gte": since}}},
+        {"$match": {"created_at": {"$gte": since}, "company_name": {"$in": visible_names}}},
         {
             "$group": {
                 "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
