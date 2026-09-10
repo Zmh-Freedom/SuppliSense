@@ -2591,3 +2591,15 @@
 - 修复方案：抽离 `SupplierReviewConclusion.tsx`，通过 props 注入事实读取和声明格式化函数，保持现有展示、API 与数据契约不变。
 - 验证结果：已抽离 `SupplierReviewConclusion.tsx`，`ChatView.tsx` 降至约 1,185 行；前端 68 项测试、Lint、TypeScript 与生产构建全部通过。
 - 关联提交：待提交。
+
+## ISS-20260910-081 StructuredAgentResult 与 ChatView 共享结构化结果实现
+
+- 发现日期：2026-09-10
+- 状态：已修复
+- 优先级：P2
+- 现象：结构化结果相关格式化函数、证据表和数据说明原本仍位于 `ChatView.tsx`。
+- 影响：结果展示逻辑与会话控制耦合，主组件难以单独维护。
+- 根因：此前仅拆分了结果内部的部分子组件，未迁移完整结果边界。
+- 修复方案：将结构化结果相关实现整体迁移到 `StructuredAgentResult.tsx`，由 `ChatView.tsx` 仅导入并组合。
+- 验证结果：`ChatView.tsx` 降至约 742 行，`StructuredAgentResult.tsx` 约 446 行；前端 68 项测试、Lint、TypeScript 与生产构建全部通过。
+- 关联提交：待提交。
