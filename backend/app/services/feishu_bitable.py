@@ -737,6 +737,11 @@ def build_supplier_contact_client() -> FeishuBitableClient:
     return _build_client(settings.FEISHU_SUPPLIER_CONTACT_TABLE_ID)
 
 
+def build_supplier_assignment_client() -> FeishuBitableClient:
+    """Build a read client configured for supplier responsibility assignments."""
+    return _build_client(settings.FEISHU_SUPPLIER_ASSIGNMENT_TABLE_ID)
+
+
 def build_supplier_transaction_client() -> FeishuBitableClient:
     """Build a read client configured for the supplier transaction snapshot table."""
     return _build_client(settings.FEISHU_BITABLE_TRANSACTION_TABLE_ID)
@@ -763,10 +768,10 @@ def sync_supplier_master(client: FeishuBitableClient | None = None) -> dict[str,
             continue
         normalized["sync_batch_id"] = batch_id
         source_record_id = normalized["source_record_id"]
-        collection.update_one(
-            {"source": "feishu_bitable", "source_record_id": source_record_id},
-            {"$set": normalized},
-            upsert=True,
+        _upsert_snapshot(
+            collection,
+            normalized,
+            query={"source": "feishu_bitable", "source_record_id": source_record_id},
         )
         synced += 1
 

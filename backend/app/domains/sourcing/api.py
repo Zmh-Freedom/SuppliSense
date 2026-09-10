@@ -157,6 +157,22 @@ async def sync_supplier_master():
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@router.post(
+    "/supplier-responsibilities/sync",
+    summary="同步飞书供应商责任分配",
+    description="只读同步采购员、科室和采购经理归属；仅接受当前飞书主数据中仍有效的供应商。",
+    dependencies=[Depends(require_admin_or_analyst)],
+)
+async def sync_supplier_responsibilities():
+    from app.services.feishu_bitable import FeishuBitableError
+    from app.services.feishu_supplier_responsibility import sync_supplier_responsibilities as _sync
+
+    try:
+        return await asyncio.to_thread(_sync)
+    except FeishuBitableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.put(
     "/suppliers/{supplier_id}",
     summary="编辑供应商",

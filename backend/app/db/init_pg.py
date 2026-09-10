@@ -45,6 +45,30 @@ DDL_STATEMENTS = [
         CHECK (assignment_role IN ('primary', 'backup'))
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS supplier_responsibility_snapshots (
+        source_record_id VARCHAR(255) PRIMARY KEY,
+        supplier_code VARCHAR(255),
+        supplier_id VARCHAR(255),
+        supplier_name VARCHAR(255),
+        source_active BOOLEAN NOT NULL DEFAULT FALSE,
+        department_code VARCHAR(128),
+        department_name VARCHAR(255),
+        purchaser_open_id VARCHAR(255),
+        purchaser_name VARCHAR(255),
+        purchaser_email VARCHAR(255),
+        manager_open_id VARCHAR(255),
+        manager_name VARCHAR(255),
+        manager_email VARCHAR(255),
+        effective_date VARCHAR(64),
+        validation_errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+        sync_status VARCHAR(32) NOT NULL DEFAULT 'current',
+        sync_batch_id UUID NOT NULL,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CHECK (sync_status IN ('current', 'invalid', 'stale'))
+    )
+    """,
 
     # Audit logs
     """
@@ -660,6 +684,9 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_audit_logs_user_action ON audit_logs (user_id, created_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_supplier_assignments_user_active ON supplier_assignments (user_id, is_active, supplier_id)",
+    "CREATE INDEX IF NOT EXISTS idx_supplier_responsibility_current_purchaser ON supplier_responsibility_snapshots (purchaser_open_id, supplier_id) WHERE source_active = TRUE AND sync_status = 'current'",
+    "CREATE INDEX IF NOT EXISTS idx_supplier_responsibility_current_manager ON supplier_responsibility_snapshots (manager_open_id, department_code) WHERE source_active = TRUE AND sync_status = 'current'",
+    "CREATE INDEX IF NOT EXISTS idx_supplier_responsibility_supplier_code ON supplier_responsibility_snapshots (supplier_code, sync_status)",
     "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name ON companies (normalized_name)",
     "CREATE INDEX IF NOT EXISTS idx_companies_normalized_name_pattern ON companies (normalized_name text_pattern_ops)",
     "CREATE INDEX IF NOT EXISTS idx_companies_merged_into_id ON companies (merged_into_id)",

@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     FEISHU_SUPPLIER_CONTACT_TABLE_ID: str = os.getenv(
         "FEISHU_SUPPLIER_CONTACT_TABLE_ID", ""
     )
+    # 供应商责任分配：采购员、科室及采购经理。该表只读同步到 PostgreSQL，
+    # 后续权限判断和风险通知均以本地快照为准。
+    FEISHU_SUPPLIER_ASSIGNMENT_TABLE_ID: str = os.getenv(
+        "FEISHU_SUPPLIER_ASSIGNMENT_TABLE_ID", ""
+    )
     FEISHU_BITABLE_TRANSACTION_TABLE_ID: str = os.getenv(
         "FEISHU_BITABLE_TRANSACTION_TABLE_ID", ""
     )

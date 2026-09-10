@@ -156,8 +156,11 @@ def _scheduled_outbox() -> None:
 def _scheduled_feishu_supplier_sync() -> None:
     try:
         from app.services.feishu_bitable import sync_supplier_tables
+        from app.services.feishu_supplier_responsibility import sync_supplier_responsibilities
 
-        sync_supplier_tables()
+        result = sync_supplier_tables()
+        if result.get("tables", {}).get("supplier_master", {}).get("status") == "ok":
+            sync_supplier_responsibilities()
     except Exception as exc:
         logger.error("feishu_supplier_sync_failed", error=str(exc))
 

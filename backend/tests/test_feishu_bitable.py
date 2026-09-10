@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.services import feishu_bitable
 from app.services.feishu_bitable import (
     FeishuBitableClient,
+    _upsert_snapshot,
     build_supplier_capability_client,
     build_supplier_contact_client,
     build_supplier_master_client,
@@ -51,6 +52,20 @@ def test_normalize_supplier_record_maps_formal_supplier_fields() -> None:
     assert result["regions"] == ["广东", "华东"]
     assert result["status"] == "active"
     assert result["contact_phone"] == "13800138000"
+
+
+def test_upsert_snapshot_does_not_put_immutable_id_in_set() -> None:
+    collection = FakeCollection()
+
+    _upsert_snapshot(
+        collection,
+        {"_id": "feishu:rec-1", "supplier_code": "S-1"},
+        query={"source_record_id": "rec-1"},
+    )
+
+    update = collection.updated[0]["update"]
+    assert update["$set"] == {"supplier_code": "S-1"}
+    assert update["$setOnInsert"] == {"_id": "feishu:rec-1"}
 
 
 def test_bitable_client_reads_all_pages_and_reuses_token(monkeypatch) -> None:

@@ -176,6 +176,7 @@ CSV 建表模板位于 `outputs/feishu_supplier_template/`，字段发生变更�
 FEISHU_SUPPLIER_MASTER_TABLE_ID       # 供应商主数据
 FEISHU_SUPPLIER_CAPABILITY_TABLE_ID   # 供应商供货能力
 FEISHU_SUPPLIER_CONTACT_TABLE_ID      # 供应商联系人
+FEISHU_SUPPLIER_ASSIGNMENT_TABLE_ID   # 供应商责任分配（采购员、科室、采购经理）
 ```
 
 三张表均必须分别配置对应的 table ID；不再支持旧的单表配置变量。三表同步启用前必须完成三项配置。
