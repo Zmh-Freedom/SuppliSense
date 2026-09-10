@@ -41,8 +41,6 @@ def list_formal_suppliers(limit: int = 20) -> dict:
         result = _list(limit=limit)
 
     from app.tools.evidence import attach_tool_evidence
-
-    result = _list(limit=limit)
     if result.get("total", 0) == 0:
         result["status"] = "not_found"
         return attach_tool_evidence(

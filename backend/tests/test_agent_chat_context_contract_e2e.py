@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 from app.api import chat as chat_api
@@ -96,7 +98,7 @@ def test_authenticated_chat_stream_preserves_current_context_for_supervisor(
 
     response = authenticated_chat_client.post(
         "/api/v1/chat/stream",
-        json={"message": message, "session_id": "chat-context-e2e", "mode": "agent-supervisor"},
+        json={"message": message, "session_id": str(uuid4()), "mode": "agent-supervisor"},
     )
 
     assert response.status_code == 200

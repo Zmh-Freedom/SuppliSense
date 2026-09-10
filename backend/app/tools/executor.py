@@ -324,14 +324,20 @@ def _unauthorized_formal_supplier_name(arguments: dict[str, Any], context: ToolC
     if not names:
         return None
     from app.domains.auth.service import get_user_by_id
-    from app.domains.supplier.access import can_access_formal_supplier_name
+    from app.domains.supplier.access import can_access_supplier, formal_supplier_id_by_name
 
+    formal_targets = [
+        (name, supplier_id)
+        for name in names
+        if (supplier_id := formal_supplier_id_by_name(name))
+    ]
+    if not formal_targets:
+        return None
     user = get_user_by_id(context.user_id)
     if user is None:
-        return names[0]
-    for name in names:
-        allowed = can_access_formal_supplier_name(name, context.user_id, user.role.value)
-        if allowed is False:
+        return formal_targets[0][0]
+    for name, supplier_id in formal_targets:
+        if not can_access_supplier(supplier_id, context.user_id, user.role.value):
             return name
     return None
 

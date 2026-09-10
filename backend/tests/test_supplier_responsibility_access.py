@@ -47,8 +47,12 @@ def test_tool_scope_rejects_unassigned_formal_supplier(monkeypatch):
 
     monkeypatch.setattr("app.domains.auth.service.get_user_by_id", lambda _user_id: User())
     monkeypatch.setattr(
-        "app.domains.supplier.access.can_access_formal_supplier_name",
-        lambda _name, _user_id, _role: False,
+        "app.domains.supplier.access.formal_supplier_id_by_name",
+        lambda _name: "supplier-unassigned",
+    )
+    monkeypatch.setattr(
+        "app.domains.supplier.access.can_access_supplier",
+        lambda _supplier_id, _user_id, _role: False,
     )
 
     assert _unauthorized_formal_supplier_name(

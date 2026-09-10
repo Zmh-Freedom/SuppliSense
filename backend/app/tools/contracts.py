@@ -259,6 +259,7 @@ class ReportOutput(StrictToolOutput):
 class FormalSupplierOutput(StrictToolOutput):
     total: int = Field(default=0, ge=0)
     items: list[dict[str, Any]] = Field(default_factory=list)
+    scope: str | None = None
 
 
 class SourcingRequestOutput(StrictToolOutput):

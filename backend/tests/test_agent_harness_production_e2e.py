@@ -50,7 +50,7 @@ def production_harness_context():
         cursor.execute(
             """
             INSERT INTO users (id, username, email, password_hash, role)
-            VALUES (%s, %s, %s, %s, 'analyst')
+            VALUES (%s, %s, %s, %s, 'admin')
             """,
             (user_id, marker, f"{marker}@example.test", "task19-test-hash"),
         )

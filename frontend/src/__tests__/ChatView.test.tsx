@@ -235,7 +235,7 @@ describe('ChatView session lifecycle', () => {
 
     await user.click(await screen.findByRole('button', { name: '执行详情' }))
     expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
-    expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
+    expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
   })
 
   it('keeps a Harness needs_review answer visible as a review state', async () => {

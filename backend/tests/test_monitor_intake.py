@@ -36,7 +36,10 @@ def test_monitor_intake_confirmation_creates_target_and_baseline(monkeypatch):
     preview = object()
     monkeypatch.setattr(intake_service, "get_db", lambda: db)
     monkeypatch.setattr("app.domains.alert.service.add_to_watchlist", lambda *args, **kwargs: target)
-    monkeypatch.setattr("app.domains.alert.service.get_watchlist_target_summaries", lambda: [target])
+    monkeypatch.setattr(
+        "app.domains.alert.service.get_watchlist_target_summaries",
+        lambda *_args, **_kwargs: [target],
+    )
     monkeypatch.setattr("app.domains.alert.service.save_snapshot", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.domains.risk.service.calculate_company_risk_preview", lambda name: preview)
 

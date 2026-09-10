@@ -121,6 +121,50 @@ function agentLabel(agent: string): string {
   return labels[agent] || agent;
 }
 
+function toolLabel(tool: string): string {
+  const labels: Record<string, string> = {
+    assess_risk: '综合风险核验',
+    assess_business_risk: '交易与结算核验',
+    assess_operational_risk: '运营风险核验',
+    query_financials: '财务数据核验',
+    sentiment_analysis: '舆情信息核验',
+    check_sanctions: '合规信息核验',
+    list_formal_suppliers: '正式供应商目录查询',
+    search_suppliers: '历史供应商查询',
+    discover_supplier_candidates: '外部候选寻源',
+    investigate_supplier_monitoring: '监控对象调查',
+    get_watchlist: '监控清单查询',
+    analyze_watchlist_trend: '风险变化分析',
+    get_monitor_review_queue: '待复核事项查询',
+    add_to_watchlist: '加入风险监控',
+  };
+  return labels[tool] || '采购数据核验';
+}
+
+function loopExitLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    all_tasks_processed: '已完成本轮核验',
+    evidence_sufficient: '所需证据已覆盖',
+    no_remediation_spec: '暂无可用的补充数据来源',
+    iteration_budget_exhausted: '已完成允许范围内的补充查询',
+    tool_budget_exhausted: '本轮查询数量已达上限',
+    deadline_exceeded: '本轮查询超时，建议稍后重试',
+    llm_budget_exhausted: '本轮分析次数已达上限',
+  };
+  return labels[reason] || '本轮核验已结束';
+}
+
+function sourceLabel(source: string): string {
+  const labels: Record<string, string> = {
+    local_snapshot: '内部供应商数据',
+    feishu_bitable: '飞书供应商数据',
+    feishu_formal_supplier_snapshot: '飞书正式供应商主数据',
+    formal_supplier_directory: '正式供应商目录',
+    tianyancha: '天眼查企业数据',
+  };
+  return labels[source] || '已核验数据来源';
+}
+
 function lifecycleLabel(status: string): string {
   const labels: Record<string, string> = {
     running: '执行中',
@@ -203,9 +247,9 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
             </div>
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{state.workflowStatus.message}</p>
             {state.workflowStatus.targetSuppliers.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">目标：{state.workflowStatus.targetSuppliers.join('、')}</p>}
-            {(state.workflowStatus.sources.length > 0 || state.workflowStatus.toolCallCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{state.workflowStatus.sources.length > 0 ? state.workflowStatus.sources.join('、') : '工具执行结果'} · 工具 {state.workflowStatus.completedToolCount}/{state.workflowStatus.toolCallCount} 已返回</p>}
+            {(state.workflowStatus.sources.length > 0 || state.workflowStatus.toolCallCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{state.workflowStatus.sources.length > 0 ? state.workflowStatus.sources.map(sourceLabel).join('、') : '已核验数据'} · 已完成 {state.workflowStatus.completedToolCount}/{state.workflowStatus.toolCallCount} 项</p>}
             {state.workflowStatus.evidenceStatus && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">证据：{state.workflowStatus.evidenceStatus}</p>}
-            {state.workflowStatus.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">Loop 退出：{state.workflowStatus.loopExitReason}</p>}
+            {state.workflowStatus.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">本轮结果：{loopExitLabel(state.workflowStatus.loopExitReason)}</p>}
           </div>}
           <ol className="grid gap-2 sm:grid-cols-5" aria-label="Agent 阶段时间线">
             {PHASES.map((phase, index) => {
@@ -233,7 +277,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
             <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
               <summary className="cursor-pointer text-xs font-medium text-[var(--color-text)]">任务计划（{state.plan.length} 项）</summary>
               <div className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-gray-500">
-                {state.plan.map((step, index) => <p key={`${step.tool}-${index}`} className="truncate">{index + 1}. {step.tool}{step.parallel ? ' · 并行' : ''}</p>)}
+                {state.plan.map((step, index) => <p key={`${step.tool}-${index}`} className="truncate">{index + 1}. {toolLabel(step.tool)}{step.parallel ? ' · 并行' : ''}</p>)}
               </div>
             </details>
           )}
@@ -262,7 +306,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
               </button>
               {detailsOpen && <div className="max-h-64 space-y-2 overflow-auto border-t border-[var(--color-border)] p-3">
                 {state.toolCalls.map((call, index) => <details key={`${call.tool}-${index}`} className="min-w-0 rounded-lg bg-[var(--color-code-bg)] p-2">
-                  <summary className="cursor-pointer truncate text-xs text-[var(--color-text)]">{call.tool}{call.result !== undefined ? ' · 已返回结果' : ' · 执行中'}</summary>
+                  <summary className="cursor-pointer truncate text-xs text-[var(--color-text)]">{toolLabel(call.tool)}{call.result !== undefined ? ' · 已返回结果' : ' · 执行中'}</summary>
                   <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-gray-500">{compactJson({ args: call.args, result: call.result })}</pre>
                 </details>)}
               </div>}

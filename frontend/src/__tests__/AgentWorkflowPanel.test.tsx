@@ -54,7 +54,8 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByLabelText('风险 Agent：进行中')).toBeInTheDocument()
     expect(screen.getByLabelText('舆情 Agent：异常')).toBeInTheDocument()
     expect(screen.getByText('当前状态：执行中')).toBeInTheDocument()
-    expect(screen.getByText('Loop 退出：evidence_sufficient')).toBeInTheDocument()
+    expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
+    expect(screen.getByText('1. 综合风险核验')).toBeInTheDocument()
   })
 
   it('marks every phase complete when the final answer needs review', async () => {
