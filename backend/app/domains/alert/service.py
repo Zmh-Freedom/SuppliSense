@@ -67,14 +67,14 @@ def _can_access_target(target: dict, user_id: str | None, user_role: str | None)
         return True
     if not user_id:
         return False
-    if str(target.get("owner_user_id") or "") == str(user_id):
-        return True
     supplier_id = str(target.get("supplier_id") or "")
-    if not supplier_id:
-        return False
-    from app.domains.supplier.access import can_access_supplier
+    if supplier_id:
+        from app.domains.supplier.access import can_access_supplier
 
-    return can_access_supplier(supplier_id, str(user_id), str(user_role or ""))
+        return can_access_supplier(supplier_id, str(user_id), str(user_role or ""))
+    # External candidates and unresolved companies have no formal purchaser
+    # assignment. They remain private to the user who investigated them.
+    return str(target.get("owner_user_id") or "") == str(user_id)
 
 
 def get_watchlist_targets(user_id: str | None = None, user_role: str | None = None) -> list[dict]:

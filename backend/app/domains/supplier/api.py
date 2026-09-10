@@ -53,7 +53,7 @@ async def list_suppliers_endpoint(
         page_size=page_size,
         hide_bare=False,  # profile endpoint shows all suppliers
         supplier_ids=None if is_admin(current_user.role.value) else await asyncio.to_thread(
-            list_assigned_supplier_ids, current_user.id
+            list_assigned_supplier_ids, current_user.id, current_user.role.value
         ),
     )
 

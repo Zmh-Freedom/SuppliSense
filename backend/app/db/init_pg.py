@@ -32,6 +32,8 @@ DDL_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS feishu_open_id VARCHAR(255)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_feishu_open_id ON users (feishu_open_id) WHERE feishu_open_id IS NOT NULL",
     """
     CREATE TABLE IF NOT EXISTS supplier_assignments (
         supplier_id VARCHAR(255) NOT NULL,

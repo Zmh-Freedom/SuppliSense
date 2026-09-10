@@ -202,10 +202,19 @@ async def list_suppliers(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     hide_bare: bool = Query(True, description="是否隐藏自动创建且无品类/地域的空壳记录"),
+    current_user=Depends(get_current_user),
 ):
     from app.domains.sourcing.supplier_repo import list_suppliers as _list
+    from app.domains.supplier.access import is_admin, list_assigned_supplier_ids
 
-    return await asyncio.to_thread(_list, keyword, status, page, page_size, hide_bare)
+    supplier_ids = None
+    if not is_admin(current_user.role.value):
+        supplier_ids = await asyncio.to_thread(
+            list_assigned_supplier_ids, current_user.id, current_user.role.value
+        )
+    return await asyncio.to_thread(
+        _list, keyword, status, page, page_size, hide_bare, supplier_ids
+    )
 
 
 @router.post(

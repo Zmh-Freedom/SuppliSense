@@ -200,6 +200,35 @@ def _persist(records: list[dict[str, Any]], batch_id: str, synced_at: datetime) 
         )
 
 
+def _link_application_users() -> int:
+    """Link application accounts to Feishu people by the verified email field."""
+    with get_cursor() as (_, cursor):
+        cursor.execute(
+            """
+            UPDATE users AS account
+            SET feishu_open_id = identity.open_id, updated_at = NOW()
+            FROM (
+                SELECT DISTINCT ON (LOWER(email)) LOWER(email) AS email, open_id
+                FROM (
+                    SELECT purchaser_email AS email, purchaser_open_id AS open_id
+                    FROM supplier_responsibility_snapshots
+                    WHERE source_active = TRUE AND sync_status = 'current'
+                    UNION ALL
+                    SELECT manager_email AS email, manager_open_id AS open_id
+                    FROM supplier_responsibility_snapshots
+                    WHERE source_active = TRUE AND sync_status = 'current'
+                ) people
+                WHERE email IS NOT NULL AND BTRIM(email) <> ''
+                  AND open_id IS NOT NULL AND BTRIM(open_id) <> ''
+                ORDER BY LOWER(email), open_id
+            ) AS identity
+            WHERE LOWER(account.email) = identity.email
+              AND account.feishu_open_id IS DISTINCT FROM identity.open_id
+            """
+        )
+        return cursor.rowcount
+
+
 def sync_supplier_responsibilities(
     client: FeishuBitableClient | None = None,
 ) -> dict[str, Any]:
@@ -230,6 +259,7 @@ def sync_supplier_responsibilities(
     ]
     _mark_duplicate_active_codes(records)
     _persist(records, batch_id, synced_at)
+    linked_users = _link_application_users()
     invalid = [record for record in records if record["sync_status"] == "invalid"]
     current = [record for record in records if record["sync_status"] == "current"]
     logger.info(
@@ -244,6 +274,7 @@ def sync_supplier_responsibilities(
         "invalid": len(invalid),
         "batch_id": batch_id,
         "synced_at": synced_at.isoformat(),
+        "linked_users": linked_users,
         "errors": [
             {"supplier_code": record["supplier_code"], "reasons": record["validation_errors"]}
             for record in invalid
