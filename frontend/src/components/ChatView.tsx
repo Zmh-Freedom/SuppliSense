@@ -26,12 +26,12 @@ const markdownComponents = {
 };
 
 const CAPABILITIES = [
-  { label: '风险评估', desc: '全面分析企业风险状况', prompt: '对 {公司名} 进行全面的风险评估' },
-  { label: '舆情分析', desc: '监测企业最新舆情动态', prompt: '分析 {公司名} 的最新舆情和新闻动态' },
-  { label: '合规筛查', desc: '制裁名单与黑名单筛查', prompt: '对 {公司名} 进行制裁名单和合规筛查' },
-  { label: '趋势预测', desc: '预测未来风险变化趋势', prompt: '预测 {公司名} 未来6-12个月的风险趋势' },
-  { label: '关系图谱', desc: '供应链关系与传染风险', prompt: '分析 {公司名} 的供应链关系和传染风险' },
-  { label: '报告生成', desc: '一键生成风险评估报告', prompt: '生成 {公司名} 的风险评估报告' },
+  { label: '风险评估', desc: '全面分析企业风险状况', prompt: '对「公司名」进行全面的风险评估' },
+  { label: '舆情分析', desc: '监测企业最新舆情动态', prompt: '分析「公司名」的最新舆情和新闻动态' },
+  { label: '合规筛查', desc: '制裁名单与黑名单筛查', prompt: '对「公司名」进行制裁名单和合规筛查' },
+  { label: '趋势预测', desc: '预测未来风险变化趋势', prompt: '预测「公司名」未来6-12个月的风险趋势' },
+  { label: '关系图谱', desc: '供应链关系与传染风险', prompt: '分析「公司名」的供应链关系和传染风险' },
+  { label: '报告生成', desc: '一键生成风险评估报告', prompt: '生成「公司名」的风险评估报告' },
 ];
 
 const RECOMMENDED = [
@@ -528,7 +528,7 @@ function SupplierReviewConclusion({ answer, evidence, limitations }: { answer: A
   return <ReviewChecklist><section className="mt-4 border-t border-[var(--color-border)] px-4 pb-4 pt-4 sm:px-5" aria-label="采购复核结论">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">采购复核结论</p>
+        <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">③</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">采购复核结论</p></div>
         <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">发现问题、查看依据、明确下一步</h3>
       </div>
       <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">需采购人员核实</span>
@@ -562,7 +562,7 @@ function ActionSummary({ answer, limitations }: { answer: AgentAnswer; limitatio
   return <ConclusionSummary><section className="border-b border-[var(--color-border)] bg-[var(--color-code-bg)]/40 px-4 py-4 sm:px-5" aria-label="行动结论">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">行动结论</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">① 结论摘要</p>
         <h3 className="mt-1 text-lg font-semibold text-[var(--color-text)]">{conclusion}</h3>
         <p className="mt-1 max-w-2xl text-sm leading-6 text-[var(--color-text-secondary)]">{explanation}</p>
       </div>
@@ -635,7 +635,7 @@ function AgentTrendCharts({ evidence, limitations }: { evidence: AgentEvidenceRe
 
   return <TrendSection><section className="border-t border-[var(--color-border)] px-4 py-4 sm:px-5" aria-label="趋势与证据">
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">趋势与证据</p>
+      <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">④</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">趋势与证据</p></div>
       <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">用变化判断复核优先级</h3>
     </div>
     {hasTransactionTrend && <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50/45 p-3.5">
@@ -672,7 +672,7 @@ function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evi
     {answer && <div className="bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-code-bg)]/60 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">业务结论</p>
+          <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">②</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">业务结论</p></div>
           <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">本轮分析结果</h3>
         </div>
         {status && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}>
@@ -715,7 +715,7 @@ function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evi
 
     <details className="group border-t border-[var(--color-border)]">
       <summary className="flex min-h-[48px] cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
-        <span className="flex items-center gap-2"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">▤</span>数据说明</span>
+        <span className="flex items-center gap-2"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">▤</span><span>数据说明</span><span className="text-[var(--color-text-secondary)]">（来源与边界）</span></span>
         <span className="flex items-center gap-2 text-xs font-normal text-[var(--color-text-secondary)]"><span>{evidence?.length || 0} 条数据记录</span><span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span></span>
       </summary>
       <div className="space-y-3 border-t border-[var(--color-border)] bg-[var(--color-code-bg)]/45 px-4 py-4 text-xs">
@@ -1217,7 +1217,8 @@ export default function ChatView() {
   }, [streamState, msgs, persist]);
 
   const handleCapabilityClick = (prompt: string) => {
-    setInput(prompt);
+    const recentSupplier = [...msgs].reverse().flatMap(message => message.references || []).find(reference => reference.name)?.name;
+    setInput(prompt.replace('「公司名」', recentSupplier || '青岛三祥科技股份有限公司'));
   };
 
   const handleRecommendedClick = (question: string) => {
