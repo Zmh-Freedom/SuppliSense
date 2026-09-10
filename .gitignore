@@ -47,6 +47,13 @@ Thumbs.db
 # Logs
 logs/
 *.log
+nohup.out
+
+# Playwright browser snapshots and console captures
+.playwright-cli/
+
+# Local audit and generated preview artifacts
+output/
 
 # Environment
 .env
