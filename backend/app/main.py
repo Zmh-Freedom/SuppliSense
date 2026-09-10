@@ -184,7 +184,7 @@ app = FastAPI(
         {"name": "financial", "description": "财务指标分析（15项指标）"},
         {"name": "sentiment", "description": "舆情情感分析"},
         {"name": "alert", "description": "风险预警与监控"},
-        {"name": "chat", "description": "AI 智能对话（ReAct/Plan-Execute/Multi-Agent）"},
+        {"name": "chat", "description": "AI 智能对话（Harness 只读分析与人工审批写操作）"},
         {"name": "p2", "description": "P2 高级功能 (ESG/风险传染/供应链依赖)"},
         {"name": "analysis", "description": "宏观风险与场景模拟分析"},
         {"name": "report", "description": "报告导出 (Excel/HTML)"},

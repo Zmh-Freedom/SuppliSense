@@ -2299,3 +2299,15 @@
 - 修复方案：初始流记录运行 ID 与事件游标；流在终态前关闭时自动回放未消费事件，并复用同一套事件渲染逻辑恢复页面。
 - 验证结果：前端 TypeScript 类型检查通过；`ChatView` 定向测试 13 项通过，新增用例覆盖初始 SSE 在取得 `run_id` 后断开、自动回放 `answer_chunk` 与 `done` 并呈现最终答案。
 - 关联提交：本次提交。
+
+## ISS-20260910-070 未引用的旧 Supervisor 图残留
+
+- 发现日期：2026-09-10
+- 状态：已修复
+- 优先级：P2
+- 现象：`backend/app/graphs/supervisor_graph.py` 保留了一套早期多 Agent Supervisor 实现，但当前聊天写操作使用 `graphs/agent_supervisor/graph.py`，只读聊天使用 Harness；仓库应用代码与测试均未导入该旧文件。
+- 影响：同一概念存在两套实现，后续维护时容易误改无效代码，并让 API 文档继续暗示已废弃的聊天执行模式。
+- 根因：Harness 架构迁移后，仅清理了活动聊天选择逻辑，未删除没有定向回归价值的旧图文件和文档措辞。
+- 修复方案：删除未引用旧图；保留被历史定向测试覆盖的 ReAct、Plan-Execute、Parallel 等模块，并将 OpenAPI 聊天说明改为当前 Harness 与审批边界。
+- 验证结果：确认应用代码与测试均不引用旧图后删除；`test_agent_harness_p0.py` 与 `test_agent_supervisor_graph.py` 共 22 项通过，前端生产构建通过。
+- 关联提交：本次提交。
