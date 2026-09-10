@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useAlertHistory } from '../hooks';
-import { api, clearStoredUser } from '../api';
+import { api, clearStoredUser, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
 import { TAB_ROUTES } from '../routes';
 import ThemeSwitcher from './ThemeSwitcher';
@@ -175,6 +175,8 @@ export default function Sidebar({ onClose }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const user = getStoredUser();
+  const [accountOpen, setAccountOpen] = useState(false);
   const activePath = '/' + (location.pathname.split('/')[1] || '');
 
   const logout = async () => {
@@ -202,7 +204,19 @@ export default function Sidebar({ onClose }: Props) {
           <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">SuppliSense</h1>
           <p className="text-[11px] text-gray-400 mt-0.5">AI 寻源与供应商风险</p>
         </div>
-        <AlertBell />
+        <div className="flex items-center gap-1">
+          <AlertBell />
+          <div className="relative">
+            <button type="button" onClick={() => setAccountOpen(value => !value)} aria-label="账号菜单"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-bg)] text-xs font-semibold text-white shadow-sm hover:opacity-90">
+              {(user?.username || '用').slice(0, 1).toUpperCase()}
+            </button>
+            {accountOpen && <div className="absolute right-0 top-11 z-50 w-52 rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-xl">
+              <div className="border-b border-[var(--color-border)] px-2 py-2"><p className="truncate text-sm font-medium text-[var(--color-text)]">{user?.username || '当前用户'}</p><p className="mt-0.5 text-xs text-gray-400">{user?.role === 'admin' ? '管理员' : '采购人员'}</p></div>
+              <button type="button" onClick={logout} className="mt-1 flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-gray-600 hover:bg-red-50 hover:text-red-700">退出登录</button>
+            </div>}
+          </div>
+        </div>
       </div>
 
       {/* divider */}
@@ -237,11 +251,6 @@ export default function Sidebar({ onClose }: Props) {
         <div className="px-3 py-1.5">
           <ThemeSwitcher />
         </div>
-        <button type="button" onClick={logout}
-          className="mt-2 flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-gray-600 transition-colors hover:bg-red-50 hover:text-red-700">
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M21 19V5a2 2 0 0 0-2-2h-6"/></svg>
-          退出登录
-        </button>
       </div>
     </aside>
   );
