@@ -974,6 +974,19 @@ def test_process_outbox_batch_retries_unknown_event_type_without_publishing(monk
         {"test": "unknown-consumer"},
     )
     try:
+        # Make the fixture explicitly claimable even when a previous interrupted
+        # run left a row with a future retry timestamp or stale lease.
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                UPDATE outbox_events
+                SET next_attempt_at = NOW(), locked_by = NULL, locked_until = NULL,
+                    published_at = NULL, dead_lettered_at = NULL, attempt_count = 0,
+                    last_error = NULL
+                WHERE event_id = %s
+                """,
+                (event_id,),
+            )
         monkeypatch.setattr(outbox_service, "_CONSUMERS", {})
         monkeypatch.setattr(outbox_service, "retry_delay_seconds", lambda attempt: 0)
 
@@ -995,6 +1008,11 @@ def test_process_outbox_batch_retries_unknown_event_type_without_publishing(monk
         assert attempt_count == 1
         assert last_error == "consumer_not_registered"
 
+        with get_cursor() as (_, cur):
+            cur.execute(
+                "UPDATE outbox_events SET next_attempt_at = NOW() WHERE event_id = %s",
+                (event_id,),
+            )
         result = process_outbox_batch("test-unknown-consumer-worker", 1, 2, 60)
         assert result == {"claimed": 1, "published": 0, "failed": 1}
         with _real_connection() as (_, cur):
