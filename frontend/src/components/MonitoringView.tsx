@@ -28,6 +28,18 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   company: '企业主体',
 };
 
+const RISK_DIMENSION_LABELS: Record<string, string> = {
+  risk: '综合风险',
+  financial: '财务风险',
+  business_risk: '商务风险',
+  business: '商务风险',
+  quality: '质量风险',
+  delivery: '交付风险',
+  compliance: '合规风险',
+  sentiment: '舆情风险',
+  esg: 'ESG 风险',
+};
+
 function targetLabel(target: MonitorTarget): string {
   return TARGET_TYPE_LABELS[target.target_type] || '监控对象';
 }
@@ -376,14 +388,21 @@ function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRis
         ? Object.entries(details).map(([label, value]) => `${label}：${String(value)}`).join('；')
         : String(data['数据状态'] || '本轮未发现该维度的可解释风险项');
       const score = typeof data['归一化'] === 'number' ? data['归一化'] : data['原始分'];
-      return { dimension, score: score == null ? '—' : String(score), evidence, attention: Number(score || 0) > 0 ? '需关注' : '未见异常信号' };
+      const evidenceText = evidence.toLowerCase();
+      const missing = score == null || ['待补充', '未覆盖', '暂无', '缺少', '未取得'].some(token => evidenceText.includes(token));
+      return {
+        dimension: RISK_DIMENSION_LABELS[dimension] || dimension,
+        score: score == null ? '—' : String(score),
+        evidence,
+        attention: missing ? '数据待补充' : Number(score) > 0 ? '需关注' : '当前未见异常信号',
+      };
     });
   const singleSnapshot = detail.history.length < 2;
 
   return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-1 text-xs text-gray-400">本轮快照：{snapshot.checked_at ? new Date(snapshot.checked_at).toLocaleString('zh-CN', { hour12: false }) : '时间未知'} · 评分体系 {snapshot.scoring_version || '—'}</p></div><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{snapshot.risk_level || '未知'} · {snapshot.risk_score ?? '—'}/100</span></div>
     <p className="mt-4 text-sm leading-6 text-[var(--color-text-secondary)]">本轮结论基于已关联的公开财务、司法与内部供应商数据形成。评分较低不表示无需关注：下表列出本轮被识别到的风险信号及其原始依据。</p>
-    <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-[var(--color-border)] text-xs text-gray-500"><tr><th className="pb-2 pr-4 font-medium">风险维度</th><th className="pb-2 pr-4 font-medium">本轮得分</th><th className="pb-2 pr-4 font-medium">判断</th><th className="pb-2 font-medium">依据</th></tr></thead><tbody className="divide-y divide-[var(--color-border)]">{rows.map(row => <tr key={row.dimension} className="align-top"><td className="py-3 pr-4 font-medium text-[var(--color-text)]">{row.dimension}</td><td className="py-3 pr-4 text-[var(--color-text-secondary)]">{row.score}</td><td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-[11px] ${row.attention === '需关注' ? 'bg-amber-50 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>{row.attention}</span></td><td className="py-3 leading-5 text-[var(--color-text-secondary)]">{row.evidence}</td></tr>)}</tbody></table></div>
+    <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-[var(--color-border)] text-xs text-gray-500"><tr><th className="pb-2 pr-4 font-medium">风险维度</th><th className="pb-2 pr-4 font-medium">本轮得分</th><th className="pb-2 pr-4 font-medium">判断</th><th className="pb-2 font-medium">依据</th></tr></thead><tbody className="divide-y divide-[var(--color-border)]">{rows.map(row => <tr key={row.dimension} className="align-top"><td className="py-3 pr-4 font-medium text-[var(--color-text)]">{row.dimension}</td><td className="py-3 pr-4 text-[var(--color-text-secondary)]">{row.score}</td><td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-[11px] ${row.attention === '需关注' ? 'bg-amber-50 text-amber-800' : row.attention === '数据待补充' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.attention}</span></td><td className="py-3 leading-5 text-[var(--color-text-secondary)]">{row.evidence}</td></tr>)}</tbody></table></div>
     {singleSnapshot && <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">目前仅有 1 条风险快照，因此系统只能展示本轮结论，尚不能判断风险是在改善、恶化还是保持稳定。</p>}
   </section>;
 }

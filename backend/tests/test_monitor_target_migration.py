@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -256,8 +257,7 @@ def test_monitor_target_summary_exposes_procurement_next_action(monkeypatch):
     assert summaries[0]["next_action"]["code"] == "verify_identity"
 
 
-@pytest.mark.asyncio
-async def test_supervisor_risk_evidence_carries_monitor_target_id(monkeypatch):
+def test_supervisor_risk_evidence_carries_monitor_target_id(monkeypatch):
     assessment = SimpleNamespace(
         risk_score=18,
         risk_level="低风险",
@@ -285,7 +285,7 @@ async def test_supervisor_risk_evidence_carries_monitor_target_id(monkeypatch):
         }],
     )
 
-    result = await _run_risk(context)
+    result = asyncio.run(_run_risk(context))
 
     assert result.evidence[0].monitor_target_id == "monitor-1"
     assert result.evidence[0].target_type == "formal_supplier"

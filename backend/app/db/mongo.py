@@ -68,8 +68,20 @@ def ensure_indexes() -> None:
     """创建常用查询索引（幂等操作）。"""
     try:
         db = get_db()
+
+        def ensure_index(collection_name: str, keys: list[tuple[str, int]], **options: object) -> None:
+            """Avoid startup noise when an older index has compatible keys."""
+            collection = db[collection_name]
+            index_name = str(options.get("name") or "_".join(f"{field}_{direction}" for field, direction in keys))
+            existing = collection.index_information().get(index_name)
+            if existing:
+                existing_keys = [(str(field), int(direction)) for field, direction in existing.get("key", [])]
+                if existing_keys == keys:
+                    return
+            collection.create_index(keys, **options)
+
         # baseinfo: 按企业名查询
-        db["baseinfo"].create_index([("name", 1)], unique=True, background=True)
+        ensure_index("baseinfo", [("name", 1)], unique=True, background=True)
         # alert_snapshots: stable monitoring target + time; company_name remains compatibility
         db["alert_snapshots"].create_index(
             [("monitor_target_id", 1), ("checked_at", -1)],
@@ -92,7 +104,7 @@ def ensure_indexes() -> None:
         db["watchlist"].create_index([("supplier_id", 1)], background=True)
         db["watchlist"].create_index([("candidate_id", 1)], background=True)
         db["watchlist"].create_index([("company_id", 1)], background=True)
-        db["watchlist"].create_index([("company_name", 1)], background=True)
+        ensure_index("watchlist", [("company_name", 1)], background=True)
         # V2 approved actions: durable external side-effect idempotency
         db["suppliers"].create_index(
             [("agent_action_key", 1)], unique=True, sparse=True, background=True
