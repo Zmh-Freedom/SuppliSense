@@ -17,6 +17,11 @@ export default defineConfig(({ mode }) => {
       checker({ typescript: true }),
     ],
     server: {
+      host: '0.0.0.0',
+      headers: {
+        // 局域网演示始终获取当前入口与模块，避免客户端停留在旧 ChatView。
+        'Cache-Control': 'no-store',
+      },
       proxy: {
         '/api/v1': backendUrl,
         '/health': backendUrl,

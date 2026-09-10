@@ -1402,15 +1402,19 @@ export default function ChatView() {
           <button
             onClick={() => send()}
             disabled={loading}
+            title={loading ? '当前请求仍在处理中' : '发送问题'}
             className="bg-[var(--color-primary-bg)] text-white rounded-xl px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-40 shrink-0 transition-colors min-h-[44px] inline-flex items-center"
           >
-            发送
+            {loading ? '处理中…' : '发送'}
           </button>
         </div>
         <div className="flex justify-between mt-2 px-1">
-          <button onClick={newChat} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
-            + 新对话
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={newChat} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
+              + 新对话
+            </button>
+            {loading && <span role="status" aria-live="polite" className="text-xs text-[var(--color-text-secondary)]">正在提交并等待 Agent 响应…</span>}
+          </div>
         </div>
       </div>
       </div>
