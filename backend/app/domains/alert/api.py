@@ -362,17 +362,27 @@ async def execute_monitor_review_task(
 async def alert_history(
     limit: int = Query(50, description="最大返回数"),
     unread_only: bool = Query(False, description="仅返回未读告警"),
-    _current_user: UserInDB = Depends(require_admin),
+    current_user: UserInDB = Depends(get_current_user),
 ):
     db = get_db()
     filter_q = {"read": False} if unread_only else {}
+    if current_user.role.value != "admin":
+        targets = await asyncio.to_thread(
+            get_watchlist_target_summaries, current_user.id, current_user.role.value
+        )
+        names = [target.get("company_name") for target in targets if target.get("company_name")]
+        if not names:
+            return {"count": 0, "unread_count": 0, "alerts": []}
+        filter_q["company_name"] = {"$in": names}
     docs = list(
         db["alerts"]
         .find(filter_q)
         .sort("created_at", -1)
         .limit(limit)
     )
-    unread_count = db["alerts"].count_documents({"read": False})
+    unread_filter = dict(filter_q)
+    unread_filter["read"] = False
+    unread_count = db["alerts"].count_documents(unread_filter)
     alerts = []
     for d in docs:
         d["_id"] = str(d["_id"])
