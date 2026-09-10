@@ -135,6 +135,30 @@ def test_harness_builds_discovery_plan_for_risk_filtered_sourcing() -> None:
     assert planned[0].tool_name == "discover_supplier_candidates"
 
 
+@pytest.mark.parametrize(
+    ("message", "tool_name"),
+    [
+        ("分析青岛三祥科技股份有限公司的供应链关系和传染风险", "contagion_analysis"),
+        ("预测青岛三祥科技股份有限公司未来6-12个月的风险趋势", "predict_risk"),
+        ("分析青岛三祥科技股份有限公司的舆情", "sentiment_analysis"),
+        ("生成青岛三祥科技股份有限公司的风险评估报告", "generate_report"),
+    ],
+)
+def test_harness_maps_explicit_capabilities_to_tools(message: str, tool_name: str) -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "capability-query",
+            "task_type": "analysis",
+            "user_message": message,
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert any(task.tool_name == tool_name and task.required for task in planned)
+
+
 def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monkeypatch) -> None:
     formal = {
         "supplier_id": "supplier-1",

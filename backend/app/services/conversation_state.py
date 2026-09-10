@@ -62,6 +62,8 @@ def analysis_dimensions_from_message(message: str) -> list[str]:
     ]
     if explicit_dimensions:
         return explicit_dimensions
+    if any(token in message for token in ("采购动作", "采取动作", "下一步怎么做", "是否需要处理", "要不要处理")):
+        return list(_DEFAULT_REVIEW_DIMENSIONS)
     if "复核" in message:
         return list(_DEFAULT_REVIEW_DIMENSIONS)
     return []

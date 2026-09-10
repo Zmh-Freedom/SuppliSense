@@ -340,7 +340,48 @@ def _append_derived_tasks(
                 evidence_requirements=["risk_comparison"],
             )
         )
+    _append_capability_tasks(tasks, current_task, context, names)
     return tasks
+
+
+def _append_capability_tasks(
+    tasks: list[HarnessTask],
+    current_task: Mapping[str, Any],
+    context: Mapping[str, Any],
+    names: list[str],
+) -> None:
+    """Bind explicit capability requests to the corresponding Harness tool."""
+    if not names:
+        return
+    message = str(current_task.get("user_message") or "")
+    requests = [
+        (("舆情", "新闻", "负面信息"), "sentiment_analysis", "sentiment"),
+        (("供应链关系", "关联关系", "传染风险", "风险传染"), "contagion_analysis", "risk_network"),
+        (("预测", "未来", "趋势预测"), "predict_risk", "risk_prediction"),
+        (("替代供应商", "备选供应商", "供应商替代"), "find_alternatives", "sourcing"),
+        (("生成报告", "风险评估报告", "导出报告"), "generate_report", "report"),
+    ]
+    existing = {task.tool_name for task in tasks}
+    prefix = str(current_task.get("task_id") or "task")
+    for tokens, tool_name, dimension in requests:
+        if tool_name in existing or not any(token in message for token in tokens):
+            continue
+        for name in dict.fromkeys(names):
+            arguments: dict[str, Any] = {"company_name": name}
+            if tool_name == "generate_report":
+                arguments["report_type"] = "html"
+            entity_id = _entity_id(name, context)
+            tasks.append(HarnessTask(
+                task_id=f"{prefix}:{name}:{dimension}",
+                tool_name=tool_name,
+                arguments=arguments,
+                entity_id=entity_id,
+                dimension=dimension,
+                resource_key=entity_id,
+                required=True,
+                evidence_requirements=[dimension],
+            ))
+        existing.add(tool_name)
 
 
 _ALLOWED_REMEDIATION_LOOP_TYPES = {"sourcing", "evidence", "provider_retry"}
@@ -814,6 +855,8 @@ def build_harness_graph(
             required_dimensions=_required_dimensions(tasks),
             required_evidence=_required_evidence_items(tasks),
         )
+        if _requests_procurement_action(state):
+            answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
         if not claims:
             no_plan = not tasks
             summary = _no_plan_summary(state) if no_plan else "本轮工具未返回可验证结论。"
@@ -885,6 +928,39 @@ def _no_plan_summary(state: HarnessState) -> str:
     if any(token in message for token in ("趋势", "变化", "复核")):
         return "我还不能形成复核结论：请指定正式供应商或明确的监控范围。"
     return "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。"
+
+
+def _requests_procurement_action(state: HarnessState) -> bool:
+    message = str((state.get("current_task") or {}).get("user_message") or state.get("user_message") or "")
+    return any(token in message for token in ("采购动作", "采取动作", "下一步怎么做", "是否需要处理", "要不要处理"))
+
+
+def _procurement_action_proposals(answer: AgentAnswer) -> list[dict[str, Any]]:
+    """Produce a read-only next-action recommendation from validated evidence."""
+    if answer.limitations:
+        return [{
+            "action_type": "supplement_data",
+            "label": "先补充缺失资料，再决定采购动作",
+            "reason": "当前存在证据覆盖不足，不能直接做暂停或切换供应商的决定。",
+            "requires_approval": False,
+        }]
+    risky = any(
+        any(token in claim.statement for token in ("下降", "恶化", "风险", "不一致", "缺失"))
+        for claim in answer.claims
+    )
+    if risky:
+        return [{
+            "action_type": "procurement_review",
+            "label": "安排采购复核",
+            "reason": "已发现需要人工确认的风险信号，先核实证据再决定是否调整采购策略。",
+            "requires_approval": False,
+        }]
+    return [{
+        "action_type": "continue_monitoring",
+        "label": "继续观察，暂不执行采购变更",
+        "reason": "当前证据未支持立即暂停、替换或扩大采购的决定。",
+        "requires_approval": False,
+    }]
 
 
 async def run_harness(

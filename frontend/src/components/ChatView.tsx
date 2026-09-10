@@ -573,7 +573,26 @@ function ActionSummary({ answer, limitations }: { answer: AgentAnswer; limitatio
       <div className="px-3 py-2.5"><dt className="text-[11px] text-[var(--color-text-secondary)]">证据覆盖</dt><dd className="mt-1 text-sm font-medium text-[var(--color-text)]">{hasClaims ? `${supportedCount} / ${answer.claims.length} 条已支持` : '等待补充'}</dd></div>
       <div className="px-3 py-2.5"><dt className="text-[11px] text-[var(--color-text-secondary)]">下一步</dt><dd className="mt-1 text-sm font-medium text-[var(--color-text)]">{nextAction}</dd></div>
     </dl>
+    {answer.action_proposals.length > 0 && <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 text-sm text-indigo-950">
+      <p className="text-[11px] font-medium text-indigo-700">采购动作建议</p>
+      {answer.action_proposals.map((proposal, index) => {
+        const item = proposal as Record<string, unknown>;
+        return <div key={`${String(item.action_type || 'action')}-${index}`} className="mt-1.5">
+          <span className="font-medium">{String(item.label || '安排人工复核')}</span>
+          {item.reason != null && <span className="ml-1 text-indigo-900/75">{String(item.reason)}</span>}
+        </div>;
+      })}
+    </div>}
   </section></ConclusionSummary>;
+}
+
+function answerStatusMeta(answer: AgentAnswer, limitations: string[]) {
+  const text = limitations.join(' ');
+  if (text.includes('主体')) return { label: '主体待确认', className: 'border-violet-200 bg-violet-50 text-violet-700', icon: '?' };
+  if (text.includes('权限')) return { label: '权限不足', className: 'border-red-200 bg-red-50 text-red-700', icon: '×' };
+  if (text.includes('资料') || text.includes('财务')) return { label: '资料待补充', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
+  if (answer.status === 'needs_review') return { label: '发现信号，需人工复核', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
+  return ANSWER_STATUS_META[answer.status] || { label: answer.status, className: 'border-gray-200 bg-gray-50 text-gray-600', icon: '·' };
 }
 
 function numericValue(value: unknown): number | null {
@@ -643,8 +662,8 @@ function AgentTrendCharts({ evidence, limitations }: { evidence: AgentEvidenceRe
 
 function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }) {
   if (!answer && (!evidence || evidence.length === 0)) return null;
-  const status = answer ? (ANSWER_STATUS_META[answer.status] || { label: answer.status, className: 'border-gray-200 bg-gray-50 text-gray-600', icon: '·' }) : null;
   const limitations = answer?.limitations.map(readableLimitation).filter(Boolean) || [];
+  const status = answer ? answerStatusMeta(answer, limitations) : null;
   const riskItems = buildRiskItems(answer, evidence || []);
   const overview = answer ? analysisOverview(answer, limitations) : '';
 
