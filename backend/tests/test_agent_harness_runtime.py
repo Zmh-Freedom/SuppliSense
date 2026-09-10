@@ -121,7 +121,8 @@ def test_harness_stops_at_review_when_evidence_is_missing() -> None:
 
     assert result["answer"]["status"] == "needs_review"
     assert any("risk" in item for item in result["answer"]["limitations"])
-    assert result["tool_call_count"] == 1
+    assert result["tool_call_count"] == 2
+    assert result["remediation_attempts"] == 1
 
 
 @pytest.mark.agent_e2e
@@ -282,6 +283,34 @@ def test_harness_remediation_loop_is_bounded_and_can_fill_missing_evidence() -> 
     assert result["tool_call_count"] == 2
 
 
+@pytest.mark.agent_e2e
+def test_harness_builds_a_fallback_query_for_missing_evidence() -> None:
+    evidence, claim = _evidence_and_claim()
+    fallback_calls: list[str] = []
+
+    def fallback_tool(company_name: str) -> dict:
+        fallback_calls.append(company_name)
+        return {
+            "status": "success",
+            "evidence_records": [{**evidence, "dimension": "financial"}],
+            "claims": [{**claim, "dimension": "financial"}],
+        }
+
+    tool = StructuredTool.from_function(fallback_tool, name="query_financials", description="test")
+    registry = ToolRegistry()
+    registry.register(tool, ToolSpec(name="query_financials", capability="financial", side_effect="read", approval_policy="none"))
+    registry.register(
+        StructuredTool.from_function(lambda company_name: {"status": "success"}, name="fake_risk", description="test"),
+        ToolSpec(name="fake_risk", capability="risk", side_effect="read", approval_policy="none"),
+    )
+
+    result = asyncio.run(run_harness(_base_state(), executor=ToolExecutor(registry)))
+
+    assert fallback_calls == ["测试供应商"]
+    assert result["remediation_attempts"] == 1
+    assert result["task_specs"][-1]["tool_name"] == "query_financials"
+
+
 def test_harness_requires_langgraph_thread_id_with_checkpointer() -> None:
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -376,7 +405,7 @@ def test_harness_respects_task_dependencies_before_parallel_scheduling() -> None
                         "depends_on": ["dependency-a"],
                     },
                 ],
-                budget={**ExecutionBudget().model_dump(mode="json"), "max_parallel_tasks": 2},
+                budget={**ExecutionBudget().model_dump(mode="json"), "max_parallel_tasks": 2, "max_loop_iterations": 0},
             ),
             executor=ToolExecutor(registry),
         )

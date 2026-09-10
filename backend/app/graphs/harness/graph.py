@@ -402,6 +402,62 @@ def _remediation_specs(state: HarnessState) -> list[dict[str, Any]]:
     return normalized
 
 
+def _build_remediation_specs(
+    state: HarnessState, tasks: list[HarnessTask]
+) -> list[dict[str, Any]]:
+    """Create one bounded fallback query for each missing evidence dimension.
+
+    This policy is deliberately deterministic: it only chooses providers that
+    already have a registered read-only contract and never asks the model to
+    invent a new data source during a remediation loop.
+    """
+    existing_tools = {task.tool_name for task in tasks}
+    task_prefix = str((state.get("current_task") or {}).get("task_id") or "task")
+    names_by_dimension: dict[str, list[str]] = {}
+    for task in tasks:
+        name = str(task.arguments.get("company_name") or "").strip()
+        if name:
+            names_by_dimension.setdefault(task.dimension, []).append(name)
+
+    fallback_tools: dict[str, tuple[str, str]] = {
+        "risk": ("query_financials", "financial"),
+        "financial": ("query_financials", "financial"),
+        "risk_trend": ("analyze_trend", "risk_trend"),
+        "sentiment": ("sentiment_analysis", "sentiment"),
+        "compliance": ("check_sanctions", "compliance"),
+        "esg": ("esg_assessment", "esg"),
+    }
+    specs: list[dict[str, Any]] = []
+    missing_dimensions = (state.get("evidence_coverage") or {}).get("missing_dimensions")
+    dimensions = missing_dimensions or list(dict.fromkeys(
+        task.dimension for task in tasks if task.required
+    ))
+    for dimension in dimensions:
+        mapping = fallback_tools.get(str(dimension))
+        if mapping is None or mapping[0] in existing_tools:
+            continue
+        tool_name, loop_dimension = mapping
+        names = list(dict.fromkeys(names_by_dimension.get(str(dimension), [])))
+        for name in names:
+            entity_id = _entity_id(name, state.get("execution_context") or {})
+            arguments: dict[str, Any] = {"company_name": name}
+            if tool_name == "analyze_trend":
+                arguments["period_months"] = int((state.get("current_task") or {}).get("period_months") or 6)
+            specs.append({
+                "task_id": f"{task_prefix}:{name}:{loop_dimension}:fallback",
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "entity_id": entity_id,
+                "dimension": loop_dimension,
+                "resource_key": f"{entity_id}:{tool_name}",
+                "required": True,
+                "evidence_requirements": [loop_dimension],
+                "loop_type": "provider_retry",
+                "source_key": f"fallback:{tool_name}",
+            })
+    return specs
+
+
 def _task_is_ready(task: HarnessTask, task_by_id: dict[str, HarnessTask]) -> bool:
     return all(
         dependency in task_by_id
@@ -601,9 +657,12 @@ def build_harness_graph(
 
     async def build_plan(state: HarnessState) -> dict[str, Any]:
         tasks = _build_default_plan(state)
+        remediation_specs = _remediation_specs(state)
+        if not remediation_specs:
+            remediation_specs = _build_remediation_specs(state, tasks)
         patch = {
             "task_specs": [task.model_dump(mode="json") for task in tasks],
-            "remediation_specs": _remediation_specs(state),
+            "remediation_specs": remediation_specs,
             "status": "planned",
         }
         await persist_event("build_plan", state, patch)
@@ -807,7 +866,16 @@ def build_harness_graph(
         attempts = int(state.get("remediation_attempts", 0))
         budget = new_budget(state.get("budget"))
         specs = _remediation_specs(state)
-        if missing and specs and attempts < budget.max_loop_iterations:
+        existing_sources = {
+            (str(item.get("source_key")), str(item.get("loop_type") or "evidence"))
+            for item in state.get("task_specs", [])
+            if isinstance(item, dict) and item.get("source_key")
+        }
+        has_new_spec = any(
+            (str(item.get("source_key")), str(item.get("loop_type") or "evidence")) not in existing_sources
+            for item in specs
+        )
+        if missing and specs and has_new_spec and attempts < budget.max_loop_iterations:
             return "remediate"
         return "render_answer"
 
@@ -881,8 +949,18 @@ def build_harness_graph(
         }:
             if int(state.get("remediation_attempts", 0)) >= new_budget(state.get("budget")).max_loop_iterations:
                 loop_exit_reason = "iteration_budget_exhausted"
-            elif not _remediation_specs(state):
-                loop_exit_reason = "no_remediation_spec"
+            else:
+                existing_sources = {
+                    (str(item.get("source_key")), str(item.get("loop_type") or "evidence"))
+                    for item in state.get("task_specs", [])
+                    if isinstance(item, dict) and item.get("source_key")
+                }
+                has_new_spec = any(
+                    (str(item.get("source_key")), str(item.get("loop_type") or "evidence")) not in existing_sources
+                    for item in _remediation_specs(state)
+                )
+                if not has_new_spec:
+                    loop_exit_reason = "no_remediation_spec"
         patch = {
             "answer": answer.model_dump(mode="json"),
             "loop_exit_reason": loop_exit_reason,

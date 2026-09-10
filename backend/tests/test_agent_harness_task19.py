@@ -150,4 +150,4 @@ def test_task19_provider_rate_limit_fails_closed_with_explicit_tool_error() -> N
     assert outcome["error"]["code"] == "provider_rate_limited"
     assert result["answer"]["status"] == "needs_review"
     assert result["answer"]["claims"] == []
-    assert result["loop_exit_reason"] == "no_remediation_spec"
+    assert result["loop_exit_reason"] == "tool_budget_exhausted"
