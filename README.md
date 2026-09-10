@@ -134,11 +134,20 @@ frontend/src/
 首次启动时，将 `backend/.env.example` 复制为 `backend/.env`，填写数据库连接与需要启用的数据源密钥。不要提交 `.env` 或任何真实密钥。
 
 ```bash
+# 首次初始化后端独立 Python 环境
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+cd ..
+
 # 启动基础设施（开发模式）
 ./start.sh --dev
 
 # 终端 1：后端
 cd backend
+source .venv/bin/activate
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # 终端 2：前端
@@ -198,6 +207,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 ```bash
 # 后端
 cd backend
+source .venv/bin/activate
 python -m pytest -m agent_e2e -v
 python -m pytest tests/test_agent_harness_p0.py tests/test_agent_supervisor_graph.py -q
 
