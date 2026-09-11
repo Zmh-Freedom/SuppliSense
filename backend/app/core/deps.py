@@ -97,5 +97,7 @@ def require_role(allowed_roles: list[UserRole]):
 
 # Convenient role checkers
 require_admin = require_role([UserRole.ADMIN])
-require_admin_or_analyst = require_role([UserRole.ADMIN, UserRole.ANALYST])
-require_any_role = require_role([UserRole.ADMIN, UserRole.ANALYST, UserRole.VIEWER])
+require_admin_or_purchaser = require_role([UserRole.ADMIN, UserRole.PURCHASER, UserRole.ANALYST])
+# Backward-compatible dependency name for historical imports.
+require_admin_or_analyst = require_admin_or_purchaser
+require_any_role = require_role([UserRole.ADMIN, UserRole.PURCHASER, UserRole.ANALYST, UserRole.VIEWER])

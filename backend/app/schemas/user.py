@@ -10,8 +10,17 @@ from pydantic import BaseModel, EmailStr, field_validator
 
 class UserRole(str, Enum):
     ADMIN = "admin"
+    PURCHASER = "purchaser"
+    # Legacy value kept so existing JWTs, fixtures, and imported records can
+    # be read while accounts are migrated to the procurement terminology.
     ANALYST = "analyst"
     VIEWER = "viewer"
+
+
+def is_purchaser_role(role: str | UserRole) -> bool:
+    """Return whether a role represents a procurement operator."""
+    value = role.value if isinstance(role, UserRole) else str(role)
+    return value in {UserRole.PURCHASER.value, UserRole.ANALYST.value}
 
 
 class UserBase(BaseModel):

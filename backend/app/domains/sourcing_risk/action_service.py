@@ -652,14 +652,14 @@ def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, 
 
 
 def _require_proposal_creator(run: dict[str, Any], user_id: str, user_role: str) -> None:
-    if user_role not in {"admin", "analyst"}:
+    if user_role not in {"admin", "purchaser", "analyst"}:
         raise DomainError("AGENT_ACTION_PROPOSAL_FORBIDDEN", "没有创建操作提案的权限", 403)
     if user_role != "admin" and run.get("user_id") != user_id:
         raise DomainError("AGENT_ACTION_PROPOSAL_FORBIDDEN", "没有创建该任务操作提案的权限", 403)
 
 
 def _require_approval_role(user_role: str) -> None:
-    if user_role not in {"admin", "analyst"}:
+    if user_role not in {"admin", "purchaser", "analyst"}:
         raise DomainError("AGENT_ACTION_APPROVAL_FORBIDDEN", "没有审批权限", 403)
 
 

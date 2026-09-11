@@ -21,6 +21,12 @@ DDL_STATEMENTS = [
     END $$
     """,
     """
+    DO $$ BEGIN
+        ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'purchaser';
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    """
     CREATE TABLE IF NOT EXISTS users (
         id UUID PRIMARY KEY,
         username VARCHAR(64) UNIQUE NOT NULL,
@@ -732,6 +738,11 @@ def ensure_pg_schema() -> None:
             _ensure_agent_run_constraints(cur)
             for stmt in INDEX_STATEMENTS:
                 cur.execute(stmt)
+        # ALTER TYPE ADD VALUE is committed with the schema transaction above;
+        # migrate legacy account rows in a separate transaction so PostgreSQL
+        # permits use of the newly added enum value.
+        with get_cursor() as (_, cur):
+            cur.execute("UPDATE users SET role = 'purchaser' WHERE role = 'analyst'")
         logger.info("pg_schema_ready")
     except Exception as e:
         logger.exception("PostgreSQL schema initialization failed: %s", e)

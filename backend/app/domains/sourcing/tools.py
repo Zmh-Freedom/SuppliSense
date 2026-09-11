@@ -26,7 +26,7 @@ def list_formal_suppliers(limit: int = 20) -> dict:
     if scoped_call:
         from app.domains.supplier.access import list_assigned_supplier_ids
 
-        allowed_ids = list_assigned_supplier_ids(user_id, user_role or "analyst")
+        allowed_ids = list_assigned_supplier_ids(user_id, user_role or "purchaser")
         if user_role != "admin" and not allowed_ids:
             return {"status": "not_found", "count": 0, "items": [], "message": "当前责任范围内暂无正式供应商"}
         result = _list(limit=limit)

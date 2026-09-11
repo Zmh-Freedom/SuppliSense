@@ -107,7 +107,7 @@ async def _langgraph_agent_supervisor_stream(
                 create_sourcing_risk_run,
                 CreateSourcingRiskRunRequest(requirement_text=message),
                 agent_user_id,
-                "analyst",
+                "purchaser",
                 session_id,
             )
         except TypeError as exc:
@@ -119,7 +119,7 @@ async def _langgraph_agent_supervisor_stream(
                 create_sourcing_risk_run,
                 CreateSourcingRiskRunRequest(requirement_text=message),
                 agent_user_id,
-                "analyst",
+                "purchaser",
             )
         run_id = str(run["id"])
         stream = stream_agent_supervisor_graph(

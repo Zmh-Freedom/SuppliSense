@@ -25,7 +25,7 @@ MAX_MERGE_HOPS = 20
 _ALIAS_EXACT_CONFIDENCE = 0.95
 _TRUSTED_IDENTITY_SOURCES = {"tianyancha", "import", "admin_verified"}
 _TRUSTED_ALIAS_SOURCES = _TRUSTED_IDENTITY_SOURCES
-_WRITER_ROLES = {"admin", "analyst"}
+_WRITER_ROLES = {"admin", "purchaser", "analyst"}
 _ANALYST_RESTRICTED_UPDATE_FIELDS = {
     "legal_name",
     "unified_social_credit_code",
@@ -433,7 +433,7 @@ def _alias_provenance_for_actor(
     actor_role: str,
 ) -> tuple[str, float]:
     """Downgrade analyst alias claims before they are persisted."""
-    if actor_role == "analyst":
+    if actor_role in {"purchaser", "analyst"}:
         return "manual", _ALIAS_EXACT_CONFIDENCE - 0.01
     return alias.source, alias.confidence
 

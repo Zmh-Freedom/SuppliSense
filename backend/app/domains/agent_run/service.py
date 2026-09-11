@@ -662,7 +662,7 @@ def create_supervisor_action_proposals(
             f"supervisor:{run_id}:{original_id}",
             candidate_id=target.get("candidate_id"),
             user_id=user_id,
-            user_role="analyst",
+            user_role="purchaser",
             expected_version=int(run["version"]),
         )
         persisted.append({**approval, "approval_id": str(proposal["id"]), "expires_at": expires_at})
@@ -708,7 +708,7 @@ def approve_supervisor_action_proposal(run_id: str, approval_id: str) -> None:
         approval_id,
         ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
         str(run["user_id"]),
-        "analyst",
+        "purchaser",
     )
 
 
@@ -725,7 +725,7 @@ def approve_supervisor_action_proposals(run_id: str, approval_ids: list[str]) ->
         approval_ids,
         ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
         str(run["user_id"]),
-        "analyst",
+        "purchaser",
     )
 
 

@@ -167,7 +167,7 @@ def agent_run_v2_route(
     if active_rollout == "shadow":
         return "shadow"
     if active_rollout == "internal":
-        return "v2" if user_role in {"admin", "analyst"} else "legacy"
+        return "v2" if user_role in {"admin", "purchaser", "analyst"} else "legacy"
     if active_rollout == "canary":
         bucket = int(hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8], 16) % 100
         return "v2" if bucket < config.AGENT_RUN_V2_CANARY_PERCENT else "legacy"

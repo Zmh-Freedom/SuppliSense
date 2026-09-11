@@ -285,7 +285,7 @@ def get_monitor_review_queue() -> dict:
         return {"status": "denied", "message": "查看待复核事项需要已登录的采购员或管理员身份"}
     from app.domains.alert.review_tasks import list_review_tasks
 
-    tasks = list_review_tasks(None, user_id, user_role or "analyst")
+    tasks = list_review_tasks(None, user_id, user_role or "purchaser")
     pending = [
         task for task in tasks
         if str(task.get("status") or "") in {"pending_approval", "approved", "executing", "needs_review"}
