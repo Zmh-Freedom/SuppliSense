@@ -107,8 +107,18 @@ const FACT_PATH_ALIASES: Record<string, string> = {
 };
 
 function canonicalFactPath(path: string): string {
-  const normalized = path.trim().toLowerCase().replace(/[\s-]+/g, '_');
-  return FACT_PATH_ALIASES[normalized] || normalized;
+  const normalized = path
+    .trim()
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^\.+|\.+$/g, '');
+  if (FACT_PATH_ALIASES[normalized]) return FACT_PATH_ALIASES[normalized];
+  const knownPaths = [...Object.keys(FACT_LABELS), ...Object.keys(RISK_FACT_LABELS)];
+  const compact = normalized.replace(/[._]/g, '');
+  const matched = knownPaths.find(item => item.replace(/[._]/g, '').toLowerCase() === compact);
+  return matched || normalized;
 }
 
 const RISK_FACT_LABELS: Record<string, string> = {
