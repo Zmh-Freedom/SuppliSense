@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
@@ -11,6 +12,9 @@ import type { Prediction } from '../types';
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState('');
   const dashQuery = useDashboard();
   const predQuery = useQuery({
     queryKey: queryKeys.predictions,
@@ -34,8 +38,29 @@ export default function Dashboard() {
     })
     .slice(0, 5);
   const isLoading = dashQuery.isLoading;
-  const isRefreshing = dashQuery.isFetching && !dashQuery.isLoading;
+  const isRefreshing = manualRefreshing || dashQuery.isFetching || predQuery.isFetching || trendQuery.isFetching;
   const error = dashQuery.error;
+
+  const refreshDashboard = async () => {
+    if (isRefreshing) return;
+    setRefreshError('');
+    setManualRefreshing(true);
+    const results = await Promise.allSettled([
+      dashQuery.refetch(),
+      predQuery.refetch(),
+      trendQuery.refetch(),
+      queryClient.refetchQueries({ queryKey: queryKeys.sentimentDashboard, type: 'active' }),
+    ]);
+    const failed = results.some(result => {
+      if (result.status === 'rejected') return true;
+      const value = result.value;
+      return Boolean(value && typeof value === 'object' && 'isError' in value && value.isError);
+    });
+    if (failed) {
+      setRefreshError('部分看板数据刷新失败，请稍后重试。');
+    }
+    setManualRefreshing(false);
+  };
 
   if (error) {
     return (
@@ -70,8 +95,9 @@ export default function Dashboard() {
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-[var(--color-text)]">风险看板</h2>
-        <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[36px] px-2 inline-flex items-center">{isRefreshing ? '刷新中…' : '刷新'}</button>
+        <button onClick={refreshDashboard} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[36px] px-2 inline-flex items-center">{isRefreshing ? '刷新中…' : '刷新看板数据'}</button>
       </div>
+      {refreshError && <p role="status" className="-mt-4 text-xs text-amber-700">{refreshError}</p>}
 
       {/* agent suggestions */}
       <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">

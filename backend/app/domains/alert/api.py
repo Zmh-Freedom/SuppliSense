@@ -232,7 +232,36 @@ async def alert_dashboard(current_user: UserInDB = Depends(get_current_user)):
 
     details.sort(key=lambda d: d["score"] if d["score"] is not None else -1, reverse=True)
 
-    alert_count = db["alerts"].count_documents({})
+    if current_user.role.value == "admin":
+        alert_count = db["alerts"].count_documents({})
+    else:
+        visible_ids = [
+            str(target.get("monitor_target_id"))
+            for target in targets
+            if target.get("monitor_target_id")
+        ]
+        visible_names = [
+            target.get("company_name")
+            for target in targets
+            if target.get("company_name")
+        ]
+        if not visible_ids and not visible_names:
+            alert_count = 0
+        else:
+            scoped_clauses = []
+            if visible_ids:
+                scoped_clauses.append({"monitor_target_id": {"$in": visible_ids}})
+            if visible_names:
+                # Older alerts may not have a stable target ID. Only use the
+                # company-name fallback for those legacy rows.
+                scoped_clauses.append({
+                    "company_name": {"$in": visible_names},
+                    "$or": [
+                        {"monitor_target_id": {"$exists": False}},
+                        {"monitor_target_id": None},
+                    ],
+                })
+            alert_count = db["alerts"].count_documents({"$or": scoped_clauses})
 
     return {
         "total": len(companies),
