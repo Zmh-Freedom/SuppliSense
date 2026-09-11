@@ -224,6 +224,9 @@ npm run build
 
 ## 文档
 
+- [使用说明书](docs/user-manual.md)
+- [项目说明书](docs/project-description.md)
+- [需求说明书](docs/requirements-specification.md)
 - [问题与修复记录](docs/issue-log.md)
 - [飞书供应商导入映射](docs/integration/feishu-import-converter.md)
 - [Agent 验收与评估](docs/release/agent-acceptance-and-evaluation.md)
