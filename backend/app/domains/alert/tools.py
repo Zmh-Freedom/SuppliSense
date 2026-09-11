@@ -38,6 +38,74 @@ def investigate_supplier_monitoring(query: str) -> dict:
 
 
 @tool
+def resolve_monitor_identity(
+    monitor_target_id: str | None = None,
+    company_name: str | None = None,
+) -> dict:
+    """核验监控对象对应的企业主体候选（只读）。
+
+    优先使用稳定的 monitor_target_id；没有该 ID 时才按企业名称检索，
+    不会自动绑定主体，也不会修改监控清单。
+    """
+    from app.domains.alert.service import resolve_watchlist_identity
+    from app.domains.company.service import search_identity
+    from app.tools.evidence import attach_tool_evidence
+
+    target_id = str(monitor_target_id or "").strip() or None
+    query = str(company_name or "").strip()
+    try:
+        if target_id:
+            result = resolve_watchlist_identity(target_id)
+        elif query:
+            result = {
+                "monitor_target_id": None,
+                "query": query,
+                **search_identity(query, limit=10),
+            }
+        else:
+            return {"status": "invalid", "message": "主体核验缺少监控对象 ID 或企业名称"}
+    except ValueError as exc:
+        return {
+            "status": "not_found",
+            "monitor_target_id": target_id,
+            "query": query,
+            "resolution": "not_found",
+            "exact": None,
+            "candidates": [],
+            "message": str(exc),
+        }
+
+    resolution = str(result.get("resolution") or "pending_verification")
+    exact = result.get("exact")
+    candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
+    result["limitations"] = [
+        "主体核验只返回候选或精确匹配，不会自动绑定监控对象。"
+    ]
+    if not exact and not candidates:
+        result["limitations"].append("当前统一主体库没有可确认的候选，未形成主体身份结论。")
+    result["claims"] = [{
+        "claim_id": f"resolve_monitor_identity:{target_id or query}:resolution",
+        "entity_id": target_id or f"entity:{query}",
+        "dimension": "identity_review",
+        "statement": (
+            f"主体检索结果：已找到 1 个精确主体候选"
+            if exact else f"主体检索结果：{len(candidates)} 个候选，等待采购人员确认"
+        ),
+        "value": resolution,
+        "fact_path": "resolution",
+        "operator": "eq",
+        "evidence_refs": [f"resolve_monitor_identity:{target_id or query}:identity_review"],
+        "confidence": 0.95 if exact else 0.85,
+    }]
+    return attach_tool_evidence(
+        result,
+        tool_name="resolve_monitor_identity",
+        entity_id=target_id or f"entity:{query}",
+        dimension="identity_review",
+    )
+
+
+@tool
 def check_alert(
     company_name: str,
     monitor_target_id: str | None = None,

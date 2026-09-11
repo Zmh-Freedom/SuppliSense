@@ -178,6 +178,29 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
     if scope_task is not None:
         return [scope_task]
 
+    # A monitor identity check is a distinct read-only task.  It must run even
+    # when no risk dimensions were requested; otherwise the user sees an empty
+    # evidence panel for a perfectly actionable主体核验 request.
+    if current_task.get("identity_verification"):
+        target_id = str(current_task.get("monitor_target_id") or "").strip() or None
+        name = names[0] if names else ""
+        if target_id or name:
+            arguments: dict[str, Any] = {}
+            if target_id:
+                arguments["monitor_target_id"] = target_id
+            if name:
+                arguments["company_name"] = name
+            return [HarnessTask(
+                task_id=f"{current_task.get('task_id', 'task')}:identity_review",
+                tool_name="resolve_monitor_identity",
+                arguments=arguments,
+                entity_id=target_id or _entity_id(name, context),
+                dimension="identity_review",
+                resource_key=target_id or _entity_id(name, context),
+                required=True,
+                evidence_requirements=["identity_review"],
+            )]
+
     if current_task.get("task_type") == "sourcing":
         requirement = current_task.get("requirement") or {}
         request_id = str(requirement.get("request_id") or "").strip() if isinstance(requirement, dict) else ""
@@ -624,6 +647,29 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
             data = outcome.get("data")
             if isinstance(data, dict):
                 latest_data = data
+    if "resolve_monitor_identity" in tool_names:
+        identity_data = next(
+            (
+                outcome.get("data")
+                for outcome in reversed(outcomes)
+                if isinstance(outcome, dict)
+                and outcome.get("tool_name") == "resolve_monitor_identity"
+                and isinstance(outcome.get("data"), dict)
+            ),
+            {},
+        )
+        if isinstance(identity_data, dict):
+            query = str(identity_data.get("query") or (target_names[0] if target_names else "该监控对象"))
+            exact = identity_data.get("exact")
+            candidates = identity_data.get("candidates") if isinstance(identity_data.get("candidates"), list) else []
+            if exact:
+                legal_name = str(exact.get("legal_name") or exact.get("name") or query)
+                return f"已完成“{query}”的主体核验检索，找到可绑定的企业主体：{legal_name}。请在监控对象详情中确认绑定。"
+            if candidates:
+                return f"已完成“{query}”的主体核验检索，找到 {len(candidates)} 个候选主体，请在监控对象详情中选择并确认。"
+            if identity_data.get("resolution") == "not_found":
+                return f"未找到对应的监控对象，暂时无法为“{query}”执行主体核验。"
+            return f"已完成“{query}”的主体核验检索，但当前没有可确认的主体候选。"
     if "get_watchlist" in tool_names:
         count = int(latest_data.get("count") or len(latest_data.get("companies") or []))
         scope = str(latest_data.get("scope") or "当前责任范围")
@@ -838,14 +884,17 @@ def build_harness_graph(
                     run_id=state["run_id"],
                     user_id=state.get("user_id"),
                     entity_id=task.entity_id,
-                    monitor_target_id=_monitor_target_id(
-                        str(
-                            task.arguments.get("company_name")
-                            or task.arguments.get("supplier_name")
-                            or task.arguments.get("supplier_reference")
-                            or ""
-                        ),
-                        state.get("execution_context") or {},
+                    monitor_target_id=(
+                        str(task.arguments.get("monitor_target_id") or "").strip() or
+                        _monitor_target_id(
+                            str(
+                                task.arguments.get("company_name")
+                                or task.arguments.get("supplier_name")
+                                or task.arguments.get("supplier_reference")
+                                or ""
+                            ),
+                            state.get("execution_context") or {},
+                        )
                     ),
                     tool_call_count=count + index,
                     max_tool_calls=budget.max_tool_calls,

@@ -190,10 +190,72 @@ def load_execution_context(
     extracted = extract_conversation_intent(user_message, execution_context["references"])
     resolved = apply_extracted_conversation_intent(execution_context, extracted)
     resolved = _enforce_scope_query_intent(resolved, user_message)
+    resolved = _apply_identity_verification_intent(resolved, user_message)
     return validate_execution_context(
         _apply_harness_sourcing_requirement(resolved, user_message),
         source="load_execution_context",
     )
+
+
+def _apply_identity_verification_intent(
+    execution_context: dict[str, Any], user_message: str
+) -> dict[str, Any]:
+    """Bind explicit monitor identity checks to a deterministic Harness task.
+
+    Identity verification is a read-only operation and must not be inferred
+    from a generic risk dimension.  The monitor target UUID in the message is
+    treated as the stable lookup key; the company name remains display context.
+    """
+    from app.graphs.agent_core.intent_extractor import (
+        extract_monitor_target_id,
+        is_identity_verification_request,
+    )
+
+    if not is_identity_verification_request(user_message):
+        return execution_context
+    current_task = dict(execution_context.get("current_task") or {})
+    target_id = extract_monitor_target_id(user_message)
+    target_names = [
+        str(item).strip()
+        for item in current_task.get("target_supplier_names", [])
+        if str(item).strip()
+    ]
+    if not target_names:
+        # Keep the common quoted form usable even when the legacy resolver did
+        # not produce a conversation entity for this turn.
+        import re
+
+        match = re.search(r"[“\"「『]([^”\"」』]+)[”\"」』]", user_message)
+        if match:
+            target_names = [match.group(1).strip()]
+    current_task.update({
+        "target_supplier_names": target_names,
+        "analysis_dimensions": ["identity_review"],
+        "task_type": "analysis",
+        "identity_verification": True,
+        "monitor_target_id": target_id,
+        "subtasks": [],
+        "user_message": user_message,
+    })
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    conversation_state["selected_supplier_names"] = target_names
+    conversation_state["selected_suppliers"] = target_names
+    conversation_state["current_task"] = current_task
+    llm_intent = execution_context.get("llm_intent")
+    normalized_intent = dict(llm_intent) if isinstance(llm_intent, dict) else {}
+    normalized_intent.update({
+        "target_supplier_names": target_names,
+        "analysis_dimensions": ["identity_review"],
+        "task_type": "analysis",
+        "requested_action": "none",
+        "monitor_target_id": target_id,
+    })
+    return {
+        **execution_context,
+        "conversation_state": conversation_state,
+        "current_task": current_task,
+        "llm_intent": normalized_intent,
+    }
 
 
 def _enforce_scope_query_intent(

@@ -314,6 +314,15 @@ class MonitoringInvestigationOutput(StrictToolOutput):
     evidence_summary: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class MonitorIdentityOutput(StrictToolOutput):
+    monitor_target_id: str | None = None
+    query: str = ""
+    resolution: str | None = None
+    exact: dict[str, Any] | None = None
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
 TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "search_company": CompanySearchOutput,
     "assess_risk": RiskAssessmentOutput,
@@ -321,6 +330,7 @@ TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "assess_operational_risk": OperationalRiskOutput,
     "check_alert": AlertCheckOutput,
     "investigate_supplier_monitoring": MonitoringInvestigationOutput,
+    "resolve_monitor_identity": MonitorIdentityOutput,
     "get_watchlist": WatchlistOutput,
     "analyze_watchlist_trend": WatchlistTrendOutput,
     "get_monitor_review_queue": ReviewQueueOutput,

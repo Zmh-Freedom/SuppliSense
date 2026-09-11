@@ -24,6 +24,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   sentiment: '舆情',
   sourcing: '寻源',
   risk_monitoring: '风险监控',
+  identity_review: '主体身份',
 };
 
 const DIMENSION_BADGE_CLASSES: Record<string, string> = {
@@ -37,6 +38,7 @@ const DIMENSION_BADGE_CLASSES: Record<string, string> = {
   esg: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   sentiment: 'border-amber-200 bg-amber-50 text-amber-700',
   sourcing: 'border-violet-200 bg-violet-50 text-violet-700',
+  identity_review: 'border-purple-200 bg-purple-50 text-purple-700',
 };
 
 function readableDimension(dimension: string): string {
@@ -90,6 +92,7 @@ const FACT_LABELS: Record<string, string> = {
   coverage: '数据覆盖率',
   sentiment_score: '舆情倾向评分',
   negative_count: '负面信息数量',
+  resolution: '主体检索结果',
 };
 
 const FACT_PATH_ALIASES: Record<string, string> = {

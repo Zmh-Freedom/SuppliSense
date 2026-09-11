@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Literal
 
 from openai import OpenAI
@@ -23,6 +24,9 @@ _NON_AGENT_TURN_PATTERNS = (
 )
 _GENERIC_RISK_QUERY_TOKENS = (
     "风险情况", "风险状况", "整体风险", "风险怎么样", "风险表现",
+)
+_MONITOR_TARGET_ID_PATTERN = re.compile(
+    r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"
 )
 
 
@@ -171,6 +175,22 @@ def has_explicit_watchlist_request(message: str) -> bool:
         "加入到监控", "加入到风险监控", "添加监控", "添加到监控",
         "纳入到监控", "纳入到风险监控", "持续监控", "开始监控", "建立监控",
     ))
+
+
+def is_identity_verification_request(message: str) -> bool:
+    """Recognize an explicit read-only request to verify a monitor identity."""
+    text = str(message or "")
+    return (
+        any(token in text for token in ("主体身份", "主体核验", "核验主体", "确认主体"))
+        and any(token in text for token in ("核验", "确认", "检索", "查找", "验证"))
+        and ("监控对象" in text or "监控目标" in text or extract_monitor_target_id(text) is not None)
+    )
+
+
+def extract_monitor_target_id(message: str) -> str | None:
+    """Extract a UUID monitor target identifier without trusting free text."""
+    match = _MONITOR_TARGET_ID_PATTERN.search(str(message or ""))
+    return match.group(0) if match else None
 
 
 # Backward-compatible alias for focused tests and older callers.
