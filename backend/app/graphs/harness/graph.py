@@ -956,7 +956,7 @@ def build_harness_graph(
             answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
         if not claims:
             no_plan = not tasks
-            summary = _no_plan_summary(state) if no_plan else "本轮工具未返回可验证结论。"
+            summary = _no_plan_summary(state) if no_plan else _summary(answer, state)
             answer = answer.model_copy(
                 update={
                     "status": "needs_review",

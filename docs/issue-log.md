@@ -19,7 +19,7 @@
 - 根因：责任范围控制接入 ToolExecutor 与监控摘要服务后，旧测试替身和离线 Harness 夹具未同步提供合法用户身份或新的函数参数；身份查询没有在无效 UUID 的测试输入下安全降级。
 - 修复方案：正式供应商权限校验只在名称实际属于正式供应商时加载用户与责任范围，避免非正式对象和离线夹具触发无效 UUID 查询；同步监控确认测试的新摘要函数签名、唯一会话 ID 和责任范围替身。
 - 验证结果：`python -m pytest -m 'not integration' -q` 为 671 passed、235 deselected；审批、监控确认、两供应商复核和跨范围拒绝回归均通过。
-- 验证结果：后端 `tests/test_agent_harness_task14.py` 16 项通过；前端 68 项测试、TypeScript、Lint、生产构建和 `git diff --check` 通过。监控清单对象级 Claim 与趋势对象级 Claim 均可通过证据校验；清单与趋势主表已改为采购语言。
+- 验证结果：后端 `tests/test_agent_harness_task14.py` 16 项通过；前端 68 项测试、TypeScript、Lint、生产构建和 `git diff --check` 通过。监控清单对象级 Claim 与趋势对象级 Claim 均可通过证据校验；清单与趋势主表已改为采购语言；空清单也会返回明确的无对象说明。
 - 关联提交：本次提交。
 
 ## ISS-20260910-071 聊天 Harness 未生成证据补全规格，Agent Loop 无法在常规提问中触发
