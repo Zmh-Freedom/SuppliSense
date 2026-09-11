@@ -28,6 +28,7 @@ export default function RiskSummary({
         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-bold text-white" style={{ background: color }}>{score == null ? '—' : normalizedScore}</div>
         <div className="min-w-[110px]">
           <div className="text-lg font-semibold" style={{ color }}>{level || '未知'}</div>
+          <div className="mt-0.5 text-[10px] text-gray-500">安全评分 · 分数越高风险越低</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {isListed && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-gray-500">上市</span>}
             {inWatchlist && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-600">监控中</span>}

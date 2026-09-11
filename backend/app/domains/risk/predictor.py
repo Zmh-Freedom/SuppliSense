@@ -97,10 +97,10 @@ def predict_company(
         )
     if len(snaps) >= 2:
         scores = [s.get("risk_score", 0) for s in snaps]
-        if len(scores) >= 3 and all(scores[i] >= scores[i+1] for i in range(len(scores)-1)):
+        if len(scores) >= 3 and all(scores[i] <= scores[i+1] for i in range(len(scores)-1)):
             score += 1
-            signals.append({"signal": "风险评分持续上升", "score": 1})
-        if snaps[0].get("risk_score", 0) >= 60:
+            signals.append({"signal": "安全评分持续下降", "score": 1})
+        if snaps[0].get("risk_score", 100) < 40:
             score += 2
             signals.append({"signal": "已处于高风险区间", "score": 2})
 

@@ -8,7 +8,7 @@
 - 经营异常新增 ≥ 1 → warning
 - 行政处罚新增 ≥ 1 → warning
 - 重大诉讼 false→true → warning
-- 风险评分上涨 ≥ 10 → warning
+- 安全评分下降 ≥ 10 → warning
 - 资产负债率上涨 ≥ 5% → warning
 - 净利润转负 → critical
 
@@ -26,7 +26,7 @@ DEFAULT_RULES = [
     {"field": "经营异常", "operator": "increase", "threshold": 1, "severity": "warning"},
     {"field": "行政处罚", "operator": "increase", "threshold": 1, "severity": "warning"},
     {"field": "重大诉讼", "operator": "become_true", "threshold": 0, "severity": "warning"},
-    {"field": "风险评分", "operator": "increase", "threshold": 10, "severity": "warning"},
+    {"field": "风险评分", "operator": "decrease", "threshold": 10, "severity": "warning"},
     {"field": "净利润", "operator": "become_negative", "threshold": 0, "severity": "critical"},
 ]
 
@@ -64,6 +64,10 @@ def evaluate_changes(rules: list[dict], changes: list[dict]) -> list[dict]:
             if rule["operator"] == "increase":
                 if isinstance(new_val, (int, float)) and isinstance(old_val, (int, float)):
                     if new_val - old_val >= rule["threshold"]:
+                        triggered.append({**change, "severity": rule["severity"]})
+            elif rule["operator"] == "decrease":
+                if isinstance(new_val, (int, float)) and isinstance(old_val, (int, float)):
+                    if old_val - new_val >= rule["threshold"]:
                         triggered.append({**change, "severity": rule["severity"]})
             elif rule["operator"] == "become_true":
                 if not old_val and new_val:

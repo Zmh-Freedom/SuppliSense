@@ -230,7 +230,8 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             trend = "数据不足"
         elif len(data) >= 2:
             delta = data[-1]["risk_score"] - data[0]["risk_score"]
-            trend = "恶化" if delta > 10 else "改善" if delta < -10 else "稳定"
+            # Safety score decreases when risk deteriorates.
+            trend = "恶化" if delta < -10 else "改善" if delta > 10 else "稳定"
 
         results.append({
             "company_name": name,

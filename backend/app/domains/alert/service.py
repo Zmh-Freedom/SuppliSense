@@ -244,9 +244,10 @@ def _risk_change(snapshots: list[dict]) -> dict:
         return {"status": "insufficient_data", "label": "数据不足", "delta": None, "previous_score": None}
     previous_score = snapshots[1].get("risk_score")
     delta = round(float(current_score) - float(previous_score), 1)
-    if delta >= 10:
+    # risk_score is a safety score: lower values indicate higher risk.
+    if delta <= -10:
         status, label = "deteriorating", "风险恶化"
-    elif delta <= -10:
+    elif delta >= 10:
         status, label = "improving", "风险改善"
     else:
         status, label = "stable", "变化不明显"

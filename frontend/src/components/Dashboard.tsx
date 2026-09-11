@@ -34,7 +34,8 @@ export default function Dashboard() {
       if (a.risk_score == null && b.risk_score == null) return 0;
       if (a.risk_score == null) return 1;
       if (b.risk_score == null) return -1;
-      return b.risk_score - a.risk_score;
+      // Safety score is lower for riskier suppliers; show highest-risk first.
+      return a.risk_score - b.risk_score;
     })
     .slice(0, 5);
   const isLoading = dashQuery.isLoading;
@@ -124,9 +125,9 @@ export default function Dashboard() {
       {/* summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <SummaryCard label="监控对象" value={data.total} color="#333" />
-        <SummaryCard label="告警" value={data.alert_count} color={getRiskColor(61)} />
-        <SummaryCard label="高风险" value={data.distribution['高风险'] || 0} color={getRiskColor(61)} />
-        <SummaryCard label="低风险" value={data.distribution['低风险'] || 0} color={getRiskColor(0)} />
+        <SummaryCard label="告警" value={data.alert_count} color={getRiskColor(20)} />
+        <SummaryCard label="高风险" value={data.distribution['高风险'] || 0} color={getRiskColor(20)} />
+        <SummaryCard label="低风险" value={data.distribution['低风险'] || 0} color={getRiskColor(80)} />
       </div>
 
       {/* Trend Charts */}
@@ -237,7 +238,7 @@ export default function Dashboard() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h3 className="text-sm font-semibold text-[var(--color-text)]">风险排名</h3>
-            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">按当前风险分数从高到低，优先查看排名靠前的供应商。</p>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">按安全评分从低到高，优先查看风险最高的供应商。</p>
           </div>
           <button type="button" onClick={() => navigate('/assess')} className="shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">查看全部</button>
         </div>

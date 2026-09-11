@@ -19,8 +19,8 @@ vi.mock('../hooks', () => ({
       distribution: { 高风险: 1, 中风险: 1, 低风险: 1, 未知: 0 },
       companies: [],
       targets: [
-        { monitor_target_id: 'target-low', company_name: '低风险供应商', target_type: 'formal_supplier', risk_score: 10, risk_level: '低风险', risk_change: { status: 'stable', label: '变化不明显', delta: 0 }, data_coverage: { summary: '5/5 个数据域可用' }, next_action: { label: '继续观察', priority: 'low' } },
-        { monitor_target_id: 'target-high', company_name: '高风险供应商', target_type: 'formal_supplier', risk_score: 82, risk_level: '高风险', risk_change: { status: 'deteriorating', label: '风险恶化', delta: 12 }, data_coverage: { summary: '3/5 个数据域可用' }, next_action: { label: '优先采购复核', priority: 'high' } },
+        { monitor_target_id: 'target-low', company_name: '低风险供应商', target_type: 'formal_supplier', risk_score: 82, risk_level: '低风险', risk_change: { status: 'stable', label: '变化不明显', delta: 0 }, data_coverage: { summary: '5/5 个数据域可用' }, next_action: { label: '继续观察', priority: 'low' } },
+        { monitor_target_id: 'target-high', company_name: '高风险供应商', target_type: 'formal_supplier', risk_score: 10, risk_level: '高风险', risk_change: { status: 'deteriorating', label: '风险恶化', delta: -12 }, data_coverage: { summary: '3/5 个数据域可用' }, next_action: { label: '优先采购复核', priority: 'high' } },
         { monitor_target_id: 'target-unknown', company_name: '暂无快照供应商', target_type: 'formal_supplier', risk_score: null, risk_level: null, risk_change: { status: 'no_data', label: '暂无快照' }, data_coverage: { summary: '1/5 个数据域可用' }, next_action: { label: '执行首次评估', priority: 'high' } },
       ],
     },

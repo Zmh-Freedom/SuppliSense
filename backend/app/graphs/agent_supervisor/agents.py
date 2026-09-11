@@ -132,18 +132,18 @@ def _risk_evidence(
     scope = "完整" if coverage.get("assessment_status") == "complete" else "初步"
     coverage_ratio = float(coverage.get("coverage_ratio") or 0)
     claim = (
-        f"{company_name} 综合风险评分：{payload.get('risk_score', '-')} / 100，"
+        f"{company_name} 综合安全评分：{payload.get('risk_score', '-')} / 100（分数越高风险越低），"
         f"等级：{payload.get('risk_level', '未知')}。"
         if scope == "完整"
         else (
-            f"{company_name} 初步风险评分：{payload.get('risk_score', '-')} / 100，"
+            f"{company_name} 初步安全评分：{payload.get('risk_score', '-')} / 100（分数越高风险越低），"
             f"数据覆盖度 {coverage_ratio:.0%}，不足以形成综合风险结论"
             f"（模型原始等级：{payload.get('risk_level', '未知')}）。"
         )
     )
     return [{
         "evidence_id": f"risk:{company_name}",
-        "source": "V2 可解释风险评分",
+        "source": "V3 可解释安全评分",
         "source_type": "internal",
         "freshness": "fresh",
         "confidence": 0.85 if scope == "完整" else 0.65,
@@ -257,7 +257,7 @@ async def _run_risk(context: AgentTaskContext) -> AgentResult:
                 else "unknown"
             ),
             "title": f"{name} 综合风险",
-            "description": f"V2 评分 {getattr(risk_info, 'risk_score', '-')} / 100，" + (
+            "description": f"V3 安全评分 {getattr(risk_info, 'risk_score', '-')} / 100，" + (
                 f"当前等级：{getattr(risk_info, 'risk_level', '未知')}"
                 if (getattr(risk_info, "risk_detail", None) or {}).get("data_coverage", {}).get("assessment_status")
                 == "complete"
@@ -283,7 +283,7 @@ async def _run_risk(context: AgentTaskContext) -> AgentResult:
             )
             else "needs_review"
         ),
-        summary=f"已按 V2 评分模型完成 {len(evidence)}/{len(company_names)} 家供应商的风险预览。",
+        summary=f"已按 V3 安全评分模型完成 {len(evidence)}/{len(company_names)} 家供应商的风险预览。",
         evidence=evidence,
         findings=findings,
         metrics=AgentMetrics(evidence_count=len(evidence)),

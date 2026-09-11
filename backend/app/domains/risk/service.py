@@ -13,7 +13,7 @@ from app.domains.risk.company_service import get_company_profile
 
 # ---- 评分版本 ----
 # 升级评分体系时递增此版本号，PG 和 MongoDB 中的历史数据可据此区分
-SCORING_VERSION = "v2"
+SCORING_VERSION = "v3_safety_score"
 
 # ---- 归一化参数：每个维度上限 25 分，四维总计 0-100 ----
 FIN_NORM = 70   # 财务维度 11 个指标的理论上限
@@ -150,8 +150,70 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     return response
 
 
+def rebuild_all_supplier_scores(*, clear_history: bool = True) -> dict:
+    """Recalculate every supplier score using the current scoring contract.
+
+    Existing snapshots, alerts and PostgreSQL assessment history are removed
+    before rebuilding so consumers never see a mixed v2/v3 score timeline.
+    Supplier master and watchlist records themselves are retained.
+    """
+    from app.db.mongo import get_db
+
+    db = get_db()
+    names: set[str] = set()
+    try:
+        for doc in db["watchlist"].find({"monitor_status": {"$ne": "removed"}}, {"company_name": 1, "display_name": 1}):
+            name = str(doc.get("display_name") or doc.get("company_name") or "").strip()
+            if name:
+                names.add(name)
+    except Exception:
+        pass
+    # The Feishu snapshot is the active supplier read model; historical rows
+    # from previous syncs must not re-enter the refresh scope.
+    try:
+        from app.domains.sourcing.supplier_repo import _current_supplier_filter, _supplier_read_collection
+        collection = _supplier_read_collection(db)
+        for doc in collection.find(_current_supplier_filter(collection), {"name": 1, "supplier_name": 1}):
+            name = str(doc.get("name") or doc.get("supplier_name") or "").strip()
+            if name:
+                names.add(name)
+    except Exception:
+        pass
+
+    removed_snapshots = db["alert_snapshots"].delete_many({}).deleted_count
+    removed_alerts = db["alerts"].delete_many({}).deleted_count
+    removed_history = 0
+    if clear_history:
+        try:
+            from app.domains.risk.repo_assessment import clear_history as clear_pg_history
+            removed_history = clear_pg_history()
+        except Exception:
+            # PostgreSQL is optional for the operational risk path.
+            removed_history = 0
+
+    refreshed: list[str] = []
+    failures: list[dict[str, str]] = []
+    for company_name in sorted(names):
+        try:
+            assess_risk(RiskAssessRequest(company_name=company_name, force_refresh=True))
+            refreshed.append(company_name)
+        except Exception as exc:
+            failures.append({"company_name": company_name, "error": str(exc)})
+
+    return {
+        "scoring_version": SCORING_VERSION,
+        "total_suppliers": len(names),
+        "refreshed": len(refreshed),
+        "failed": len(failures),
+        "failures": failures,
+        "removed_snapshots": removed_snapshots,
+        "removed_alerts": removed_alerts,
+        "removed_assessment_history": removed_history,
+    }
+
+
 def calculate_company_risk_preview(company_name: str) -> RiskCalculateResponse | None:
-    """Calculate the V2 risk score from cached evidence without side effects.
+    """Calculate the v3 safety score from cached evidence without side effects.
 
     This boundary is used by the Agent Supervisor.  Unlike ``assess_risk``, it
     never calls Tianyancha, creates an assessment snapshot, or persists an
@@ -165,7 +227,7 @@ def calculate_company_risk_preview(company_name: str) -> RiskCalculateResponse |
 
 
 def _calculate_company_risk(profile, *, include_soft_risk: bool) -> RiskCalculateResponse:
-    """Build an explainable V2 score from already available company evidence."""
+    """Build an explainable v3 safety score from available company evidence."""
     name = profile.company_name
     risk = get_risk_info(name)
     if risk is None:
@@ -265,7 +327,7 @@ def _clamp(v, lo, hi):
 
 
 def _normalize(raw: float, norm_base: float) -> float:
-    """将原始分数映射到 0-25 区间。"""
+    """将风险扣分映射到 0-25 区间。"""
     return round(min(raw / norm_base * 25, 25), 1)
 
 
@@ -437,17 +499,30 @@ def _calc_score(
     }
 
     # ==================== 总分 ====================
-    total = round(fin_norm + jud_norm + op_norm + soft_norm)
+    # Internally each dimension is calculated as a risk deduction.  The
+    # public score is deliberately the inverse safety score so that a higher
+    # value always means lower risk.  Keep the deduction in the breakdown for
+    # auditability and expose the dimension safety points in ``归一化``.
+    risk_points = round(fin_norm + jud_norm + op_norm + soft_norm)
+    total = max(0, min(100, 100 - risk_points))
+    for dimension in ("财务风险", "司法风险", "经营风险", "软指标"):
+        item = breakdown.get(dimension)
+        if isinstance(item, dict) and isinstance(item.get("归一化"), (int, float)):
+            deduction = item["归一化"]
+            item["风险扣分"] = deduction
+            item["归一化"] = round(max(0, 25 - deduction), 1)
+    breakdown["风险扣分总计"] = risk_points
     breakdown["总计"] = total
+    breakdown["评分口径"] = "安全分（0-100，分数越高风险越低）"
     breakdown["权重"] = "财务 25% + 司法 25% + 经营 25% + 软指标 25%"
 
     return total, breakdown
 
 
 def _score_to_level(score: int) -> str:
-    if score <= 30:
+    """Map safety score to procurement risk level."""
+    if score >= 70:
         return "低风险"
-    elif score <= 60:
+    if score >= 40:
         return "中风险"
-    else:
-        return "高风险"
+    return "高风险"

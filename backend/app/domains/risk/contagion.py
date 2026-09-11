@@ -181,7 +181,7 @@ def analyze_contagion(company_name: str) -> dict:
     for r in related:
         if r["in_watchlist"]:
             snap = db["alert_snapshots"].find_one({"company_name": r["name"]}, sort=[("checked_at", -1)])
-            if snap and snap.get("risk_score", 0) >= 60:
+            if snap and snap.get("risk_score", 100) < 40:
                 high_risk_related += 1
 
     return {

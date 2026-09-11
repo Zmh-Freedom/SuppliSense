@@ -23,13 +23,13 @@ class TestClamp:
 
 class TestScoreToLevel:
     def test_low_risk(self):
-        assert _score_to_level(20) == "低风险"
+        assert _score_to_level(80) == "低风险"
 
     def test_medium_risk(self):
         assert _score_to_level(45) == "中风险"
 
     def test_high_risk(self):
-        assert _score_to_level(75) == "高风险"
+        assert _score_to_level(20) == "高风险"
 
 
 class TestParseFloat:

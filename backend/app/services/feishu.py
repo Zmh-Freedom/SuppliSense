@@ -208,7 +208,8 @@ def send_daily_digest() -> None:
                 target_ids.append(str(target_id))
             query = {"monitor_target_id": target_id} if target_id else {"company_name": target.get("company_name", "")}
             snapshot = db["alert_snapshots"].find_one(query, sort=[("checked_at", -1)])
-            if snapshot and snapshot.get("risk_score", 0) > 30:
+            # Lower safety scores represent higher risk.
+            if snapshot and snapshot.get("risk_score", 100) < 40:
                 high_risk.append((target.get("company_name", ""), snapshot.get("risk_score"), snapshot.get("risk_level", "未知")))
         if high_risk:
             lines.append("重点关注：")

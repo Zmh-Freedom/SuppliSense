@@ -791,7 +791,7 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         if risk_score is not None or risk_level is not None:
             risk_text = []
             if risk_score is not None:
-                risk_text.append(f"综合风险评分 {risk_score}/100")
+                risk_text.append(f"综合安全评分 {risk_score}/100（分数越高风险越低）")
             if risk_level is not None:
                 risk_text.append(
                     f"在已取得资料范围内{risk_level}"

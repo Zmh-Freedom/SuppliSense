@@ -216,7 +216,8 @@ def check_and_notify() -> dict:
             for change in changes.get("changes", []):
                 if change.get("field") == "风险评分":
                     try:
-                        score_delta = max(score_delta, float(change.get("new", 0)) - float(change.get("old", 0)))
+                        # Safety score falling means risk is worsening.
+                        score_delta = max(score_delta, float(change.get("old", 0)) - float(change.get("new", 0)))
                     except (TypeError, ValueError):
                         pass
                 elif change.get("field") == "风险等级" and change.get("new") in ("high", "critical"):

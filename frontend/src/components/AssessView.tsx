@@ -511,7 +511,7 @@ function AssessContent({ initialName }: { initialName: string }) {
                 render={(d) => (
                   <div>
                     {d.alternatives?.length === 0 ? (
-                      <p className="text-xs text-gray-400">{d.source_risk_score != null && d.source_risk_score < 60 ? '风险较低，暂不需替代' : '暂未找到替代'}</p>
+                      <p className="text-xs text-gray-400">{d.source_risk_score != null && d.source_risk_score >= 70 ? '安全评分较高，暂不需替代' : '暂未找到替代'}</p>
                     ) : (
                       <div className="grid grid-cols-2 gap-2">
                         {d.alternatives?.slice(0, 4).map((a, i) => (

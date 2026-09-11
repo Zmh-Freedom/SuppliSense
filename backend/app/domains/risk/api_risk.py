@@ -11,6 +11,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
+@router.post(
+    "/rebuild-scores",
+    summary="按最新评分体系重建全部供应商评分",
+    description="管理员专用：清理旧评分快照、告警和评估历史，并按当前证据重算全部供应商。",
+)
+async def rebuild_scores(current_user=Depends(get_current_user)):
+    if getattr(getattr(current_user, "role", None), "value", current_user.role) not in {"admin", "administrator"}:
+        raise HTTPException(status_code=403, detail="仅管理员可重建全部供应商评分")
+    from app.domains.risk.service import rebuild_all_supplier_scores
+
+    return await asyncio.to_thread(rebuild_all_supplier_scores)
+
+
 def _refresh_assessment(company_name: str) -> None:
     """Background task: re-assess risk and save snapshot."""
     try:

@@ -6,7 +6,7 @@
 策略：
   1. 优先从监控清单中匹配同行业低风险企业
   2. 补充搜索天眼查数据库中的同行业未监控企业
-  3. 按风险评分升序排列，推荐 Top 5
+  3. 按安全评分降序排列，推荐 Top 5
 """
 
 from app.db.mongo import get_db
@@ -131,14 +131,14 @@ def find_alternatives(company_name: str, limit: int = 5) -> dict:
                 })
                 existing_names.add(ext_name)
 
-    # sort: low risk first, known risk before unknown
+    # Safety score is higher for safer suppliers; rank safest first.
     candidates.sort(key=lambda c: (
-        c["risk_score"] if c["risk_score"] is not None else 50,
+        -(c["risk_score"] if c["risk_score"] is not None else 50),
     ))
 
-    # filter: only suggest companies with lower risk
+    # filter: only suggest companies with lower risk (higher safety score)
     if source_score is not None:
-        better = [c for c in candidates if c["risk_score"] is None or c["risk_score"] < source_score]
+        better = [c for c in candidates if c["risk_score"] is None or c["risk_score"] > source_score]
         if better:
             candidates = better
 
@@ -168,7 +168,7 @@ def get_alternative_dashboard() -> dict:
             else {"company_name": name}
         )
         snap = db["alert_snapshots"].find_one(query, sort=[("checked_at", -1)])
-        if snap and snap.get("risk_score", 0) >= 60:
+        if snap and snap.get("risk_score", 100) < 40:
             alt = find_alternatives(name, limit=3)
             high_risk_companies.append({
                 "company_name": name,

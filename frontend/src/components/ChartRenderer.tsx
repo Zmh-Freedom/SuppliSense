@@ -36,8 +36,8 @@ function GaugeChart({ data }: { data: ChartData }) {
   const label = String(item.label ?? '');
   const pct = Math.min(value / max, 1);
 
-  // 颜色: 绿(0-30) → 黄(30-60) → 红(60-100)
-  const color = value <= 30 ? '#10b981' : value <= 60 ? '#f59e0b' : '#ef4444';
+  // Risk safety score colors: red (low safety) → amber → green.
+  const color = value < 40 ? '#ef4444' : value < 70 ? '#f59e0b' : '#10b981';
 
   return (
     <div className="flex flex-col items-center py-2">

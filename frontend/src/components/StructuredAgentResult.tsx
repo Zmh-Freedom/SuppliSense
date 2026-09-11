@@ -60,7 +60,7 @@ function readableLimitation(limitation: string): string {
 
 const FACT_LABELS: Record<string, string> = {
   count: '可见监控对象数量',
-  risk_score: '综合风险评分',
+  risk_score: '综合安全评分',
   risk_level: '风险等级',
   revenue: '营业收入',
   net_profit: '净利润',
@@ -331,8 +331,8 @@ function claimAssessment(claim: AgentAnswer['claims'][number], coverageLimited =
       return { label: '需核实', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
     if (leafPath === 'risk_score') {
-      if (value >= 60) return { label: '高风险信号', className: 'border-red-200 bg-red-50 text-red-700' };
-      if (value >= 30) return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+      if (value < 40) return { label: '高风险信号', className: 'border-red-200 bg-red-50 text-red-700' };
+      if (value < 70) return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
       return { label: coverageLimited ? '资料范围内风险较低' : '风险较低', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
     }
   }

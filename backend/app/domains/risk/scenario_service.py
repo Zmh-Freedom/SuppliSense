@@ -74,13 +74,14 @@ def simulate(company_name: str, scenario: str = "bankruptcy") -> dict:
         impact_factors.append({"factor": "组织复杂度", "detail": "少或无分支机构", "score": 0, "level": "low"})
 
     # factor 3: current risk level
-    if risk_score >= 80:
+    # risk_score is a safety score: lower values mean greater risk.
+    if risk_score < 20:
         impact_score += 30
         impact_factors.append({"factor": "当前风险水平", "detail": f"{risk_level} {risk_score}/100", "score": 30, "level": "high"})
-    elif risk_score >= 60:
+    elif risk_score < 40:
         impact_score += 20
         impact_factors.append({"factor": "当前风险水平", "detail": f"{risk_level} {risk_score}/100", "score": 20, "level": "medium"})
-    elif risk_score >= 30:
+    elif risk_score < 70:
         impact_score += 10
         impact_factors.append({"factor": "当前风险水平", "detail": f"{risk_level} {risk_score}/100", "score": 10, "level": "low"})
     else:

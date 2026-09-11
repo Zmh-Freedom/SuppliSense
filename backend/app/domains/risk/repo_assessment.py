@@ -9,6 +9,13 @@ from typing import Any
 from app.db.postgres import get_cursor
 
 
+def clear_history() -> int:
+    """Remove assessment history so old score semantics cannot mix with v3."""
+    with get_cursor() as (conn, cur):
+        cur.execute("DELETE FROM assessment_history")
+        return int(cur.rowcount or 0)
+
+
 def save_assessment(
     company_name: str,
     risk_score: int,

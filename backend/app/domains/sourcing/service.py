@@ -131,7 +131,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         risk_level = risk_info.get("risk_level", "unknown")
 
         # 加权公式
-        final_rank = 0.6 * match_score + 0.4 * (1 - risk_score / 100)
+        # risk_score is the safety score (higher means safer), so a safer
+        # supplier increases the sourcing rank.
+        final_rank = 0.6 * match_score + 0.4 * (risk_score / 100)
         # 匹配分衰减（越靠后匹配越低）
         final_rank *= (1 - i * 0.02)
 
