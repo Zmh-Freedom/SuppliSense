@@ -458,6 +458,17 @@ async def stream_agent_supervisor_graph(
                         "pending_approvals"
                     ]
                 yield _sse_event("approval_required", payload)
+                # Approval is a deliberate pause. Emit a terminal marker for
+                # clients whose stream reader expects every response to end
+                # with `done`; the workflow itself remains resumable from the
+                # checkpoint stored above.
+                yield _sse_event(
+                    "done",
+                    {
+                        "answer": payload["message"],
+                        "status": "waiting_approval",
+                    },
+                )
                 return
 
             for stage, output in update.items():

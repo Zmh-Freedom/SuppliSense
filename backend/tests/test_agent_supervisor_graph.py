@@ -639,14 +639,19 @@ def test_supervisor_pause_uses_existing_approval_event_with_pause_flag(
     assert business_event_types == [
         "thinking",
         "approval_required",
+        "done",
     ]
-    assert events[-1][1] == {
+    assert events[-2][1] == {
         "message": "确认执行待审批的供应商操作？",
         "tool": "agent_supervisor",
         "args": {"pending_approvals": pending_approvals},
         "session_id": "pause-run",
         "requires_human_approval": True,
         "pending_approvals": pending_approvals,
+    }
+    assert events[-1][1] == {
+        "answer": "确认执行待审批的供应商操作？",
+        "status": "waiting_approval",
     }
     assert stored[0]["mode"] == "agent-supervisor"
 
