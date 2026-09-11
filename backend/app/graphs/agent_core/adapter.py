@@ -189,10 +189,59 @@ def load_execution_context(
     )
     extracted = extract_conversation_intent(user_message, execution_context["references"])
     resolved = apply_extracted_conversation_intent(execution_context, extracted)
+    resolved = _enforce_scope_query_intent(resolved, user_message)
     return validate_execution_context(
         _apply_harness_sourcing_requirement(resolved, user_message),
         source="load_execution_context",
     )
+
+
+def _enforce_scope_query_intent(
+    execution_context: dict[str, Any], user_message: str
+) -> dict[str, Any]:
+    """Keep range-level procurement questions free of hallucinated suppliers.
+
+    LLM extraction is useful for aliases and dimensions, but a question such as
+    ``查看监控清单`` has no supplier target by design.  If a model happens to
+    return a target for that wording, it would incorrectly switch the Harness
+    from the scope tool to a single-supplier analysis.  The deterministic
+    message contract is authoritative for these four range-level intents.
+    """
+    scope_tokens = (
+        "监控清单", "监控列表", "我负责的供应商", "我管理的供应商",
+        "我科室", "本部门", "待复核", "待审核", "待处理事项",
+    )
+    if not any(token in str(user_message or "") for token in scope_tokens):
+        return execution_context
+    current_task = dict(execution_context.get("current_task") or {})
+    current_task.update({
+        "target_supplier_names": [],
+        "analysis_dimensions": [],
+        "subtasks": [],
+        "task_type": "analysis",
+        "user_message": user_message,
+    })
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    conversation_state.update({
+        "selected_supplier_names": [],
+        "selected_suppliers": [],
+        "current_task": current_task,
+    })
+    llm_intent = execution_context.get("llm_intent")
+    if isinstance(llm_intent, dict):
+        llm_intent = {
+            **llm_intent,
+            "target_supplier_names": [],
+            "analysis_dimensions": [],
+            "task_type": "analysis",
+            "requested_action": "none",
+        }
+    return {
+        **execution_context,
+        "conversation_state": conversation_state,
+        "current_task": current_task,
+        **({"llm_intent": llm_intent} if isinstance(llm_intent, dict) else {}),
+    }
 
 
 def _apply_harness_sourcing_requirement(

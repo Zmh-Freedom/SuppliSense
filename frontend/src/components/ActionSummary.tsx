@@ -6,9 +6,11 @@ export default function ActionSummary({ answer, limitations }: { answer: AgentAn
   const needsReview = answer.status === 'needs_review' || limitations.length > 0;
   const hasClaims = answer.claims.length > 0;
   const isWatchlist = answer.summary.includes('监控清单') || answer.claims.some(claim => claim.statement.startsWith('监控对象：'));
-  const isTrend = answer.summary.includes('风险变化检查') || answer.claims.some(claim => claim.statement.includes('风险变化：'));
+  const isTrend = answer.summary.includes('风险变化') || answer.claims.some(claim => claim.statement.includes('风险变化：'));
   const conclusion = isWatchlist ? '监控清单' : isTrend ? '风险变化检查' : needsReview ? '建议复核' : hasClaims ? '已形成初步结论' : '暂未形成结论';
   const explanation = isWatchlist || isTrend
+    ? answer.summary
+    : answer.summary && (answer.summary.includes('供应商复核') || answer.summary.includes('综合风险评分') || answer.summary.includes('寻源候选'))
     ? answer.summary
     : needsReview
     ? '发现了需要人工确认的信号或数据缺口，请先完成下方复核事项。'

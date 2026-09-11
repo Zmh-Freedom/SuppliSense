@@ -296,12 +296,19 @@ function claimAssessment(claim: AgentAnswer['claims'][number]): { label: string;
 }
 
 function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
+  if (answer.summary.includes('监控清单') && answer.claims.length === 0) return answer.summary;
+  if (answer.summary.includes('风险变化') && answer.claims.length === 0) return answer.summary;
   if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：'))) {
     const count = answer.claims.filter(claim => claim.statement.startsWith('监控对象：')).length;
     return `当前责任范围内共有 ${count} 家供应商纳入监控，下面列出可直接打开详情的监控对象。`;
   }
   if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：'))) {
     return answer.summary || '已完成当前责任范围内供应商的风险变化检查，下面列出每家的变化状态。';
+  }
+  if (answer.claims.length > 0 && answer.summary && (
+    answer.summary.includes('供应商复核') || answer.summary.includes('综合风险评分') || answer.summary.includes('寻源候选')
+  )) {
+    return answer.summary;
   }
   const dimensions = [...new Set(answer.claims.map(claim => readableDimension(claim.dimension)))];
   const supportedCount = answer.claims.filter(claim => claim.validation_status === 'supported').length;

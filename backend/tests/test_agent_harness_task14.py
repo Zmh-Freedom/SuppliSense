@@ -9,7 +9,10 @@ import pytest
 from app.domains.sourcing_risk import discovery_service
 from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
 from app.graphs.agent_core.adapter import _apply_harness_sourcing_requirement
-from app.graphs.harness.graph import _build_default_plan
+from app.graphs.agent_core.adapter import _enforce_scope_query_intent
+from app.graphs.agent_core.answer_contract import AgentAnswer
+from app.graphs.agent_core.evidence_ledger import ValidatedClaim
+from app.graphs.harness.graph import _build_default_plan, _summary
 from app.tools import TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor
 
@@ -91,6 +94,65 @@ def test_harness_recognizes_formal_supplier_directory_query() -> None:
 
     assert len(planned) == 1
     assert planned[0].tool_name == "list_formal_suppliers"
+
+
+def test_scope_query_cannot_become_single_supplier_analysis_from_llm_noise() -> None:
+    context = {
+        "current_task": {
+            "task_type": "analysis",
+            "target_supplier_names": ["模型误识别的公司"],
+            "analysis_dimensions": ["risk"],
+            "user_message": "查看监控清单",
+        },
+        "conversation_state": {},
+        "llm_intent": {
+            "target_supplier_names": ["模型误识别的公司"],
+            "analysis_dimensions": ["risk"],
+            "task_type": "analysis",
+            "requested_action": "none",
+        },
+    }
+
+    resolved = _enforce_scope_query_intent(context, "查看监控清单")
+
+    assert resolved["current_task"]["target_supplier_names"] == []
+    assert resolved["current_task"]["analysis_dimensions"] == []
+    assert resolved["llm_intent"]["target_supplier_names"] == []
+
+
+def test_supplier_review_summary_answers_the_business_question_first() -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="待生成",
+        claims=[
+            ValidatedClaim(
+                claim_id="risk", entity_id="entity:supplier", dimension="risk",
+                statement="青岛三祥科技股份有限公司 综合风险评分：7/100",
+                value=7, fact_path="risk_score", evidence_refs=["risk"], confidence=0.9,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profit", entity_id="entity:supplier", dimension="financial",
+                statement="青岛三祥科技股份有限公司 净利润同比增长率：-18.1%",
+                value=-0.181, fact_path="net_profit_growth", evidence_refs=["financial"], confidence=0.9,
+                validation_status="supported",
+            ),
+        ],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk", "financial"],
+        },
+        "task_specs": [],
+        "tool_outcomes": [],
+    })
+
+    assert "青岛三祥科技股份有限公司" in summary
+    assert "综合风险评分 7/100" in summary
+    assert "净利润同比下降 18.1%" in summary
+    assert "证据复核点" not in summary
 
 
 @pytest.mark.parametrize(

@@ -586,6 +586,17 @@ def _required_evidence_items(tasks: list[HarnessTask]) -> list[dict[str, str]]:
 
 
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
+    current_task = state.get("current_task") or {}
+    target_names = [
+        str(item).strip()
+        for item in current_task.get("target_supplier_names", [])
+        if str(item).strip()
+    ] if isinstance(current_task, dict) else []
+    dimensions = {
+        str(item).strip()
+        for item in current_task.get("analysis_dimensions", [])
+        if str(item).strip()
+    } if isinstance(current_task, dict) else set()
     tasks = state.get("task_specs") or []
     tool_names = {
         str(item.get("tool_name") or item.get("tool") or "")
@@ -605,6 +616,8 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if "get_watchlist" in tool_names:
         count = int(latest_data.get("count") or len(latest_data.get("companies") or []))
         scope = str(latest_data.get("scope") or "当前责任范围")
+        if count == 0:
+            return f"{scope}目前没有已纳入监控的供应商，暂时没有可展示的监控清单。"
         return f"已整理{scope}内的监控清单，共 {count} 家供应商，下面列出可直接查看的监控对象。"
     if "analyze_watchlist_trend" in tool_names:
         companies = latest_data.get("companies") if isinstance(latest_data.get("companies"), list) else []
@@ -615,6 +628,63 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         if not available:
             return f"已检查当前责任范围内 {len(companies)} 家供应商，但最近 {period} 个月的风险快照不足，暂时无法判断上升或下降。"
         return f"已完成当前责任范围内 {len(companies)} 家供应商最近 {period} 个月的风险变化检查，下面直接列出每家的变化状态和下一步建议。"
+    if target_names and answer.claims:
+        # Put the procurement conclusion before the evidence table.  Every
+        # sentence below is assembled from validated Claims, so this remains a
+        # deterministic presentation layer rather than an unsupported LLM
+        # interpretation.
+        subject = "、".join(dict.fromkeys(target_names[:3]))
+        values = {
+            str(claim.fact_path): claim.value
+            for claim in answer.claims
+            if claim.fact_path and claim.value is not None
+        }
+        risk_score = values.get("risk_score")
+        risk_level = values.get("risk_level")
+        summary_parts: list[str] = [f"已完成 {subject} 的供应商复核"]
+        if risk_score is not None or risk_level is not None:
+            risk_text = []
+            if risk_score is not None:
+                risk_text.append(f"综合风险评分 {risk_score}/100")
+            if risk_level is not None:
+                risk_text.append(str(risk_level))
+            summary_parts.append("，".join(risk_text))
+        if "financial" in dimensions:
+            profit_growth = values.get("net_profit_growth")
+            if isinstance(profit_growth, (int, float)) and profit_growth < 0:
+                summary_parts.append(f"净利润同比下降 {abs(profit_growth) * 100:.1f}%")
+            elif isinstance(profit_growth, (int, float)):
+                summary_parts.append(f"净利润同比增长 {profit_growth * 100:.1f}%")
+        if "business_risk" in dimensions:
+            missing_months = values.get("missing_month_count")
+            mismatch_months = values.get("settlement_without_receipts_month_count")
+            if isinstance(missing_months, (int, float)) and missing_months > 0:
+                summary_parts.append(f"近 12 个月缺失交易 {int(missing_months)} 个月")
+            if isinstance(mismatch_months, (int, float)) and mismatch_months > 0:
+                summary_parts.append(f"结算与收货记录不一致 {int(mismatch_months)} 个月")
+        result = "；".join(summary_parts) + "。"
+        if answer.status == "needs_review":
+            return result + "部分数据覆盖不足，采购动作请先按下方提示核实。"
+        return result + "可结合下方数据依据安排后续采购动作。"
+    if "sourcing" in dimensions or "discover_supplier_candidates" in tool_names or "search_suppliers" in tool_names:
+        candidate_count = 0
+        external_count = 0
+        for outcome in outcomes:
+            if not isinstance(outcome, dict):
+                continue
+            data = outcome.get("data")
+            if not isinstance(data, dict):
+                continue
+            candidates = data.get("candidates")
+            if isinstance(candidates, list):
+                candidate_count = max(candidate_count, len(candidates))
+            for key in ("external_candidates", "external"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    external_count = max(external_count, len(value))
+        if candidate_count or external_count:
+            return f"已找到 {candidate_count + external_count} 家寻源候选，其中 {external_count} 家为外部待核验候选；下面按历史合作与外部候选分开展示。"
+        return "已完成历史供应商和外部候选检索，但当前没有返回可用候选。"
     if answer.status == "completed":
         return "已完成基于有效证据的 Agent 分析。"
     if answer.status == "partial":
