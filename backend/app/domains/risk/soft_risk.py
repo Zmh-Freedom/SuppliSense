@@ -127,5 +127,7 @@ def _call_llm(company_name: str, context: dict[str, Any] | None) -> dict | None:
                 result["dimensions"][dim] = {"score": 0, "reason": "未分析"}
         return result
     except Exception as e:
-        logger.warning("soft_risk_llm_failed", company=company_name, error=str(e))
+        # This module uses the standard-library logger; pass context through
+        # the message arguments instead of structlog-style keyword fields.
+        logger.warning("soft_risk_llm_failed company=%s error=%s", company_name, str(e))
         return None

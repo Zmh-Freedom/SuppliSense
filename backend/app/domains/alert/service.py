@@ -260,6 +260,11 @@ def _next_action(target: dict, snapshot: dict | None, risk_change: dict, coverag
         reason = "外部候选尚未完成主体确认" if target.get("target_type") == "external_candidate" else "监控对象尚未完成主体确认"
         return {"code": "verify_identity", "label": "完成主体核验", "priority": priority, "reason": reason}
     if not snapshot:
+        assessment_status = target.get("initial_assessment_status")
+        if assessment_status == "failed":
+            return {"code": "assess", "label": "重试首次评估", "priority": "high", "reason": "上次首次评估未成功，当前仍没有可用风险快照"}
+        if assessment_status == "running":
+            return {"code": "assess", "label": "首次评估进行中", "priority": "high", "reason": "首次风险评估正在执行，完成后将生成风险快照"}
         return {"code": "assess", "label": "执行首次评估", "priority": "high", "reason": "暂无风险快照，不能判断风险变化"}
     if risk_change["status"] == "deteriorating" or snapshot.get("risk_level") == "高风险":
         return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": "风险分数上升或当前处于高风险"}
@@ -283,6 +288,18 @@ def get_watchlist_target_summaries(
     for target in targets:
         snapshots = _target_snapshots(db, target)
         latest = snapshots[0] if snapshots else None
+        initial_status = target.get("initial_assessment_status")
+        if not initial_status:
+            # Rows created before the status fields were introduced are
+            # considered complete when a historical snapshot already exists.
+            initial_status = "completed" if latest else "pending"
+        initial_assessment = {
+            "status": initial_status,
+            "started_at": target.get("initial_assessment_started_at"),
+            "completed_at": target.get("initial_assessment_at"),
+            "failed_at": target.get("initial_assessment_failed_at"),
+            "error": target.get("initial_assessment_error"),
+        }
         risk_change = _risk_change(snapshots)
         coverage = _data_coverage(db, target, latest)
         next_action = _next_action(target, latest, risk_change, coverage)
@@ -302,6 +319,10 @@ def get_watchlist_target_summaries(
             "last_checked_at": latest.get("checked_at") if latest else None,
             "next_action": next_action,
             "review_task": review_task,
+            "initial_assessment_status": initial_status,
+            "initial_assessment_at": target.get("initial_assessment_at"),
+            "initial_assessment_error": target.get("initial_assessment_error"),
+            "initial_assessment": initial_assessment,
         })
         summaries.append(enriched)
     return summaries

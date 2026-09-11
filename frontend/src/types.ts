@@ -147,6 +147,16 @@ export interface MonitorTarget {
     reason: string;
   };
   review_task?: MonitorReviewTask | null;
+  initial_assessment_status?: 'pending' | 'running' | 'completed' | 'failed' | string;
+  initial_assessment_at?: string | null;
+  initial_assessment_error?: string | null;
+  initial_assessment?: {
+    status: 'pending' | 'running' | 'completed' | 'failed' | string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    failed_at?: string | null;
+    error?: string | null;
+  };
 }
 
 export interface MonitorRiskDetail {

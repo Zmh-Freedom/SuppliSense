@@ -101,10 +101,24 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
     if _all_zero and not indicators.get("major_lawsuit") and risk.lawsuit_count == 0:
         from app.core.logging import get_logger
         _logger = get_logger(__name__)
-        _logger.warning("risk_data_suspiciously_empty",
-                         company=name,
-                         industry=industry_category,
-                         hint="所有风险指标为零，可能是短名查询数据不完整")
+        # A standalone maintenance script may invoke this service before the
+        # structlog configuration is installed. Keep the data-quality warning
+        # best-effort so it can never abort an otherwise valid assessment.
+        try:
+            _logger.warning(
+                "risk_data_suspiciously_empty",
+                company=name,
+                industry=industry_category,
+                hint="所有风险指标为零，可能是短名查询数据不完整",
+            )
+        except TypeError:
+            import logging
+            logging.getLogger(__name__).warning(
+                "risk_data_suspiciously_empty company=%s industry=%s hint=%s",
+                name,
+                industry_category,
+                "所有风险指标为零，可能是短名查询数据不完整",
+            )
 
     # check if in watchlist
     from app.domains.alert.service import get_watchlist

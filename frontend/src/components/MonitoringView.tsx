@@ -48,6 +48,19 @@ function coverageOf(target: MonitorTarget): CoverageDetails {
   return (target.data_coverage || {}) as CoverageDetails;
 }
 
+function initialAssessmentStatus(target: MonitorTarget): string {
+  return target.initial_assessment?.status || target.initial_assessment_status || (target.risk_score != null ? 'completed' : 'pending');
+}
+
+function initialAssessmentLabel(target: MonitorTarget): string {
+  return ({
+    pending: '待首次复核',
+    running: '首次复核中',
+    completed: '首次复核已完成',
+    failed: '首次复核失败',
+  } as Record<string, string>)[initialAssessmentStatus(target)] || '首次复核状态未知';
+}
+
 function actionPrompt(target: MonitorTarget): string {
   const name = target.display_name || target.company_name;
   const id = target.monitor_target_id;
@@ -347,7 +360,7 @@ function MonitoringTargetDetail({
           </div>
           <div className="flex flex-wrap gap-2"><TaskActionButton target={target} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} /><button type="button" onClick={() => onAnalyze(target)} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-surface-hover)]">Agent 复核</button><button type="button" onClick={onRefresh} disabled={isRefreshing} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-secondary)] disabled:opacity-50">{isRefreshing ? '检查中…' : '重新检查'}</button></div>
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-4"><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={action?.label || '继续观察'} /></div>
+        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-5"><DetailMetric label="首次复核" value={initialAssessmentLabel(target)} /><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={action?.label || '继续观察'} /></div>
       </section>
 
       <IdentityResolutionPanel

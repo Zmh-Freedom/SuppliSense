@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.core.deps import get_current_user, require_admin_or_analyst
+from app.core.deps import get_current_user, require_admin, require_admin_or_analyst
 from app.core.logging import get_logger
 from app.schemas.sourcing import (
     SelectResultRequest,
@@ -171,6 +171,18 @@ async def sync_supplier_responsibilities():
         return await asyncio.to_thread(_sync)
     except FeishuBitableError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post(
+    "/supplier-responsibilities/initial-assessments/backfill",
+    summary="回补首次风险评估",
+    description="管理员一次性为当前监控对象建立首次风险基线；已有快照只补记完成状态，不重复调用外部数据服务。",
+    dependencies=[Depends(require_admin)],
+)
+async def backfill_initial_assessments():
+    from app.services.feishu_supplier_responsibility import backfill_initial_assessments as _backfill
+
+    return await asyncio.to_thread(_backfill)
 
 
 @router.put(

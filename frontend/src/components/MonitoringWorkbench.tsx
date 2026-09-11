@@ -50,6 +50,28 @@ function identityLabel(target: MonitorTarget): string {
   return IDENTITY_LABELS[target.identity_status || ''] || '待确认';
 }
 
+function initialAssessmentStatus(target: MonitorTarget): string {
+  return target.initial_assessment?.status || target.initial_assessment_status || (target.risk_score != null ? 'completed' : 'pending');
+}
+
+function initialAssessmentLabel(target: MonitorTarget): string {
+  const status = initialAssessmentStatus(target);
+  return ({
+    pending: '待首次复核',
+    running: '首次复核中',
+    completed: '首次复核已完成',
+    failed: '首次复核失败',
+  } as Record<string, string>)[status] || '首次复核状态未知';
+}
+
+function initialAssessmentTone(target: MonitorTarget): string {
+  const status = initialAssessmentStatus(target);
+  if (status === 'completed') return 'bg-emerald-50 text-emerald-700';
+  if (status === 'failed') return 'bg-red-50 text-red-700';
+  if (status === 'running') return 'bg-blue-50 text-blue-700';
+  return 'bg-amber-50 text-amber-700';
+}
+
 function formatCheckedAt(value?: string | null): string {
   if (!value) return '尚未检查';
   const date = new Date(value);
@@ -159,11 +181,12 @@ export default function MonitoringWorkbench({
           <div className="rounded-xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-sm text-gray-400">暂无监控对象。输入供应商线索后，系统会先自动调查主体和资料覆盖。</div>
         ) : (
           <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
-            <table className="w-full min-w-[820px] border-collapse text-left">
+            <table className="w-full min-w-[960px] border-collapse text-left">
               <thead className="bg-[var(--color-background)] text-[11px] text-gray-500">
                 <tr>
                   <th className="px-3 py-3 font-medium">监控对象</th>
                   <th className="px-3 py-3 font-medium">身份状态</th>
+                  <th className="px-3 py-3 font-medium">首次复核</th>
                   <th className="px-3 py-3 font-medium">风险变化</th>
                   <th className="px-3 py-3 font-medium">数据覆盖</th>
               <th className="px-3 py-3 font-medium">下一步</th>
@@ -193,6 +216,12 @@ export default function MonitoringWorkbench({
                         <span className={`inline-flex rounded-full px-2 py-1 text-[11px] ${target.identity_status === 'verified' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                           {identityLabel(target)}
                         </span>
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className={`inline-flex rounded-full px-2 py-1 text-[11px] ${initialAssessmentTone(target)}`}>
+                          {initialAssessmentLabel(target)}
+                        </span>
+                        {target.initial_assessment_error && <div className="mt-1 max-w-[160px] text-[10px] leading-4 text-red-600">{target.initial_assessment_error}</div>}
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">

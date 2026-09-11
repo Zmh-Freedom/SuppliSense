@@ -409,6 +409,86 @@ def _monitor_target_has_snapshot(
         return False
 
 
+def backfill_initial_assessments(*, force: bool = False) -> dict[str, Any]:
+    """建立当前监控对象的首次风险基线，并回填可追溯的状态。
+
+    这是管理员触发的一次性运维动作，不读取或写入飞书责任分配表。已有
+    风险快照的对象只补记为已完成，避免重复调用外部风险数据服务；没有快照
+    的对象才执行一次完整评估，并把成功或失败写回监控对象。
+    """
+    db = get_db()
+    collection = db["watchlist"]
+    targets = list(collection.find({"monitor_status": {"$ne": "removed"}}))
+    result: dict[str, Any] = {
+        "status": "ok",
+        "scanned": len(targets),
+        "assessed": 0,
+        "marked_completed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "errors": [],
+    }
+
+    from app.domains.alert.service import _target_snapshots
+    from app.domains.risk.service import assess_risk
+    from app.schemas import RiskAssessRequest
+
+    for target in targets:
+        monitor_target_id = _text(target.get("monitor_target_id"))
+        company_name = _text(target.get("company_name") or target.get("display_name"))
+        target_filter = (
+            {"_id": target["_id"]}
+            if target.get("_id") is not None
+            else {"monitor_target_id": monitor_target_id}
+        )
+        if not company_name or not monitor_target_id:
+            result["skipped"] += 1
+            result["errors"].append({
+                "monitor_target_id": monitor_target_id or None,
+                "error": "监控对象缺少稳定 ID 或企业名称",
+            })
+            continue
+
+        snapshots = _target_snapshots(db, target, limit=1)
+        if snapshots and not force:
+            latest_checked_at = snapshots[0].get("checked_at")
+            update: dict[str, Any] = {
+                "initial_assessment_status": "completed",
+            }
+            if latest_checked_at:
+                update["initial_assessment_at"] = latest_checked_at
+            elif not target.get("initial_assessment_at"):
+                update["initial_assessment_at"] = datetime.now(timezone.utc)
+            collection.update_one(target_filter, {"$set": update, "$unset": {"initial_assessment_error": ""}})
+            result["marked_completed"] += 1
+            continue
+
+        collection.update_one(target_filter, {"$set": {
+            "initial_assessment_status": "running",
+            "initial_assessment_started_at": datetime.now(timezone.utc),
+        }})
+        try:
+            assess_risk(RiskAssessRequest(company_name=company_name))
+            collection.update_one(target_filter, {"$set": {
+                "initial_assessment_status": "completed",
+                "initial_assessment_at": datetime.now(timezone.utc),
+            }, "$unset": {"initial_assessment_error": "", "initial_assessment_failed_at": ""}})
+            result["assessed"] += 1
+        except Exception as exc:
+            message = str(exc)[:500]
+            collection.update_one(target_filter, {"$set": {
+                "initial_assessment_status": "failed",
+                "initial_assessment_error": message,
+                "initial_assessment_failed_at": datetime.now(timezone.utc),
+            }})
+            result["failed"] += 1
+            result["errors"].append({"monitor_target_id": monitor_target_id, "company_name": company_name, "error": message})
+
+    if result["failed"]:
+        result["status"] = "partial_failed"
+    return result
+
+
 def sync_supplier_responsibilities(
     client: FeishuBitableClient | None = None,
 ) -> dict[str, Any]:
