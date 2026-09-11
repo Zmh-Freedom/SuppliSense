@@ -39,7 +39,7 @@ RISK_TIMEOUT_SECONDS = 120  # 风险评估超时时间（含 AkShare + 天眼查
     "/calculate",
     response_model=RiskCalculateResponse,
     summary="计算企业风险评分",
-    description="基于企业工商信息、司法风险、财务指标等多维度数据，计算 13 维度风险评分并返回风险等级。",
+    description="基于企业工商信息、司法风险、财务指标等多维度数据，计算 0-100 安全评分（分数越高风险越低）并返回风险等级。",
     responses={
         400: {"description": "请求参数错误"},
         504: {"description": "计算超时（>60秒）"},
@@ -63,7 +63,7 @@ async def risk_calculate(request: RiskCalculateRequest):
     "/assess",
     response_model=RiskCalculateResponse,
     summary="快速评估企业风险（含缓存）",
-    description="根据企业名称快速评估风险。优先返回缓存结果，2小时内数据直接返回，过期数据返回缓存同时后台刷新。",
+    description="根据企业名称快速评估风险。返回 0-100 安全评分（分数越高风险越低）；优先返回缓存结果，2小时内数据直接返回，过期数据返回缓存同时后台刷新。",
     responses={
         400: {"description": "请求参数错误"},
         504: {"description": "评估超时（>60秒）"},
