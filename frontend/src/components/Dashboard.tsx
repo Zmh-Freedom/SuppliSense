@@ -24,6 +24,15 @@ export default function Dashboard() {
   const data = dashQuery.data;
   const predictions = predQuery.data ?? [];
   const alertTrend = trendQuery.data?.data ?? [];
+  const rankedTargets = [...(data?.targets ?? [])]
+    .filter(target => target.monitor_status !== 'removed')
+    .sort((a, b) => {
+      if (a.risk_score == null && b.risk_score == null) return 0;
+      if (a.risk_score == null) return 1;
+      if (b.risk_score == null) return -1;
+      return b.risk_score - a.risk_score;
+    })
+    .slice(0, 5);
   const isLoading = dashQuery.isLoading;
   const isRefreshing = dashQuery.isFetching && !dashQuery.isLoading;
   const error = dashQuery.error;
@@ -201,12 +210,69 @@ export default function Dashboard() {
       <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text)]">采购复核工作台</h3>
-            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">监控对象的身份、数据覆盖、风险变化和下一步动作集中在风险监控模块管理。</p>
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">风险排名</h3>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">按当前风险分数从高到低，优先查看排名靠前的供应商。</p>
           </div>
-          <button type="button" onClick={() => navigate('/assess')} className="shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">打开工作台</button>
+          <button type="button" onClick={() => navigate('/assess')} className="shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">查看全部</button>
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center"><DashboardMiniMetric label="监控对象" value={data.total} /><DashboardMiniMetric label="优先复核" value={data.targets?.filter(target => target.next_action?.priority === 'high').length ?? 0} /><DashboardMiniMetric label="未覆盖数据域" value={data.targets?.filter(target => target.data_coverage?.status !== 'complete').length ?? 0} /></div>
+        {rankedTargets.length === 0 ? (
+          <div className="mt-4 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-8 text-center text-xs text-[var(--color-text-secondary)]">
+            暂无监控对象，风险排名会在建立监控对象后显示。
+          </div>
+        ) : (
+          <div className="mt-4 overflow-x-auto rounded-xl border border-[var(--color-border)]">
+            <table className="w-full min-w-[700px] border-collapse text-left text-xs">
+              <thead className="bg-[var(--color-background)] text-[11px] text-[var(--color-text-secondary)]">
+                <tr>
+                  <th className="w-14 px-3 py-3 font-medium">排名</th>
+                  <th className="px-3 py-3 font-medium">供应商</th>
+                  <th className="px-3 py-3 font-medium">当前风险</th>
+                  <th className="px-3 py-3 font-medium">风险变化</th>
+                  <th className="px-3 py-3 font-medium">数据覆盖</th>
+                  <th className="px-3 py-3 font-medium">下一步</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {rankedTargets.map((target, index) => {
+                  const score = target.risk_score;
+                  const riskColor = score == null ? '#737373' : getRiskColor(score);
+                  const riskBg = score == null ? '#f5f5f4' : getRiskBg(score);
+                  const trendDelta = target.risk_change?.delta;
+                  const trendText = target.risk_change?.label || '暂无数据';
+                  return (
+                    <tr key={target.monitor_target_id} className="align-middle hover:bg-[var(--color-surface-hover)]">
+                      <td className="px-3 py-3">
+                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-background)] font-semibold text-[var(--color-text-secondary)]">{index + 1}</span>
+                      </td>
+                      <td className="max-w-[240px] px-3 py-3">
+                        <button type="button" onClick={() => navigate(`/assess/${encodeURIComponent(target.monitor_target_id)}`)} className="block max-w-full truncate text-left font-medium text-[var(--color-text)] hover:text-[var(--color-primary-bg)]">
+                          {target.display_name || target.company_name}
+                        </button>
+                        {target.supplier_code && <span className="mt-1 block text-[10px] text-gray-400">{target.supplier_code}</span>}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className="inline-flex rounded-full px-2 py-1 text-[11px] font-medium" style={{ color: riskColor, background: riskBg }}>
+                          {score == null ? '暂无快照' : `${target.risk_level || '未知'} ${score}/100`}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-[var(--color-text-secondary)]">
+                        {trendText}{trendDelta != null ? ` ${trendDelta > 0 ? '+' : ''}${trendDelta}` : ''}
+                      </td>
+                      <td className="max-w-[150px] px-3 py-3 text-[var(--color-text-secondary)]">
+                        <span className="block truncate">{(target.data_coverage as { summary?: string } | undefined)?.summary || '覆盖情况未知'}</span>
+                      </td>
+                      <td className="max-w-[160px] px-3 py-3">
+                        <span className={`block truncate font-medium ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                          {target.next_action?.label || '继续观察'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
     </div>
@@ -220,8 +286,4 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
       <div className="text-xs text-gray-400 mt-1">{label}</div>
     </div>
   );
-}
-
-function DashboardMiniMetric({ label, value }: { label: string; value: number }) {
-  return <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-3 py-2"><div className="text-lg font-semibold text-[var(--color-text)]">{value}</div><div className="text-[11px] text-gray-400">{label}</div></div>;
 }
