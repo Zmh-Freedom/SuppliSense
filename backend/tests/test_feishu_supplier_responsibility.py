@@ -74,11 +74,21 @@ def test_normalize_responsibility_record_rejects_supplier_not_in_current_master(
 def test_sync_monitor_targets_auto_enrols_and_marks_responsible_supplier(monkeypatch) -> None:
     collection = MagicMock()
     collection.find_one.side_effect = [None, None]
-    monkeypatch.setattr(responsibility, "get_db", lambda: {"watchlist": collection})
+    snapshots = MagicMock()
+    snapshots.find_one.return_value = None
+    monkeypatch.setattr(
+        responsibility,
+        "get_db",
+        lambda: {"watchlist": collection, "alert_snapshots": snapshots},
+    )
     monkeypatch.setattr(
         responsibility,
         "_application_user_ids_by_identity",
         lambda: {"ou-buyer": "user-buyer"},
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.service.assess_risk",
+        lambda request: object(),
     )
     record = {
         "supplier_id": "supplier:1",
@@ -99,10 +109,58 @@ def test_sync_monitor_targets_auto_enrols_and_marks_responsible_supplier(monkeyp
 
     result = responsibility._sync_monitor_targets([record])
 
-    assert result == {"monitored": 1, "errors": []}
+    assert result == {
+        "monitored": 1,
+        "assessed": 1,
+        "errors": [],
+        "assessment_errors": [],
+    }
     update_filter, update_doc = collection.update_one.call_args_list[0].args[:2]
     assert update_filter == {"supplier_id": "supplier:1"}
     assert update_doc["$set"]["target_type"] == "formal_supplier"
     assert update_doc["$set"]["is_responsible_supplier"] is True
     assert update_doc["$set"]["responsibility_status"] == "assigned"
     assert update_doc["$set"]["owner_user_id"] == "user-buyer"
+
+
+def test_sync_monitor_targets_skips_initial_assessment_when_snapshot_exists(monkeypatch) -> None:
+    collection = MagicMock()
+    collection.find_one.return_value = {
+        "_id": "watch-1",
+        "monitor_target_id": "target-1",
+        "supplier_id": "supplier:1",
+    }
+    snapshots = MagicMock()
+    snapshots.find_one.return_value = {"snapshot_id": "snapshot-1"}
+    monkeypatch.setattr(
+        responsibility,
+        "get_db",
+        lambda: {"watchlist": collection, "alert_snapshots": snapshots},
+    )
+    monkeypatch.setattr(
+        responsibility,
+        "_application_user_ids_by_identity",
+        lambda: {"ou-buyer": "user-buyer"},
+    )
+    called = False
+
+    def fake_assess(_request):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("app.domains.risk.service.assess_risk", fake_assess)
+
+    result = responsibility._sync_monitor_targets([{
+        "supplier_id": "supplier:1",
+        "supplier_code": "SUP-001",
+        "supplier_name": "示例供应商",
+        "source_active": True,
+        "sync_status": "current",
+        "purchaser_open_id": "ou-buyer",
+        "synced_at": datetime.now(timezone.utc),
+    }])
+
+    assert result["monitored"] == 1
+    assert result["assessed"] == 0
+    assert result["assessment_errors"] == []
+    assert called is False

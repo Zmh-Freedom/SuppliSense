@@ -267,7 +267,9 @@ def _sync_monitor_targets(records: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     active_supplier_ids = {str(record["supplier_id"]) for record in active_records}
     monitored = 0
+    assessed = 0
     errors: list[dict[str, str]] = []
+    assessment_errors: list[dict[str, str]] = []
     for record in active_records:
         supplier_id = str(record["supplier_id"])
         company_name = _text(record.get("supplier_name"))
@@ -312,6 +314,53 @@ def _sync_monitor_targets(records: list[dict[str, Any]]) -> dict[str, Any]:
                 upsert=True,
             )
             monitored += 1
+
+            # The first enrollment must have a usable risk baseline immediately.
+            # Existing snapshots are left untouched so the six-hour Feishu sync
+            # remains idempotent and does not repeatedly call paid providers.
+            snapshot_exists = _monitor_target_has_snapshot(
+                db, monitor_target_id=target_id, company_name=company_name
+            )
+            if not snapshot_exists:
+                target_filter = (
+                    {"_id": existing["_id"]}
+                    if existing and existing.get("_id") is not None
+                    else {"supplier_id": supplier_id}
+                )
+                collection.update_one(
+                    target_filter,
+                    {"$set": {
+                        "initial_assessment_status": "running",
+                        "initial_assessment_started_at": datetime.now(timezone.utc),
+                    }},
+                )
+                try:
+                    from app.domains.risk.service import assess_risk
+                    from app.schemas import RiskAssessRequest
+
+                    assess_risk(RiskAssessRequest(company_name=company_name))
+                    collection.update_one(
+                        target_filter,
+                        {"$set": {
+                            "initial_assessment_status": "completed",
+                            "initial_assessment_at": datetime.now(timezone.utc),
+                        }, "$unset": {"initial_assessment_error": ""}},
+                    )
+                    assessed += 1
+                except Exception as exc:
+                    message = str(exc)[:500]
+                    collection.update_one(
+                        target_filter,
+                        {"$set": {
+                            "initial_assessment_status": "failed",
+                            "initial_assessment_error": message,
+                            "initial_assessment_failed_at": datetime.now(timezone.utc),
+                        }},
+                    )
+                    assessment_errors.append({
+                        "supplier_id": supplier_id,
+                        "error": message,
+                    })
         except Exception as exc:
             logger.warning(
                 "feishu_monitor_target_sync_failed",
@@ -333,7 +382,31 @@ def _sync_monitor_targets(records: list[dict[str, Any]]) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("feishu_monitor_responsibility_cleanup_failed", error=str(exc))
         errors.append({"supplier_id": "*", "error": str(exc)})
-    return {"monitored": monitored, "errors": errors}
+    return {
+        "monitored": monitored,
+        "assessed": assessed,
+        "errors": errors,
+        "assessment_errors": assessment_errors,
+    }
+
+
+def _monitor_target_has_snapshot(
+    db: object,
+    *,
+    monitor_target_id: str,
+    company_name: str,
+) -> bool:
+    """Check for an existing risk baseline without mixing monitor identities."""
+    try:
+        snapshots = db["alert_snapshots"]
+        if snapshots.find_one({"monitor_target_id": monitor_target_id}):
+            return True
+        # Compatibility for snapshots written before monitor_target_id existed.
+        return bool(company_name and snapshots.find_one({"company_name": company_name}))
+    except Exception:
+        # A missing snapshot collection should be treated as no baseline; the
+        # assessment attempt will surface the actual persistence/config error.
+        return False
 
 
 def sync_supplier_responsibilities(
@@ -384,7 +457,9 @@ def sync_supplier_responsibilities(
         "synced_at": synced_at.isoformat(),
         "linked_users": linked_users,
         "auto_monitored": monitor_sync["monitored"],
-        "auto_monitor_errors": monitor_sync["errors"],
+        # Keep the existing response shape: initial-assessment failures are
+        # surfaced through the established auto-monitor error collection.
+        "auto_monitor_errors": monitor_sync["errors"] + monitor_sync["assessment_errors"],
         "errors": [
             {"supplier_code": record["supplier_code"], "reasons": record["validation_errors"]}
             for record in invalid
