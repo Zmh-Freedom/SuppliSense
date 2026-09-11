@@ -74,7 +74,7 @@ def test_save_snapshot_appends_a_version_linked_to_previous_snapshot(monkeypatch
     assert saved["snapshot_id"]
     assert saved["snapshot_version"] == 4
     assert saved["previous_snapshot_id"] == "snapshot-3"
-    assert saved["scoring_version"] == "v2"
+    assert saved["scoring_version"] == "v3_safety_score"
 
 
 def test_snapshot_history_limits_and_orders_by_version(monkeypatch):

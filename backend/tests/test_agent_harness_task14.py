@@ -197,7 +197,7 @@ def test_supplier_review_summary_answers_the_business_question_first() -> None:
     })
 
     assert "青岛三祥科技股份有限公司" in summary
-    assert "综合风险评分 7/100" in summary
+    assert "综合安全评分 7/100" in summary
     assert "净利润同比下降 18.1%" in summary
     assert "证据复核点" not in summary
 

@@ -209,6 +209,7 @@ DDL_STATEMENTS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE assessment_history ADD COLUMN IF NOT EXISTS scoring_version VARCHAR(16) NOT NULL DEFAULT 'unknown'",
 
     # Agent Harness control plane
     """
