@@ -295,8 +295,10 @@ function AssessContent({ initialName }: { initialName: string }) {
                   <div>
                     <p className="font-medium mb-2 text-[var(--color-text-secondary)]">司法</p>
                     <SuitRow rd={rd} />
-                    <Row label="被执行" value={rd?.executed_count ?? 0} />
-                    <Row label="失信" value={rd?.dishonesty_count ?? 0} />
+                    <JudicialRow label="被执行" value={rd?.executed_count} status={rd?.judicial_data_status?.executedPerson} />
+                    <JudicialRow label="失信" value={rd?.dishonesty_count} status={rd?.judicial_data_status?.dishonesty} />
+                    <JudicialRow label="开庭公告" value={rd?.court_announcement_count} status={rd?.judicial_data_status?.courtAnnouncement} />
+                    <JudicialRow label="限制消费" value={rd?.consumption_restriction_count} status={rd?.judicial_data_status?.consumptionRestriction} />
                     <Row label="重大诉讼" warn={rd?.major_lawsuit} />
                   </div>
                   <div>
@@ -642,11 +644,15 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SuitRow({ rd }: { rd?: { lawsuit_count: number; recent_lawsuits?: number } }) {
+function SuitRow({ rd }: { rd?: { lawsuit_count: number; recent_lawsuits?: number; judicial_data_status?: Record<string, string> } }) {
   const recent = rd?.recent_lawsuits;
   const total = rd?.lawsuit_count ?? 0;
+  const lawSuitStatus = rd?.judicial_data_status?.lawSuit;
+  const courtRegisterStatus = rd?.judicial_data_status?.courtRegister;
+  const statusLabel = (status?: string) => status === 'has_records' ? '有记录' : status === 'no_records' ? '明确无记录' : status === 'query_failed' ? '查询失败' : '暂无数据';
   return (
-    <p className="text-xs text-gray-500 py-0.5">
+    <div className="text-xs text-gray-500 py-0.5">
+      <p>
       近3年诉讼{' '}
       {recent != null ? (
         <>
@@ -656,8 +662,22 @@ function SuitRow({ rd }: { rd?: { lawsuit_count: number; recent_lawsuits?: numbe
       ) : (
         <span className="font-medium text-[var(--color-text)]">{total}</span>
       )}
-    </p>
+      </p>
+      {(lawSuitStatus || courtRegisterStatus) && <p className="mt-0.5 text-[11px] text-gray-400">法律诉讼：{statusLabel(lawSuitStatus)} · 立案信息：{statusLabel(courtRegisterStatus)}</p>}
+    </div>
   );
+}
+
+function JudicialRow({ label, value, status }: { label: string; value?: number; status?: string }) {
+  const statusLabel = status === 'has_records'
+    ? `有记录（${value ?? 0}条）`
+    : status === 'no_records'
+      ? '明确无记录'
+      : status === 'query_failed'
+        ? '查询失败'
+        : '暂无数据';
+  const tone = status === 'has_records' ? 'text-amber-700' : status === 'no_records' ? 'text-emerald-700' : 'text-gray-400';
+  return <p className={`text-xs py-0.5 ${tone}`}><span className="text-gray-500">{label}</span>：{statusLabel}</p>;
 }
 
 function Row({ label, value, warn, extra }: { label: string; value?: number; warn?: boolean; extra?: string }) {

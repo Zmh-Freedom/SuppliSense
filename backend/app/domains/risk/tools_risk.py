@@ -24,6 +24,8 @@ def assess_risk(company_name: str) -> dict:
             "risk_score", "risk_level",
             "risk_detail.lawsuit_count", "risk_detail.executed_count",
             "risk_detail.dishonesty_count", "risk_detail.major_lawsuit",
+            "risk_detail.court_announcement_count",
+            "risk_detail.consumption_restriction_count",
             "risk_detail.abnormal_operation_count",
             "risk_detail.administrative_penalty_count",
             "risk_detail.legal_person_change_frequent",

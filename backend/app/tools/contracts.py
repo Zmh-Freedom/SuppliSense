@@ -54,6 +54,7 @@ class TianyanchaRiskLookupOutput(StrictToolOutput):
     source_message: str | None = None
     queried_at: str | None = None
     counts: dict[str, int] = Field(default_factory=dict)
+    collection_statuses: dict[str, dict[str, Any]] = Field(default_factory=dict)
     records: list[dict[str, Any]] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)
 

@@ -95,6 +95,7 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
 
     # 数据质量检查：已知企业但风险指标全零 → 大概率短名数据缺失
     _risk_indicators = ["dishonesty_count", "lawsuit_count", "executed_count",
+                        "court_announcement_count", "consumption_restriction_count",
                         "abnormal_operation_count", "administrative_penalty_count",
                         "guarantee_count", "pledge_count", "bankruptcy_count", "env_penalty_count"]
     _all_zero = all(indicators.get(k, 0) == 0 for k in _risk_indicators)
@@ -177,6 +178,8 @@ def _calculate_company_risk(profile, *, include_soft_risk: bool) -> RiskCalculat
         risk=risk,
         financial=financial,
         dishonesty_count=indicators["dishonesty_count"],
+        court_announcement_count=indicators.get("court_announcement_count", 0),
+        consumption_restriction_count=indicators.get("consumption_restriction_count", 0),
         major_lawsuit=indicators["major_lawsuit"],
         legal_person_change_frequent=indicators["legal_person_change_frequent"],
         net_profit_declining=indicators.get("net_profit_declining", False),
@@ -197,6 +200,9 @@ def _calculate_company_risk(profile, *, include_soft_risk: bool) -> RiskCalculat
         "recent_lawsuits": get_recent_lawsuits(name, years=3),
         "executed_count": indicators["executed_count"] or risk.executed_count,
         "dishonesty_count": indicators["dishonesty_count"],
+        "court_announcement_count": indicators.get("court_announcement_count", 0),
+        "consumption_restriction_count": indicators.get("consumption_restriction_count", 0),
+        "judicial_data_status": indicators.get("judicial_data_status", {}),
         "major_lawsuit": indicators["major_lawsuit"],
         "abnormal_operation_count": risk.abnormal_operation_count,
         "administrative_penalty_count": risk.administrative_penalty_count,
@@ -221,7 +227,10 @@ def _risk_data_coverage(risk, indicators: dict, financial, include_soft_risk: bo
     """Describe score inputs instead of treating unavailable inputs as zero risk."""
     available = {
         "financial": financial is not None,
-        "judicial": any((
+        "judicial": bool(indicators.get("judicial_data_status")) and any(
+            status in {"has_records", "no_records"}
+            for status in indicators.get("judicial_data_status", {}).values()
+        ) or any((
             risk.lawsuit_count,
             risk.executed_count,
             indicators.get("dishonesty_count", 0),
@@ -352,6 +361,14 @@ def _calc_score(
             dishonesty_pts = 25
         jud_items["失信"] = f"{dishonesty_pts}分 ({req.dishonesty_count}条)"
         jud_raw += dishonesty_pts
+    announcement_pts = _clamp(req.court_announcement_count * 0.5, 0, 5)
+    if announcement_pts > 0:
+        jud_items["开庭公告"] = f"{announcement_pts:.1f}分 ({req.court_announcement_count}条)"
+        jud_raw += announcement_pts
+    restriction_pts = _clamp(req.consumption_restriction_count * 5, 0, 15)
+    if restriction_pts > 0:
+        jud_items["限制消费"] = f"{restriction_pts:.1f}分 ({req.consumption_restriction_count}条)"
+        jud_raw += restriction_pts
     if req.major_lawsuit:
         jud_items["重大诉讼"] = "10分"
         jud_raw += 10

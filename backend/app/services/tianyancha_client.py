@@ -199,6 +199,34 @@ def fetch_company(company_name: str) -> bool:
     return saved
 
 
+def fetch_collections(company_name: str, collections: list[str] | tuple[str, ...]) -> dict[str, str]:
+    """按指定数据域补齐天眼查快照。
+
+    返回每个集合的调用结果：``queried`` 表示接口返回了可落库响应
+    （包括供应商明确返回的无结果响应），``query_failed`` 表示接口调用
+    失败或没有可落库响应。这样司法工具可以在已有部分缓存时只补缺失域，
+    而不会把一次局部命中误当成全部数据已覆盖。
+    """
+    if not TOKEN:
+        return {collection: "not_queried" for collection in collections}
+
+    endpoint_by_collection = {collection: (path, wrapper_key) for collection, path, wrapper_key in _ENDPOINTS}
+    outcomes: dict[str, str] = {}
+    for collection in dict.fromkeys(collections):
+        endpoint = endpoint_by_collection.get(collection)
+        if endpoint is None:
+            outcomes[collection] = "query_failed"
+            continue
+        path, wrapper_key = endpoint
+        response = _call(path, company_name)
+        if response is None:
+            outcomes[collection] = "query_failed"
+            continue
+        _save(collection, company_name, response, wrapper_key)
+        outcomes[collection] = "queried"
+    return outcomes
+
+
 def _fetch_lawsuit_paginated(company_name: str) -> None:
     """
     翻页拉取 lawSuit 全量数据，保存到 lawSuit_detail 集合。

@@ -12,6 +12,8 @@ class RiskCalculateRequest(BaseModel):
 
     # extra risk indicators beyond the basic schemas
     dishonesty_count: int = 0
+    court_announcement_count: int = 0
+    consumption_restriction_count: int = 0
     major_lawsuit: bool = False
     legal_person_change_frequent: bool = False
     net_profit_declining: bool = False

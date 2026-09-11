@@ -20,6 +20,7 @@ _LEGAL_COLLECTIONS = (
     "courtRegister",
     "dishonesty",
     "executedPerson",
+    "courtAnnouncement",
     "consumptionRestriction",
 )
 _BUSINESS_COLLECTIONS = (
@@ -31,6 +32,27 @@ _BUSINESS_COLLECTIONS = (
     "taxArrears",
 )
 _PROFILE_COLLECTIONS = ("baseinfo", "holder", "invest", "changeInfo", "branch")
+
+_COLLECTION_LABELS = {
+    "lawSuit": "法律诉讼",
+    "courtRegister": "立案信息",
+    "dishonesty": "失信被执行人",
+    "executedPerson": "被执行人",
+    "courtAnnouncement": "开庭公告",
+    "consumptionRestriction": "限制消费",
+    "riskInfo": "综合风险信息",
+    "abnormal": "经营异常",
+    "punishmentInfo": "行政处罚",
+    "illegalinfo": "严重违法",
+    "equityPledge": "股权质押",
+    "taxArrears": "欠税公告",
+}
+_STATUS_LABELS = {
+    "has_records": "有记录",
+    "no_records": "明确无记录",
+    "not_queried": "未查询",
+    "query_failed": "查询失败",
+}
 
 
 def _now() -> str:
@@ -84,27 +106,76 @@ def _ensure_documents(
     collections: tuple[str, ...],
     *,
     fetch_news: bool = False,
-) -> tuple[dict[str, dict[str, Any]], str, str]:
-    """Read cache first, then make one bounded provider call when configured."""
+) -> tuple[dict[str, dict[str, Any]], str, str, dict[str, str]]:
+    """Read cache first, then query only missing provider collections."""
     documents = _cached_documents(company_name, collections)
-    if documents:
-        return documents, "cached", "已使用本地天眼查快照"
+    missing = [collection for collection in collections if collection not in documents]
+    if not missing:
+        return documents, "cached", "已使用本地天眼查快照", {collection: "cached" for collection in collections}
     if not settings.TIANYANCHA_TOKEN:
-        return {}, "unavailable", "未配置天眼查访问凭据"
+        return documents, "cached" if documents else "unavailable", "未配置天眼查访问凭据", {collection: "not_queried" for collection in missing}
 
     try:
         from app.services import tianyancha_client
 
         if fetch_news:
-            tianyancha_client.fetch_news(company_name)
+            response = tianyancha_client.fetch_news(company_name)
+            fetch_statuses = {"news": "queried" if response is not None else "query_failed"}
         else:
-            tianyancha_client.fetch_company(company_name)
+            fetch_statuses = tianyancha_client.fetch_collections(company_name, missing)
     except Exception as exc:
-        return {}, "failed", f"天眼查查询失败：{type(exc).__name__}"
+        return documents, "failed" if not documents else "partial", f"天眼查查询失败：{type(exc).__name__}", {collection: "query_failed" for collection in missing}
     documents = _cached_documents(company_name, collections)
     if documents:
-        return documents, "live", "已完成天眼查检索并写入本地快照"
-    return {}, "not_found", "天眼查未返回可用资料"
+        failed = any(fetch_statuses.get(collection) == "query_failed" for collection in missing)
+        return documents, "partial" if failed else "live", "已完成天眼查缺失维度检索并写入本地快照", fetch_statuses
+    if any(value == "query_failed" for value in fetch_statuses.values()):
+        return {}, "failed", "天眼查查询失败", fetch_statuses
+    return {}, "not_found", "天眼查未返回可用资料", fetch_statuses
+
+
+def _unpack_ensure_result(result: Any) -> tuple[dict[str, dict[str, Any]], str, str, dict[str, str]]:
+    """Support historical test doubles that return the original three values."""
+    if isinstance(result, tuple) and len(result) == 4:
+        documents, source_mode, source_message, fetch_statuses = result
+        return documents, source_mode, source_message, dict(fetch_statuses or {})
+    documents, source_mode, source_message = result
+    return documents, source_mode, source_message, {}
+
+
+def _collection_status(document: dict[str, Any] | None, attempted: str | None) -> str:
+    if document is not None:
+        return "has_records" if _records(document) or _provider_total(document) > 0 else "no_records"
+    if attempted in {"query_failed", "queried"}:
+        return "query_failed"
+    return "not_queried"
+
+
+def _provider_total(document: dict[str, Any] | None) -> int:
+    value = _unwrap(document)
+    if isinstance(value, dict):
+        for candidate in (value.get("total"), (value.get("result") or {}).get("total") if isinstance(value.get("result"), dict) else None):
+            if isinstance(candidate, (int, float)):
+                return int(candidate)
+    return 0
+
+
+def _collection_statuses(
+    collections: tuple[str, ...],
+    documents: dict[str, dict[str, Any]],
+    fetch_statuses: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    statuses: dict[str, dict[str, Any]] = {}
+    for collection in collections:
+        status = _collection_status(documents.get(collection), fetch_statuses.get(collection))
+        statuses[collection] = {
+            "label": _COLLECTION_LABELS.get(collection, collection),
+            "status": status,
+            "status_label": _STATUS_LABELS[status],
+            "count": len(_records(documents.get(collection))) if documents.get(collection) else 0,
+            "source_mode": "cached" if collection in documents and fetch_statuses.get(collection) != "queried" else ("live" if fetch_statuses.get(collection) == "queried" else "none"),
+        }
+    return statuses
 
 
 def _base_profile(document: dict[str, Any] | None) -> dict[str, Any]:
@@ -128,7 +199,7 @@ def _provider_evidence(
         "dimension": dimension,
         "provider": "tianyancha",
         "source_type": "tianyancha_api",
-        "status": "available" if records else status,
+        "status": "available" if any(item.get("status") in {"has_records", "no_records"} for item in records) else status,
         "collected_at": _now(),
         "data_mode": "formal",
         "facts": {
@@ -197,7 +268,7 @@ def lookup_company_identity(company_name: str, unified_social_credit_code: str =
             "candidates": [],
             "message": "企业名称至少需要两个字符",
         }
-    documents, source_mode, source_message = _ensure_documents(name, ("baseinfo",))
+    documents, source_mode, source_message, _ = _unpack_ensure_result(_ensure_documents(name, ("baseinfo",)))
     profile = _base_profile(documents.get("baseinfo"))
     if not profile:
         return {
@@ -279,15 +350,28 @@ def _lookup_risk_domain(
             "limitations": ["企业名称至少需要两个字符"],
             "message": "企业名称至少需要两个字符",
         }
-    documents, source_mode, source_message = _ensure_documents(name, collections)
+    documents, source_mode, source_message, fetch_statuses = _unpack_ensure_result(_ensure_documents(name, collections))
     records_by_type = {collection: _records(documents.get(collection)) for collection in collections}
     counts = {collection: len(records) for collection, records in records_by_type.items()}
+    collection_statuses = _collection_statuses(collections, documents, fetch_statuses)
     records = [
-        {"data_type": collection, "count": count, "items": records_by_type[collection][:10]}
+        {
+            "data_type": collection,
+            "label": collection_statuses[collection]["label"],
+            "count": count,
+            "status": collection_statuses[collection]["status"],
+            "status_label": collection_statuses[collection]["status_label"],
+            "items": records_by_type[collection][:10],
+        }
         for collection, count in counts.items()
-        if count or collection in documents
     ]
-    available = bool(documents)
+    available = any(item["status"] in {"has_records", "no_records"} for item in collection_statuses.values())
+    dimension_limitations = [
+        f"{item['label']}：{item['status_label']}"
+        for item in collection_statuses.values()
+        if item["status"] in {"not_queried", "query_failed"}
+    ]
+    limitations = ([] if available else [f"未取得天眼查{label}资料，不能形成该维度结论"]) + dimension_limitations
     payload: dict[str, Any] = {
         "status": "available" if available else source_mode,
         "company_name": name,
@@ -297,8 +381,9 @@ def _lookup_risk_domain(
         "source_message": source_message,
         "queried_at": _now(),
         "counts": counts,
+        "collection_statuses": collection_statuses,
         "records": records,
-        "limitations": [] if available else [f"未取得天眼查{label}资料，不能形成该维度结论"],
+        "limitations": limitations,
         "evidence": _provider_evidence(
             tool_name=tool_name,
             company_name=name,
@@ -310,19 +395,23 @@ def _lookup_risk_domain(
         ),
     }
     if available:
-        payload["claims"] = [_claim(
-            tool_name=tool_name,
-            company_name=name,
-            dimension=dimension,
-            statement=f"天眼查{label}返回 {sum(counts.values())} 条分类记录",
-            value=counts,
-        )]
+        payload["claims"] = [
+            _claim(
+                tool_name=tool_name,
+                company_name=name,
+                dimension=dimension,
+                statement=f"天眼查{_COLLECTION_LABELS.get(collection, collection)}：{collection_statuses[collection]['status_label']}（{counts[collection]} 条）",
+                value=counts[collection],
+            )
+            for collection in collections
+            if collection_statuses[collection]["status"] in {"has_records", "no_records"}
+        ]
     return _with_evidence(payload, tool_name=tool_name, company_name=name, dimension=dimension)
 
 
 @tool
 def lookup_legal_risk(company_name: str) -> dict:
-    """查询诉讼、立案、被执行、失信和限制消费。只读。"""
+    """查询诉讼、立案、被执行、失信、开庭公告和限制消费。只读。"""
     return _lookup_risk_domain(company_name, _LEGAL_COLLECTIONS, "legal_risk", "lookup_legal_risk", "司法风险")
 
 
@@ -345,7 +434,7 @@ def lookup_company_news(company_name: str) -> dict:
             "limitations": ["企业名称至少需要两个字符"],
             "message": "企业名称至少需要两个字符",
         }
-    documents, source_mode, source_message = _ensure_documents(name, ("news",), fetch_news=True)
+    documents, source_mode, source_message, _ = _unpack_ensure_result(_ensure_documents(name, ("news",), fetch_news=True))
     records = _records(documents.get("news"), limit=30)
     payload = {
         "status": "available" if documents else source_mode,
@@ -390,7 +479,7 @@ def lookup_company_profile(company_name: str) -> dict:
             "limitations": ["企业名称至少需要两个字符"],
             "message": "企业名称至少需要两个字符",
         }
-    documents, source_mode, source_message = _ensure_documents(name, _PROFILE_COLLECTIONS)
+    documents, source_mode, source_message, _ = _unpack_ensure_result(_ensure_documents(name, _PROFILE_COLLECTIONS))
     profile = _base_profile(documents.get("baseinfo"))
     sections = {
         "baseinfo": profile,

@@ -11,6 +11,9 @@ export interface RiskDetail {
   recent_lawsuits?: number;
   executed_count: number;
   dishonesty_count: number;
+  court_announcement_count?: number;
+  consumption_restriction_count?: number;
+  judicial_data_status?: Record<string, 'has_records' | 'no_records' | 'not_queried' | 'query_failed' | string>;
   major_lawsuit: boolean;
   abnormal_operation_count: number;
   administrative_penalty_count: number;

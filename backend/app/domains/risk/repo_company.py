@@ -115,6 +115,30 @@ def get_risk_indicators(company_name: str) -> dict:
 
     indicators = _empty_indicators()
 
+    def _has_records(doc: dict | None) -> bool:
+        if not isinstance(doc, dict):
+            return False
+        if _total_from_doc(doc) > 0:
+            return True
+        def contains_items(value: object) -> bool:
+            if isinstance(value, list):
+                return any(isinstance(item, dict) for item in value)
+            if isinstance(value, dict):
+                return any(contains_items(item) for item in value.values())
+            return False
+        return contains_items(doc.get("items")) or contains_items(doc.get("item"))
+
+    def _status(coll: str) -> str:
+        document = db[coll].find_one({"name": company_name})
+        if document is None:
+            return "not_queried"
+        return "has_records" if _has_records(document) else "no_records"
+
+    indicators["judicial_data_status"] = {
+        collection: _status(collection)
+        for collection in ("lawSuit", "courtRegister", "executedPerson", "dishonesty", "courtAnnouncement", "consumptionRestriction")
+    }
+
     # Read from riskInfo if available
     doc = db["riskInfo"].find_one({"name": company_name})
     if doc:
@@ -159,6 +183,8 @@ def get_risk_indicators(company_name: str) -> dict:
         indicators["executed_count"] = _total("executedPerson")
     if indicators["dishonesty_count"] == 0:
         indicators["dishonesty_count"] = _total("dishonesty")
+    indicators["court_announcement_count"] = _total("courtAnnouncement")
+    indicators["consumption_restriction_count"] = _total("consumptionRestriction")
     if indicators["pledge_count"] == 0:
         indicators["pledge_count"] = _total("equityPledge")
     # major_lawsuit: also check individual lawsuit collection
@@ -314,6 +340,8 @@ def _empty_indicators() -> dict:
     return {
         "executed_count": 0,
         "dishonesty_count": 0,
+        "court_announcement_count": 0,
+        "consumption_restriction_count": 0,
         "lawsuit_count": 0,
         "major_lawsuit": False,
         "legal_person_change_frequent": False,
@@ -321,4 +349,19 @@ def _empty_indicators() -> dict:
         "pledge_count": 0,
         "bankruptcy_count": 0,
         "env_penalty_count": 0,
+        "judicial_data_status": {},
     }
+
+
+def _total_from_doc(doc: dict | None) -> int:
+    """Read provider totals from both Tianyancha snapshot response shapes."""
+    if not isinstance(doc, dict):
+        return 0
+    value = doc.get("items") or doc.get("item") or {}
+    if isinstance(value, dict):
+        result = value.get("result")
+        if isinstance(result, dict) and isinstance(result.get("total"), (int, float)):
+            return int(result["total"])
+        if isinstance(value.get("total"), (int, float)):
+            return int(value["total"])
+    return 0

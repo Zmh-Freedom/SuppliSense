@@ -142,6 +142,14 @@ const RISK_FACT_LABELS: Record<string, string> = {
   'risk_detail.lawsuit_count': '诉讼记录数',
   'risk_detail.executed_count': '被执行记录数',
   'risk_detail.dishonesty_count': '失信记录数',
+  'risk_detail.court_announcement_count': '开庭公告数',
+  'risk_detail.consumption_restriction_count': '限制消费数',
+  'legal_risk.lawSuit': '法律诉讼',
+  'legal_risk.courtRegister': '立案信息',
+  'legal_risk.executedPerson': '被执行人',
+  'legal_risk.dishonesty': '失信被执行人',
+  'legal_risk.courtAnnouncement': '开庭公告',
+  'legal_risk.consumptionRestriction': '限制消费',
   'risk_detail.major_lawsuit': '重大诉讼标记',
   'risk_detail.abnormal_operation_count': '经营异常记录数',
   'risk_detail.administrative_penalty_count': '行政处罚记录数',
@@ -305,7 +313,7 @@ function claimAssessment(claim: AgentAnswer['claims'][number], coverageLimited =
       : { label: '未见重大诉讼', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
   }
   if (typeof value === 'number') {
-    if (['lawsuit_count', 'executed_count', 'dishonesty_count', 'abnormal_operation_count', 'administrative_penalty_count', 'guarantee_count', 'pledge_count', 'bankruptcy_count', 'env_penalty_count'].includes(leafPath)) {
+    if (['lawsuit_count', 'executed_count', 'dishonesty_count', 'court_announcement_count', 'consumption_restriction_count', 'abnormal_operation_count', 'administrative_penalty_count', 'guarantee_count', 'pledge_count', 'bankruptcy_count', 'env_penalty_count', 'lawSuit', 'courtRegister', 'executedPerson', 'courtAnnouncement', 'consumptionRestriction'].includes(leafPath)) {
       return value > 0
         ? { label: '需要关注', className: 'border-amber-200 bg-amber-50 text-amber-700' }
         : { label: '未见记录', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
@@ -410,6 +418,21 @@ function buildRiskItems(answer?: AgentAnswer, evidence: AgentEvidenceRecord[] = 
         Object.keys(riskDetail).forEach(key => {
           if (key !== 'data_coverage' && key !== 'in_watchlist' && key in RISK_FACT_LABELS) items.add(RISK_FACT_LABELS[key]);
         });
+        const judicialStatuses = (riskDetail as { judicial_data_status?: unknown }).judicial_data_status;
+        if (judicialStatuses && typeof judicialStatuses === 'object' && !Array.isArray(judicialStatuses)) {
+          const labels: Record<string, string> = {
+            lawSuit: '法律诉讼',
+            courtRegister: '立案信息',
+            executedPerson: '被执行人',
+            dishonesty: '失信被执行人',
+            courtAnnouncement: '开庭公告',
+            consumptionRestriction: '限制消费',
+          };
+          const statusLabels: Record<string, string> = { has_records: '有记录', no_records: '明确无记录', not_queried: '暂无数据', query_failed: '查询失败' };
+          Object.entries(judicialStatuses as Record<string, unknown>).forEach(([key, value]) => {
+            if (labels[key] && typeof value === 'string') items.add(`${labels[key]}：${statusLabels[value] || value}`);
+          });
+        }
       }
       const coverage = facts.data_coverage;
       if (coverage && typeof coverage === 'object' && !Array.isArray(coverage)) {
@@ -423,6 +446,19 @@ function buildRiskItems(answer?: AgentAnswer, evidence: AgentEvidenceRecord[] = 
       if ('exposure_level' in facts) items.add('内部采购敞口');
       if ('settlement_share' in facts) items.add('实结算金额占比');
       if ('latest_received_record_count' in facts) items.add('收货记录数');
+    }
+    if (record.dimension === 'legal_risk') {
+      const statuses = facts.collection_statuses;
+      if (statuses && typeof statuses === 'object' && !Array.isArray(statuses)) {
+        Object.values(statuses as Record<string, unknown>).forEach(item => {
+          if (item && typeof item === 'object' && !Array.isArray(item)) {
+            const status = item as { label?: unknown; status_label?: unknown };
+            if (typeof status.label === 'string' && typeof status.status_label === 'string') {
+              items.add(`${status.label}：${status.status_label}`);
+            }
+          }
+        });
+      }
     }
   });
   return [...items];

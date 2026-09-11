@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.domains.risk import tools_tianyancha
+from app.core.config import settings
 from app.tools import TOOL_REGISTRY
 
 
@@ -74,6 +75,63 @@ def test_lookup_legal_risk_returns_counts_and_records(monkeypatch) -> None:
     assert validated.counts["executedPerson"] == 1
     assert validated.claims
     assert validated.evidence_records
+
+
+def test_lookup_legal_risk_exposes_each_judicial_collection_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        tools_tianyancha,
+        "_ensure_documents",
+        lambda *_args, **_kwargs: (
+            {
+                "executedPerson": {"items": {"result": {"items": [{"name": COMPANY}]}}},
+                "dishonesty": {"items": {"result": {"total": 0, "items": [], "error_code": 300000}}},
+            },
+            "partial",
+            "已完成天眼查缺失维度检索并写入本地快照",
+            {"lawSuit": "query_failed", "courtAnnouncement": "not_queried", "consumptionRestriction": "queried"},
+        ),
+    )
+
+    result = tools_tianyancha.lookup_legal_risk.invoke({"company_name": COMPANY})
+    validated = TOOL_REGISTRY.get("lookup_legal_risk").output_model.model_validate(result)
+
+    assert validated.collection_statuses["executedPerson"]["status"] == "has_records"
+    assert validated.collection_statuses["dishonesty"]["status"] == "no_records"
+    assert validated.collection_statuses["courtAnnouncement"]["status"] == "not_queried"
+    assert validated.collection_statuses["consumptionRestriction"]["status"] == "query_failed"
+    assert {item["data_type"] for item in validated.records} >= set(tools_tianyancha._LEGAL_COLLECTIONS)
+    assert validated.evidence_records[0]["status"] == "available"
+
+
+def test_missing_cached_legal_collection_is_refreshed_independently(monkeypatch) -> None:
+    law_suit = {"items": {"result": {"total": 0, "items": [], "error_code": 300000}}}
+    executed = {"items": {"result": {"items": [{"name": COMPANY}]}}}
+    cache = {"lawSuit": law_suit}
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        tools_tianyancha,
+        "_cached_documents",
+        lambda _name, collections: {collection: cache[collection] for collection in collections if collection in cache},
+    )
+    monkeypatch.setattr(settings, "TIANYANCHA_TOKEN", "test-token")
+
+    def fake_fetch(_name: str, collections: list[str] | tuple[str, ...]) -> dict[str, str]:
+        calls.append(tuple(collections))
+        cache["executedPerson"] = executed
+        return {collection: "queried" for collection in collections}
+
+    from app.services import tianyancha_client
+    monkeypatch.setattr(tianyancha_client, "fetch_collections", fake_fetch)
+
+    documents, source_mode, _message, statuses = tools_tianyancha._ensure_documents(
+        COMPANY, ("lawSuit", "executedPerson")
+    )
+
+    assert calls == [("executedPerson",)]
+    assert source_mode == "live"
+    assert documents["executedPerson"] == executed
+    assert statuses == {"executedPerson": "queried"}
 
 
 def test_lookup_business_risk_without_provider_data_stays_unavailable(monkeypatch) -> None:
