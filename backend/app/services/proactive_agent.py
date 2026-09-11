@@ -117,7 +117,7 @@ def run_proactive_analysis() -> dict:
     # 推送结果
     pushed = False
     if all_results:
-        pushed = _push_results(all_results)
+        pushed = _push_results(all_results, targets)
 
     logger.info(
         "proactive_agent_completed",
@@ -156,97 +156,54 @@ def _parse_analysis_response(text: str) -> list[dict]:
     return []
 
 
-def _push_results(results: list[dict]) -> bool:
-    """推送分析结果到飞书 + WebSocket。"""
-    pushed_feishu = False
-    pushed_ws = False
+def _push_results(results: list[dict], targets: list[dict]) -> bool:
+    """按采购员/经理分别推送主动分析，并通过 WebSocket 精确投递。"""
+    from app.db.mongo import get_db
+    from app.domains.alert.notifier import _create_and_deliver, get_target_recipients
 
-    # 推送到飞书
-    try:
-        lines = ["## 🤖 主动监控分析报告\n"]
-        for r in results:
-            emoji = {"稳定": "🟢", "上升": "🔴", "下降": "🟡"}.get(
-                r.get("status", ""), "⚪"
+    target_by_name = {str(target.get("company_name")): target for target in targets}
+    groups: dict[tuple[str, str, str], list[dict]] = {}
+    for result in results:
+        target = target_by_name.get(str(result.get("company")))
+        if not target:
+            continue
+        for recipient in get_target_recipients(target):
+            key = (
+                str(recipient.get("recipient_type") or ""),
+                str(recipient.get("recipient_open_id") or ""),
+                "" if recipient.get("recipient_type") == "manager" else str(recipient.get("purchaser_open_id") or ""),
             )
-            lines.append(
-                f"{emoji} **{r['company']}** — {r.get('status', 'unknown')}\n"
-                f"> {r.get('analysis', '')}\n"
-                f"> 建议：{r.get('suggestion', '需要关注')}\n"
-            )
-        _send_markdown("\n".join(lines))
-        pushed_feishu = True
-    except Exception as e:
-        logger.error("proactive_agent_feishu_error", error=str(e)[:200])
+            groups.setdefault(key, []).append({"result": result, "target": target, "recipient": recipient})
 
-    # 推送到 WebSocket
-    try:
-        from app.services.ws_manager import ws_manager
+    pushed = False
+    for _, items in groups.items():
+        lines = ["🤖 主动监控分析报告"]
+        for item in items:
+            result = item["result"]
+            emoji = {"稳定": "🟢", "上升": "🔴", "下降": "🟡"}.get(result.get("status", ""), "⚪")
+            lines.append(f"{emoji} {result.get('company', '')} — {result.get('status', 'unknown')}\n{result.get('analysis', '')}\n建议：{result.get('suggestion', '需要关注')}")
+        text = "\n\n".join(lines)
+        item = items[0]
+        status = _create_and_deliver(db, item["target"], item["recipient"], notification_type="proactive_analysis", text=text, results=[entry["result"] for entry in items])
+        pushed = pushed or status == "success"
+        try:
+            from app.services.ws_manager import ws_manager
 
-        ws_manager.broadcast("proactive_analysis", {
-            "results": results,
-            "count": len(results),
-        })
-        pushed_ws = True
-    except Exception as e:
-        logger.error("proactive_agent_ws_error", error=str(e)[:200])
-
-    return pushed_feishu or pushed_ws
+            recipient_ids = {str(entry["recipient"].get("recipient_open_id")) for entry in items if entry["recipient"].get("recipient_open_id")}
+            asyncio.run(ws_manager.broadcast("proactive_analysis", {"results": [entry["result"] for entry in items], "count": len(items)}, recipient_ids))
+            pushed = True
+        except Exception as exc:
+            logger.error("proactive_agent_ws_error", error=str(exc)[:200])
+    return pushed
 
 
 # ---- 飞书 markdown 推送辅助 ----
 
 def _send_markdown(content: str) -> None:
     """发送飞书 markdown 消息。"""
-    import hashlib
-    import hmac
-    import time
+    from app.services.feishu import send_risk_report
 
-    import requests
-    from app.core.config import settings
-
-    webhook = settings.FEISHU_WEBHOOK_URL
-    secret = settings.FEISHU_SECRET
-
-    if not webhook:
-        logger.warning("feishu_webhook_not_configured")
-        return
-
-    timestamp = str(int(time.time()))
-    if secret:
-        sign = hmac.new(
-            secret.encode(), f"{timestamp}\n{secret}".encode(), hashlib.sha256
-        ).digest()
-        sign_encoded = sign.hex()
+    if send_risk_report(content):
+        logger.info("proactive_agent_feishu_sent")
     else:
-        sign_encoded = ""
-
-    payload = {
-        "timestamp": timestamp,
-        "sign": sign_encoded,
-        "msg_type": "interactive",
-        "card": {
-            "header": {
-                "title": {"tag": "plain_text", "content": "SuppliSense 主动监控"},
-                "template": "blue",
-            },
-            "elements": [
-                {
-                    "tag": "markdown",
-                    "content": content,
-                }
-            ],
-        },
-    }
-
-    try:
-        resp = requests.post(webhook, json=payload, timeout=10)
-        if resp.status_code == 200:
-            logger.info("proactive_agent_feishu_sent")
-        else:
-            logger.warning(
-                "proactive_agent_feishu_failed",
-                status=resp.status_code,
-                body=resp.text[:200],
-            )
-    except Exception as e:
-        logger.error("proactive_agent_feishu_error", error=str(e)[:200])
+        logger.warning("proactive_agent_feishu_failed")

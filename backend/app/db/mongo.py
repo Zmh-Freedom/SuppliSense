@@ -189,6 +189,15 @@ def ensure_indexes() -> None:
         db["notifications"].create_index(
             [("read", 1), ("created_at", -1)], background=True
         )
+        db["notifications"].create_index(
+            [("purchaser_open_id", 1), ("created_at", -1)], background=True
+        )
+        db["notifications"].create_index(
+            [("manager_open_id", 1), ("created_at", -1)], background=True
+        )
+        db["notification_deliveries"].create_index(
+            [("notification_id", 1), ("created_at", -1)], background=True
+        )
         # 天眼查数据集合（按企业名查询，之前缺失）
         _tianyancha_collections = [
             "riskInfo", "lawSuit", "courtRegister", "abnormal", "punishmentInfo", "executedPerson",

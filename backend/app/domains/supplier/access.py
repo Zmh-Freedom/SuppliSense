@@ -19,6 +19,24 @@ def _feishu_open_id_for_user(user_id: str) -> str | None:
     return str(row[0]) if row and row[0] else None
 
 
+def feishu_open_id_for_user(user_id: str) -> str | None:
+    """Return the verified Feishu identity mapped to an application user."""
+    return _feishu_open_id_for_user(user_id)
+
+
+def user_id_for_feishu_open_id(open_id: str) -> str | None:
+    """Resolve an application account from a Feishu person identity."""
+    if not open_id:
+        return None
+    with get_cursor() as (_, cur):
+        cur.execute(
+            "SELECT id FROM users WHERE feishu_open_id = %s AND is_active = TRUE LIMIT 1",
+            (open_id,),
+        )
+        row = cur.fetchone()
+    return str(row[0]) if row and row[0] else None
+
+
 def list_assigned_supplier_ids(user_id: str, role: str = "") -> set[str]:
     """Return formal suppliers visible to one purchaser or department manager."""
     if is_admin(role):

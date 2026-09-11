@@ -328,10 +328,22 @@ async def websocket_endpoint(websocket: WebSocket):
         return
 
     from app.services.ws_manager import ws_manager
+    from app.domains.auth.service import get_user_by_id
+    from app.domains.supplier.access import feishu_open_id_for_user
+
+    user_id = str(payload.get("sub") or "")
+    user = get_user_by_id(user_id)
+    open_id = feishu_open_id_for_user(user_id) if user else None
 
     await websocket.accept()
     client_id = f"{id(websocket)}"
-    await ws_manager.connect(websocket, client_id)
+    await ws_manager.connect(
+        websocket,
+        client_id,
+        user_id=user_id,
+        open_id=open_id,
+        role=getattr(getattr(user, "role", None), "value", None),
+    )
 
     try:
         while True:

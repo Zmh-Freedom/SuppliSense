@@ -470,16 +470,27 @@ def _check_negative_alert(company_name: str, result: dict) -> None:
         risk_tags = [t["tag"] for t in result.get("risk_tags", [])[:3]]
         db["alerts"].insert_one({
             "company_name": company_name,
+            "monitor_target_id": watchlist_doc.get("monitor_target_id"),
+            "target_type": watchlist_doc.get("target_type"),
+            "supplier_id": watchlist_doc.get("supplier_id"),
+            "candidate_id": watchlist_doc.get("candidate_id"),
+            "company_id": watchlist_doc.get("company_id"),
             "created_at": datetime.now(timezone.utc),
             "changes": [{"field": "舆情风险", "old": f"负面占比 {prev_ratio*100:.0f}%", "new": alert_reason}],
             "severity": "warning",
             "type": "sentiment",
             "risk_tags": risk_tags,
         })
-        from app.services.feishu import send_alert_card
-        send_alert_card(company_name, "warning", [{
-            "field": "舆情风险", "old": f"负面占比 {prev_ratio*100:.0f}%", "new": alert_reason,
-        }])
+        try:
+            from app.domains.alert.notifier import notify_target_change
+
+            notify_target_change(
+                watchlist_doc,
+                [{"field": "舆情风险", "old": f"负面占比 {prev_ratio*100:.0f}%", "new": alert_reason}],
+                "warning",
+            )
+        except Exception as exc:
+            logger.warning("scoped_sentiment_delivery_failed", company=company_name, error=str(exc))
 
 
 # ---- Trend & Dashboard ----

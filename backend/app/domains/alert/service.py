@@ -573,27 +573,26 @@ def detect_changes(
                 "severity": final_severity,
                 "read": False,
             })
-            # push to feishu
-            from app.services.feishu import send_alert_card
-            send_alert_card(company_name, final_severity, triggered)
-
-            # Broadcast via WebSocket
             try:
-                from app.services.ws_manager import ws_manager
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    loop.create_task(ws_manager.broadcast(
-                        "alert_update",
-                        {"company_name": company_name, "severity": final_severity},
-                    ))
-                else:
-                    asyncio.run(ws_manager.broadcast(
-                        "alert_update",
-                        {"company_name": company_name, "severity": final_severity},
-                    ))
+                target_doc = db["watchlist"].find_one(
+                    {"monitor_target_id": monitor_target_id or new.get("monitor_target_id")}
+                )
             except Exception:
-                pass  # WebSocket push is best-effort
+                target_doc = None
+            target_doc = target_doc or {
+                "company_name": company_name,
+                "monitor_target_id": monitor_target_id or new.get("monitor_target_id"),
+                "supplier_id": new.get("supplier_id"),
+                "candidate_id": new.get("candidate_id"),
+                "company_id": new.get("company_id"),
+                "target_type": new.get("target_type"),
+            }
+            try:
+                from app.domains.alert.notifier import notify_target_change
+
+                notify_target_change(target_doc, triggered, final_severity)
+            except Exception as exc:
+                logger.warning("scoped_alert_delivery_failed", company=company_name, error=str(exc))
 
     return {
         "company_name": company_name,

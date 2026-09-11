@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # Feishu
     FEISHU_WEBHOOK_URL: str = os.getenv("FEISHU_WEBHOOK_URL", "")
     FEISHU_SECRET: str = os.getenv("FEISHU_SECRET", "")
+    FEISHU_USER_MESSAGE_ENABLED: bool = os.getenv(
+        "FEISHU_USER_MESSAGE_ENABLED", "true"
+    ).lower() == "true"
     # Feishu Bitable supplier source integration
     FEISHU_BITABLE_ENABLED: bool = os.getenv("FEISHU_BITABLE_ENABLED", "false").lower() == "true"
     FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")

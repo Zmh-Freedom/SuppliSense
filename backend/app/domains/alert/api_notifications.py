@@ -10,6 +10,19 @@ from app.schemas.user import UserInDB
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
+def _notification_scope(current_user: UserInDB) -> dict:
+    """Build a fail-closed scope from the Feishu responsibility identity."""
+    role = getattr(current_user.role, "value", current_user.role)
+    if role == "admin":
+        return {"purchaser_open_id": {"$exists": True, "$ne": None}}
+    from app.domains.supplier.access import feishu_open_id_for_user
+
+    open_id = feishu_open_id_for_user(str(current_user.id))
+    if not open_id:
+        return {"purchaser_open_id": "__unmapped_user__"}
+    return {"$or": [{"purchaser_open_id": open_id}, {"manager_open_id": open_id}]}
+
+
 @router.get(
     "",
     summary="获取通知列表",
@@ -26,7 +39,7 @@ async def list_notifications(
     from app.db.mongo import get_db
 
     db = get_db()
-    query: dict = {"recipient_user_id": current_user.id}
+    query: dict = _notification_scope(current_user)
     if read is not None:
         query["read"] = read
     notifs = list(db["notifications"].find(query).sort("created_at", -1).limit(limit))
@@ -36,7 +49,7 @@ async def list_notifications(
             n["created_at"] = n["created_at"].isoformat()
     return {
         "notifications": notifs,
-        "unread_count": db["notifications"].count_documents({"recipient_user_id": current_user.id, "read": False}),
+        "unread_count": db["notifications"].count_documents({**_notification_scope(current_user), "read": False}),
     }
 
 
@@ -56,8 +69,12 @@ async def mark_read(
     from app.db.mongo import get_db
 
     db = get_db()
+    try:
+        object_id = ObjectId(notif_id)
+    except Exception:
+        return {"status": "ok"}
     db["notifications"].update_one(
-        {"_id": ObjectId(notif_id), "recipient_user_id": current_user.id}, {"$set": {"read": True}}
+        {"_id": object_id, **_notification_scope(current_user)}, {"$set": {"read": True}}
     )
     return {"status": "ok"}
 
@@ -76,6 +93,6 @@ async def mark_all_read(
 
     db = get_db()
     db["notifications"].update_many(
-        {"recipient_user_id": current_user.id, "read": False}, {"$set": {"read": True}}
+        {**_notification_scope(current_user), "read": False}, {"$set": {"read": True}}
     )
     return {"status": "ok"}

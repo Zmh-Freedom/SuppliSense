@@ -14,28 +14,116 @@ import time
 
 import httpx
 
-WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
-SECRET = os.getenv("FEISHU_SECRET", "")
+from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger()
+
+_tenant_access_token: str | None = None
+_tenant_access_token_expires_at = 0.0
+
+
+def _webhook_config() -> tuple[str, str]:
+    """Read current settings so tests and runtime config changes are honored."""
+    webhook = settings.FEISHU_WEBHOOK_URL or os.getenv("FEISHU_WEBHOOK_URL", "")
+    secret = settings.FEISHU_SECRET or os.getenv("FEISHU_SECRET", "")
+    return webhook, secret
+
+
+def _signed_webhook_url(webhook_url: str, secret: str) -> str:
+    """Build a Feishu webhook URL with the documented Base64 HMAC-SHA256 sign."""
+    if not secret:
+        return webhook_url
+    ts = str(int(time.time()))
+    sign = base64.b64encode(
+        hmac.new(secret.encode(), f"{ts}\n{secret}".encode(), hashlib.sha256).digest()
+    ).decode()
+    sep = "&" if "?" in webhook_url else "?"
+    return f"{webhook_url}{sep}timestamp={ts}&sign={sign}"
 
 
 def _signed_url() -> str:
-    if not SECRET:
-        return WEBHOOK_URL
-    ts = str(int(time.time()))
-    sign = base64.b64encode(
-        hmac.new(SECRET.encode(), f"{ts}\n{SECRET}".encode(), hashlib.sha256).digest()
-    ).decode()
-    sep = "&" if "?" in WEBHOOK_URL else "?"
-    return f"{WEBHOOK_URL}{sep}timestamp={ts}&sign={sign}"
+    webhook, secret = _webhook_config()
+    return _signed_webhook_url(webhook, secret)
 
 
 def _post(payload: dict) -> bool:
-    if not WEBHOOK_URL:
+    webhook, _ = _webhook_config()
+    if not webhook:
         return False
     try:
         r = httpx.post(_signed_url(), json=payload, timeout=10)
-        return r.is_success
+        if not r.is_success:
+            return False
+        body = r.json()
+        return not isinstance(body, dict) or body.get("code", 0) == 0
     except Exception:
+        return False
+
+
+def _get_tenant_access_token() -> str | None:
+    """Get an app tenant token for the Feishu user-message API."""
+    global _tenant_access_token, _tenant_access_token_expires_at
+    if not settings.FEISHU_USER_MESSAGE_ENABLED:
+        return None
+    now = time.time()
+    if _tenant_access_token and now < _tenant_access_token_expires_at - 60:
+        return _tenant_access_token
+    if not settings.FEISHU_APP_ID or not settings.FEISHU_APP_SECRET:
+        return None
+    try:
+        response = httpx.post(
+            f"{settings.FEISHU_BITABLE_BASE_URL.rstrip('/')}/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": settings.FEISHU_APP_ID, "app_secret": settings.FEISHU_APP_SECRET},
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=settings.FEISHU_BITABLE_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = (
+            payload.get("data")
+            if isinstance(payload, dict) and isinstance(payload.get("data"), dict)
+            else payload
+        )
+        token = data.get("tenant_access_token") if isinstance(data, dict) else None
+        if not isinstance(token, str) or not token:
+            return None
+        _tenant_access_token = token
+        _tenant_access_token_expires_at = now + int(data.get("expire", 7200))
+        return token
+    except Exception as exc:
+        logger.warning("feishu_tenant_token_failed", error=str(exc)[:200])
+        return None
+
+
+def send_user_message(open_id: str, text: str) -> bool:
+    """Send a text message to one Feishu user through the self-built app."""
+    if not open_id:
+        return False
+    token = _get_tenant_access_token()
+    if not token:
+        return False
+    try:
+        response = httpx.post(
+            f"{settings.FEISHU_BITABLE_BASE_URL.rstrip('/')}/open-apis/im/v1/messages",
+            params={"receive_id_type": "open_id"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={
+                "receive_id": open_id,
+                "msg_type": "text",
+                "content": json.dumps({"text": text}, ensure_ascii=False),
+            },
+            timeout=settings.FEISHU_BITABLE_TIMEOUT_SECONDS,
+        )
+        if not response.is_success:
+            return False
+        payload = response.json()
+        return isinstance(payload, dict) and payload.get("code", 0) == 0
+    except Exception as exc:
+        logger.warning("feishu_user_message_failed", open_id=open_id, error=str(exc)[:200])
         return False
 
 
@@ -86,97 +174,63 @@ def send_alert_card(company_name: str, severity: str, changes: list[dict]) -> bo
 
 
 def send_daily_digest() -> None:
-    """生成并发送每日简报"""
+    """按采购员和科室经理分别生成每日风险简报。"""
     from app.db.mongo import get_db
     from app.domains.alert.service import get_watchlist_targets
+    from app.domains.alert.notifier import _create_and_deliver, get_target_recipients
 
     db = get_db()
     targets = get_watchlist_targets()
-    companies = [target.get("company_name", "") for target in targets if target.get("company_name")]
-    target_ids = [target["monitor_target_id"] for target in targets if target.get("monitor_target_id")]
-    if not companies:
-        send_text("📊 供应商风险日报\n\n暂无监控企业，请在系统中添加。")
+    if not targets:
         return
+    groups: dict[tuple[str, str, str, str], list[dict]] = {}
+    for target in targets:
+        for recipient in get_target_recipients(target):
+            key = (
+                str(recipient.get("recipient_type") or ""),
+                str(recipient.get("recipient_open_id") or ""),
+                "" if recipient.get("recipient_type") == "manager" else str(recipient.get("purchaser_open_id") or ""),
+                str(recipient.get("department_name") or ""),
+            )
+            groups.setdefault(key, []).append({"target": target, "recipient": recipient})
 
-    lines = []
-    alerts = list(db["alerts"].find().sort("created_at", -1).limit(10))
-
-    # batch query latest snapshots and sentiments
-    snapshots = list(db["alert_snapshots"].aggregate([
-        {"$match": {"$or": [
-            {"monitor_target_id": {"$in": target_ids}},
-            {"company_name": {"$in": companies}},
-        ]}},
-        {"$sort": {"checked_at": -1}},
-        {"$group": {"_id": {"$ifNull": ["$monitor_target_id", "$company_name"]}, "doc": {"$first": "$$ROOT"}}},
-    ]))
-    snapshot_map = {
-        key: value
-        for item in snapshots
-        for key, value in ((str(item["_id"]), item["doc"]), (item["doc"].get("company_name", ""), item["doc"]))
-    }
-
-    sentiments = list(db["sentiment_results"].aggregate([
-        {"$match": {"company_name": {"$in": companies}}},
-        {"$sort": {"analyzed_at": -1}},
-        {"$group": {"_id": "$company_name", "doc": {"$first": "$$ROOT"}}},
-    ]))
-    sentiment_map = {s["_id"]: s["doc"] for s in sentiments}
-
-    # summary
-    distribution = {"低风险": 0, "中风险": 0, "高风险": 0, "未知": 0}
-    for name in companies:
-        snap = snapshot_map.get(name)
-        level = snap.get("risk_level", "未知") if snap else "未知"
-        distribution[level] = distribution.get(level, 0) + 1
-
-    lines.append(f"**监控 {len(companies)} 家供应商**")
-    lines.append(
-        f"低风险 {distribution['低风险']} · 中风险 {distribution['中风险']} · 高风险 {distribution['高风险']} · 未评估 {distribution['未知']}"
-    )
-    lines.append("")
-
-    # alert summary
-    if alerts:
-        lines.append("**最新告警**")
-        for a in alerts[:5]:
-            ts = a["created_at"].strftime("%m-%d %H:%M") if hasattr(a["created_at"], "strftime") else str(a.get("created_at", ""))[:16]
-            changes = a.get("changes", [])
-            change_text = " · ".join(f"{c['field']}: {c['old']}→{c['new']}" for c in changes)
-            lines.append(f"- {a['company_name']} {change_text} _{ts}_")
-    else:
-        lines.append("无新告警 ✅")
-
-    # top risk companies
-    lines.append("")
-    lines.append("**高风险关注**")
-    high_risk = []
-    for name in companies:
-        snap = snapshot_map.get(name)
-        if snap and snap.get("risk_score", 0) > 30:
-            high_risk.append((name, snap["risk_score"], snap["risk_level"]))
-    high_risk.sort(key=lambda x: x[1], reverse=True)
-
-    if high_risk:
-        for name, score, level in high_risk[:8]:
-            lines.append(f"- **{name}** {score}/100 {level}")
-    else:
-        lines.append("暂无中高风险企业 ✅")
-
-    # sentiment summary
-    lines.append("")
-    lines.append("**舆情监控**")
-    neg_companies = []
-    for name in companies:
-        sent = sentiment_map.get(name)
-        if sent and sent.get("sentiment_score", 0) < -0.2:
-            neg_companies.append((name, sent.get("sentiment_score", 0), sent.get("negative_count", 0)))
-    neg_companies.sort(key=lambda x: x[1])
-
-    if neg_companies:
-        for name, score, neg_count in neg_companies[:5]:
-            lines.append(f"- {name} 负面舆情 {neg_count}条（情感分 {score}）")
-    else:
-        lines.append("无负面舆情 ✅")
-
-    send_risk_report("\n".join(lines))
+    for (recipient_type, _, _, department_name), items in groups.items():
+        lines = ["📊 供应商风险日报"]
+        if recipient_type == "manager":
+            lines.append(f"所属科室：{department_name or '未标注'}")
+        lines.append(f"负责范围：{len(items)} 家供应商")
+        high_risk: list[tuple[str, object, object]] = []
+        target_ids: list[str] = []
+        for item in items:
+            target = item["target"]
+            target_id = target.get("monitor_target_id")
+            if target_id:
+                target_ids.append(str(target_id))
+            query = {"monitor_target_id": target_id} if target_id else {"company_name": target.get("company_name", "")}
+            snapshot = db["alert_snapshots"].find_one(query, sort=[("checked_at", -1)])
+            if snapshot and snapshot.get("risk_score", 0) > 30:
+                high_risk.append((target.get("company_name", ""), snapshot.get("risk_score"), snapshot.get("risk_level", "未知")))
+        if high_risk:
+            lines.append("重点关注：")
+            for name, score, level in sorted(high_risk, key=lambda value: float(value[1] or 0), reverse=True)[:8]:
+                lines.append(f"- {name} {score}/100 {level}")
+        else:
+            lines.append("重点关注：暂无中高风险企业 ✅")
+        if target_ids:
+            recent_alerts = list(db["alerts"].find({"monitor_target_id": {"$in": target_ids}}).sort("created_at", -1).limit(5))
+            if recent_alerts:
+                lines.append("最新变化：")
+                for alert in recent_alerts:
+                    changes = "；".join(f"{c.get('field', '')}: {c.get('old', '-')}→{c.get('new', '-')}" for c in alert.get("changes", []))
+                    lines.append(f"- {alert.get('company_name', '')} {changes}")
+        text = "\n".join(lines)
+        representative = items[0]
+        _create_and_deliver(
+            db,
+            representative["target"],
+            representative["recipient"],
+            notification_type="daily_digest",
+            text=text,
+            digest_scope="department" if recipient_type == "manager" else "purchaser",
+            digest_target_ids=target_ids,
+        )

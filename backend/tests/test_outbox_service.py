@@ -602,7 +602,9 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
             assert last_error == "consumer_handler_failed"
             assert dead_lettered_at is None
             assert next_attempt_at >= failure_started_at + timedelta(seconds=2)
-            assert next_attempt_at <= datetime.now(timezone.utc) + timedelta(seconds=2)
+            # PostgreSQL clock and the Python assertion clock are sampled on
+            # separate connections; allow a small scheduling/round-trip margin.
+            assert next_attempt_at <= datetime.now(timezone.utc) + timedelta(seconds=3)
             cur.execute(
                 "UPDATE outbox_events SET next_attempt_at = NOW() WHERE event_id = %s",
                 (str(event_id),),
