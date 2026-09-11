@@ -29,6 +29,7 @@ from app.graphs.agent_core.evidence_ledger import (
 )
 from app.tools import TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor, ToolOutcome
+from app.core.logging import get_logger
 from app.graphs.harness.state import (
     ExecutionBudget,
     HarnessState,
@@ -41,6 +42,7 @@ from app.domains.risk.risk_contract import get_risk_dimension_spec
 
 PersistCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 ProgressCallback = Callable[[str, dict[str, Any], bool], Awaitable[None] | None]
+NarrateCallback = Callable[[AgentAnswer, str], Awaitable[AgentAnswer] | AgentAnswer]
 
 _DIMENSION_TO_TOOL = {
     dimension: (spec.tool_name, spec.argument_name)
@@ -50,6 +52,8 @@ _DIMENSION_TO_TOOL = {
     )
     if (spec := get_risk_dimension_spec(dimension)) is not None
 }
+
+logger = get_logger()
 
 
 def _entity_id(name: str, context: Mapping[str, Any]) -> str:
@@ -699,6 +703,7 @@ def build_harness_graph(
     executor: ToolExecutor | None = None,
     persist: PersistCallback | None = None,
     progress: ProgressCallback | None = None,
+    narrate: NarrateCallback | None = None,
     checkpointer: Any = None,
 ) -> Any:
     """Build the only runtime graph used by Harness-level tests and callers."""
@@ -1039,6 +1044,25 @@ def build_harness_graph(
             )
         else:
             answer = answer.model_copy(update={"summary": _summary(answer, state)})
+        narration_attempted = False
+        budget = new_budget(state.get("budget"))
+        if (
+            narrate is not None
+            and answer.status != "failed"
+            and int(state.get("llm_call_count", 0)) < budget.max_llm_calls
+            and answer.claims
+        ):
+            narration_attempted = True
+            try:
+                narrative = narrate(answer, str(state.get("user_message") or ""))
+                if inspect.isawaitable(narrative):
+                    narrative = await narrative
+                if isinstance(narrative, AgentAnswer):
+                    answer = narrative
+            except Exception as exc:
+                # Narration is an optional presentation layer.  The validated
+                # deterministic summary remains the source of truth.
+                logger.warning("answer_narration_callback_failed", error=str(exc))
         coverage = state.get("evidence_coverage") or {}
         loop_exit_reason = state.get("loop_exit_reason")
         if coverage.get("missing_dimensions") and loop_exit_reason not in {
@@ -1065,6 +1089,8 @@ def build_harness_graph(
             "loop_exit_reason": loop_exit_reason,
             "status": answer.status,
         }
+        if narration_attempted:
+            patch["llm_call_count"] = int(state.get("llm_call_count", 0)) + 1
         await persist_event("render_answer", state, patch)
         return patch
 
@@ -1146,6 +1172,7 @@ async def run_harness(
     executor: ToolExecutor | None = None,
     persist: PersistCallback | None = None,
     progress: ProgressCallback | None = None,
+    narrate: NarrateCallback | None = None,
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
 ) -> HarnessState:
@@ -1158,6 +1185,7 @@ async def run_harness(
         executor=executor,
         persist=persist,
         progress=progress,
+        narrate=narrate,
         checkpointer=checkpointer,
     )
     return await graph.ainvoke(state, config=active_config)

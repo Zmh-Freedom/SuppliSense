@@ -222,12 +222,17 @@ async def stream_harness_graph(
         await publish("run", {"run_id": active_run_id, "turn_id": active_turn_id})
     try:
         async def run_graph() -> Any:
+            from app.graphs.agent_core.narrator import narrate_answer
+
             return await run_harness(
                 state,
                 checkpointer=checkpointer,
                 config=config,
                 persist=persist,
                 progress=progress,
+                narrate=lambda answer, message: asyncio.to_thread(
+                    narrate_answer, answer, message
+                ),
             )
 
         runner = asyncio.create_task(run_graph())
