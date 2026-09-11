@@ -121,6 +121,13 @@ export interface MonitorTarget {
   company_id?: string | null;
   supplier_code?: string | null;
   monitor_status?: 'active' | 'paused' | 'removed' | string;
+  is_responsible_supplier?: boolean;
+  responsibility_status?: 'assigned' | 'unassigned' | string;
+  responsibility_source?: string | null;
+  purchaser_name?: string | null;
+  purchaser_email?: string | null;
+  department_name?: string | null;
+  manager_name?: string | null;
   added_at?: string | null;
   last_checked_at?: string | null;
   data_coverage?: Record<string, unknown>;

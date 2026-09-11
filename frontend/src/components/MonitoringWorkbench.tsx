@@ -184,6 +184,7 @@ export default function MonitoringWorkbench({
                         </button>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-gray-400">
                           <span className="rounded-full bg-gray-100 px-2 py-0.5">{targetTypeLabel(target)}</span>
+                          {target.is_responsible_supplier && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">我负责</span>}
                           {target.supplier_code && <span>{target.supplier_code}</span>}
                           <span>上次检查 {formatCheckedAt(target.last_checked_at)}</span>
                         </div>

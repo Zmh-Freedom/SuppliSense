@@ -229,6 +229,113 @@ def _link_application_users() -> int:
         return cursor.rowcount
 
 
+def _application_user_ids_by_identity() -> dict[str, str]:
+    """Return active application user IDs keyed by email and Feishu open_id."""
+    with get_cursor() as (_, cursor):
+        cursor.execute(
+            """
+            SELECT id, email, feishu_open_id
+            FROM users
+            WHERE is_active = TRUE
+            """
+        )
+        identities: dict[str, str] = {}
+        for user_id, email, open_id in cursor.fetchall():
+            user_id_text = str(user_id)
+            for value in (email, open_id):
+                normalized = _text(value).casefold()
+                if normalized:
+                    identities[normalized] = user_id_text
+        return identities
+
+
+def _sync_monitor_targets(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Auto-enrol current formal suppliers into monitoring with ownership metadata."""
+    db = get_db()
+    collection = db["watchlist"]
+    try:
+        user_ids = _application_user_ids_by_identity()
+    except Exception as exc:
+        logger.warning("feishu_monitor_user_lookup_failed", error=str(exc))
+        user_ids = {}
+
+    active_records = [
+        record for record in records
+        if record.get("source_active")
+        and record.get("sync_status") == "current"
+        and record.get("supplier_id")
+    ]
+    active_supplier_ids = {str(record["supplier_id"]) for record in active_records}
+    monitored = 0
+    errors: list[dict[str, str]] = []
+    for record in active_records:
+        supplier_id = str(record["supplier_id"])
+        company_name = _text(record.get("supplier_name"))
+        try:
+            existing = collection.find_one({"supplier_id": supplier_id})
+            if existing is None and company_name:
+                # Reuse a legacy name-keyed row instead of creating a duplicate
+                # when the supplier identity is first linked from Feishu.
+                existing = collection.find_one({"company_name": company_name})
+            target_id = str((existing or {}).get("monitor_target_id") or uuid.uuid4())
+            current_status = str((existing or {}).get("monitor_status") or "active")
+            owner_user_id = user_ids.get(
+                _text(record.get("purchaser_open_id")).casefold()
+            ) or user_ids.get(_text(record.get("purchaser_email")).casefold())
+            target_doc = {
+                "monitor_target_id": target_id,
+                "target_type": "formal_supplier",
+                "identity_status": "verified",
+                "company_name": company_name,
+                "display_name": company_name,
+                "supplier_id": supplier_id,
+                "supplier_code": _text(record.get("supplier_code")),
+                "monitor_status": current_status,
+                "is_responsible_supplier": True,
+                "responsibility_status": "assigned",
+                "responsibility_source": "feishu_responsibility",
+                "purchaser_open_id": _text(record.get("purchaser_open_id")) or None,
+                "purchaser_name": _text(record.get("purchaser_name")) or None,
+                "purchaser_email": _text(record.get("purchaser_email")) or None,
+                "department_code": _text(record.get("department_code")) or None,
+                "department_name": _text(record.get("department_name")) or None,
+                "manager_open_id": _text(record.get("manager_open_id")) or None,
+                "manager_name": _text(record.get("manager_name")) or None,
+                "manager_email": _text(record.get("manager_email")) or None,
+                "owner_user_id": owner_user_id,
+                "responsibility_synced_at": record.get("synced_at"),
+            }
+            identity_filter = {"_id": existing["_id"]} if existing and existing.get("_id") is not None else {"supplier_id": supplier_id}
+            collection.update_one(
+                identity_filter,
+                {"$set": target_doc, "$setOnInsert": {"added_at": datetime.now(timezone.utc)}},
+                upsert=True,
+            )
+            monitored += 1
+        except Exception as exc:
+            logger.warning(
+                "feishu_monitor_target_sync_failed",
+                supplier_id=supplier_id,
+                error=str(exc),
+            )
+            errors.append({"supplier_id": supplier_id, "error": str(exc)})
+
+    # A supplier that is no longer assigned remains available for historical
+    # review, but is no longer labelled as the current user's responsibility.
+    try:
+        collection.update_many(
+            {
+                "responsibility_source": "feishu_responsibility",
+                "supplier_id": {"$nin": list(active_supplier_ids)},
+            },
+            {"$set": {"is_responsible_supplier": False, "responsibility_status": "unassigned"}},
+        )
+    except Exception as exc:
+        logger.warning("feishu_monitor_responsibility_cleanup_failed", error=str(exc))
+        errors.append({"supplier_id": "*", "error": str(exc)})
+    return {"monitored": monitored, "errors": errors}
+
+
 def sync_supplier_responsibilities(
     client: FeishuBitableClient | None = None,
 ) -> dict[str, Any]:
@@ -260,6 +367,7 @@ def sync_supplier_responsibilities(
     _mark_duplicate_active_codes(records)
     _persist(records, batch_id, synced_at)
     linked_users = _link_application_users()
+    monitor_sync = _sync_monitor_targets(records)
     invalid = [record for record in records if record["sync_status"] == "invalid"]
     current = [record for record in records if record["sync_status"] == "current"]
     logger.info(
@@ -275,6 +383,8 @@ def sync_supplier_responsibilities(
         "batch_id": batch_id,
         "synced_at": synced_at.isoformat(),
         "linked_users": linked_users,
+        "auto_monitored": monitor_sync["monitored"],
+        "auto_monitor_errors": monitor_sync["errors"],
         "errors": [
             {"supplier_code": record["supplier_code"], "reasons": record["validation_errors"]}
             for record in invalid
