@@ -190,7 +190,7 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                 arguments["monitor_target_id"] = target_id
             if name:
                 arguments["company_name"] = name
-            return [HarnessTask(
+            identity_task = HarnessTask(
                 task_id=f"{current_task.get('task_id', 'task')}:identity_review",
                 tool_name="resolve_monitor_identity",
                 arguments=arguments,
@@ -199,7 +199,20 @@ def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
                 resource_key=target_id or _entity_id(name, context),
                 required=True,
                 evidence_requirements=["identity_review"],
-            )]
+            )
+            if name:
+                return [identity_task, HarnessTask(
+                    task_id=f"{current_task.get('task_id', 'task')}:tianyancha_identity",
+                    tool_name="lookup_company_identity",
+                    arguments={"company_name": name},
+                    entity_id=target_id or _entity_id(name, context),
+                    dimension="identity_review",
+                    depends_on=[identity_task.task_id],
+                    resource_key=target_id or _entity_id(name, context),
+                    required=True,
+                    evidence_requirements=["identity_review"],
+                )]
+            return [identity_task]
 
     if current_task.get("task_type") == "sourcing":
         requirement = current_task.get("requirement") or {}
@@ -375,6 +388,7 @@ def _append_derived_tasks(
             )
         )
     _append_capability_tasks(tasks, current_task, context, names)
+    _append_tianyancha_tasks(tasks, current_task, context, names)
     return tasks
 
 
@@ -412,6 +426,63 @@ def _append_capability_tasks(
                 entity_id=entity_id,
                 dimension=dimension,
                 resource_key=entity_id,
+                required=True,
+                evidence_requirements=[dimension],
+            ))
+        existing.add(tool_name)
+
+
+def _append_tianyancha_tasks(
+    tasks: list[HarnessTask],
+    current_task: Mapping[str, Any],
+    context: Mapping[str, Any],
+    names: list[str],
+) -> None:
+    """Map explicit provider/data requests to safe Tianyancha business tools."""
+    if not names:
+        return
+    message = str(current_task.get("user_message") or "")
+    requested = {
+        str(item).strip()
+        for item in current_task.get("provider_capabilities", [])
+        if str(item).strip()
+    }
+    token_rules = {
+        "identity": ("主体身份", "主体核验", "统一社会信用代码", "法人", "登记状态"),
+        "legal_risk": ("司法", "诉讼", "被执行", "失信", "限制消费"),
+        "business_risk": ("经营风险", "行政处罚", "经营异常", "严重违法", "股权质押", "欠税"),
+        "news": ("舆情", "新闻", "负面信息"),
+        "profile": ("工商资料", "注册资本", "注册地址", "历史变更", "股东", "分支机构"),
+    }
+    if "天眼查" in message:
+        requested.add("identity")
+    for capability, tokens in token_rules.items():
+        if any(token in message for token in tokens):
+            requested.add(capability)
+    tool_by_capability = {
+        "identity": ("lookup_company_identity", "identity_review"),
+        "legal_risk": ("lookup_legal_risk", "legal_risk"),
+        "business_risk": ("lookup_business_risk", "business_risk"),
+        "news": ("lookup_company_news", "sentiment"),
+        "profile": ("lookup_company_profile", "company_profile"),
+    }
+    existing = {task.tool_name for task in tasks}
+    prefix = str(current_task.get("task_id") or "task")
+    for capability in ("identity", "legal_risk", "business_risk", "news", "profile"):
+        if capability not in requested:
+            continue
+        tool_name, dimension = tool_by_capability[capability]
+        if tool_name in existing:
+            continue
+        for name in dict.fromkeys(names):
+            entity_id = _entity_id(name, context)
+            tasks.append(HarnessTask(
+                task_id=f"{prefix}:{name}:{capability}:external",
+                tool_name=tool_name,
+                arguments={"company_name": name},
+                entity_id=entity_id,
+                dimension=dimension,
+                resource_key=f"{entity_id}:tianyancha:{capability}",
                 required=True,
                 evidence_requirements=[dimension],
             ))

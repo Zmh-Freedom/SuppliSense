@@ -34,6 +34,51 @@ class CompanySearchOutput(StrictToolOutput):
     results: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class TianyanchaIdentityOutput(StrictToolOutput):
+    company_name: str
+    resolution: str | None = None
+    candidate: dict[str, Any] | None = None
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None
+    source_mode: str | None = None
+    source_message: str | None = None
+    queried_at: str | None = None
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TianyanchaRiskLookupOutput(StrictToolOutput):
+    company_name: str
+    domain: str
+    source: str | None = None
+    source_mode: str | None = None
+    source_message: str | None = None
+    queried_at: str | None = None
+    counts: dict[str, int] = Field(default_factory=dict)
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TianyanchaNewsOutput(StrictToolOutput):
+    company_name: str
+    source: str | None = None
+    source_mode: str | None = None
+    source_message: str | None = None
+    queried_at: str | None = None
+    articles_count: int = Field(default=0, ge=0)
+    articles: list[dict[str, Any]] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TianyanchaProfileOutput(StrictToolOutput):
+    company_name: str
+    source: str | None = None
+    source_mode: str | None = None
+    source_message: str | None = None
+    queried_at: str | None = None
+    profile: dict[str, Any] = Field(default_factory=dict)
+    limitations: list[str] = Field(default_factory=list)
+
+
 class RiskAssessmentOutput(StrictToolOutput):
     risk_score: int | float | None = None
     risk_level: str | None = None
@@ -332,6 +377,11 @@ class MonitorIdentityOutput(StrictToolOutput):
 
 TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
     "search_company": CompanySearchOutput,
+    "lookup_company_identity": TianyanchaIdentityOutput,
+    "lookup_legal_risk": TianyanchaRiskLookupOutput,
+    "lookup_business_risk": TianyanchaRiskLookupOutput,
+    "lookup_company_news": TianyanchaNewsOutput,
+    "lookup_company_profile": TianyanchaProfileOutput,
     "assess_risk": RiskAssessmentOutput,
     "assess_business_risk": BusinessRiskOutput,
     "assess_operational_risk": OperationalRiskOutput,
@@ -367,4 +417,11 @@ TOOL_OUTPUT_MODELS: dict[str, type[StrictToolOutput]] = {
 }
 
 
-__all__ = ["StrictToolOutput", "TOOL_OUTPUT_MODELS"]
+__all__ = [
+    "StrictToolOutput",
+    "TianyanchaIdentityOutput",
+    "TianyanchaRiskLookupOutput",
+    "TianyanchaNewsOutput",
+    "TianyanchaProfileOutput",
+    "TOOL_OUTPUT_MODELS",
+]

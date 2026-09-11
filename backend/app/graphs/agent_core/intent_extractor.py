@@ -42,6 +42,9 @@ class ConversationIntentExtraction(BaseModel):
         default_factory=list,
         max_length=8,
     )
+    provider_capabilities: list[Literal[
+        "identity", "legal_risk", "business_risk", "news", "profile"
+    ]] = Field(default_factory=list, max_length=5)
     task_type: Literal["sourcing", "analysis", "none"] = "none"
     requested_action: Literal["add_watchlist", "none"] = "none"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -101,6 +104,7 @@ def extract_conversation_intent(
             "Set task_type='sourcing' for finding, recommending, or listing suppliers, including requests such as '找风险最低的供应商'; risk is then a sourcing filter, not a company risk-assessment task.",
             "Set task_type='analysis' for assessing explicitly named suppliers; set task_type='none' only when no agent task is requested.",
             "For a generic supplier review ('复核' or '风险情况') without explicit dimensions, use risk, financial, and business_risk; explicit dimensions take precedence.",
+            "Use provider_capabilities only when the user explicitly asks for工商主体、司法/诉讼、经营处罚、新闻舆情、工商资料或天眼查查询; choose one or more of identity, legal_risk, business_risk, news, profile.",
             "Use requested_action='add_watchlist' only when the user explicitly asks to monitor or add to monitoring.",
             "This is read-only intent extraction and must not execute an action.",
         ],

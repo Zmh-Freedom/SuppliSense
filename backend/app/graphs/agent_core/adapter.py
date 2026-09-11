@@ -372,9 +372,10 @@ def apply_extracted_conversation_intent(
 
     target_names = list(getattr(extracted, "target_supplier_names", []) or [])
     dimensions = list(getattr(extracted, "analysis_dimensions", []) or [])
+    provider_capabilities = list(getattr(extracted, "provider_capabilities", []) or [])
     task_type = getattr(extracted, "task_type", "none")
     requested_action = getattr(extracted, "requested_action", "none")
-    if not target_names and not dimensions and task_type == "none" and requested_action == "none":
+    if not target_names and not dimensions and not provider_capabilities and task_type == "none" and requested_action == "none":
         return execution_context
 
     conversation_state = dict(execution_context.get("conversation_state") or {})
@@ -401,6 +402,8 @@ def apply_extracted_conversation_intent(
         # A company-only follow-up means "run the last explicit analysis for
         # this company". Do not inherit sourcing or an old execution plan.
         dimensions = _text_list(current_task.get("analysis_dimensions"))
+    if provider_capabilities:
+        current_task["provider_capabilities"] = provider_capabilities
     if task_type == "sourcing" and not target_names:
         current_task["task_type"] = "sourcing"
     elif target_names or dimensions:
@@ -417,6 +420,8 @@ def apply_extracted_conversation_intent(
             dimensions=dimensions,
         ).model_dump(mode="json")
         planned["user_message"] = str(current_task.get("user_message") or "")
+        if provider_capabilities:
+            planned["provider_capabilities"] = provider_capabilities
         current_task = planned
     conversation_state["current_task"] = current_task
     return {

@@ -124,6 +124,7 @@ _EVIDENCE_TOOLS = {
     "contagion_analysis", "sentiment_analysis", "check_sanctions", "compare_companies",
     "analyze_trend", "query_financials", "predict_risk", "macro_risk", "find_alternatives",
     "scenario_simulate", "list_formal_suppliers", "search_suppliers", "discover_supplier_candidates", "discover_web_suppliers", "investigate_supplier_monitoring", "resolve_monitor_identity", "get_monitor_review_queue",
+    "lookup_company_identity", "lookup_legal_risk", "lookup_business_risk", "lookup_company_news", "lookup_company_profile",
 }
 _CAPABILITIES = {
     "search_company": "company_lookup", "assess_risk": "risk", "assess_business_risk": "business_risk",
@@ -138,6 +139,11 @@ _CAPABILITIES = {
     "discover_supplier_candidates": "sourcing",
     "select_sourcing_result": "sourcing", "expand_supplier_library": "sourcing", "discover_web_suppliers": "sourcing",
     "select_external_supplier_candidate": "sourcing",
+    "lookup_company_identity": "company_lookup",
+    "lookup_legal_risk": "legal_risk",
+    "lookup_business_risk": "business_risk",
+    "lookup_company_news": "sentiment",
+    "lookup_company_profile": "company_profile",
 }
 
 

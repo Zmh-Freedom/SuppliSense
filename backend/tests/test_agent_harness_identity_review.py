@@ -37,10 +37,13 @@ def test_identity_request_builds_harness_task_without_risk_dimensions() -> None:
         "task_specs": [],
     })
 
-    assert len(plan) == 1
+    assert len(plan) == 2
     assert plan[0].tool_name == "resolve_monitor_identity"
     assert plan[0].arguments["monitor_target_id"] == "189a3b05-5666-495a-8aa9-00d0a8cc7d58"
     assert plan[0].dimension == "identity_review"
+    assert plan[1].tool_name == "lookup_company_identity"
+    assert plan[1].arguments == {"company_name": "上海海拉电子有限公司"}
+    assert plan[1].depends_on == [plan[0].task_id]
 
 
 def test_identity_tool_output_contract_is_registered() -> None:
@@ -74,3 +77,22 @@ def test_approved_monitor_write_confirmation_includes_risk_baseline() -> None:
 
     assert "已将上海海拉电子有限公司加入风险监控清单" in text
     assert "风险基线：18/100，低风险" in text
+
+
+def test_explicit_provider_capability_adds_controlled_legal_lookup() -> None:
+    plan = _build_default_plan({
+        "current_task": {
+            "task_id": "legal-turn",
+            "target_supplier_names": ["示例汽车零部件有限公司"],
+            "user_message": "查询示例汽车零部件有限公司的司法诉讼和被执行信息",
+            "task_type": "analysis",
+            "provider_capabilities": ["legal_risk"],
+        },
+        "execution_context": {},
+        "task_specs": [],
+    })
+
+    legal_tasks = [task for task in plan if task.tool_name == "lookup_legal_risk"]
+    assert len(legal_tasks) == 1
+    assert legal_tasks[0].arguments == {"company_name": "示例汽车零部件有限公司"}
+    assert legal_tasks[0].dimension == "legal_risk"

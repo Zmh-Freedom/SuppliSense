@@ -12,6 +12,13 @@ from app.domains.risk.tools_analysis import (
     analyze_trend,
     query_financials,
 )
+from app.domains.risk.tools_tianyancha import (
+    lookup_company_identity,
+    lookup_legal_risk,
+    lookup_business_risk,
+    lookup_company_news,
+    lookup_company_profile,
+)
 from app.domains.risk.tools_report import generate_report, manage_scheduled_report
 from app.domains.alert.tools import check_alert, get_watchlist, add_to_watchlist, remove_from_watchlist, analyze_watchlist_trend, investigate_supplier_monitoring, resolve_monitor_identity, get_monitor_review_queue
 from app.domains.sourcing.tools import (
@@ -50,6 +57,11 @@ TOOLS_LIST = [
     analyze_trend,
     compare_companies,
     query_financials,
+    lookup_company_identity,
+    lookup_legal_risk,
+    lookup_business_risk,
+    lookup_company_news,
+    lookup_company_profile,
     manage_scheduled_report,
     list_formal_suppliers,
     create_sourcing_request,
