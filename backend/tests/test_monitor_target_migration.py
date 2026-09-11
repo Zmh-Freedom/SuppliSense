@@ -8,6 +8,17 @@ from app.domains.alert import service as alert_service
 from app.graphs.agent_supervisor.agents import AgentTaskContext, _run_risk
 from app.graphs.agent_supervisor.contracts import PlannerTask
 from app.schemas import RiskCalculateResponse
+from app.tools.contracts import WatchlistOutput
+
+
+def test_watchlist_output_accepts_owner_user_id_from_responsibility_scope():
+    result = WatchlistOutput.model_validate({
+        "company_name": "责任范围供应商有限公司",
+        "owner_user_id": "purchaser-1",
+        "monitor_status": "active",
+    })
+
+    assert result.owner_user_id == "purchaser-1"
 
 
 def test_add_watchlist_persists_full_stable_monitor_target(monkeypatch):

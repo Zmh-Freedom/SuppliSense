@@ -2806,3 +2806,16 @@
 - 修复方案：将 `approval_required` 明确视为本次请求的合法暂停终态；服务端随后补发带 `status=waiting_approval` 的 `done` 事件，前端在只收到审批事件时也会立即持久化待审批消息、结束加载状态并保留审批恢复入口，继续使用既有的审批恢复接口和持久化审批状态。
 - 验证结果：前端审批流回归（含“审批事件后没有 done”场景）通过；前端 71 项测试、TypeScript 类型检查、Lint 和生产构建通过；后端审批暂停回归验证 `approval_required → done(waiting_approval)` 顺序；后端 `/health` 返回 200，最新运行记录保持 `ACTION_PENDING` 且存在待审批提案。
 - 关联提交：`2d5a3b82`、`348bcb07`。
+
+## ISS-20260911-099 add_to_watchlist 返回责任人字段导致输出校验失败
+
+- 发现日期：2026-09-11
+- 状态：处理中
+- 优先级：P0
+- 现象：用户批准加入监控动作后，执行详情显示“执行失败”，错误为 `WatchlistOutput owner_user_id Extra inputs are not permitted`。
+- 影响：人工审批本身已完成，但供应商无法写入监控清单；用户看到的是泛化失败提示，无法完成写操作闭环。
+- 根因：责任范围接入后，`add_to_watchlist` 的业务结果包含 `owner_user_id`，但 `WatchlistOutput` 严格禁止未声明字段，统一 ToolExecutor 在输出校验阶段拒绝了该结果。
+- 修复方案：在 Watchlist 输出契约中声明责任人字段并保持向后兼容；补充带责任人数据的工具执行与审批恢复回归，确保副作用回执仍可验证。
+- 补充发现：本次批准请求已成功进入 `/chat/resume`，但对应 `agent.action.approved` Outbox 事件重试 5 次后进入死信，记录的公开错误为 `consumer_handler_failed`；该错误是上述输出校验异常被 Outbox 脱敏后的结果。
+- 验证结果：Watchlist 输出契约已声明 `owner_user_id`；带责任人字段的输出模型、监控目标迁移和 ToolExecutor 回归通过。后端需重启后用新请求重新审批，旧死信提案不会自动重复执行。
+- 关联提交：待补充。

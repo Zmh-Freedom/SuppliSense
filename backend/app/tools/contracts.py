@@ -95,6 +95,7 @@ class AlertCheckOutput(StrictToolOutput):
 class WatchlistOutput(StrictToolOutput):
     company_name: str | None = None
     display_name: str | None = None
+    owner_user_id: str | None = None
     monitor_target_id: str | None = None
     target_type: str | None = None
     identity_status: str | None = None
