@@ -338,8 +338,9 @@ def get_supplier(sid: str) -> dict | None:
     """Read a formal supplier by current view id or stable supplier_id."""
     db = get_db()
     collection = _supplier_read_collection(db)
+    current_filter = _current_supplier_filter(collection)
     for query in ({"_id": sid}, {"supplier_id": sid}):
-        supplier = collection.find_one(query)
+        supplier = collection.find_one({**current_filter, **query})
         if supplier:
             return supplier
     return None
@@ -350,7 +351,8 @@ def get_supplier_by_name(name: str) -> dict | None:
     # Relationship links must resolve against the same formal read model as
     # the supplier list/profile. Otherwise a stale auto-created legacy record
     # can produce a link that the Feishu snapshot-backed profile cannot open.
-    return _supplier_read_collection(db).find_one({"name": name})
+    collection = _supplier_read_collection(db)
+    return collection.find_one({**_current_supplier_filter(collection), "name": name})
 
 
 def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:
@@ -358,10 +360,7 @@ def search_for_sourcing_v2(requirement: dict[str, Any]) -> list[dict]:
     db = get_db()
     candidates: list[dict] = []
     collection = _supplier_read_collection(db)
-    is_feishu_snapshot = getattr(collection, "name", "") == "supplier_master_snapshots"
-    supplier_filter = {"status": "active"}
-    if is_feishu_snapshot:
-        supplier_filter.update({"source": "feishu_bitable", "sync_status": "current"})
+    supplier_filter = _current_supplier_filter(collection, {"status": "active"})
     suppliers = list(collection.find(supplier_filter))
     supplier_ids = [
         str(supplier.get("supplier_id") or supplier.get("_id"))
@@ -616,7 +615,7 @@ def list_suppliers(
 ) -> dict[str, Any]:
     db = get_db()
     collection = _supplier_read_collection(db)
-    filt: dict[str, Any] = {}
+    filt: dict[str, Any] = _current_supplier_filter(collection)
     if keyword:
         filt["name"] = {"$regex": keyword, "$options": "i"}
     if status:
@@ -653,9 +652,9 @@ def list_formal_suppliers(limit: int = 20) -> dict[str, Any]:
     """Return the current formal supplier directory from the active read model."""
     db = get_db()
     collection = _supplier_read_collection(db)
-    filters: dict[str, Any] = {"status": {"$in": ["active", "approved"]}}
-    if collection.name == "supplier_master_snapshots":
-        filters.update({"source": "feishu_bitable", "sync_status": "current"})
+    filters: dict[str, Any] = _current_supplier_filter(
+        collection, {"status": {"$in": ["active", "approved"]}}
+    )
 
     safe_limit = max(1, min(limit, 50))
     sort_field = "synced_at" if collection.name == "supplier_master_snapshots" else "created_at"
@@ -691,12 +690,10 @@ def formal_supplier_exists_by_name(name: str) -> bool:
         return False
     db = get_db()
     collection = _supplier_read_collection(db)
-    filters: dict[str, Any] = {
+    filters: dict[str, Any] = _current_supplier_filter(collection, {
         "name": {"$regex": f"^{value}$", "$options": "i"},
         "status": {"$in": ["active", "approved"]},
-    }
-    if collection.name == "supplier_master_snapshots":
-        filters.update({"source": "feishu_bitable", "sync_status": "current"})
+    })
     return collection.count_documents(filters, limit=1) > 0
 
 
@@ -741,6 +738,14 @@ def _supplier_read_collection(db: Any) -> Any:
         if snapshots is not None and has_current_feishu_supplier_snapshot(db):
             return snapshots
     return db["suppliers"]
+
+
+def _current_supplier_filter(collection: Any, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Add the active Feishu snapshot boundary to every formal read query."""
+    filters = dict(base or {})
+    if getattr(collection, "name", "") == "supplier_master_snapshots":
+        filters.update({"source": "feishu_bitable", "sync_status": "current"})
+    return filters
 
 
 def has_current_feishu_supplier_snapshot(db: Any | None = None) -> bool:
