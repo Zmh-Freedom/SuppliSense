@@ -138,6 +138,7 @@ class AlertCheckOutput(StrictToolOutput):
 
 
 class WatchlistOutput(StrictToolOutput):
+    cancelled: bool = False
     company_name: str | None = None
     display_name: str | None = None
     owner_user_id: str | None = None

@@ -251,6 +251,13 @@ def test_supervisor_creates_one_watchlist_proposal_per_structured_target(
     persisted: list[dict] = []
     monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
     monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    # The current write contract requires a resolvable formal supplier identity
+    # before an add-watchlist proposal is created. Keep this unit fixture
+    # explicit so it tests approval fan-out rather than identity lookup.
+    monkeypatch.setattr(
+        "app.domains.sourcing.supplier_repo.resolve_supplier_id",
+        lambda name: f"supplier-id:{name}",
+    )
 
     result = asyncio.run(
         supervisor_graph.execute_ready_tasks(

@@ -29,7 +29,9 @@ def fallback_requirement_from_query(message: str) -> dict[str, str] | None:
     chat Supervisor can still perform a read-only broad search when the user only
     names a product/category, while leaving all write decisions behind review.
     """
-    match = re.search(r"(?:找|推荐|寻找)(.+?)(?:供应商|厂家|厂商)", message)
+    match = re.search(r"为(.+?)(?:寻找|查找|搜索)(?:历史)?(?:合作)?供应商", message)
+    if not match:
+        match = re.search(r"(?:找|推荐|寻找)(.+?)(?:供应商|厂家|厂商)", message)
     if not match:
         return None
     target = match.group(1).strip(" ，,、")

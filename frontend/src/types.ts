@@ -78,6 +78,7 @@ export type ReviewTaskStatus =
   | 'completed'
   | 'needs_review'
   | 'failed'
+  | 'rejected'
   | 'cancelled'
   | string;
 

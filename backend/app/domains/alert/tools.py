@@ -338,6 +338,43 @@ def add_to_watchlist(
     from app.tools.executor import get_active_tool_context
 
     active_context = get_active_tool_context()
+    from app.domains.alert.service import _find_watchlist_target
+    existing_target = _find_watchlist_target(
+        monitor_target_id=monitor_target_id,
+        supplier_id=supplier_id,
+        candidate_id=candidate_id,
+        company_id=company_id,
+        company_name=company_name.strip() or None,
+    )
+    if existing_target and existing_target.get("monitor_status", "active") == "active":
+        return {
+            **existing_target,
+            "status": "already_watching",
+            "message": f"{existing_target.get('company_name') or company_name} 已在当前监控清单中，无需重复加入。",
+            "side_effect_receipt": {
+                "operation": "add_to_watchlist",
+                "status": "already_watching",
+                "monitor_target_id": existing_target.get("monitor_target_id"),
+            },
+        }
+    # A free-text external company must first be resolved to a formal
+    # supplier or verified company identity.  Never create a monitoring row
+    # merely because the user typed a recognizable company name.
+    if target_type == "external_candidate" and not company_id:
+        return {
+            "status": "needs_review",
+            "error": "identity_required",
+            "message": "该外部候选尚未完成主体核验，暂不能加入监控清单。请先完成主体检索与确认。",
+        }
+    if not existing_target and not monitor_target_id and not supplier_id and not company_id and target_type is not None:
+        from app.domains.sourcing.supplier_repo import resolve_supplier_id
+
+        if not resolve_supplier_id(company_name.strip()):
+            return {
+                "status": "needs_review",
+                "error": "identity_required",
+                "message": "该企业尚未完成主体核验，暂不能加入监控清单。请先完成主体检索与确认。",
+            }
     approval_args = {
         "company_name": company_name,
         "target_type": target_type,

@@ -424,6 +424,7 @@ async def stream_agent_supervisor_graph(
         "intent": {},
     }
     full_answer = ""
+    final_status = "completed"
     discovered_references: list[dict] = []
 
     yield _workflow_status("running", "understand", "正在分析组合寻源与风险任务...")
@@ -526,6 +527,9 @@ async def stream_agent_supervisor_graph(
                             )
 
                 if stage == "finalize":
+                    task_status = str(output.get("task_status") or "")
+                    if "拒绝" in str(output.get("final_answer") or "") or task_status == "REJECTED":
+                        final_status = "rejected"
                     answer = output.get("final_answer")
                     if isinstance(answer, str) and answer and answer != full_answer:
                         full_answer = answer
@@ -546,8 +550,14 @@ async def stream_agent_supervisor_graph(
             )
         if discovered_references:
             yield _sse_event("references", {"items": discovered_references})
-        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
-        yield _sse_event("done", {"answer": full_answer})
+        if final_status == "rejected":
+            yield _workflow_status("rejected", "approval", "操作已拒绝，未写入业务数据")
+        else:
+            yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
+        done_payload = {"answer": full_answer}
+        if final_status == "rejected":
+            done_payload["status"] = final_status
+        yield _sse_event("done", done_payload)
     except Exception as exc:
         from app.graphs import format_llm_error
 

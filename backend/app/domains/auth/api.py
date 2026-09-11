@@ -39,7 +39,7 @@ class LoginRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = ""
 
 
 def _create_tokens(user) -> Token:
@@ -157,6 +157,15 @@ async def login_json(request: Request, req: LoginRequest, response: Response):
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
+    response.set_cookie(
+        key="refresh_token",
+        value=tokens.refresh_token,
+        httponly=True,
+        samesite="lax",
+        secure=settings.COOKIE_SECURE,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path="/api/v1/auth",
+    )
 
     return {"detail": "登录成功", "username": user.username, "role": user.role}
 
@@ -173,7 +182,8 @@ async def login_json(request: Request, req: LoginRequest, response: Response):
 @limiter.limit(settings.RATE_LIMIT_AUTH)
 async def refresh_token(request: Request, req: RefreshRequest, response: Response):
     """Exchange refresh token for a new access token."""
-    payload = decode_token(req.refresh_token)
+    refresh_token = req.refresh_token.strip() or request.cookies.get("refresh_token", "")
+    payload = decode_token(refresh_token)
     if payload is None or payload.get("type") != "refresh":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的刷新令牌")
 
@@ -216,6 +226,7 @@ async def refresh_token(request: Request, req: RefreshRequest, response: Respons
 async def logout(request: Request, response: Response):
     """Clear the HttpOnly cookie."""
     response.delete_cookie(key="access_token", path="/", secure=settings.COOKIE_SECURE)
+    response.delete_cookie(key="refresh_token", path="/api/v1/auth", secure=settings.COOKIE_SECURE)
     return {"detail": "已退出登录"}
 
 

@@ -12,12 +12,12 @@ from app.graphs.agent_core.contracts import AgentTask, ConversationState, migrat
 _ANALYSIS_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("risk", ("风险", "风险评估", "风险分析")),
     ("financial", ("财务", "财务风险")),
-    ("business_risk", ("商务", "商务风险", "供应依赖", "可替代性")),
+    ("business_risk", ("商务", "商务风险", "供应依赖", "可替代性", "行政处罚", "经营异常", "严重违法", "欠税", "股权质押")),
+    ("compliance", ("诉讼", "被执行", "失信", "限制消费", "司法", "法律风险", "合规", "制裁", "黑名单")),
     ("quality", ("质量", "质量风险")),
     ("delivery", ("交付", "交付风险")),
     ("esg", ("ESG", "esg", "环境社会治理")),
     ("sentiment", ("舆情", "新闻", "负面信息")),
-    ("compliance", ("合规", "制裁", "黑名单")),
 )
 _DEFAULT_REVIEW_DIMENSIONS = ["risk", "financial", "business_risk"]
 _GENERIC_RISK_QUERY_TOKENS = (
@@ -59,9 +59,18 @@ def analysis_dimensions_from_message(message: str) -> list[str]:
     if "五维风险" in message or "五个维度" in message:
         return ["risk", "financial", "business_risk", "quality", "delivery", "compliance"]
     explicit_dimensions = [
-        dimension
+        (min(
+            (message.find(keyword) for keyword in keywords if keyword in message),
+            default=len(message),
+        ), dimension)
         for dimension, keywords in _ANALYSIS_DIMENSIONS
         if any(keyword in message for keyword in keywords)
+    ]
+    # Preserve the order used by the purchaser.  This matters in the result
+    # table: “风险、ESG、舆情和合规” should read in that same order, while
+    # generic reviews continue to use the stable default order below.
+    explicit_dimensions = [
+        dimension for _, dimension in sorted(explicit_dimensions, key=lambda item: item[0])
     ]
     if any(token in message for token in _GENERIC_RISK_QUERY_TOKENS):
         # Range-level questions such as “这些供应商的风险情况” intentionally

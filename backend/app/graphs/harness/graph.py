@@ -756,6 +756,18 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         if not available:
             return f"已检查当前责任范围内 {len(companies)} 家供应商，但最近 {period} 个月的风险快照不足，暂时无法判断上升或下降。"
         return f"已完成当前责任范围内 {len(companies)} 家供应商最近 {period} 个月的风险变化检查，下面直接列出每家的变化状态和下一步建议。"
+    if {"lookup_company_news", "sentiment_analysis"}.intersection(tool_names):
+        sentiment_claims = [claim for claim in answer.claims if claim.dimension in {"sentiment", "news"}]
+        if not sentiment_claims:
+            return "本轮已完成舆情检索，但当前没有可验证的新闻或负面信息结果，因此暂不下舆情结论。"
+    if {"lookup_legal_risk", "lookup_business_risk"}.intersection(tool_names):
+        requested_claims = [
+            claim for claim in answer.claims
+            if claim.dimension in {"legal_risk", "business_risk"}
+            or (claim.fact_path or "").startswith("risk_detail.")
+        ]
+        if not requested_claims:
+            return "本轮已完成司法/经营风险检索，但当前没有可验证的明细结果，暂不下确定性结论。"
     if target_names and answer.claims:
         # Put the procurement conclusion before the evidence table.  Every
         # sentence below is assembled from validated Claims, so this remains a
@@ -769,13 +781,22 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         }
         risk_score = values.get("risk_score")
         risk_level = values.get("risk_level")
+        coverage_ratio = values.get("risk_detail.data_coverage.coverage_ratio")
+        coverage_limited = (
+            answer.status in {"partial", "needs_review"}
+            or bool(answer.limitations)
+            or (isinstance(coverage_ratio, (int, float)) and coverage_ratio < 1)
+        )
         summary_parts: list[str] = [f"已完成 {subject} 的供应商复核"]
         if risk_score is not None or risk_level is not None:
             risk_text = []
             if risk_score is not None:
                 risk_text.append(f"综合风险评分 {risk_score}/100")
             if risk_level is not None:
-                risk_text.append(str(risk_level))
+                risk_text.append(
+                    f"在已取得资料范围内{risk_level}"
+                    if coverage_limited else str(risk_level)
+                )
             summary_parts.append("，".join(risk_text))
         if "financial" in dimensions:
             profit_growth = values.get("net_profit_growth")
@@ -802,8 +823,8 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
             if isinstance(mismatch_months, (int, float)) and mismatch_months > 0:
                 summary_parts.append(f"结算与收货记录不一致 {int(mismatch_months)} 个月")
         result = "；".join(summary_parts) + "。"
-        if answer.status == "needs_review":
-            return result + "以上为已取得资料范围内的信号，部分维度未覆盖，采购动作请先按下方提示核实。"
+        if coverage_limited:
+            return result + "以上结论仅适用于已取得资料范围，部分维度尚未覆盖；采购动作请先按下方提示核实。"
         return result + "可结合下方数据依据安排后续采购动作。"
     if "sourcing" in dimensions or "discover_supplier_candidates" in tool_names or "search_suppliers" in tool_names:
         candidate_count = 0

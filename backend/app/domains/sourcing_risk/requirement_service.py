@@ -123,6 +123,13 @@ def resolve_harness_requirement(
     if provided_values.get("category") and not _SOURCING_REQUEST_PATTERN.search(raw_text or ""):
         return _harness_ready(_normalise_harness_requirement(provided_values))
 
+    # Preserve the material/category that appears before “寻找历史供应商”.
+    # A generic LLM extractor can otherwise latch onto the word “历史” and
+    # send an unusable category to the local material-supplier index.
+    deterministic = _fallback_requirement_from_text(raw_text)
+    if deterministic and re.search(r"为.+?(?:寻找|查找|搜索)(?:历史)?(?:合作)?供应商", raw_text or ""):
+        return _harness_ready(deterministic, extraction_source="deterministic_fallback")
+
     if settings.LLM_API_KEY:
         try:
             parsed = parse_requirement(raw_text, provided_values)
@@ -183,6 +190,18 @@ def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
     historical = _HISTORICAL_SUPPLIER_PATTERN.search(message or "")
     if historical:
         material = historical.group("material").strip(" ，,、？?请帮我查询")
+        if material:
+            return {
+                "category": material,
+                "material": material,
+                "product": material,
+                "specification": material,
+                "must_have": [],
+                "optional_conditions": [],
+            }
+    by_material = re.search(r"为(?P<target>.+?)(?:寻找|查找|搜索)(?:历史)?(?:合作)?供应商", message or "")
+    if by_material:
+        material = by_material.group("target").strip(" ，,、的")
         if material:
             return {
                 "category": material,

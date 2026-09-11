@@ -156,8 +156,8 @@ def external_assessment_clarification(
     if not candidates:
         return ClarificationNeeded(
             message=(
-                f"暂未找到与“{target}”对应的可确认企业主体，暂不进行风险评分。"
-                "请补充企业全称、统一社会信用代码或天眼查链接。"
+                f"暂未找到与“{target}”对应的可确认企业主体，系统已停止风险评分。"
+                "当前没有可验证的公开资料，因此不输出风险结论。"
             ),
             missing=["company_identity"],
         )

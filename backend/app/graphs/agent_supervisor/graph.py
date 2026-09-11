@@ -287,6 +287,25 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
                 if value:
                     target[field] = value
             break
+        try:
+            from app.domains.alert.service import _find_watchlist_target
+
+            existing = _find_watchlist_target(company_name=company_name)
+        except Exception:
+            existing = None
+        if isinstance(existing, dict):
+            target["monitor_status"] = existing.get("monitor_status") or "active"
+            target["already_monitored"] = target["monitor_status"] == "active"
+            for field in ("monitor_target_id", "target_type", "supplier_id", "candidate_id", "company_id", "supplier_code", "identity_status"):
+                if existing.get(field) and not target.get(field):
+                    target[field] = existing[field]
+        if not existing and not any(target.get(field) for field in ("supplier_id", "company_id", "candidate_id", "monitor_target_id")):
+            try:
+                from app.domains.sourcing.supplier_repo import resolve_supplier_id
+
+                target["identity_required"] = not bool(resolve_supplier_id(company_name))
+            except Exception:
+                target["identity_required"] = True
         if target.get("candidate_id") and not target.get("supplier_id"):
             target.setdefault("target_type", "external_candidate")
         elif target.get("supplier_id"):
@@ -294,13 +313,20 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
         return target
 
     if isinstance(intent, dict) and intent.get("request_watchlist") and isinstance(target_names, list):
+        resolved_targets = [
+            monitor_target(company_name)
+            for company_name in target_names
+            if isinstance(company_name, str) and company_name.strip()
+        ]
         recommendations.extend({
             "action_type": "add_watchlist",
-            "target": monitor_target(company_name),
+            "target": target,
             "reason": "用户要求对该供应商持续进行风险监控。",
             "impact": "加入本地风险监控清单，后续定时检查风险与舆情变化。",
             "requires_approval": True,
-        } for company_name in target_names if isinstance(company_name, str) and company_name.strip())
+        } for target in resolved_targets
+          if not target.get("already_monitored")
+          and not target.get("identity_required"))
     return {
         "agent_results": {
             task_id: result.model_dump(mode="json")

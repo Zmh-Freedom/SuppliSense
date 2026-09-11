@@ -60,9 +60,10 @@ function phaseStatus(state: AgentWorkflowState, index: number): PhaseStatus {
     decision: 4,
     approval: 4,
     completed: 4,
+    rejected: 4,
   };
   const currentStage = state.workflowStatus?.stage;
-  if (lifecycle === 'completed' || lifecycle === 'needs_review') return 'complete';
+  if (lifecycle === 'completed' || lifecycle === 'needs_review' || lifecycle === 'rejected') return 'complete';
   if (currentStage === 'decision' && lifecycle !== 'running') return 'complete';
   if (lifecycle === 'failed') return index >= (stageIndex[currentStage || ''] ?? 2) ? 'error' : 'complete';
   if (lifecycle === 'partial') return index >= (stageIndex[currentStage || ''] ?? 3) ? 'error' : 'complete';
@@ -175,6 +176,7 @@ function lifecycleLabel(status: string): string {
     failed: '失败',
     clarifying: '等待澄清',
     stopped: '已停止',
+    rejected: '已拒绝',
   };
   return labels[status] || status;
 }
@@ -208,7 +210,7 @@ function approvalHeadingLabel(status?: ApprovalData['status']): string {
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
   const [expanded, setExpanded] = useState(() => {
     const lifecycle = state.workflowStatus?.status;
-    return lifecycle !== 'completed' && lifecycle !== 'partial' && lifecycle !== 'needs_review' && lifecycle !== 'failed';
+    return lifecycle !== 'completed' && lifecycle !== 'partial' && lifecycle !== 'needs_review' && lifecycle !== 'failed' && lifecycle !== 'rejected';
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);

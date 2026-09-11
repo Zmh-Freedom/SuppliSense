@@ -191,6 +191,7 @@ def load_execution_context(
     resolved = apply_extracted_conversation_intent(execution_context, extracted)
     resolved = _enforce_scope_query_intent(resolved, user_message)
     resolved = _apply_identity_verification_intent(resolved, user_message)
+    resolved = _apply_monitor_target_id_intent(resolved, user_message)
     return validate_execution_context(
         _apply_harness_sourcing_requirement(resolved, user_message),
         source="load_execution_context",
@@ -255,6 +256,68 @@ def _apply_identity_verification_intent(
         "conversation_state": conversation_state,
         "current_task": current_task,
         "llm_intent": normalized_intent,
+    }
+
+
+def _apply_monitor_target_id_intent(
+    execution_context: dict[str, Any], user_message: str
+) -> dict[str, Any]:
+    """Resolve a stable monitor-target UUID to its display name for analysis.
+
+    Users often paste the ID from the monitoring page and ask for a risk
+    review without repeating the supplier name.  The UUID is the authoritative
+    lookup key; loading its name here keeps the Harness plan executable while
+    preserving the same permission-scoped target reference.
+    """
+    from app.graphs.agent_core.intent_extractor import extract_monitor_target_id
+
+    target_id = extract_monitor_target_id(user_message)
+    if not target_id:
+        return execution_context
+    current_task = dict(execution_context.get("current_task") or {})
+    names = [str(item).strip() for item in current_task.get("target_supplier_names", []) if str(item).strip()]
+    if names:
+        current_task["monitor_target_id"] = target_id
+        return {**execution_context, "current_task": current_task}
+    try:
+        from app.domains.alert.service import _find_watchlist_target
+
+        target = _find_watchlist_target(monitor_target_id=target_id)
+    except Exception as exc:
+        logger.warning("monitor_target_id_resolution_failed", monitor_target_id=target_id, error=str(exc))
+        target = None
+    if not isinstance(target, dict):
+        return execution_context
+    name = str(target.get("company_name") or target.get("display_name") or "").strip()
+    if not name:
+        return execution_context
+    current_task.update({
+        "target_supplier_names": [name],
+        "monitor_target_id": target_id,
+        "task_type": "analysis",
+        "user_message": user_message,
+    })
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    conversation_state["selected_supplier_names"] = [name]
+    conversation_state["selected_suppliers"] = [name]
+    conversation_state["current_task"] = current_task
+    references = list(execution_context.get("references") or [])
+    if not any(isinstance(item, dict) and item.get("monitor_target_id") == target_id for item in references):
+        references.append({
+            "kind": "supplier",
+            "name": name,
+            "monitor_target_id": target_id,
+            "target_type": target.get("target_type"),
+            "supplier_id": target.get("supplier_id"),
+            "company_id": target.get("company_id"),
+            "identity_status": target.get("identity_status"),
+            "source": "monitor_target_id",
+        })
+    return {
+        **execution_context,
+        "references": references,
+        "conversation_state": conversation_state,
+        "current_task": current_task,
     }
 
 

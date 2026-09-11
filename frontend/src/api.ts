@@ -28,6 +28,7 @@ async function refreshAccessToken(): Promise<boolean> {
   try {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       // refresh token is stored in httpOnly cookie; the backend reads it from the cookie, not the request body
       body: JSON.stringify({}),

@@ -187,7 +187,16 @@ def is_identity_verification_request(message: str) -> bool:
     return (
         any(token in text for token in ("主体身份", "主体核验", "核验主体", "确认主体"))
         and any(token in text for token in ("核验", "确认", "检索", "查找", "验证"))
-        and ("监控对象" in text or "监控目标" in text or extract_monitor_target_id(text) is not None)
+        # A user may ask to verify a named supplier without spelling out
+        # “监控对象”.  The company name is enough to enter the read-only
+        # identity flow; a monitor UUID remains the preferred stable key when
+        # it is present.
+        and (
+            "监控对象" in text
+            or "监控目标" in text
+            or extract_monitor_target_id(text) is not None
+            or bool(re.search(r"(?:有限公司|股份有限公司|集团有限公司|集团)", text))
+        )
     )
 
 
