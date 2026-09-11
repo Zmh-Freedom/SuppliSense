@@ -10,6 +10,8 @@ export default function ActionSummary({ answer, limitations }: { answer: AgentAn
   const conclusion = isWatchlist ? '监控清单' : isTrend ? '风险变化检查' : needsReview ? '建议复核' : hasClaims ? '已形成初步结论' : '暂未形成结论';
   const explanation = isWatchlist || isTrend
     ? answer.summary
+    : hasClaims && answer.summary?.includes('\n\n')
+    ? answer.summary
     : answer.summary && (answer.summary.includes('供应商复核') || answer.summary.includes('综合风险评分') || answer.summary.includes('寻源候选'))
     ? answer.summary
     : needsReview
