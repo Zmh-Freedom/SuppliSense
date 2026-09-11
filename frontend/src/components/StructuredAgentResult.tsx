@@ -369,6 +369,17 @@ function claimGroupTitle(group: ReturnType<typeof claimGroup>): string {
   return ({ summary: '综合结论', risk: '风险信号', financial: '财务指标', other: '其他已核验信息' })[group];
 }
 
+function shouldShowClaim(claim: AgentAnswer['claims'][number]): boolean {
+  const path = claim.fact_path || '';
+  if (!path.startsWith('risk_detail.')) return true;
+  const leafPath = path.split('.').pop() || path;
+  if (leafPath === 'major_lawsuit' || leafPath === 'legal_person_change_frequent') {
+    return claim.value === true;
+  }
+  if (leafPath.endsWith('_count')) return typeof claim.value !== 'number' || claim.value > 0;
+  return true;
+}
+
 function buildRiskItems(answer?: AgentAnswer, evidence: AgentEvidenceRecord[] = []): string[] {
   const items = new Set<string>();
   answer?.claims.forEach(claim => {
@@ -476,7 +487,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
         <table className="w-full table-fixed border-collapse text-left text-sm">
           <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th scope="col" className="w-[15%] px-2 py-2.5 font-medium sm:px-3">风险维度</th><th scope="col" className="w-[20%] px-2 py-2.5 font-medium sm:px-3">指标/检查项</th><th scope="col" className="w-[32%] px-2 py-2.5 font-medium sm:px-3">当前数据</th><th scope="col" className="w-[18%] px-2 py-2.5 font-medium sm:px-3">判断</th><th scope="col" className="hidden w-[8%] px-3 py-2.5 font-medium md:table-cell">依据状态</th><th scope="col" className="hidden w-[7%] px-3 py-2.5 font-medium md:table-cell">可信度</th></tr></thead>
           <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {
-            const claims = answer.claims.filter(claim => claimGroup(claim) === group);
+            const claims = answer.claims.filter(claim => claimGroup(claim) === group && shouldShowClaim(claim));
             if (claims.length === 0) return null;
             return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => { const assessment = claimAssessment(claim); return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{readableClaimDetail(claim)}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>; })}</Fragment>;
           })}</tbody>
