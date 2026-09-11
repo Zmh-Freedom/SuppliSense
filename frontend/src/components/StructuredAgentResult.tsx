@@ -384,6 +384,9 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const status = answer ? answerStatusMeta(answer, limitations) : null;
   const riskItems = buildRiskItems(answer, evidence || []);
   const overview = answer ? analysisOverview(answer, limitations) : '';
+  const watchlistClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：')) || [];
+  const trendClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：')) || [];
+  const scopeQuery = watchlistClaims.length > 0 || trendClaims.length > 0;
 
   return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 分析结果">
     {answer && <ActionSummary answer={answer} limitations={limitations} />}
@@ -398,7 +401,19 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
         </span>}
       </div>
       <p className="mt-3 max-w-4xl text-sm leading-6 text-[var(--color-text-secondary)]">{overview}</p>
-      {answer.claims.length > 0 && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      {watchlistClaims.length > 0 && <div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th className="px-3 py-2.5 font-medium">供应商</th><th className="px-3 py-2.5 font-medium">监控状态</th><th className="px-3 py-2.5 font-medium">当前说明</th></tr></thead>
+          <tbody className="divide-y divide-[var(--color-border)]">{watchlistClaims.map(claim => <tr key={claim.claim_id}><td className="px-3 py-3 font-medium text-[var(--color-text)]">{String(claim.value || claim.statement.replace('监控对象：', ''))}</td><td className="px-3 py-3"><span className="inline-flex rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">已纳入监控</span></td><td className="px-3 py-3 text-[var(--color-text-secondary)]">可打开监控对象详情查看风险快照和下一步动作</td></tr>)}</tbody>
+        </table>
+      </div>}
+      {trendClaims.length > 0 && <div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th className="px-3 py-2.5 font-medium">供应商</th><th className="px-3 py-2.5 font-medium">本月变化</th><th className="px-3 py-2.5 font-medium">下一步</th></tr></thead>
+          <tbody className="divide-y divide-[var(--color-border)]">{trendClaims.map(claim => { const assessment = claimAssessment(claim); const name = claim.statement.split(' 最近 ')[0]; const next = claim.value === '恶化' ? '安排采购复核' : claim.value === '改善' || claim.value === '稳定' ? '继续观察' : '等待后续快照'; return <tr key={claim.claim_id}><td className="px-3 py-3 font-medium text-[var(--color-text)]">{name}</td><td className="px-3 py-3"><span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{readableClaimDetail(claim)}</span></td><td className="px-3 py-3 text-[var(--color-text-secondary)]">{next}</td></tr>; })}</tbody>
+        </table>
+      </div>}
+      {answer.claims.length > 0 && !scopeQuery && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full table-fixed border-collapse text-left text-sm">
           <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]">
             <tr>
