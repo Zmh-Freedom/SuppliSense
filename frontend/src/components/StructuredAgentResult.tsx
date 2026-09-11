@@ -22,6 +22,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   esg: 'ESG',
   sentiment: '舆情',
   sourcing: '寻源',
+  risk_monitoring: '风险监控',
 };
 
 const DIMENSION_BADGE_CLASSES: Record<string, string> = {
@@ -55,6 +56,7 @@ function readableLimitation(limitation: string): string {
 }
 
 const FACT_LABELS: Record<string, string> = {
+  count: '可见监控对象数量',
   risk_score: '综合风险评分',
   risk_level: '风险等级',
   revenue: '营业收入',
@@ -178,6 +180,11 @@ function readableClaimStatement(claim: AgentAnswer['claims'][number]): string {
 }
 
 function readableClaimDetail(claim: AgentAnswer['claims'][number]): string {
+  if (claim.dimension === 'risk_monitoring' && !claim.fact_path) {
+    if (claim.statement.startsWith('监控对象：')) return String(claim.value ?? claim.statement.replace('监控对象：', ''));
+    const trendDetail = claim.statement.replace(/^.*?最近\s*\d+\s*个月风险变化：/, '');
+    if (trendDetail !== claim.statement) return trendDetail;
+  }
   if (claim.fact_path && claim.value !== undefined && claim.value !== null) {
     return readableFactValue(claim.fact_path, claim.value);
   }
@@ -227,6 +234,8 @@ function readableValidationStatus(status: AgentAnswer['claims'][number]['validat
 }
 
 function claimMetric(claim: AgentAnswer['claims'][number]): string {
+  if (claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：')) return '监控对象';
+  if (claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：')) return '本月风险变化';
   return claim.fact_path ? readableFactLabel(claim.fact_path) : '综合判断';
 }
 
@@ -240,6 +249,15 @@ function claimAssessment(claim: AgentAnswer['claims'][number]): { label: string;
 
   const value = claim.value;
   const path = canonicalFactPath(claim.fact_path || '');
+  if (claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：')) {
+    return { label: '已纳入监控', className: 'border-blue-200 bg-blue-50 text-blue-700' };
+  }
+  if (claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：')) {
+    if (value === '恶化') return { label: '风险上升', className: 'border-red-200 bg-red-50 text-red-700' };
+    if (value === '改善') return { label: '风险下降', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+    if (value === '稳定') return { label: '基本稳定', className: 'border-blue-200 bg-blue-50 text-blue-700' };
+    return { label: '暂无足够数据', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+  }
   if (path === 'risk_level' && typeof value === 'string') {
     if (value.includes('低')) return { label: '风险较低', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
     if (value.includes('高')) return { label: '高风险信号', className: 'border-red-200 bg-red-50 text-red-700' };
@@ -278,6 +296,13 @@ function claimAssessment(claim: AgentAnswer['claims'][number]): { label: string;
 }
 
 function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
+  if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：'))) {
+    const count = answer.claims.filter(claim => claim.statement.startsWith('监控对象：')).length;
+    return `当前责任范围内共有 ${count} 家供应商纳入监控，下面列出可直接打开详情的监控对象。`;
+  }
+  if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：'))) {
+    return answer.summary || '已完成当前责任范围内供应商的风险变化检查，下面列出每家的变化状态。';
+  }
   const dimensions = [...new Set(answer.claims.map(claim => readableDimension(claim.dimension)))];
   const supportedCount = answer.claims.filter(claim => claim.validation_status === 'supported').length;
   const scope = dimensions.length > 0 ? dimensions.join('、') : '现有数据';

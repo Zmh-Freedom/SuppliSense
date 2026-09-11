@@ -5,11 +5,15 @@ export default function ActionSummary({ answer, limitations }: { answer: AgentAn
   const supportedCount = answer.claims.filter(claim => claim.validation_status === 'supported').length;
   const needsReview = answer.status === 'needs_review' || limitations.length > 0;
   const hasClaims = answer.claims.length > 0;
-  const conclusion = needsReview ? '建议复核' : hasClaims ? '已形成初步结论' : '暂未形成结论';
-  const explanation = needsReview
+  const isWatchlist = answer.summary.includes('监控清单') || answer.claims.some(claim => claim.statement.startsWith('监控对象：'));
+  const isTrend = answer.summary.includes('风险变化检查') || answer.claims.some(claim => claim.statement.includes('风险变化：'));
+  const conclusion = isWatchlist ? '监控清单' : isTrend ? '风险变化检查' : needsReview ? '建议复核' : hasClaims ? '已形成初步结论' : '暂未形成结论';
+  const explanation = isWatchlist || isTrend
+    ? answer.summary
+    : needsReview
     ? '发现了需要人工确认的信号或数据缺口，请先完成下方复核事项。'
     : hasClaims ? '当前判断已有可追溯证据支持，可结合明细安排后续动作。' : '当前证据不足以支持明确判断，已标注本轮未覆盖的数据范围。';
-  const nextAction = needsReview ? '核对复核事项' : hasClaims ? '查看结论明细' : '查看数据范围';
+  const nextAction = isWatchlist ? '选择供应商查看详情' : isTrend ? '查看每家供应商的变化' : needsReview ? '核对复核事项' : hasClaims ? '查看结论明细' : '查看数据范围';
 
   return <ConclusionSummary><section className="border-b border-[var(--color-border)] bg-[var(--color-code-bg)]/40 px-4 py-4 sm:px-5" aria-label="行动结论">
     <div className="flex flex-wrap items-start justify-between gap-3">

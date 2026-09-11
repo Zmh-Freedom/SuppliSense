@@ -586,6 +586,35 @@ def _required_evidence_items(tasks: list[HarnessTask]) -> list[dict[str, str]]:
 
 
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
+    tasks = state.get("task_specs") or []
+    tool_names = {
+        str(item.get("tool_name") or item.get("tool") or "")
+        for item in tasks
+        if isinstance(item, dict)
+    }
+    outcomes = state.get("tool_outcomes") or []
+    latest_data: dict[str, Any] = {}
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        tool_name = str(outcome.get("tool_name") or outcome.get("tool") or "")
+        if tool_name in {"get_watchlist", "analyze_watchlist_trend"}:
+            data = outcome.get("data")
+            if isinstance(data, dict):
+                latest_data = data
+    if "get_watchlist" in tool_names:
+        count = int(latest_data.get("count") or len(latest_data.get("companies") or []))
+        scope = str(latest_data.get("scope") or "当前责任范围")
+        return f"已整理{scope}内的监控清单，共 {count} 家供应商，下面列出可直接查看的监控对象。"
+    if "analyze_watchlist_trend" in tool_names:
+        companies = latest_data.get("companies") if isinstance(latest_data.get("companies"), list) else []
+        period = int(latest_data.get("period_months") or 1)
+        if not companies:
+            return f"当前责任范围内暂无可分析的监控供应商，暂时无法判断最近 {period} 个月的风险变化。"
+        available = [item for item in companies if isinstance(item, dict) and item.get("trend") not in {None, "暂无数据", "数据不足"}]
+        if not available:
+            return f"已检查当前责任范围内 {len(companies)} 家供应商，但最近 {period} 个月的风险快照不足，暂时无法判断上升或下降。"
+        return f"已完成当前责任范围内 {len(companies)} 家供应商最近 {period} 个月的风险变化检查，下面直接列出每家的变化状态和下一步建议。"
     if answer.status == "completed":
         return "已完成基于有效证据的 Agent 分析。"
     if answer.status == "partial":

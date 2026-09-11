@@ -92,7 +92,20 @@ def get_watchlist() -> dict:
                 "operator": "eq",
                 "evidence_refs": ["get_watchlist:watchlist:risk_monitoring"],
                 "confidence": 0.99,
-            }],
+            }, *[
+                {
+                    "claim_id": f"watchlist:item:{index}",
+                    "entity_id": "watchlist",
+                    "dimension": "risk_monitoring",
+                    "statement": f"监控对象：{name}",
+                    "value": name,
+                    "operator": "eq",
+                    "evidence_refs": ["get_watchlist:watchlist:risk_monitoring"],
+                    "confidence": 0.99,
+                }
+                for index, name in enumerate(companies)
+                if name
+            ]],
         },
         tool_name="get_watchlist",
         entity_id="watchlist",
@@ -185,11 +198,10 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             continue
         payload["claims"].append({
             "claim_id": f"{evidence_id}:claim:{item['monitor_target_id'] or item['company_name']}",
-            "entity_id": str(item.get("monitor_target_id") or f"entity:{item['company_name']}"),
+            "entity_id": "watchlist",
             "dimension": "risk_monitoring",
             "statement": f"{item['company_name']} 最近 {period_months} 个月风险变化：{item['trend']}（{item['trend_data_points']} 个数据点）",
             "value": item["trend"],
-            "fact_path": "companies",
             "operator": "eq",
             "evidence_refs": [evidence_id],
             "confidence": 0.9 if item["trend_data_points"] >= 2 else 0.65,
