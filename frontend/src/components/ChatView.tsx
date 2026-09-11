@@ -348,10 +348,27 @@ export default function ChatView() {
           setLoading(false);
         },
         onApprovalRequired: (data) => {
+          receivedTerminalEvent = true;
           approvalAccRef.current = { ...data, status: 'pending' };
           const waiting = { ...workflowAccRef.current, status: 'waiting_approval' as const, stage: 'approval', message: '等待人工确认后继续执行' };
           workflowAccRef.current = waiting;
-          setStreamState(prev => prev ? { ...prev, approval: data, workflowStatus: waiting } : null);
+          // Approval is a deliberate pause, not a failed stream. Persist the
+          // approval card immediately because the supervisor stream ends
+          // after approval_required and does not emit a normal done event.
+          const approvalAnswer = normalizeApprovalAnswer(answerAccRef.current || data.message);
+          const approvalMsgs: ChatMessage[] = [...newMsgs, {
+            role: 'assistant',
+            content: approvalAnswer,
+            references: referencesAccRef.current,
+            agentAnswer: agentAnswerAccRef.current,
+            evidence: evidenceAccRef.current,
+            workflow: waiting,
+            approval: { ...data, status: 'pending' },
+          }];
+          persist(sid, approvalMsgs);
+          answerAccRef.current = '';
+          setStreamState(null);
+          setLoading(false);
         },
         onChartData: (data) => {
           setStreamState(prev => prev ? {

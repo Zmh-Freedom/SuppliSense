@@ -268,6 +268,14 @@ export async function chatStream(
         receivedTerminalEvent = true;
         callbacks.onClarification?.(data);
       },
+      // An approval request intentionally pauses the workflow.  The server
+      // closes this SSE response after persisting the checkpoint, so treat
+      // approval_required as a valid terminal event for this request rather
+      // than misclassifying the close as a broken stream.
+      onApprovalRequired: (data) => {
+        receivedTerminalEvent = true;
+        callbacks.onApprovalRequired?.(data);
+      },
     };
     const answer = await _parseSSEStream(res, trackedCallbacks);
     if (!receivedTerminalEvent) throw new Error('SSE 流在收到最终结果前断开');

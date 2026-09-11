@@ -288,6 +288,28 @@ describe('ChatView session lifecycle', () => {
     expect(sessions[0].msgs.at(-1).approval.status).toBe('pending')
   })
 
+  it('keeps an approval card when the supervisor stream ends without done', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onApprovalRequired?.({
+        message: '确认执行加入监控动作？',
+        tool: 'agent_supervisor',
+        args: { pending_approvals: [{ approval_id: 'approval-no-done', action_type: 'add_watchlist' }] },
+        session_id: sessionId,
+      })
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '请加入监控')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
+    expect(screen.queryByText('工作流执行失败')).not.toBeInTheDocument()
+    const sessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]')
+    expect(sessions[0].msgs.at(-1).approval.status).toBe('pending')
+  })
+
   it('shows the resolved approval result after confirming a persisted action', async () => {
     let resumeHandlers: StreamCallbacks | undefined
     mocks.chatStream.mockImplementation(async (_message: string, sessionId: string, handlers: StreamCallbacks) => {
