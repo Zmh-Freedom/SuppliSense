@@ -672,7 +672,7 @@ def _require_non_self_approval_for_high_risk_import(
     proposal: dict[str, Any], user_id: str, run: dict[str, Any]
 ) -> None:
     payload = dict(proposal.get("payload") or {})
-    high_risk = payload.get("risk_level") == "high" or int(payload.get("risk_score") or 0) >= 70
+    high_risk = payload.get("risk_level") == "high" or int(payload.get("risk_score") or 100) < 40
     if proposal["action_type"] == "import_external_supplier" and high_risk and run.get("user_id") == user_id:
         raise DomainError("AGENT_ACTION_SELF_APPROVAL_FORBIDDEN", "高风险导入不能由发起人审批", 403)
 
