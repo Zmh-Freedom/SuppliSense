@@ -95,6 +95,23 @@ def _format_final_answer(
     return "\n\n".join(lines)
 
 
+def _format_action_receipts(receipts: list[dict[str, Any]]) -> str:
+    """Turn approved monitor writes into a procurement-facing confirmation."""
+    lines: list[str] = []
+    for receipt in receipts:
+        data = receipt.get("data") if isinstance(receipt.get("data"), dict) else receipt
+        name = str(data.get("company_name") or data.get("display_name") or "该供应商")
+        status = str(data.get("risk_baseline_status") or "not_available")
+        score = data.get("risk_score")
+        level = data.get("risk_level")
+        if status == "created" and score is not None:
+            risk = f"风险基线：{score}/100，{level or '等级待确认'}"
+        else:
+            risk = "风险基线：当前资料不足，暂未形成评分"
+        lines.append(f"已将{name}加入风险监控清单。{risk}。")
+    return "\n\n".join(lines)
+
+
 def _ready_task_ids(
     plan: TaskPlan, results: dict[str, AgentResult]
 ) -> list[str]:
@@ -449,6 +466,7 @@ async def approval_gate(state: AgentTaskState) -> dict[str, Any]:
 
     decision = request_supervisor_approval(approvals)
     approval_status = str(decision["status"])
+    action_receipts: list[dict[str, Any]] = []
     if decision.get("approved") is True:
         await _call_sync(
             agent_run_service.approve_supervisor_action_proposals,
@@ -456,11 +474,13 @@ async def approval_gate(state: AgentTaskState) -> dict[str, Any]:
             [approval["approval_id"] for approval in approvals],
         )
         for approval in approvals:
-            await _call_sync(
+            execution_result = await _call_sync(
                 agent_run_service.execute_supervisor_approved_action,
                 state["run_id"],
                 approval["approval_id"],
             )
+            if isinstance(execution_result, dict):
+                action_receipts.append(execution_result)
 
     decided = [{**approval, "status": approval_status} for approval in approvals]
     await _persist(
@@ -474,7 +494,11 @@ async def approval_gate(state: AgentTaskState) -> dict[str, Any]:
             "pending_approvals": decided,
         },
     )
-    return {"pending_approvals": decided, "task_status": "DECISION_READY"}
+    return {
+        "pending_approvals": decided,
+        "action_receipts": action_receipts,
+        "task_status": "DECISION_READY",
+    }
 
 
 async def finalize(state: AgentTaskState) -> dict[str, Any]:
@@ -500,6 +524,10 @@ async def finalize(state: AgentTaskState) -> dict[str, Any]:
         else ""
     )
     final_answer = f"{state.get('final_answer', '')}{suffix}".strip()
+    action_receipts = state.get("action_receipts") or []
+    if action_receipts:
+        confirmation = _format_action_receipts(action_receipts)
+        final_answer = f"{final_answer}\n\n{confirmation}".strip()
     await _persist(
         state,
         task_status,

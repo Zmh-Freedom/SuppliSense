@@ -58,3 +58,19 @@ def test_identity_tool_output_contract_is_registered() -> None:
         "claims": [],
     })
     assert output.query == "示例公司"
+
+
+def test_approved_monitor_write_confirmation_includes_risk_baseline() -> None:
+    from app.graphs.agent_supervisor.graph import _format_action_receipts
+
+    text = _format_action_receipts([{
+        "data": {
+            "company_name": "上海海拉电子有限公司",
+            "risk_baseline_status": "created",
+            "risk_score": 18,
+            "risk_level": "低风险",
+        }
+    }])
+
+    assert "已将上海海拉电子有限公司加入风险监控清单" in text
+    assert "风险基线：18/100，低风险" in text

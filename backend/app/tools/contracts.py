@@ -111,6 +111,13 @@ class WatchlistOutput(StrictToolOutput):
     operation: str | None = None
     side_effect_receipt: dict[str, Any] | None = None
     scope: str | None = None
+    risk_baseline_status: str | None = None
+    risk_baseline_message: str | None = None
+    risk_score: int | float | None = None
+    risk_level: str | None = None
+    score_breakdown: dict[str, Any] | None = None
+    risk_detail: dict[str, Any] | None = None
+    financial: dict[str, Any] | None = None
 
 
 class WatchlistTrendOutput(StrictToolOutput):

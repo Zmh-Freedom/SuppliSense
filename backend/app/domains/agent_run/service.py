@@ -669,7 +669,7 @@ def create_supervisor_action_proposals(
     return persisted
 
 
-def execute_supervisor_approved_action(run_id: str, approval_id: str) -> None:
+def execute_supervisor_approved_action(run_id: str, approval_id: str) -> dict[str, Any] | None:
     """Enter the existing approved-only, idempotent V2 action boundary.
 
     The action service reloads the durable proposal and refuses execution unless
@@ -684,7 +684,7 @@ def execute_supervisor_approved_action(run_id: str, approval_id: str) -> None:
 
     from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
 
-    execute_sourcing_risk_action(
+    return execute_sourcing_risk_action(
         {
             "payload": {
                 "run_id": run_id,

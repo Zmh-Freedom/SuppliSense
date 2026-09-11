@@ -240,7 +240,7 @@ def decide_action_proposals(
     return decisions
 
 
-def execute_sourcing_risk_action(event: dict) -> None:
+def execute_sourcing_risk_action(event: dict) -> dict[str, Any] | None:
     """Run an approved action once; every adapter owns its durable idempotency key."""
     require_v2_execution(settings)
     payload = dict(event.get("payload") or {})
@@ -250,16 +250,18 @@ def execute_sourcing_risk_action(event: dict) -> None:
     if proposal is None:
         raise DomainError("AGENT_ACTION_PROPOSAL_NOT_FOUND", "操作提案不存在", 404)
     if proposal["execution_state"] == "succeeded":
-        return
+        return None
     if proposal["status"] != "approved":
         raise DomainError("AGENT_ACTION_NOT_APPROVED", "操作尚未批准", 409)
 
     action_payload = {**dict(proposal["payload"]), "idempotency_key": proposal["idempotency_key"]}
+    result: dict[str, Any] | None = None
     if proposal["action_type"] in {"add_watchlist", "remove_watchlist"}:
-        _execute_watchlist_action(event, proposal, action_payload)
+        result = _execute_watchlist_action(event, proposal, action_payload)
     else:
         _execute_action(proposal["action_type"], action_payload)
     mark_action_succeeded(run_id, proposal_id)
+    return result
 
 
 def import_external_supplier(payload: dict[str, Any]) -> str:
@@ -580,7 +582,7 @@ def _execute_action(action_type: str, payload: dict[str, Any]) -> None:
 
 def _execute_watchlist_action(
     event: dict[str, Any], proposal: dict[str, Any], payload: dict[str, Any]
-) -> None:
+) -> dict[str, Any]:
     """Execute monitor mutations through the shared Harness ToolExecutor boundary."""
     from app.graphs.harness.actions import issue_approval_token
     from app.graphs.harness.durable_actions import proposal_from_durable_row
@@ -639,6 +641,7 @@ def _execute_watchlist_action(
             f"{harness_proposal.tool_name} 未返回有效副作用回执{detail}",
             502,
         )
+    return result.model_dump(mode="json")
 
 
 def _get_authorized_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:

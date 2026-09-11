@@ -364,8 +364,49 @@ def add_to_watchlist(
         company_id=company_id,
         supplier_code=supplier_code,
     )
+    # Establish a first risk baseline as part of the approved add operation.
+    # This uses cached evidence only; unavailable evidence must not roll back
+    # the monitoring write, but the result must say so explicitly.
+    baseline: dict[str, object] = {
+        "risk_baseline_status": "not_available",
+        "risk_baseline_message": "当前没有可用于计算风险基线的企业资料。",
+    }
+    try:
+        from app.domains.alert.service import save_snapshot
+        from app.domains.risk.service import calculate_company_risk_preview
+
+        preview = calculate_company_risk_preview(result.get("company_name") or company_name)
+        if preview is not None:
+            preview_data = preview.model_dump(mode="json")
+            save_snapshot(
+                result.get("company_name") or company_name,
+                preview,
+                monitor_target_id=result.get("monitor_target_id") or monitor_target_id,
+                target_type=result.get("target_type") or target_type,
+                supplier_id=result.get("supplier_id") or supplier_id,
+                candidate_id=result.get("candidate_id") or candidate_id,
+                company_id=result.get("company_id") or company_id,
+            )
+            baseline = {
+                "risk_baseline_status": "created",
+                "risk_baseline_message": "已基于当前可用资料建立风险基线。",
+                "risk_score": preview_data.get("risk_score"),
+                "risk_level": preview_data.get("risk_level"),
+                "score_breakdown": preview_data.get("score_breakdown"),
+                "risk_detail": preview_data.get("risk_detail"),
+                "financial": preview_data.get("financial"),
+            }
+    except Exception as exc:
+        from app.core.logging import get_logger
+
+        get_logger(__name__).warning(
+            "watchlist_risk_baseline_failed",
+            company=result.get("company_name") or company_name,
+            error=str(exc),
+        )
     return {
         **result,
+        **baseline,
         "side_effect_receipt": {
             "receipt_id": active_context.idempotency_key if active_context else f"watchlist:add:{company_name}",
             "operation": "add_to_watchlist",
@@ -374,6 +415,9 @@ def add_to_watchlist(
             "supplier_id": result.get("supplier_id") or supplier_id,
             "candidate_id": result.get("candidate_id") or candidate_id,
             "company_id": result.get("company_id") or company_id,
+            "risk_baseline_status": baseline.get("risk_baseline_status"),
+            "risk_score": baseline.get("risk_score"),
+            "risk_level": baseline.get("risk_level"),
         },
     }
 
