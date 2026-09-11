@@ -391,19 +391,23 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const status = answer ? answerStatusMeta(answer, limitations) : null;
   const riskItems = buildRiskItems(answer, evidence || []);
   const overview = answer ? analysisOverview(answer, limitations) : '';
-  const watchlistClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：')) || [];
+  const watchlistClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && (
+    claim.statement.startsWith('监控对象：') || (typeof claim.value === 'string' && /(?:有限公司|股份有限公司|集团)/.test(claim.value))
+  )) || [];
   const trendClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：')) || [];
-  const scopeQuery = watchlistClaims.length > 0 || trendClaims.length > 0;
+  const isWatchlist = Boolean(answer?.summary.includes('监控清单') || watchlistClaims.length > 0);
+  const isTrend = Boolean(answer?.summary.includes('风险变化') || trendClaims.length > 0);
+  const scopeQuery = isWatchlist || isTrend;
 
   return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 分析结果">
-    {answer && <ActionSummary answer={answer} limitations={limitations} />}
+    {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} />}
     {answer && <div className="bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-code-bg)]/60 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">②</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">业务结论</p></div>
-          <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">本轮分析结果</h3>
+          <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">{scopeQuery ? '▣' : '②'}</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">{scopeQuery ? '采购视图' : '业务结论'}</p></div>
+          <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">{isWatchlist && !isTrend ? '我的监控清单' : isTrend ? '我负责供应商的风险变化' : '本轮分析结果'}</h3>
         </div>
-        {status && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}>
+        {status && !scopeQuery && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}>
           <span aria-hidden="true">{status.icon}</span>{status.label}
         </span>}
       </div>
