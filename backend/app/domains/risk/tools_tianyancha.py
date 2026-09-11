@@ -172,7 +172,7 @@ def _collection_statuses(
             "label": _COLLECTION_LABELS.get(collection, collection),
             "status": status,
             "status_label": _STATUS_LABELS[status],
-            "count": len(_records(documents.get(collection))) if documents.get(collection) else 0,
+            "count": (_provider_total(documents.get(collection)) or len(_records(documents.get(collection)))) if documents.get(collection) else 0,
             "source_mode": "cached" if collection in documents and fetch_statuses.get(collection) != "queried" else ("live" if fetch_statuses.get(collection) == "queried" else "none"),
         }
     return statuses
@@ -352,7 +352,10 @@ def _lookup_risk_domain(
         }
     documents, source_mode, source_message, fetch_statuses = _unpack_ensure_result(_ensure_documents(name, collections))
     records_by_type = {collection: _records(documents.get(collection)) for collection in collections}
-    counts = {collection: len(records) for collection, records in records_by_type.items()}
+    counts = {
+        collection: (_provider_total(documents.get(collection)) or len(records))
+        for collection, records in records_by_type.items()
+    }
     collection_statuses = _collection_statuses(collections, documents, fetch_statuses)
     records = [
         {
