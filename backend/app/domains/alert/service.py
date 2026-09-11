@@ -750,13 +750,15 @@ def remove_from_watchlist(
 def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
     """Resolve a monitoring target name to verified company candidates.
 
-    This deliberately reuses the deterministic identity resolver used by sourcing.
-    It returns candidates for a human decision and never changes the watchlist.
+    This reuses both the canonical identity resolver and the supplier-master
+    lookup used by monitoring intake.  Supplier records are candidates only;
+    a user must still confirm a verified canonical company before binding.
     """
     target = _find_watchlist_target(monitor_target_id=monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
     from app.domains.company.service import search_identity
+    from app.domains.alert.intake_service import _load_local_candidates
 
     query = str(target.get("display_name") or target.get("company_name") or "").strip()
     if not query:
@@ -767,7 +769,55 @@ def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
             "exact": None,
             "candidates": [],
         }
-    result = search_identity(query, limit=max(1, min(limit, 20)))
+    safe_limit = max(1, min(limit, 20))
+    result = search_identity(query, limit=safe_limit)
+    local_candidates = _load_local_candidates(query)
+    canonical_candidates = []
+    if isinstance(result.get("exact"), dict):
+        canonical_candidates.append(result["exact"])
+    canonical_candidates.extend(
+        item for item in result.get("candidates", []) if isinstance(item, dict)
+    )
+
+    # Keep canonical candidates authoritative, then append Feishu/internal
+    # supplier candidates that are not already represented by the same stable
+    # identity.  A supplier candidate without company_id must remain pending
+    # so the UI cannot accidentally call the canonical binding endpoint with
+    # an empty company ID.
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for candidate in [*canonical_candidates, *local_candidates]:
+        if not isinstance(candidate, dict):
+            continue
+        item = dict(candidate)
+        if item.get("candidate_type") == "supplier" and not item.get("company_id"):
+            item["verification_status"] = "pending_verification"
+            item["binding_note"] = "供应商资料已找到，待核验正式企业主体后绑定"
+        key = str(
+            item.get("company_id")
+            or item.get("supplier_id")
+            or item.get("candidate_id")
+            or item.get("legal_name")
+        )
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+
+    exact = result.get("exact") if isinstance(result.get("exact"), dict) else None
+    if exact is None and merged:
+        result = {
+            **result,
+            "resolution": "candidates",
+            "exact": None,
+            "candidates": merged[:safe_limit],
+        }
+    elif exact is not None:
+        # Preserve the canonical exact match while exposing any matching
+        # supplier record as supporting candidate evidence.
+        result = {**result, "candidates": merged[1:safe_limit]}
+    else:
+        result = {**result, "candidates": []}
     return {
         "monitor_target_id": monitor_target_id,
         "query": query,

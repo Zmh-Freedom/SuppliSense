@@ -167,13 +167,19 @@ export interface MonitorRiskDetail {
 }
 
 export interface MonitorIdentityCandidate {
-  company_id: string;
+  company_id?: string | null;
+  candidate_type?: 'company' | 'supplier' | string;
+  candidate_id?: string | null;
+  supplier_id?: string | null;
+  supplier_code?: string | null;
   legal_name: string;
   unified_social_credit_code?: string | null;
   registration_status?: string | null;
   verification_status: 'verified' | 'pending_verification' | string;
   match_type: 'credit_code' | 'legal_name' | 'alias' | 'prefix' | string;
   confidence: number;
+  source?: string | null;
+  binding_note?: string | null;
   redirected_from?: string | null;
 }
 

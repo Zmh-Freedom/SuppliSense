@@ -119,6 +119,44 @@ def test_resolve_watchlist_identity_reuses_company_identity_search(monkeypatch):
     assert result["candidates"][0]["company_id"] == "company-1"
 
 
+def test_resolve_watchlist_identity_includes_feishu_supplier_candidate(monkeypatch):
+    target = {
+        "monitor_target_id": "monitor-feishu-identity-1",
+        "company_name": "上海海拉电子有限公司",
+        "display_name": "上海海拉电子有限公司",
+    }
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_: target)
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {"resolution": "pending_verification", "exact": None, "candidates": []},
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_local_candidates",
+        lambda query: [{
+            "candidate_id": "supplier:supplier:feishu:hella",
+            "candidate_type": "supplier",
+            "supplier_id": "supplier:feishu:hella",
+            "supplier_code": "8310242",
+            "company_id": None,
+            "legal_name": query,
+            "unified_social_credit_code": "91310115607341266A",
+            "registration_status": "存续",
+            "verification_status": "verified",
+            "match_type": "legal_name",
+            "confidence": 1.0,
+            "source": "飞书正式供应商主数据",
+        }],
+    )
+
+    result = alert_service.resolve_watchlist_identity("monitor-feishu-identity-1")
+
+    assert result["resolution"] == "candidates"
+    assert result["candidates"][0]["source"] == "飞书正式供应商主数据"
+    assert result["candidates"][0]["supplier_code"] == "8310242"
+    assert result["candidates"][0]["verification_status"] == "pending_verification"
+    assert "待核验正式企业主体" in result["candidates"][0]["binding_note"]
+
+
 def test_confirm_watchlist_identity_binds_verified_company_and_audit(monkeypatch):
     target = {
         "monitor_target_id": "monitor-identity-1",
