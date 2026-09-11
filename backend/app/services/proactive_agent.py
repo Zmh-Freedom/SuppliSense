@@ -7,6 +7,7 @@
 运行频率：默认每 2 小时一次（PROACTIVE_AGENT_CRON 环境变量配置）
 """
 
+import asyncio
 import json
 import os
 
@@ -32,7 +33,7 @@ ANALYSIS_PROMPT = """你是采购风险分析专家。请根据以下供应商�
 {context}
 
 请输出 JSON 数组：
-[{"company": "企业名", "status": "稳定|上升|下降", "analysis": "分析文本", "suggestion": "继续监控|需要关注|建议替换"}]"""
+[{{"company": "企业名", "status": "稳定|上升|下降", "analysis": "分析文本", "suggestion": "继续监控|需要关注|建议替换"}}]"""
 
 
 def _build_company_context(company_name: str, monitor_target_id: str | None = None) -> str:
@@ -161,6 +162,7 @@ def _push_results(results: list[dict], targets: list[dict]) -> bool:
     from app.db.mongo import get_db
     from app.domains.alert.notifier import _create_and_deliver, get_target_recipients
 
+    db = get_db()
     target_by_name = {str(target.get("company_name")): target for target in targets}
     groups: dict[tuple[str, str, str], list[dict]] = {}
     for result in results:
