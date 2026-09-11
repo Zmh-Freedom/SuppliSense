@@ -120,6 +120,53 @@ def test_scope_query_cannot_become_single_supplier_analysis_from_llm_noise() -> 
     assert resolved["llm_intent"]["target_supplier_names"] == []
 
 
+def test_explicit_watchlist_write_is_not_downgraded_to_scope_query() -> None:
+    context = {
+        "current_task": {
+            "task_id": "watch-write",
+            "task_type": "analysis",
+            "target_supplier_names": ["上海海拉电子有限公司"],
+            "analysis_dimensions": [],
+            "user_message": "把上海海拉电子有限公司加入到监控清单中",
+        },
+        "conversation_state": {},
+        "llm_intent": {
+            "target_supplier_names": ["上海海拉电子有限公司"],
+            "analysis_dimensions": [],
+            "task_type": "analysis",
+            "requested_action": "add_watchlist",
+        },
+    }
+
+    resolved = _enforce_scope_query_intent(
+        context, "把上海海拉电子有限公司加入到监控清单中"
+    )
+
+    assert resolved["current_task"]["target_supplier_names"] == ["上海海拉电子有限公司"]
+    assert resolved["llm_intent"]["requested_action"] == "add_watchlist"
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": {"references": []},
+    })
+    assert planned[0].tool_name == "investigate_supplier_monitoring"
+
+
+def test_explicit_watchlist_write_has_deterministic_fallback_without_llm() -> None:
+    from app.graphs.agent_core.adapter import build_execution_context
+
+    context = build_execution_context(
+        session_id="watch-write-fallback",
+        user_message="把上海海拉电子有限公司加入到监控清单中",
+    )
+
+    resolved = _enforce_scope_query_intent(
+        context, "把上海海拉电子有限公司加入到监控清单中"
+    )
+
+    assert resolved["current_task"]["target_supplier_names"] == ["上海海拉电子有限公司"]
+    assert resolved["llm_intent"]["requested_action"] == "add_watchlist"
+
+
 def test_supplier_review_summary_answers_the_business_question_first() -> None:
     answer = AgentAnswer(
         status="completed",

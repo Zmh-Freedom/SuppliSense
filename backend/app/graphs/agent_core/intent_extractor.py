@@ -148,7 +148,7 @@ def extract_conversation_intent(
         # contains an explicit add/monitor instruction.
         "requested_action": (
             extracted.requested_action
-            if _has_explicit_watchlist_request(message)
+            if has_explicit_watchlist_request(message)
             else "none"
         ),
     })
@@ -163,13 +163,18 @@ def extract_conversation_intent(
     return validated
 
 
-def _has_explicit_watchlist_request(message: str) -> bool:
+def has_explicit_watchlist_request(message: str) -> bool:
     """Return whether the user explicitly asked to add a target to monitoring."""
     normalized = "".join(str(message or "").strip().lower().split())
     return any(token in normalized for token in (
         "加入监控", "加入风险监控", "纳入监控", "纳入风险监控",
-        "持续监控", "开始监控", "建立监控",
+        "加入到监控", "加入到风险监控", "添加监控", "添加到监控",
+        "纳入到监控", "纳入到风险监控", "持续监控", "开始监控", "建立监控",
     ))
+
+
+# Backward-compatible alias for focused tests and older callers.
+_has_explicit_watchlist_request = has_explicit_watchlist_request
 
 
 def _expand_generic_risk_dimensions(message: str, dimensions: list[str]) -> list[str]:
@@ -180,7 +185,13 @@ def _expand_generic_risk_dimensions(message: str, dimensions: list[str]) -> list
     procurement checks users expect from a general risk review.  The expansion
     is deterministic and does not invent a supplier or a finding.
     """
-    if any(token in str(message or "") for token in _GENERIC_RISK_QUERY_TOKENS):
+    text = str(message or "")
+    # A plural/range query already has an intentional lightweight risk scope;
+    # expanding it to financial and business checks would multiply calls and
+    # change the established “这些供应商的风险情况” contract.
+    if any(token in text for token in ("这些供应商", "上述供应商", "所有供应商")):
+        return list(dict.fromkeys(dimensions))
+    if any(token in text for token in _GENERIC_RISK_QUERY_TOKENS):
         if dimensions and set(dimensions) <= {"risk"}:
             return ["risk", "financial", "business_risk"]
     return list(dict.fromkeys(dimensions))

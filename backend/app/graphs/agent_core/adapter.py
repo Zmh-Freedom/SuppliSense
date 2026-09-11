@@ -213,6 +213,28 @@ def _enforce_scope_query_intent(
     )
     if not any(token in str(user_message or "") for token in scope_tokens):
         return execution_context
+    # A message can mention “监控清单” while explicitly requesting a write,
+    # for example “把上海海拉电子有限公司加入到监控清单中”. Preserve that
+    # action and its target so Chat API can route it to the approval workflow.
+    from app.graphs.agent_core.intent_extractor import has_explicit_watchlist_request
+
+    if has_explicit_watchlist_request(user_message):
+        # The explicit write verb is authoritative even when the LLM is
+        # unavailable or conservatively returns requested_action="none".
+        # Populate the same structured field consumed by Chat API routing so
+        # the request always reaches the durable approval workflow.
+        current_task = dict(execution_context.get("current_task") or {})
+        llm_intent = execution_context.get("llm_intent")
+        normalized_intent = dict(llm_intent) if isinstance(llm_intent, dict) else {}
+        normalized_intent["requested_action"] = "add_watchlist"
+        if not normalized_intent.get("target_supplier_names"):
+            normalized_intent["target_supplier_names"] = list(
+                current_task.get("target_supplier_names") or []
+            )
+        return {
+            **execution_context,
+            "llm_intent": normalized_intent,
+        }
     current_task = dict(execution_context.get("current_task") or {})
     current_task.update({
         "target_supplier_names": [],

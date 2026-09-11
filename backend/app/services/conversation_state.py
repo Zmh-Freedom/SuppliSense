@@ -64,6 +64,11 @@ def analysis_dimensions_from_message(message: str) -> list[str]:
         if any(keyword in message for keyword in keywords)
     ]
     if any(token in message for token in _GENERIC_RISK_QUERY_TOKENS):
+        # Range-level questions such as “这些供应商的风险情况” intentionally
+        # request the lightweight risk view. Keep the established scope query
+        # contract instead of expanding every supplier into three dimensions.
+        if any(token in message for token in _PLURAL_REFERENCE_TOKENS):
+            return ["risk"]
         return list(_DEFAULT_REVIEW_DIMENSIONS)
     if explicit_dimensions:
         return explicit_dimensions

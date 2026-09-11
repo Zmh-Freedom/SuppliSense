@@ -251,6 +251,13 @@ def _scope_query_task(
     message = str(current_task.get("user_message") or "").strip()
     if not message:
         return None
+    from app.graphs.agent_core.intent_extractor import has_explicit_watchlist_request
+
+    # “加入/纳入监控清单” is a write request. It must continue through the
+    # durable approval path instead of being mistaken for a read-only list
+    # query merely because the phrase contains “监控清单”.
+    if has_explicit_watchlist_request(message):
+        return None
     task_id = str(current_task.get("task_id") or "task")
     if any(token in message for token in ("待复核", "待审核", "待处理事项")):
         return HarnessTask(
