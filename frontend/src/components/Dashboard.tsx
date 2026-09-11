@@ -66,7 +66,7 @@ export default function Dashboard() {
     return (
       <div className="max-w-2xl mx-auto py-20 text-center">
         <p className="text-gray-400 mb-4">加载失败，请检查后端服务</p>
-        <button onClick={() => dashQuery.refetch()} disabled={isRefreshing} className="text-sm text-blue-500 hover:text-blue-600 disabled:opacity-50">重试</button>
+        <button onClick={refreshDashboard} disabled={isRefreshing} className="text-sm text-blue-500 hover:text-blue-600 disabled:opacity-50">重试</button>
       </div>
     );
   }
