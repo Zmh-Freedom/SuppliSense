@@ -659,6 +659,17 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 summary_parts.append(f"净利润同比下降 {abs(profit_growth) * 100:.1f}%")
             elif isinstance(profit_growth, (int, float)):
                 summary_parts.append(f"净利润同比增长 {profit_growth * 100:.1f}%")
+            if any("financial" in str(item).lower() or "财务" in str(item) for item in answer.limitations):
+                summary_parts.append("财务数据暂未覆盖")
+        lawsuit_count = values.get("risk_detail.lawsuit_count")
+        major_lawsuit = values.get("risk_detail.major_lawsuit")
+        penalty_count = values.get("risk_detail.administrative_penalty_count")
+        if isinstance(lawsuit_count, (int, float)) and lawsuit_count > 0:
+            summary_parts.append(f"已发现诉讼记录 {int(lawsuit_count)} 起")
+        if major_lawsuit is True:
+            summary_parts.append("存在重大诉讼标记")
+        if isinstance(penalty_count, (int, float)) and penalty_count > 0:
+            summary_parts.append(f"行政处罚 {int(penalty_count)} 条")
         if "business_risk" in dimensions:
             missing_months = values.get("missing_month_count")
             mismatch_months = values.get("settlement_without_receipts_month_count")
@@ -668,7 +679,7 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 summary_parts.append(f"结算与收货记录不一致 {int(mismatch_months)} 个月")
         result = "；".join(summary_parts) + "。"
         if answer.status == "needs_review":
-            return result + "部分数据覆盖不足，采购动作请先按下方提示核实。"
+            return result + "以上为已取得资料范围内的信号，部分维度未覆盖，采购动作请先按下方提示核实。"
         return result + "可结合下方数据依据安排后续采购动作。"
     if "sourcing" in dimensions or "discover_supplier_candidates" in tool_names or "search_suppliers" in tool_names:
         candidate_count = 0

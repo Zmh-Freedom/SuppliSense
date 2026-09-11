@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import { EvidenceTable } from './ChatResultSections';
 import AgentTrendCharts from './AgentTrendCharts';
@@ -125,34 +126,50 @@ const RISK_FACT_LABELS: Record<string, string> = {
   financial: '财务数据',
   judicial: '司法风险',
   operational: '经营风险',
+  'risk_detail.lawsuit_count': '诉讼记录数',
+  'risk_detail.executed_count': '被执行记录数',
+  'risk_detail.dishonesty_count': '失信记录数',
+  'risk_detail.major_lawsuit': '重大诉讼标记',
+  'risk_detail.abnormal_operation_count': '经营异常记录数',
+  'risk_detail.administrative_penalty_count': '行政处罚记录数',
+  'risk_detail.legal_person_change_frequent': '法人频繁变更',
+  'risk_detail.guarantee_count': '对外担保记录数',
+  'risk_detail.pledge_count': '股权质押记录数',
+  'risk_detail.bankruptcy_count': '破产相关记录数',
+  'risk_detail.env_penalty_count': '环保处罚记录数',
+  'risk_detail.data_coverage.coverage_ratio': '风险数据覆盖率',
+  'risk_detail.data_coverage.assessment_status': '风险数据覆盖状态',
 };
 
 function readableFactLabel(path: string): string {
   const canonicalPath = canonicalFactPath(path);
-  return FACT_LABELS[canonicalPath] || RISK_FACT_LABELS[canonicalPath] || path
+  return FACT_LABELS[canonicalPath] || RISK_FACT_LABELS[canonicalPath] || FACT_LABELS[path] || RISK_FACT_LABELS[path] || path
     .replaceAll('_', ' ')
     .replace(/\b\w/g, char => char.toUpperCase());
 }
 
 function readableFactValue(path: string, value: unknown): string {
   const canonicalPath = canonicalFactPath(path);
-  if (canonicalPath === 'clean' && typeof value === 'boolean') return value ? '未命中风险记录' : '发现风险记录';
-  if (canonicalPath === 'supplier_spend_share' && typeof value === 'number') return `${(value * 100).toFixed(1)}%`;
-  if (canonicalPath === 'settlement_share' && typeof value === 'number') {
+  const leafPath = canonicalPath.split('.').pop() || canonicalPath;
+  if (leafPath === 'clean' && typeof value === 'boolean') return value ? '未命中风险记录' : '发现风险记录';
+  if (leafPath === 'supplier_spend_share' && typeof value === 'number') return `${(value * 100).toFixed(1)}%`;
+  if (leafPath === 'settlement_share' && typeof value === 'number') {
     return value > 0 && value < 0.001 ? '<0.1%' : `${(value * 100).toFixed(1)}%`;
   }
-  if (canonicalPath === 'exposure_level' && typeof value === 'string') {
+  if (leafPath === 'exposure_level' && typeof value === 'string') {
     return ({ high: '高敞口', medium: '中敞口', low: '低敞口', unknown: '暂无法判断' } as Record<string, string>)[value] ?? value;
   }
-  if (canonicalPath === 'coverage' && typeof value === 'number') return `${(value * 100).toFixed(0)}%`;
-  if (['revenue_growth', 'net_profit_growth', 'debt_ratio', 'roe', 'net_profit_margin', 'settlement_change_ratio', 'receipt_record_change_ratio'].includes(canonicalPath) && typeof value === 'number') return `${(value * 100).toFixed(1)}%`;
-  if (['missing_month_count', 'settlement_without_receipts_month_count'].includes(canonicalPath) && typeof value === 'number') return `${value.toFixed(0)} 个月`;
-  if (['current_ratio', 'quick_ratio'].includes(canonicalPath) && typeof value === 'number') return value.toFixed(2);
-  if (canonicalPath === 'risk_score' && typeof value === 'number') return `${value}/100`;
-  if (canonicalPath === 'cash_flow' && typeof value === 'number') return `${value.toFixed(2)} 元/股`;
-  if (canonicalPath === 'latest_actual_settlement_amount' && typeof value === 'number') return `${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 元`;
-  if (canonicalPath === 'latest_received_record_count' && typeof value === 'number') return `${value.toLocaleString('zh-CN')} 条`;
-  if (canonicalPath === 'comparison_supplier_count' && typeof value === 'number') return `${value.toLocaleString('zh-CN')} 家`;
+  if ((leafPath === 'coverage' || leafPath === 'coverage_ratio') && typeof value === 'number') return `${(value * 100).toFixed(0)}%`;
+  if (['revenue_growth', 'net_profit_growth', 'debt_ratio', 'roe', 'net_profit_margin', 'settlement_change_ratio', 'receipt_record_change_ratio'].includes(leafPath) && typeof value === 'number') return `${(value * 100).toFixed(1)}%`;
+  if (['missing_month_count', 'settlement_without_receipts_month_count'].includes(leafPath) && typeof value === 'number') return `${value.toFixed(0)} 个月`;
+  if (['current_ratio', 'quick_ratio'].includes(leafPath) && typeof value === 'number') return value.toFixed(2);
+  if (leafPath === 'risk_score' && typeof value === 'number') return `${value}/100`;
+  if (leafPath === 'cash_flow' && typeof value === 'number') return `${value.toFixed(2)} 元/股`;
+  if (leafPath === 'latest_actual_settlement_amount' && typeof value === 'number') return `${value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} 元`;
+  if (leafPath === 'latest_received_record_count' && typeof value === 'number') return `${value.toLocaleString('zh-CN')} 条`;
+  if (leafPath === 'comparison_supplier_count' && typeof value === 'number') return `${value.toLocaleString('zh-CN')} 家`;
+  if (leafPath === 'major_lawsuit' && typeof value === 'boolean') return value ? '有' : '无';
+  if (leafPath === 'legal_person_change_frequent' && typeof value === 'boolean') return value ? '是' : '否';
   if (typeof value === 'boolean') return value ? '有' : '无';
   return String(value);
 }
@@ -249,6 +266,7 @@ function claimAssessment(claim: AgentAnswer['claims'][number]): { label: string;
 
   const value = claim.value;
   const path = canonicalFactPath(claim.fact_path || '');
+  const leafPath = path.split('.').pop() || path;
   if (claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：')) {
     return { label: '已纳入监控', className: 'border-blue-200 bg-blue-50 text-blue-700' };
   }
@@ -258,36 +276,46 @@ function claimAssessment(claim: AgentAnswer['claims'][number]): { label: string;
     if (value === '稳定') return { label: '基本稳定', className: 'border-blue-200 bg-blue-50 text-blue-700' };
     return { label: '暂无足够数据', className: 'border-amber-200 bg-amber-50 text-amber-700' };
   }
-  if (path === 'risk_level' && typeof value === 'string') {
+  if (leafPath === 'risk_level' && typeof value === 'string') {
     if (value.includes('低')) return { label: '风险较低', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
     if (value.includes('高')) return { label: '高风险信号', className: 'border-red-200 bg-red-50 text-red-700' };
     return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
   }
-  if (path === 'clean' && typeof value === 'boolean') {
+  if (leafPath === 'clean' && typeof value === 'boolean') {
     return value
       ? { label: '未见风险信号', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
       : { label: '需关注', className: 'border-red-200 bg-red-50 text-red-700' };
   }
+  if (leafPath === 'major_lawsuit' && typeof value === 'boolean') {
+    return value
+      ? { label: '需人工核实', className: 'border-red-200 bg-red-50 text-red-700' }
+      : { label: '未见重大诉讼', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+  }
   if (typeof value === 'number') {
-    if (['revenue_growth', 'net_profit_growth', 'cash_flow'].includes(path) && value < 0) {
+    if (['lawsuit_count', 'executed_count', 'dishonesty_count', 'abnormal_operation_count', 'administrative_penalty_count', 'guarantee_count', 'pledge_count', 'bankruptcy_count', 'env_penalty_count'].includes(leafPath)) {
+      return value > 0
+        ? { label: '需要关注', className: 'border-amber-200 bg-amber-50 text-amber-700' }
+        : { label: '未见记录', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+    }
+    if (['revenue_growth', 'net_profit_growth', 'cash_flow'].includes(leafPath) && value < 0) {
       return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
-    if ((path === 'current_ratio' && value > 0 && value < 1) || (path === 'quick_ratio' && value > 0 && value < 0.8)) {
+    if ((leafPath === 'current_ratio' && value > 0 && value < 1) || (leafPath === 'quick_ratio' && value > 0 && value < 0.8)) {
       return { label: '流动性需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
-    if (['settlement_change_ratio', 'receipt_record_change_ratio'].includes(path) && Math.abs(value) >= 0.3) {
+    if (['settlement_change_ratio', 'receipt_record_change_ratio'].includes(leafPath) && Math.abs(value) >= 0.3) {
       return { label: '波动需复核', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
-    if (['missing_month_count', 'settlement_without_receipts_month_count'].includes(path) && value > 0) {
+    if (['missing_month_count', 'settlement_without_receipts_month_count'].includes(leafPath) && value > 0) {
       return { label: '需核实', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
-    if (path === 'risk_score') {
+    if (leafPath === 'risk_score') {
       if (value >= 60) return { label: '高风险信号', className: 'border-red-200 bg-red-50 text-red-700' };
       if (value >= 30) return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
       return { label: '风险较低', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
     }
   }
-  if (path === 'exposure_level' && typeof value === 'string') {
+  if (leafPath === 'exposure_level' && typeof value === 'string') {
     if (value === 'high') return { label: '高敞口', className: 'border-red-200 bg-red-50 text-red-700' };
     if (value === 'medium') return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     if (value === 'low') return { label: '低敞口', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
@@ -327,6 +355,18 @@ function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
     return `${evidenceSummary} 当前存在数据覆盖或证据限制，以下内容用于安排复核，不应直接视为最终准入或风险结论。`;
   }
   return `${evidenceSummary} 以下按结论、证据支持度和可信度汇总，便于理解推荐依据或需要关注的风险信号。`;
+}
+
+function claimGroup(claim: AgentAnswer['claims'][number]): 'summary' | 'risk' | 'financial' | 'other' {
+  const path = claim.fact_path || '';
+  if (path === 'risk_score' || path === 'risk_level') return 'summary';
+  if (claim.dimension === 'financial' || path.startsWith('financial.')) return 'financial';
+  if (claim.dimension === 'risk' || path.startsWith('risk_detail.')) return 'risk';
+  return 'other';
+}
+
+function claimGroupTitle(group: ReturnType<typeof claimGroup>): string {
+  return ({ summary: '综合结论', risk: '风险信号', financial: '财务指标', other: '其他已核验信息' })[group];
 }
 
 function buildRiskItems(answer?: AgentAnswer, evidence: AgentEvidenceRecord[] = []): string[] {
@@ -404,6 +444,8 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const isWatchlist = Boolean(answer?.summary.includes('监控清单') || watchlistClaims.length > 0);
   const isTrend = Boolean(answer?.summary.includes('风险变化') || trendClaims.length > 0);
   const scopeQuery = isWatchlist || isTrend;
+  const financialMissing = limitations.some(item => item.includes('财务'));
+  const hasRiskSignals = Boolean(answer?.claims.some(claim => claimGroup(claim) === 'risk' && claim.fact_path?.startsWith('risk_detail.')));
 
   return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 分析结果">
     {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} />}
@@ -432,31 +474,20 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
       </div>}
       {answer.claims.length > 0 && !scopeQuery && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full table-fixed border-collapse text-left text-sm">
-          <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]">
-            <tr>
-              <th scope="col" className="w-[18%] px-2 py-2.5 font-medium sm:px-3">维度</th>
-              <th scope="col" className="w-[23%] px-2 py-2.5 font-medium sm:px-3">指标/检查项</th>
-              <th scope="col" className="w-[29%] px-2 py-2.5 font-medium sm:px-3">数据与说明</th>
-              <th scope="col" className="w-[20%] px-2 py-2.5 font-medium sm:px-3">判断</th>
-              <th scope="col" className="hidden w-[10%] px-3 py-2.5 font-medium md:table-cell">证据状态</th>
-              <th scope="col" className="hidden w-[10%] px-3 py-2.5 text-right font-medium md:table-cell">可信度</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--color-border)]">
-            {answer.claims.map(claim => {
-              const assessment = claimAssessment(claim);
-              return <tr key={claim.claim_id} className="align-top">
-                <td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td>
-                <td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{claimMetric(claim)}</td>
-                <td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{readableClaimDetail(claim)}</td>
-                <td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td>
-                <td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td>
-                <td className="hidden px-3 py-3 text-right text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td>
-              </tr>;
-            })}
-          </tbody>
+          <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th scope="col" className="w-[15%] px-2 py-2.5 font-medium sm:px-3">风险维度</th><th scope="col" className="w-[20%] px-2 py-2.5 font-medium sm:px-3">指标/检查项</th><th scope="col" className="w-[32%] px-2 py-2.5 font-medium sm:px-3">当前数据</th><th scope="col" className="w-[18%] px-2 py-2.5 font-medium sm:px-3">判断</th><th scope="col" className="hidden w-[8%] px-3 py-2.5 font-medium md:table-cell">依据状态</th><th scope="col" className="hidden w-[7%] px-3 py-2.5 font-medium md:table-cell">可信度</th></tr></thead>
+          <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {
+            const claims = answer.claims.filter(claim => claimGroup(claim) === group);
+            if (claims.length === 0) return null;
+            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => { const assessment = claimAssessment(claim); return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{readableClaimDetail(claim)}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>; })}</Fragment>;
+          })}</tbody>
         </table>
       </div></EvidenceTable>}
+      {answer.claims.length > 0 && !scopeQuery && <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-sm leading-6 text-violet-950" aria-label="采购建议">
+        <h4 className="font-semibold">采购建议</h4>
+        <p className="mt-1">{answer.status === 'needs_review' || financialMissing
+          ? `当前结论仅代表已取得资料范围${hasRiskSignals ? '，请先核实上方风险信号' : ''}；涉及关键零件或大额订单时，建议完成采购复核后再决定。`
+          : '当前已取得的数据未见需要立即暂停采购的信号，可按正常流程推进并持续关注指标变化。'}</p>
+      </section>}
     </div>}
 
     {answer && <SupplierReviewConclusion answer={answer} evidence={evidence || []} limitations={limitations} numericFact={numericFact} reviewClaims={reviewClaims} />}

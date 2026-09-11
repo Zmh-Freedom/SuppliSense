@@ -219,10 +219,24 @@ _CLAIM_LABELS = {
     "settlement_change_ratio": "最新月实结算金额环比变化",
     "receipt_record_change_ratio": "最新月收货记录数环比变化",
     "settlement_without_receipts_month_count": "结算与收货记录不一致月份数",
+    "risk_detail.lawsuit_count": "诉讼记录数",
+    "risk_detail.executed_count": "被执行记录数",
+    "risk_detail.dishonesty_count": "失信记录数",
+    "risk_detail.major_lawsuit": "重大诉讼标记",
+    "risk_detail.abnormal_operation_count": "经营异常记录数",
+    "risk_detail.administrative_penalty_count": "行政处罚记录数",
+    "risk_detail.legal_person_change_frequent": "法人频繁变更",
+    "risk_detail.guarantee_count": "对外担保记录数",
+    "risk_detail.pledge_count": "股权质押记录数",
+    "risk_detail.bankruptcy_count": "破产相关记录数",
+    "risk_detail.env_penalty_count": "环保处罚记录数",
+    "risk_detail.data_coverage.coverage_ratio": "风险数据覆盖率",
+    "risk_detail.data_coverage.assessment_status": "风险数据覆盖状态",
 }
 _PERCENTAGE_CLAIMS = {
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",
     "settlement_change_ratio", "receipt_record_change_ratio",
+    "risk_detail.data_coverage.coverage_ratio",
 }
 
 
@@ -234,6 +248,12 @@ def _claim_statement(subject: str, path: str, value: Any) -> str:
 def _format_claim_value(path: str, value: Any) -> str:
     if path in _PERCENTAGE_CLAIMS and isinstance(value, (int, float)):
         return f"{value * 100:.1f}%"
+    if path == "risk_detail.major_lawsuit" and isinstance(value, bool):
+        return "有" if value else "无"
+    if path == "risk_detail.legal_person_change_frequent" and isinstance(value, bool):
+        return "是" if value else "否"
+    if path.startswith("risk_detail.") and path.endswith("_count") and isinstance(value, (int, float)):
+        return f"{value:,.0f} 条"
     if path == "settlement_share" and isinstance(value, (int, float)):
         return "<0.1%" if 0 < value < 0.001 else f"{value * 100:.1f}%"
     if path == "latest_actual_settlement_amount" and isinstance(value, (int, float)):

@@ -15,6 +15,9 @@ export default function SupplierReviewConclusion({ answer, evidence, limitations
 }) {
   const businessFacts = evidence.find(record => record.dimension === 'business_risk')?.facts;
   const netProfitGrowth = answer.claims.find(claim => claim.fact_path === 'net_profit_growth')?.value;
+  const lawsuitCount = answer.claims.find(claim => claim.fact_path === 'risk_detail.lawsuit_count')?.value;
+  const majorLawsuit = answer.claims.find(claim => claim.fact_path === 'risk_detail.major_lawsuit')?.value;
+  const penaltyCount = answer.claims.find(claim => claim.fact_path === 'risk_detail.administrative_penalty_count')?.value;
   const financeMissing = limitations.some(item => item.includes('财务'));
   const settlementChange = numericFact(businessFacts, 'settlement_change_ratio');
   const missingMonths = numericFact(businessFacts, 'missing_month_count');
@@ -33,6 +36,21 @@ export default function SupplierReviewConclusion({ answer, evidence, limitations
     basis.push('本轮未取得可用的财务正式证据；这不是低风险或高风险判断。');
     checks.push('核对本轮已覆盖的数据范围；财务维度未形成结论，不据此判断供应商经营状况。');
     boundaries.push('未取得财务数据时，系统不形成财务风险结论，也不将数据缺失判定为低风险或高风险。');
+  }
+  if (typeof lawsuitCount === 'number' && lawsuitCount > 0) {
+    findings.push(`公开司法信息中有 ${Math.round(lawsuitCount)} 起诉讼记录，需要确认是否影响履约。`);
+    basis.push(...reviewClaims(answer, ['risk_detail.lawsuit_count']));
+    checks.push('核实诉讼案件当前状态、涉诉金额及是否影响供应商履约与持续供货。');
+  }
+  if (majorLawsuit === true) {
+    findings.push('公开司法信息带有重大诉讼标记，需要人工核实。');
+    basis.push(...reviewClaims(answer, ['risk_detail.major_lawsuit']));
+    checks.push('确认重大诉讼标记对应的案件性质、进展和对供应商经营的实际影响。');
+  }
+  if (typeof penaltyCount === 'number' && penaltyCount > 0) {
+    findings.push(`公开经营信息中有 ${Math.round(penaltyCount)} 条行政处罚记录，需要关注整改情况。`);
+    basis.push(...reviewClaims(answer, ['risk_detail.administrative_penalty_count']));
+    checks.push('核实行政处罚原因、整改状态以及是否影响相关产品或订单履约。');
   }
   if (settlementChange !== null && settlementChange <= -0.5) {
     findings.push('最新月实结算金额环比显著下降，需要核实交易变化原因。');

@@ -20,7 +20,18 @@ def assess_risk(company_name: str) -> dict:
         entity_id=f"entity:{company_name}",
         dimension="risk",
         source_type="risk_service_result",
-        claim_fields=["risk_score", "risk_level"],
+        claim_fields=[
+            "risk_score", "risk_level",
+            "risk_detail.lawsuit_count", "risk_detail.executed_count",
+            "risk_detail.dishonesty_count", "risk_detail.major_lawsuit",
+            "risk_detail.abnormal_operation_count",
+            "risk_detail.administrative_penalty_count",
+            "risk_detail.legal_person_change_frequent",
+            "risk_detail.guarantee_count", "risk_detail.pledge_count",
+            "risk_detail.bankruptcy_count", "risk_detail.env_penalty_count",
+            "risk_detail.data_coverage.coverage_ratio",
+            "risk_detail.data_coverage.assessment_status",
+        ],
         claim_subject=company_name,
     )
 

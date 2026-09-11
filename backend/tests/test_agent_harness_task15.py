@@ -41,6 +41,43 @@ def test_conversation_state_defaults_generic_review_to_available_real_dimensions
     assert analysis_dimensions_from_message("财务复核青岛三祥科技股份有限公司") == [
         "financial",
     ]
+    assert analysis_dimensions_from_message("看一下米其林的风险情况") == [
+        "risk", "financial", "business_risk",
+    ]
+
+
+def test_risk_evidence_exposes_detail_claims_for_procurement_review() -> None:
+    result = attach_tool_evidence(
+        {
+            "company_name": "米其林（中国）投资有限公司",
+            "risk_score": 10,
+            "risk_level": "低风险",
+            "risk_detail": {
+                "lawsuit_count": 3,
+                "major_lawsuit": True,
+                "administrative_penalty_count": 1,
+                "data_coverage": {"coverage_ratio": 0.75, "assessment_status": "partial"},
+            },
+        },
+        tool_name="assess_risk",
+        entity_id="entity:米其林（中国）投资有限公司",
+        dimension="risk",
+        claim_fields=[
+            "risk_score", "risk_level", "risk_detail.lawsuit_count",
+            "risk_detail.major_lawsuit", "risk_detail.administrative_penalty_count",
+            "risk_detail.data_coverage.coverage_ratio",
+        ],
+        claim_subject="米其林（中国）投资有限公司",
+    )
+
+    assert [item["statement"] for item in result["claims"]] == [
+        "米其林（中国）投资有限公司 综合风险评分：10/100",
+        "米其林（中国）投资有限公司 风险等级：低风险",
+        "米其林（中国）投资有限公司 诉讼记录数：3 条",
+        "米其林（中国）投资有限公司 重大诉讼标记：有",
+        "米其林（中国）投资有限公司 行政处罚记录数：1 条",
+        "米其林（中国）投资有限公司 风险数据覆盖率：75.0%",
+    ]
 
 
 def test_planner_builds_supplier_dimension_matrix_with_required_evidence() -> None:

@@ -21,6 +21,9 @@ _ANALYSIS_TOKENS = (
 _NON_AGENT_TURN_PATTERNS = (
     "你好", "您好", "嗨", "hello", "hi", "谢谢", "感谢", "好的", "ok", "收到",
 )
+_GENERIC_RISK_QUERY_TOKENS = (
+    "风险情况", "风险状况", "整体风险", "风险怎么样", "风险表现",
+)
 
 
 class ConversationIntentExtraction(BaseModel):
@@ -93,7 +96,7 @@ def extract_conversation_intent(
             "Do not invent companies, supplier codes, risk findings, or actions.",
             "Set task_type='sourcing' for finding, recommending, or listing suppliers, including requests such as '找风险最低的供应商'; risk is then a sourcing filter, not a company risk-assessment task.",
             "Set task_type='analysis' for assessing explicitly named suppliers; set task_type='none' only when no agent task is requested.",
-            "For a generic supplier review ('复核') without explicit dimensions, use risk, financial, and business_risk; explicit dimensions take precedence.",
+            "For a generic supplier review ('复核' or '风险情况') without explicit dimensions, use risk, financial, and business_risk; explicit dimensions take precedence.",
             "Use requested_action='add_watchlist' only when the user explicitly asks to monitor or add to monitoring.",
             "This is read-only intent extraction and must not execute an action.",
         ],
@@ -130,10 +133,15 @@ def extract_conversation_intent(
         return None
 
     inferred_task_type = infer_task_type(message)
+    extracted_dimensions = _expand_generic_risk_dimensions(
+        message,
+        list(extracted.analysis_dimensions),
+    )
     validated = extracted.model_copy(update={
         "target_supplier_names": validate_extracted_targets(
             extracted.target_supplier_names, supplier_references
         ),
+        "analysis_dimensions": extracted_dimensions,
         "task_type": inferred_task_type if inferred_task_type != "none" else extracted.task_type,
         # The model may over-read the word “监控” in a read-only identity
         # request. A write action is allowed only when the current message
@@ -162,6 +170,20 @@ def _has_explicit_watchlist_request(message: str) -> bool:
         "加入监控", "加入风险监控", "纳入监控", "纳入风险监控",
         "持续监控", "开始监控", "建立监控",
     ))
+
+
+def _expand_generic_risk_dimensions(message: str, dimensions: list[str]) -> list[str]:
+    """Use the standard review bundle for an unqualified risk-status question.
+
+    The model may conservatively return only ``risk`` for wording such as
+    ``看一下某供应商的风险情况``.  That would hide the financial and internal
+    procurement checks users expect from a general risk review.  The expansion
+    is deterministic and does not invent a supplier or a finding.
+    """
+    if any(token in str(message or "") for token in _GENERIC_RISK_QUERY_TOKENS):
+        if dimensions and set(dimensions) <= {"risk"}:
+            return ["risk", "financial", "business_risk"]
+    return list(dict.fromkeys(dimensions))
 
 
 def infer_task_type(message: str) -> Literal["sourcing", "analysis", "none"]:

@@ -20,6 +20,9 @@ _ANALYSIS_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("compliance", ("合规", "制裁", "黑名单")),
 )
 _DEFAULT_REVIEW_DIMENSIONS = ["risk", "financial", "business_risk"]
+_GENERIC_RISK_QUERY_TOKENS = (
+    "风险情况", "风险状况", "整体风险", "风险怎么样", "风险表现",
+)
 _PLURAL_REFERENCE_TOKENS = (
     "这些企业", "上述企业", "这些供应商", "上述供应商",
     "推荐的供应商", "推荐企业", "它们", "全部企业", "所有企业",
@@ -60,6 +63,8 @@ def analysis_dimensions_from_message(message: str) -> list[str]:
         for dimension, keywords in _ANALYSIS_DIMENSIONS
         if any(keyword in message for keyword in keywords)
     ]
+    if any(token in message for token in _GENERIC_RISK_QUERY_TOKENS):
+        return list(_DEFAULT_REVIEW_DIMENSIONS)
     if explicit_dimensions:
         return explicit_dimensions
     if any(token in message for token in ("采购动作", "采取动作", "下一步怎么做", "是否需要处理", "要不要处理")):
