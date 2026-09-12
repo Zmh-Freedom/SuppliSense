@@ -46,6 +46,7 @@ def sentiment_analysis(company_name: str) -> dict:
 
     return attach_tool_evidence({
         "company_name": result["company_name"],
+        "overall_sentiment": result.get("overall_sentiment", "neutral"),
         "sentiment_score": result["sentiment_score"],
         "negative_count": result["negative_count"],
         "neutral_count": result["neutral_count"],

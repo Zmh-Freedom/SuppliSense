@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.core.cache import cached, invalidate_cache, cache_client
 from app.db.mongo import get_db
+from app.domains.risk.news_sources import collect_public_news
 
 _llm_client = None
 
@@ -119,8 +120,28 @@ def _cache_search(company_name: str, results: list) -> None:
         pass
 
 
+def _find_company_website(company_name: str) -> str | None:
+    """从本地主数据或已缓存的工商资料中读取企业官网。"""
+    try:
+        db = get_db()
+        for collection_name in ("supplier_master_snapshots", "suppliers", "baseinfo"):
+            doc = db[collection_name].find_one(
+                {"$or": [{"name": company_name}, {"company_name": company_name}]},
+                sort=[("synced_at", -1), ("updated_at", -1)],
+            )
+            if not doc:
+                continue
+            for field in ("website_url", "website", "webSite", "webUrl"):
+                value = doc.get(field)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    except Exception:
+        return None
+    return None
+
+
 def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
-    """通过 Bing 搜索公司新闻（DuckDuckGo 限流时备用）。"""
+    """按来源优先级采集公开新闻，再用搜索引擎补充线索。"""
     # check Redis cache first
     cached = _cached_search(company_name)
     if cached is not None:
@@ -137,6 +158,45 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     }
     short = _short_name(company_name)
     query = f"{short} 最新新闻"
+
+    # 优先使用汽车行业和企业官方公开来源。盖世站内搜索会触发验证码，
+    # 适配器只读取公开列表页，不调用该入口。
+    website_url = _find_company_website(company_name)
+    try:
+        public_result = collect_public_news(
+            company_name,
+            website_url=website_url,
+            max_results=max_results,
+        )
+        if public_result["articles"]:
+            logger.info(
+                "public_news_sources_collected",
+                extra={
+                    "company": company_name,
+                    "count": public_result["article_count"],
+                    "sources": {
+                        item["source_name"]: item["status"]
+                        for item in public_result["sources"]
+                    },
+                },
+            )
+            _cache_search(company_name, public_result["articles"])
+            return public_result["articles"]
+        logger.info(
+            "public_news_sources_empty",
+            extra={
+                "company": company_name,
+                "sources": {
+                    item["source_name"]: item["status"]
+                    for item in public_result["sources"]
+                },
+            },
+        )
+    except Exception as exc:
+        logger.warning(
+            "public_news_sources_failed",
+            extra={"company": company_name, "error": str(exc)},
+        )
 
     if ENABLE_HTML_SCRAPING:
         # method 1: Bing search
@@ -337,7 +397,13 @@ def analyze_sentiment(
 
     # LLM classify
     prompt_data = [
-        {"index": i, "title": a["title"], "body": a["body"][:100]}
+        {
+            "index": i,
+            "title": a["title"],
+            "body": a["body"][:100],
+            "source": a.get("source_name") or a.get("source", ""),
+            "published_at": a.get("published_at") or a.get("date", ""),
+        }
         for i, a in enumerate(news_articles)
     ]
     prompt = NEWS_SENTIMENT_PROMPT + json.dumps(prompt_data, ensure_ascii=False)
@@ -354,11 +420,8 @@ def analyze_sentiment(
         for i, a in enumerate(news_articles):
             cls = class_map.get(i, {})
             articles.append({
-                "title": a["title"],
+                **a,
                 "body": a["body"][:150],
-                "source": a["source"],
-                "url": a["url"],
-                "date": a["date"],
                 "sentiment": cls.get("sentiment", "neutral"),
                 "confidence": cls.get("confidence", 0.5),
                 "risk_tags": cls.get("risk_tags", []),
@@ -405,6 +468,7 @@ def analyze_sentiment(
         "articles_count": len(articles),
         "negative_count": neg, "neutral_count": neu, "positive_count": pos,
         "sentiment_score": overall_score,
+        "overall_sentiment": llm_result.get("overall_sentiment", "neutral") if isinstance(llm_result, dict) else "neutral",
         "risk_tags": risk_tags,
         "articles": articles[:20],
         "summary": summary,
