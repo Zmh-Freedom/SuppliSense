@@ -3356,3 +3356,15 @@
 - 修复方案：增加采购语言的澄清卡片，展示缺失的品类/规格等字段，提交后恢复同一 Agent Run；同时优先通过确定性解析减少不必要澄清。
 - 验证结果：前端已增加采购语言的澄清卡片、缺失字段输入和同一任务恢复调用；流式事件也会持久化澄清字段和状态。寻源工作台前端测试 24 项、Lint、TypeScript 和生产构建通过。真实浏览器桥接本轮无法重新建立，未将桥接故障计为产品失败。
 - 关联提交：`07eb47cf fix(sourcing): unify requirement parsing and clarify runs`。
+
+## ISS-20260912-023 寻源外部发现阶段因状态字段重复导致任务卡死
+
+- 发现日期：2026-09-12
+- 状态：已关闭
+- 优先级：P0
+- 现象：真实浏览器中历史合作寻源已完成需求解析并进入本地检索，但任务先后出现状态字段重复异常和 checkpoint 序列化异常，页面停在 `LOCAL_SEARCHING` 或 `POLICY_LOCKED`；后端后台任务分别抛出 `record_graph_trace() got multiple values for keyword argument 'status'` 与 `Object of type datetime is not JSON serializable`。
+- 影响：寻源工作台无法进入外部候选、主体核验和结果展示，用户看到任务一直执行中。
+- 根因：`_event`/`_snapshot_event` 将状态作为显式参数传入，同时把 payload 中的 `status` 再次展开；历史候选的 Mongo `datetime` 也未经转换直接写入 PostgreSQL JSON checkpoint。
+- 修复方案：记录图追踪时从 payload 中剥离保留字段 `status`，并在事件、快照和 LangGraph checkpoint 边界统一递归转换 MappingProxy、tuple、datetime/date 为 JSON/MsgPack 安全容器；保留业务字段语义。
+- 验证结果：补充状态重复、MappingProxy 解冻和 datetime 序列化回归，寻源图与发现服务定向测试通过；重启前后端后真实浏览器创建“后轮制动鼓有哪些历史合作供应商？再补充盖世候选”任务，页面进入“企业主体人工复核”，本地历史候选 4 家、外部候选 2 家，未再出现任务卡死或后端异常。真实浏览器提交“帮我找供应商”并补充“制动系统 / 后轮制动鼓”后，任务继续进入本地检索并召回 4 家候选，最终进入主体复核；浏览器控制台 0 errors（保留 2 条既有 warning）。
+- 关联提交：待提交。

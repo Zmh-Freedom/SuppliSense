@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import date, datetime
 from typing import Any
 
 from langgraph.types import interrupt
@@ -110,7 +111,10 @@ async def lock_policy(state: SourcingRiskGraphState) -> dict[str, Any]:
     await _event(state["run_id"], "policy_locked", {"checksum": policy["checksum"]}, "POLICY_LOCKED")
     return {
         "status": "POLICY_LOCKED",
-        "policy_snapshot": dict(policy),
+        # ``freeze_policy_snapshot`` intentionally returns immutable nested
+        # MappingProxy/tuple values. LangGraph's Postgres serializer requires
+        # ordinary JSON-compatible containers at the checkpoint boundary.
+        "policy_snapshot": _thaw_policy_value(policy),
         "policy_snapshot_id": state.get("policy_snapshot_id") or policy["checksum"],
     }
 
@@ -456,6 +460,15 @@ def _candidate_ids(candidates: list[dict[str, Any]]) -> list[str]:
     return [str(candidate["company_id"]) for candidate in candidates if candidate.get("company_id")]
 
 
+def _thaw_policy_value(value: Any) -> Any:
+    """Convert an immutable policy snapshot to checkpoint-safe containers."""
+    if isinstance(value, Mapping):
+        return {key: _thaw_policy_value(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_thaw_policy_value(item) for item in value]
+    return value
+
+
 def _mark_sanctions_failures_for_review(
     candidates: list[dict[str, Any]], evidence_by_company_id: Mapping[str, list[dict[str, Any]]]
 ) -> list[dict[str, Any]]:
@@ -473,20 +486,36 @@ def _mark_sanctions_failures_for_review(
 
 
 async def _event(run_id: str, event_type: str, payload: dict[str, Any], status: str | None = None) -> None:
-    record_graph_trace(event_type, run_id=run_id, status=status, **payload)
+    safe_payload = _checkpoint_safe(payload)
+    trace_payload = {key: value for key, value in safe_payload.items() if key != "status"}
+    record_graph_trace(event_type, run_id=run_id, status=status, **trace_payload)
     if status is not None:
-        await asyncio.to_thread(record_orchestration_state, run_id, status, event_type, payload)
+        await asyncio.to_thread(record_orchestration_state, run_id, status, event_type, safe_payload)
         return
-    await asyncio.to_thread(append_typed_event, run_id, event_type, payload)
+    await asyncio.to_thread(append_typed_event, run_id, event_type, safe_payload)
 
 
 async def _snapshot_event(
     run_id: str, status: str, event_type: str, payload: dict[str, Any], **collections: Any,
 ) -> dict[str, Any]:
-    record_graph_trace(event_type, run_id=run_id, status=status, **payload)
+    safe_payload = _checkpoint_safe(payload)
+    trace_payload = {key: value for key, value in safe_payload.items() if key != "status"}
+    record_graph_trace(event_type, run_id=run_id, status=status, **trace_payload)
+    safe_collections = {key: _checkpoint_safe(value) for key, value in collections.items()}
     return await asyncio.to_thread(
-        persist_orchestration_snapshot, run_id, status, event_type, payload, **collections
+        persist_orchestration_snapshot, run_id, status, event_type, safe_payload, **safe_collections
     )
+
+
+def _checkpoint_safe(value: Any) -> Any:
+    """Convert graph payloads to containers accepted by JSON/MsgPack checkpoints."""
+    if isinstance(value, Mapping):
+        return {key: _checkpoint_safe(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_checkpoint_safe(item) for item in value]
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return value
 
 
 def _with_candidate_keys(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:

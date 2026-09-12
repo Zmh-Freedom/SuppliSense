@@ -32,9 +32,38 @@ _CONTACT_PAGE_TERMS = ("contact", "contact-us", "联系我们", "联系方式", 
 
 
 def search_local_suppliers(requirement: dict, policy: dict) -> list[dict]:
-    """Search the local library; policy is accepted for a stable orchestration seam."""
+    """Search history first, then the current formal supplier library.
+
+    The durable V2 graph must see the same internal material relationships as
+    the read-only Harness sourcing tool.  Keep both sources side-effect free
+    and collapse duplicate suppliers before the graph applies its candidate
+    sufficiency policy.
+    """
     del policy
-    return search_for_sourcing_v2(requirement)
+    from app.domains.sourcing.service import discover_read_only_sourcing_candidates
+
+    library = discover_read_only_sourcing_candidates(requirement)
+    history = list(library.get("local_candidates") or []) if isinstance(library, dict) else []
+    formal = search_for_sourcing_v2(requirement)
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for candidate in [*history, *formal]:
+        if not isinstance(candidate, dict):
+            continue
+        key = str(
+            candidate.get("supplier_code")
+            or candidate.get("supplier_id")
+            or candidate.get("company_id")
+            or candidate.get("supplier_name")
+            or candidate.get("name")
+            or ""
+        ).strip()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append(dict(candidate))
+    return merged
 
 
 def search_external_provider(requirement: dict) -> list[dict]:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+from types import MappingProxyType
 from uuid import uuid4
 
 import pytest
@@ -287,6 +289,42 @@ def test_external_provider_failure_keeps_checkpoint_and_durable_status_aligned(m
     assert update["external_status"] == "failed"
     assert update["external_failure_reasons"][0]["stage"] == "external_discovery"
     assert transitions == [("run-id", "LOCAL_SEARCHING", "provider_failed", {"provider": "external_discovery", "error": "ConnectionError"})]
+
+
+def test_snapshot_event_accepts_payload_status_without_duplicate_trace_argument(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provider payloads may include status; trace recording must not crash on duplicate kwargs."""
+    traces: list[dict] = []
+    monkeypatch.setattr(nodes, "record_graph_trace", lambda *_args, **kwargs: traces.append(kwargs))
+
+    asyncio.run(nodes._snapshot_event("run-id", "LOCAL_SEARCHING", "discovery", {"status": "LOCAL_SEARCHING", "count": 0}))
+
+    assert traces == [{"run_id": "run-id", "status": "LOCAL_SEARCHING", "count": 0}]
+
+
+def test_lock_policy_thaws_immutable_snapshot_for_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Frozen nested policy containers must be serializable by Postgres checkpoints."""
+    frozen = MappingProxyType({"checksum": "policy-id", "weights": MappingProxyType({"risk": 0.2})})
+    monkeypatch.setattr(nodes, "freeze_policy_snapshot", lambda *_: frozen)
+
+    update = asyncio.run(nodes.lock_policy({"run_id": "run-id", "requirement": {"category": "摄像头"}}))
+
+    assert update["policy_snapshot"] == {"checksum": "policy-id", "weights": {"risk": 0.2}}
+
+
+def test_snapshot_event_converts_datetime_candidates_before_persisting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mongo timestamps in candidate snapshots must remain JSON serializable."""
+    persisted: list[dict] = []
+    monkeypatch.setattr(nodes, "persist_orchestration_snapshot", lambda *_args, **kwargs: persisted.append(kwargs) or {})
+
+    asyncio.run(nodes._snapshot_event(
+        "run-id",
+        "LOCAL_SEARCHING",
+        "discovery",
+        {"count": 1},
+        candidates=[{"supplier_name": "历史供应商", "source_updated_at": datetime(2026, 9, 12, tzinfo=timezone.utc)}],
+    ))
+
+    assert persisted[0]["candidates"][0]["source_updated_at"] == "2026-09-12T00:00:00+00:00"
 
 
 def test_investigation_failure_keeps_checkpoint_and_durable_status_aligned(monkeypatch: pytest.MonkeyPatch) -> None:
