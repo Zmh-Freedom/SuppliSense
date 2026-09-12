@@ -42,6 +42,10 @@ _SSE_QUERY_URL = "https://query.sse.com.cn/security/stock/queryCompanyBulletinNe
 _BSE_QUERY_URL = "https://www.bse.cn/disclosureInfoController/companyAnnouncement.do"
 _HKEX_STOCKS_URL = "https://www1.hkexnews.hk/ncms/script/eds/activestock_sehk_c.json"
 _HKEX_TITLE_SEARCH_URL = "https://www1.hkexnews.hk/search/titlesearch.xhtml"
+_CREDIT_CHINA_URL = "https://www.creditchina.gov.cn/"
+_COURT_EXECUTION_SEARCH_URL = "https://zxgk.court.gov.cn/gkw/html/zhzxgk/index.html"
+_SAMR_NOTICE_URL = "https://www.samr.gov.cn/jzxts/tzgg/"
+_CCGP_PENALTY_URL = "https://www.ccgp.gov.cn/jdjc/jdcf/"
 
 # 交易所名称通常使用繁体或简称。这里只保留常见公开名称的轻量转换，
 # 找不到映射时适配器会安全返回 no_results，不会把未匹配误报成无风险。
@@ -346,6 +350,37 @@ def _get(
     if response.status_code != 200:
         logger.warning(
             "news_source_http_error",
+            extra={"url": url, "status_code": response.status_code},
+        )
+        return None
+    response.encoding = response.apparent_encoding or response.encoding
+    return response
+
+
+def _post(
+    url: str,
+    *,
+    data: dict[str, str],
+    timeout: int = _DEFAULT_TIMEOUT,
+    headers: dict[str, str] | None = None,
+) -> requests.Response | None:
+    try:
+        request_headers = {"User-Agent": _USER_AGENT}
+        if headers:
+            request_headers.update(headers)
+        response = requests.post(
+            url,
+            data=data,
+            headers=request_headers,
+            timeout=timeout,
+            allow_redirects=True,
+        )
+    except requests.RequestException as exc:
+        logger.warning("news_source_post_failed", extra={"url": url, "error": str(exc)})
+        return None
+    if response.status_code != 200:
+        logger.warning(
+            "news_source_post_http_error",
             extra={"url": url, "status_code": response.status_code},
         )
         return None
@@ -729,6 +764,131 @@ def fetch_hkex_news(company_name: str, max_results: int = 12) -> dict:
     return _result("香港交易所披露易", _deduplicate(articles, max_results))
 
 
+def _listing_articles(
+    company_name: str,
+    response: requests.Response,
+    *,
+    source_name: str,
+    source_type: str,
+    publisher: str,
+    max_results: int,
+    href_prefix: str | None = None,
+) -> list[dict]:
+    """从公开列表页提取与公司名称相关的公告链接。"""
+    soup = BeautifulSoup(response.text, "html.parser")
+    articles: list[dict] = []
+    for link in soup.find_all("a", href=True):
+        title = _normalise_text(link.get_text(" ", strip=True))
+        if not title:
+            continue
+        href = urljoin(response.url, str(link["href"]))
+        if href_prefix and href_prefix not in href:
+            continue
+        context_node = link.find_parent(["li", "tr", "dd"]) or link.parent
+        context = _normalise_text(context_node.get_text(" ", strip=True))
+        if not _matches_company(company_name, f"{title} {context}"):
+            continue
+        articles.append(
+            _article(
+                title=title,
+                body=context,
+                url=href,
+                source_name=source_name,
+                source_type=source_type,
+                published_at=_parse_date(context) or _parse_date(title),
+                publisher=publisher,
+            )
+        )
+    return articles
+
+
+def fetch_credit_china_news(company_name: str, max_results: int = 12) -> dict:
+    """读取信用中国公开页面中的主体信用公告和失信信息。"""
+    response = _get(_CREDIT_CHINA_URL)
+    if response is None:
+        return _result("信用中国", [], error="信用中国公开页面不可访问或需要实名验证")
+    articles = _listing_articles(
+        company_name,
+        response,
+        source_name="信用中国",
+        source_type="credit_official",
+        publisher="国家公共信用信息中心",
+        max_results=max_results,
+    )
+    return _result("信用中国", _deduplicate(articles, max_results))
+
+
+def fetch_court_execution_news(company_name: str, max_results: int = 12) -> dict:
+    """查询中国执行信息公开网的公开执行信息入口。
+
+    该站点可能要求验证码或实名校验；遇到校验页时返回 ``fetch_failed``，
+    不将无法检索解释为明确无执行记录。
+    """
+    landing = _get(_COURT_EXECUTION_SEARCH_URL)
+    if landing is None:
+        return _result("中国执行信息公开网", [], error="执行信息公开网入口不可访问")
+    soup = BeautifulSoup(landing.text, "html.parser")
+    form = soup.select_one("form#zhcx-search-form") or soup.find("form", action=True)
+    action = urljoin(landing.url, str(form.get("action") if form else ""))
+    if not action or action == landing.url:
+        return _result("中国执行信息公开网", [], error="执行信息公开查询入口未找到")
+    result = _post(
+        action,
+        data={
+            "pName": company_name,
+            "pCardNum": "",
+            "selectCourtId": "0",
+            "currentPage": "1",
+        },
+        headers={"Referer": landing.url, "X-Requested-With": "XMLHttpRequest"},
+    )
+    if result is None:
+        return _result("中国执行信息公开网", [], error="执行信息公开查询需要验证码或暂不可用")
+    articles = _listing_articles(
+        company_name,
+        result,
+        source_name="中国执行信息公开网",
+        source_type="judicial_official",
+        publisher="最高人民法院",
+        max_results=max_results,
+    )
+    return _result("中国执行信息公开网", _deduplicate(articles, max_results))
+
+
+def fetch_samr_news(company_name: str, max_results: int = 12) -> dict:
+    """抓取国家市场监督管理总局公开行政处罚公告。"""
+    response = _get(_SAMR_NOTICE_URL)
+    if response is None:
+        return _result("国家市场监督管理总局", [], error="市场监管总局公告页面不可访问")
+    articles = _listing_articles(
+        company_name,
+        response,
+        source_name="国家市场监督管理总局",
+        source_type="regulatory_official",
+        publisher="国家市场监督管理总局",
+        max_results=max_results,
+        href_prefix="samr.gov.cn",
+    )
+    return _result("国家市场监督管理总局", _deduplicate(articles, max_results))
+
+
+def fetch_ccgp_news(company_name: str, max_results: int = 12) -> dict:
+    """抓取中国政府采购网公开监督处罚和投诉处理公告。"""
+    response = _get(_CCGP_PENALTY_URL)
+    if response is None:
+        return _result("中国政府采购网", [], error="政府采购监督处罚页面不可访问")
+    articles = _listing_articles(
+        company_name,
+        response,
+        source_name="中国政府采购网",
+        source_type="procurement_official",
+        publisher="财政部",
+        max_results=max_results,
+        href_prefix="ccgp.gov.cn",
+    )
+    return _result("中国政府采购网", _deduplicate(articles, max_results))
+
+
 def fetch_company_website_news(
     company_name: str,
     website_url: str | None,
@@ -799,6 +959,10 @@ def collect_public_news(
         fetch_sse_news(company_name, max_results=max_results),
         fetch_bse_news(company_name, max_results=max_results),
         fetch_hkex_news(company_name, max_results=max_results),
+        fetch_credit_china_news(company_name, max_results=max_results),
+        fetch_court_execution_news(company_name, max_results=max_results),
+        fetch_samr_news(company_name, max_results=max_results),
+        fetch_ccgp_news(company_name, max_results=max_results),
     ]
     articles = _deduplicate(
         (article for result in source_results for article in result["articles"]),

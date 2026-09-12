@@ -102,6 +102,10 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         ("fetch_sse_news", "上海证券交易所公告"),
         ("fetch_bse_news", "北京证券交易所公告"),
         ("fetch_hkex_news", "香港交易所披露易"),
+        ("fetch_credit_china_news", "信用中国"),
+        ("fetch_court_execution_news", "中国执行信息公开网"),
+        ("fetch_samr_news", "国家市场监督管理总局"),
+        ("fetch_ccgp_news", "中国政府采购网"),
     ):
         monkeypatch.setattr(
             news_sources,
@@ -111,7 +115,7 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
     result = news_sources.collect_public_news("示例公司")
 
     assert result["article_count"] == 1
-    assert len(result["sources"]) == 6
+    assert len(result["sources"]) == 10
     assert {source["source_name"] for source in result["sources"]} == {
         "盖世汽车公开资讯",
         "中国汽车工业协会",
@@ -119,6 +123,10 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         "上海证券交易所公告",
         "北京证券交易所公告",
         "香港交易所披露易",
+        "信用中国",
+        "中国执行信息公开网",
+        "国家市场监督管理总局",
+        "中国政府采购网",
     }
 
 
@@ -197,3 +205,50 @@ def test_fetch_hkex_news_parses_title_search(monkeypatch) -> None:
     assert result["article_count"] == 1
     assert result["articles"][0]["source_name"] == "香港交易所披露易"
     assert result["articles"][0]["published_at"] == "2026-09-08"
+
+
+def test_fetch_credit_china_news_parses_company_related_link(monkeypatch) -> None:
+    html = '<a href="/xyxx/1.html">青岛三祥科技股份有限公司行政处罚信息 2026-08-15</a>'
+    monkeypatch.setattr(news_sources, "_get", lambda url, **_kwargs: FakeResponse(html, url))
+
+    result = news_sources.fetch_credit_china_news("青岛三祥科技股份有限公司")
+
+    assert result["status"] == "ok"
+    assert result["articles"][0]["source_type"] == "credit_official"
+    assert result["articles"][0]["published_at"] == "2026-08-15"
+
+
+def test_fetch_court_execution_news_returns_fetch_failed_when_query_blocked(monkeypatch) -> None:
+    landing = '<form id="zhcx-search-form" action="findDisXgl.do"></form>'
+
+    def fake_get(url: str, **_kwargs):
+        return FakeResponse(landing, url)
+
+    monkeypatch.setattr(news_sources, "_get", fake_get)
+    monkeypatch.setattr(news_sources, "_post", lambda *args, **kwargs: None)
+
+    result = news_sources.fetch_court_execution_news("青岛三祥科技股份有限公司")
+
+    assert result["status"] == "fetch_failed"
+    assert result["articles"] == []
+
+
+def test_fetch_samr_news_parses_company_related_penalty(monkeypatch) -> None:
+    html = '<a href="/jzxts/tzgg/xzcf/art/2026/art_a.html">青岛三祥科技股份有限公司行政处罚决定书</a>'
+    monkeypatch.setattr(news_sources, "_get", lambda url, **_kwargs: FakeResponse(html, url))
+
+    result = news_sources.fetch_samr_news("青岛三祥科技股份有限公司")
+
+    assert result["status"] == "ok"
+    assert result["articles"][0]["source_type"] == "regulatory_official"
+
+
+def test_fetch_ccgp_news_parses_company_related_penalty(monkeypatch) -> None:
+    html = '<a href="/jdjc/jdcf/202609/t20260901_1.htm">青岛三祥科技股份有限公司政府采购处罚公告 2026-09-01</a>'
+    monkeypatch.setattr(news_sources, "_get", lambda url, **_kwargs: FakeResponse(html, url))
+
+    result = news_sources.fetch_ccgp_news("青岛三祥科技股份有限公司")
+
+    assert result["status"] == "ok"
+    assert result["articles"][0]["source_type"] == "procurement_official"
+    assert result["articles"][0]["published_at"] == "2026-09-01"
