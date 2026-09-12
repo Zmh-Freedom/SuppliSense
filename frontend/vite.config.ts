@@ -26,7 +26,7 @@ export default defineConfig(({ mode }) => {
         '/api/v1': backendUrl,
         '/health': backendUrl,
         '/metrics': backendUrl,
-        '/ws': { target: `ws://localhost:${backendPort}`, ws: true },
+        '/ws': { target: `ws://127.0.0.1:${backendPort}`, ws: true },
       },
     },
   }

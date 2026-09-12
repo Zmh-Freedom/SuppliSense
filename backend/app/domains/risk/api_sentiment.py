@@ -35,9 +35,16 @@ async def company_sentiment(company_name: str, background_tasks: BackgroundTasks
     - 有缓存：立即返回（即使已过期），后台异步刷新
     - 无缓存：立即返回 analyzing 状态，后台异步分析
     """
-    from app.domains.risk.sentiment import _analyzing_locks, _get_cached_sentiment
+    from app.domains.risk.sentiment import (
+        _analyzing_locks,
+        _cached_sentiment_is_relevant,
+        _get_cached_sentiment,
+    )
 
     cached = _get_cached_sentiment(company_name)
+    if cached and not _cached_sentiment_is_relevant(company_name, cached):
+        # 过滤规则上线前写入的旧结果不再直接展示，交给后台重新采集。
+        cached = None
 
     if cached:
         # 有缓存数据，立即返回；如果已过期则后台刷新
@@ -85,11 +92,13 @@ async def trigger_analysis(req: AnalyzeRequest, background_tasks: BackgroundTask
     - force_refresh=false: 返回缓存（如有），后台刷新过期数据
     - force_refresh=true: 立即返回缓存，后台强制刷新
     """
-    from app.domains.risk.sentiment import _get_cached_sentiment
+    from app.domains.risk.sentiment import _cached_sentiment_is_relevant, _get_cached_sentiment
 
     if req.force_refresh:
         # 强制刷新：返回现有缓存 + 后台强制分析
         cached = _get_cached_sentiment(req.company_name)
+        if cached and not _cached_sentiment_is_relevant(req.company_name, cached):
+            cached = None
         background_tasks.add_task(analyze_sentiment_background, req.company_name)
         if cached:
             cached["refreshing"] = True
@@ -103,6 +112,8 @@ async def trigger_analysis(req: AnalyzeRequest, background_tasks: BackgroundTask
 
     # 非强制：返回缓存（如有且未过期），否则后台刷新
     cached = _get_cached_sentiment(req.company_name)
+    if cached and not _cached_sentiment_is_relevant(req.company_name, cached):
+        cached = None
     if cached and not cached.get("is_stale", False):
         return cached
     if cached:

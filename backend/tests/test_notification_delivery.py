@@ -132,3 +132,17 @@ def test_websocket_broadcast_filters_recipient_open_id():
     buyer_messages, other_messages = asyncio.run(run())
     assert len(buyer_messages) == 1
     assert other_messages == []
+
+
+def test_websocket_broadcast_from_thread_runs_without_event_loop(monkeypatch):
+    manager = WSManager()
+    manager._connections["client"] = object()
+    calls = []
+
+    async def fake_broadcast(event, payload, recipient_open_ids):
+        calls.append((event, payload, recipient_open_ids))
+
+    monkeypatch.setattr(manager, "broadcast", fake_broadcast)
+    manager.broadcast_from_thread("sentiment_ready", {"company_name": "供应商 A"})
+
+    assert calls == [("sentiment_ready", {"company_name": "供应商 A"}, None)]

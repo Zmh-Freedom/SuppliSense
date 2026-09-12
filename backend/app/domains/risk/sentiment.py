@@ -14,6 +14,7 @@
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 
 from openai import OpenAI
@@ -108,6 +109,39 @@ def _short_name(company_name: str) -> str:
     return company_name
 
 
+def _filter_search_articles(company_name: str, articles: list[dict], max_results: int) -> list[dict]:
+    """只保留标题或正文明确提及目标主体的搜索结果。
+
+    搜索引擎会把短语相近的行业文章、同名主体和无关结果混入结果集。
+    公开适配器已经有各自的来源过滤，这里专门保护搜索引擎回退路径，
+    避免这些结果直接进入 LLM 舆情结论。
+    """
+    full_name = company_name.strip()
+    short_name = _short_name(full_name).strip()
+    filtered: list[dict] = []
+    for article in articles:
+        title = str(article.get("title") or "")
+        body = str(article.get("body") or "")
+        title_match = bool(full_name and full_name in title)
+        short_match = False
+        if short_name and len(short_name) >= 3:
+            match = re.search(re.escape(short_name), title)
+            if match:
+                # 中文短名出现在更长词组中时很容易误命中（例如“星际测试版”）。
+                # 只接受标题开头或前面有明确分隔符的短名命中，完整公司名仍可在任意位置命中。
+                preceding = title[match.start() - 1] if match.start() else ""
+                short_match = match.start() == 0 or not ("\u4e00" <= preceding <= "\u9fff")
+        body_match = bool(full_name and full_name in body)
+        if not (title_match or short_match or body_match):
+            continue
+        item = dict(article)
+        item["relevance_status"] = "exact_name" if title_match or body_match else "short_name"
+        filtered.append(item)
+        if len(filtered) >= max_results:
+            break
+    return filtered
+
+
 def _cached_search(company_name: str) -> list | None:
     key = f"sentiment_search:{company_name}"
     cached = cache_client.get(key)
@@ -130,7 +164,10 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     cached = _cached_search(company_name)
     if cached is not None:
         logger.info("sentiment_search_cache_hit", extra={"company": company_name})
-        return cached
+        filtered_cached = _filter_search_articles(company_name, cached, max_results)
+        if filtered_cached:
+            return filtered_cached
+        _cache_search(company_name, [])
 
     import requests
     from bs4 import BeautifulSoup
@@ -150,20 +187,27 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
             company_name,
             max_results=max_results,
         )
-        if public_result["articles"]:
+        # 公开适配器各自会按来源字段过滤，但部分站点仍可能返回简称相近
+        # 或泛行业文章；在舆情服务边界再做一次严格主体校验。
+        public_articles = _filter_search_articles(
+            company_name,
+            public_result["articles"],
+            max_results,
+        )
+        if public_articles:
             logger.info(
                 "public_news_sources_collected",
                 extra={
                     "company": company_name,
-                    "count": public_result["article_count"],
+                    "count": len(public_articles),
                     "sources": {
                         item["source_name"]: item["status"]
                         for item in public_result["sources"]
                     },
                 },
             )
-            _cache_search(company_name, public_result["articles"])
-            return public_result["articles"]
+            _cache_search(company_name, public_articles)
+            return public_articles
         logger.info(
             "public_news_sources_empty",
             extra={
@@ -200,9 +244,10 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
                     body = snippet_el.get_text(strip=True)[:300] if snippet_el else ""
                     url = title_el.get("href", "")
                     articles.append({"title": title, "body": body, "source": "Bing", "url": url, "date": ""})
-                if articles:
-                    _cache_search(company_name, articles[:max_results])
-                    return articles[:max_results]
+                filtered = _filter_search_articles(company_name, articles, max_results)
+                if filtered:
+                    _cache_search(company_name, filtered)
+                    return filtered
         except Exception:
             pass
 
@@ -233,9 +278,10 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
                             qs = parse_qs(parsed.query)
                             url = qs.get("uddg", [url])[0]
                     articles.append({"title": title, "body": body[:200], "source": "", "url": url, "date": ""})
-                if articles:
-                    _cache_search(company_name, articles[:max_results])
-                    return articles[:max_results]
+                filtered = _filter_search_articles(company_name, articles, max_results)
+                if filtered:
+                    _cache_search(company_name, filtered)
+                    return filtered
         except Exception:
             pass
 
@@ -253,9 +299,10 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
                         "source": r.get("source", ""), "url": r.get("url", ""),
                         "date": r.get("date", ""),
                     })
-            if articles:
-                _cache_search(company_name, articles[:max_results])
-                return articles[:max_results]
+            filtered = _filter_search_articles(company_name, articles, max_results)
+            if filtered:
+                _cache_search(company_name, filtered)
+                return filtered
         except Exception:
             pass
 
@@ -313,6 +360,21 @@ def _get_cached_sentiment(company_name: str) -> dict | None:
     return None
 
 
+def _cached_sentiment_is_relevant(
+    company_name: str,
+    cached: dict,
+    max_results: int = 12,
+) -> bool:
+    """判断持久化舆情缓存是否通过当前主体相关性门槛。"""
+    cached_articles = cached.get("articles") or []
+    if not cached_articles:
+        return True
+    filtered = _filter_search_articles(company_name, cached_articles, max_results)
+    titles = [str(item.get("title") or "") for item in cached_articles]
+    filtered_titles = [str(item.get("title") or "") for item in filtered]
+    return len(cached_articles) <= max_results and filtered_titles == titles[:max_results]
+
+
 # 跟踪正在后台分析的企业，避免重复触发
 _analyzing_locks: set[str] = set()
 
@@ -331,10 +393,23 @@ def analyze_sentiment(
     if not force_refresh:
         cached = _get_cached_sentiment(company_name)
         if cached and not cached.get("is_stale", False):
-            return cached
+            cached_articles = cached.get("articles") or []
+            # 旧的 MongoDB 结果可能在主体过滤上线前写入，不能因为命中
+            # 6 小时缓存就绕过相关性校验。无文章的明确无数据结果可以直接复用。
+            if _cached_sentiment_is_relevant(company_name, cached, max_results):
+                return cached
+            filtered_cached = _filter_search_articles(company_name, cached_articles, max_results)
+            logger.info(
+                "sentiment_cache_rejected_for_relevance",
+                extra={"company": company_name, "cached_count": len(cached_articles), "accepted_count": len(filtered_cached)},
+            )
 
     # search news
-    news_articles = _search_news(company_name, max_results=max_results)
+    news_articles = _filter_search_articles(
+        company_name,
+        _search_news(company_name, max_results=max_results),
+        max_results,
+    )
 
     # Fallback: Tianyancha news collection
     if not news_articles:
@@ -363,6 +438,7 @@ def analyze_sentiment(
                         "date": item.get("publishTime", "") or item.get("newsDate", ""),
                     })
             if news_articles:
+                news_articles = _filter_search_articles(company_name, news_articles, max_results)
                 logger.info(
                     "sentiment_tianyancha_fallback",
                     extra={"company": company_name, "count": len(news_articles)},
@@ -660,9 +736,11 @@ def analyze_sentiment_background(company_name: str) -> None:
         analyze_sentiment(company_name, force_refresh=True)
         # Notify WebSocket clients that analysis is ready
         try:
-            import asyncio
             from app.services.ws_manager import ws_manager
-            asyncio.create_task(ws_manager.broadcast("sentiment_ready", {"company_name": company_name}))
+            ws_manager.broadcast_from_thread(
+                "sentiment_ready",
+                {"company_name": company_name},
+            )
         except Exception as e:
             logger.warning("ws_broadcast_failed: %s", e)
     except Exception as e:

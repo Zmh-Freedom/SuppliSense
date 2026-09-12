@@ -313,7 +313,10 @@ async def metrics_endpoint(request: Request):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    token = websocket.query_params.get("token")
+    # Browser clients authenticate the HTTP API with an HttpOnly cookie and
+    # cannot safely read that cookie to append a query token. Keep the query
+    # parameter for existing clients, while accepting the same cookie here.
+    token = websocket.query_params.get("token") or websocket.cookies.get("access_token")
     if not token:
         await websocket.close(code=4001, reason="Missing token")
         return

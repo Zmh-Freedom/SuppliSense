@@ -19,6 +19,13 @@ export default function Layout() {
     }
   }, []);
 
+  // Keep one authenticated, app-wide connection so background risk/sentiment
+  // refreshes can invalidate the active page without requiring a manual reload.
+  useEffect(() => {
+    wsClient.connect();
+    return () => wsClient.disconnect();
+  }, []);
+
   useEffect(() => {
     const unsub = wsClient.on('sourcing_suggestion', (data) => {
       if (Notification.permission === 'granted') {

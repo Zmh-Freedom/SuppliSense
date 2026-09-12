@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -10,6 +11,7 @@ class WSManager:
     def __init__(self):
         self._connections: dict[str, WebSocket] = {}
         self._identities: dict[str, dict[str, str | None]] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(
         self,
@@ -20,6 +22,7 @@ class WSManager:
         open_id: str | None = None,
         role: str | None = None,
     ) -> None:
+        self._loop = asyncio.get_running_loop()
         self._connections[client_id] = websocket
         self._identities[client_id] = {"user_id": user_id, "open_id": open_id, "role": role}
         logger.info("ws_client_connected client_id=%s total=%d", client_id, len(self._connections))
@@ -27,7 +30,38 @@ class WSManager:
     def disconnect(self, client_id: str) -> None:
         self._connections.pop(client_id, None)
         self._identities.pop(client_id, None)
+        if not self._connections:
+            self._loop = None
         logger.info("ws_client_disconnected client_id=%s total=%d", client_id, len(self._connections))
+
+    def broadcast_from_thread(
+        self,
+        event: str,
+        payload: dict,
+        recipient_open_ids: set[str] | list[str] | None = None,
+    ) -> None:
+        """从同步或工作线程安全地投递广播，不遗留未等待的协程。"""
+        if not self._connections:
+            return
+
+        coroutine = self.broadcast(event, payload, recipient_open_ids)
+        loop = self._loop
+        if loop is not None and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+
+            def _log_failure(done: asyncio.Future) -> None:
+                try:
+                    done.result()
+                except Exception as exc:  # pragma: no cover - network best effort
+                    logger.warning("ws_broadcast_failed: %s", exc)
+
+            future.add_done_callback(_log_failure)
+            return
+
+        try:
+            asyncio.run(coroutine)
+        except Exception as exc:  # pragma: no cover - network best effort
+            logger.warning("ws_broadcast_failed: %s", exc)
 
     async def broadcast(
         self,
