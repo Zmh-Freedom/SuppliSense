@@ -28,9 +28,9 @@ const OLD_SESSION = {
   updatedAt: 1,
 }
 
-function renderChat() {
+function renderChat(initialEntries = ['/chat']) {
   return render(
-    <MemoryRouter initialEntries={['/chat']}>
+    <MemoryRouter initialEntries={initialEntries}>
       <ChatView />
     </MemoryRouter>,
   )
@@ -229,6 +229,19 @@ describe('ChatView session lifecycle', () => {
     expect(calls).toHaveLength(2)
     expect(calls[0][1]).not.toBe('old-session')
     expect(calls[1][1]).not.toBe(calls[0][1])
+  })
+
+  it('auto-submits monitoring deep-link reviews in a fresh conversation', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已完成监控复核。', status: 'completed' })
+      return '已完成监控复核。'
+    })
+
+    renderChat(['/chat?q=' + encodeURIComponent('请复核青岛三祥科技股份有限公司')])
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][0]).toBe('请复核青岛三祥科技股份有限公司')
+    expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
   })
 
   it('persists the completed Agent workflow summary with the answer', async () => {

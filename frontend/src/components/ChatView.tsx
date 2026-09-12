@@ -135,6 +135,7 @@ export default function ChatView() {
   const saveTimerRef = useRef<number | null>(null);
   const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
   const approvalAccRef = useRef<ApprovalData | null>(null);
+  const autoSubmittedQueryRef = useRef(false);
   const referencesAccRef = useRef<SupplierReference[]>([]);
   const agentAnswerAccRef = useRef<AgentAnswer | undefined>(undefined);
   const evidenceAccRef = useRef<AgentEvidenceRecord[]>([]);
@@ -433,6 +434,16 @@ export default function ChatView() {
       setLoading(false);
     }
   }, [input, loading, activeSid, msgs, persist]);
+
+  // Deep links from the monitoring workbench represent an explicit Agent
+  // review action. Start them in a fresh conversation and submit immediately
+  // so the button is an executable workflow rather than a prefilled draft.
+  useEffect(() => {
+    const query = searchParams.get('q')?.trim();
+    if (!query || autoSubmittedQueryRef.current) return;
+    autoSubmittedQueryRef.current = true;
+    void send(query, true);
+  }, [searchParams, send]);
 
   const handleApproval = useCallback(async (approved: boolean) => {
     const persistedApprovalIndex = [...msgs].map((message, index) => ({ message, index })).reverse().find(
