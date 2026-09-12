@@ -89,6 +89,16 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('AI 工作台')).toBeInTheDocument()
   })
 
+  it('does not load another account\'s legacy or scoped chat history', () => {
+    localStorage.setItem('session', JSON.stringify({ username: 'xiaoli.meng', role: 'purchaser' }))
+    localStorage.setItem('chat_sessions:minhao.zhou', JSON.stringify([OLD_SESSION]))
+
+    renderChat()
+
+    expect(screen.queryByText('旧会话')).not.toBeInTheDocument()
+    expect(screen.getByText('暂无会话')).toBeInTheDocument()
+  })
+
   it('does not recreate a deleted session when its stream completes', async () => {
     const completeStream = createPendingStream()
     const user = userEvent.setup()

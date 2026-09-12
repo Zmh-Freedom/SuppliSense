@@ -321,3 +321,10 @@ def test_target_resolver_keeps_short_assessment_subject_for_identity_search():
 
     assert result.target_supplier_names == ["华为"]
     assert result.reason == "explicit_short_assessment_name"
+
+
+def test_target_resolver_keeps_short_analysis_subject_for_scope_check():
+    result = resolve_supplier_target_selection("分析华为的风险", [])
+
+    assert result.target_supplier_names == ["华为"]
+    assert result.reason == "explicit_short_analysis_name"

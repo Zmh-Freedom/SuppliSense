@@ -30,6 +30,25 @@ interface Session {
 
 const STORAGE_KEY = 'chat_sessions';
 
+/** Scope browser-only chat state to the authenticated account. */
+function storageScope(): string {
+  try {
+    const raw = localStorage.getItem('session');
+    const user = raw ? JSON.parse(raw) as { username?: string } : null;
+    const username = String(user?.username || '').trim();
+    return username || 'anonymous';
+  } catch {
+    return 'anonymous';
+  }
+}
+
+function scopedKey(base: string): string {
+  const scope = storageScope();
+  // The anonymous key is kept for isolated component tests and legacy local
+  // previews; authenticated sessions always use a per-user namespace.
+  return scope === 'anonymous' ? base : `${base}:${encodeURIComponent(scope)}`;
+}
+
 function createSessionId(): string {
   try {
     const randomUuid = globalThis.crypto?.randomUUID;
@@ -47,7 +66,7 @@ function agentFromTool(tool: string): string | null {
 
 function loadSessions(): Session[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(scopedKey(STORAGE_KEY));
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
@@ -55,7 +74,7 @@ function loadSessions(): Session[] {
 function saveSessions(sessions: Session[]) {
   // keep last 50 sessions max
   const trimmed = sessions.slice(-50);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+  localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify(trimmed));
 }
 
 type StreamState = ChatStreamViewState;
@@ -99,7 +118,7 @@ export default function ChatView() {
   const [input, setInput] = useState<string>(() => {
     const queryInput = searchParams.get('q');
     if (queryInput) return queryInput;
-    try { return localStorage.getItem('chat_input') || ''; } catch { return ''; }
+    try { return localStorage.getItem(scopedKey('chat_input')) || ''; } catch { return ''; }
   });
 
   useEffect(() => {
@@ -126,7 +145,7 @@ export default function ChatView() {
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     saveTimerRef.current = window.setTimeout(() => {
       try {
-        localStorage.setItem('chat_input', input);
+        localStorage.setItem(scopedKey('chat_input'), input);
       } catch {
         return;
       }

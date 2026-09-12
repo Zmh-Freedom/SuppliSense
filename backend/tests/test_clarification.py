@@ -90,6 +90,18 @@ class TestClarification:
         assert result is not None
         assert "不在你当前负责范围内" in result.message
 
+    def test_unknown_analysis_subject_is_stopped_before_risk_scoring(self, monkeypatch):
+        monkeypatch.setattr("app.domains.alert.service.get_watchlist_targets", lambda **_: [])
+        monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: False)
+
+        result = review_scope_clarification(
+            ["华为"], [], "user-1", "analyst", "分析华为的风险"
+        )
+
+        assert result is not None
+        assert "不能直接生成供应商风险评分" in result.message
+        assert "评估该企业风险" in result.message
+
     def test_external_assessment_requires_subject_confirmation(self, monkeypatch):
         class SearchTool:
             @staticmethod

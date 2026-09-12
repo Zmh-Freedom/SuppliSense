@@ -64,7 +64,16 @@ def review_scope_clarification(
     External enterprise assessment remains available through an explicit
     ``评估`` request; ``复核`` must refer to a monitored or formal supplier.
     """
-    if "复核" not in message or not target_names:
+    if not target_names:
+        return None
+    # Procurement review is intentionally fail-closed for every risk-analysis
+    # wording.  Only an explicit external-assessment request ("评估") may
+    # proceed through the separate identity-search flow below.
+    analysis_request = any(
+        token in str(message or "")
+        for token in ("复核", "分析", "风险", "评分", "财务", "舆情", "合规", "查询")
+    )
+    if not analysis_request or "评估" in str(message or ""):
         return None
 
     known_names: set[str] = set()
@@ -113,6 +122,15 @@ def review_scope_clarification(
             missing=["supplier_scope"],
         )
     if missing:
+        if "复核" not in str(message or ""):
+            return ClarificationNeeded(
+                message=(
+                    f"“{missing[0]}”不在当前责任范围的监控清单或正式供应商库中，"
+                    "因此不能直接生成供应商风险评分。若要调查外部企业，请改为“评估该企业风险”，"
+                    "系统会先搜索并确认主体。"
+                ),
+                missing=["formal_supplier_or_monitor_target"],
+            )
         return ClarificationNeeded(
             message=(
                 f"当前责任范围的监控清单和正式供应商库中均未找到“{missing[0]}”，因此无法按供应商复核流程分析。"

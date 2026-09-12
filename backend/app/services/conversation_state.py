@@ -105,6 +105,7 @@ def resolve_supplier_target_selection(
     explicit_company_names = _explicit_company_names(message)
     short_review_target = _short_review_target(message)
     short_assessment_target = _short_assessment_target(message)
+    short_analysis_target = _short_analysis_target(message)
     if not references:
         if explicit_company_names:
             return TargetResolution(explicit_company_names, 1.0, False, "explicit_full_name")
@@ -112,6 +113,8 @@ def resolve_supplier_target_selection(
             return TargetResolution([short_review_target], 0.9, False, "explicit_short_review_name")
         if short_assessment_target:
             return TargetResolution([short_assessment_target], 0.9, False, "explicit_short_assessment_name")
+        if short_analysis_target:
+            return TargetResolution([short_analysis_target], 0.85, False, "explicit_short_analysis_name")
         needs_clarification = _has_contextual_target_reference(message)
         return TargetResolution([], 0.0, needs_clarification, "missing_context")
 
@@ -128,6 +131,8 @@ def resolve_supplier_target_selection(
         return TargetResolution([short_review_target], 0.9, False, "explicit_short_review_name")
     if short_assessment_target:
         return TargetResolution([short_assessment_target], 0.9, False, "explicit_short_assessment_name")
+    if short_analysis_target:
+        return TargetResolution([short_analysis_target], 0.85, False, "explicit_short_analysis_name")
 
     names = [reference["name"] for reference in references]
     for token, limit in _ORDINAL_TARGETS:
@@ -172,6 +177,35 @@ def _short_assessment_target(message: str) -> str | None:
     if not 2 <= len(candidate) <= 30:
         return None
     if any(token in candidate for token in ("风险", "财务", "商务", "企业", "供应商", "公司", "前两家", "前三家", "前五家", "第一家", "这些", "上述")):
+        return None
+    if not all("一" <= char <= "鿿" or char.isascii() for char in candidate):
+        return None
+    return candidate
+
+
+def _short_analysis_target(message: str) -> str | None:
+    """Extract a short named subject from ``分析/查看`` risk questions.
+
+    This keeps an unknown short name (for example ``分析华为的风险``) visible
+    to the scope guard so it can stop before any generic risk fallback runs.
+    """
+    normalized = str(message or "").strip()
+    prefixes = ("分析", "查看", "查询", "看看", "帮我分析", "帮我看看")
+    prefix = next((item for item in prefixes if normalized.startswith(item)), None)
+    if not prefix:
+        return None
+    candidate = normalized[len(prefix):].strip(" ：:，,。？！!?\t")
+    for filler in ("一下", "下"):
+        if candidate.startswith(filler):
+            candidate = candidate[len(filler):].strip()
+            break
+    for trailing in ("的风险情况", "的风险", "风险情况", "风险", "的财务", "的舆情"):
+        if candidate.endswith(trailing):
+            candidate = candidate[: -len(trailing)].strip()
+            break
+    if not 2 <= len(candidate) <= 30:
+        return None
+    if candidate in {"一下", "下", "一下呢"} or any(token in candidate for token in ("我负责", "我管理", "监控清单", "供应商", "企业", "公司", "这些", "上述")):
         return None
     if not all("一" <= char <= "鿿" or char.isascii() for char in candidate):
         return None

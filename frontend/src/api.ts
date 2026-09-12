@@ -11,10 +11,28 @@ export function getStoredUser(): { username: string; role: string } | null {
 }
 
 export function setStoredUser(username: string, role: string): void {
+  // Never allow the pre-isolation global chat cache to become visible after a
+  // login. Authenticated ChatView instances use a username-scoped key.
+  localStorage.removeItem('chat_sessions');
+  localStorage.removeItem('chat_input');
   localStorage.setItem(SESSION_KEY, JSON.stringify({ username, role }));
 }
 
 export function clearStoredUser(): void {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    const user = raw ? JSON.parse(raw) as { username?: string } : null;
+    const username = String(user?.username || '').trim();
+    if (username) {
+      localStorage.removeItem(`chat_sessions:${encodeURIComponent(username)}`);
+      localStorage.removeItem(`chat_input:${encodeURIComponent(username)}`);
+    }
+  } catch {
+    // Continue clearing the auth marker even if local storage is malformed.
+  }
+  // Remove legacy unscoped values as a safety net for older browser sessions.
+  localStorage.removeItem('chat_sessions');
+  localStorage.removeItem('chat_input');
   localStorage.removeItem(SESSION_KEY);
 }
 
