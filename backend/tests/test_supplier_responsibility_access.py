@@ -12,6 +12,15 @@ def test_unlinked_user_has_no_formal_supplier_scope(monkeypatch):
     assert access.list_assigned_supplier_ids("user-1", "viewer") == set()
 
 
+def test_transient_user_id_fails_closed_before_uuid_query(monkeypatch):
+    def fail_if_called():
+        raise AssertionError("invalid user IDs must not reach PostgreSQL")
+
+    monkeypatch.setattr(access, "get_cursor", fail_if_called)
+
+    assert access.list_assigned_supplier_ids("browser-user", "purchaser") == set()
+
+
 def test_manager_scope_uses_department_and_purchaser_open_id(monkeypatch):
     captured = {}
 
