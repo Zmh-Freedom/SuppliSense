@@ -49,6 +49,26 @@ describe('MonitoringView', () => {
     expect(screen.getByText('低风险 85/100')).toHaveStyle({ color: '#2d8c63' });
   });
 
+  it('shows procurement wording for risk detail levels and priorities', async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes('/risk-detail')) return Promise.resolve({
+        monitor_target_id: 'monitor-1', company_name: '待核验候选有限公司', has_snapshot: true,
+        risk_change: { status: 'stable', label: '变化不明显' },
+        latest_snapshot: {
+          risk_score: 85, risk_level: 'low', scoring_version: 'v2', checked_at: '2026-09-12T10:00:00Z',
+          score_breakdown: { 舆情: { 原始分: 0, 数据状态: 'LLM 不可用' } }, risk_detail: {},
+        }, history: [{ risk_score: 85, risk_level: 'low' }],
+      });
+      if (path.includes('/identity-candidates')) return Promise.resolve({ monitor_target_id: 'monitor-1', query: '待核验候选有限公司', resolution: 'pending_verification', candidates: [] });
+      return Promise.resolve({});
+    });
+    renderView('/assess/monitor-1');
+
+    expect(await screen.findByText('低风险 · 85/100')).toBeInTheDocument();
+    expect(await screen.findByText('该维度暂未形成可用结论')).toBeInTheDocument();
+    expect(screen.queryByText('LLM 不可用')).not.toBeInTheDocument();
+  });
+
   it('investigates a supplier before adding it to monitoring', async () => {
     const user = userEvent.setup();
     vi.mocked(api.post).mockResolvedValueOnce({

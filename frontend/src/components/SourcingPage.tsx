@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
-import { getRiskColor } from '../riskColors';
+import { getRiskColor, getRiskLevelLabel } from '../riskColors';
 import type { SourcingRequestDetail, SourcingResultItem, SourcingRiskCandidate } from '../types';
 import SourcingRiskWorkbench from './SourcingRiskWorkbench';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
@@ -348,7 +348,7 @@ function SourcingResultCard({ result, watched, onWatch }: {
             {isHistoricalCandidate && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">历史合作候选</span>}
             {result.risk_level && result.risk_level !== 'unknown' && (
               <span className="text-xs px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: color }}>
-                {result.risk_level}
+                {getRiskLevelLabel(result.risk_level)}
               </span>
             )}
             {watched && <span className="text-xs text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded-full">已监控</span>}

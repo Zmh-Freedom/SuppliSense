@@ -2,13 +2,15 @@ import type { WSEventMap } from './types';
 
 type EventHandler<T = unknown> = (data: T) => void;
 
-class WSClient {
+export class WSClient {
   private ws: WebSocket | null = null;
   private handlers: Map<string, Set<EventHandler<unknown>>> = new Map();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
+  private reconnectEnabled = true;
 
   connect() {
+    this.reconnectEnabled = true;
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -34,7 +36,7 @@ class WSClient {
 
     this.ws.onclose = () => {
       this.ws = null;
-      this.scheduleReconnect();
+      if (this.reconnectEnabled) this.scheduleReconnect();
     };
 
     this.ws.onerror = () => {
@@ -66,6 +68,9 @@ class WSClient {
   }
 
   disconnect() {
+    // Closing a socket fires onclose asynchronously. Disable reconnects before
+    // closing so logout/unmount cannot schedule an anonymous retry.
+    this.reconnectEnabled = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

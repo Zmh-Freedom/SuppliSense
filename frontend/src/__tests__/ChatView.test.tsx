@@ -464,6 +464,31 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('净利润')).toBeInTheDocument()
   })
 
+  it('translates sourcing claim fields into procurement wording', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '已完成寻源候选整理。',
+        claims: [{
+          claim_id: 'sourcing-name', entity_id: 'candidate:1', dimension: 'sourcing',
+          statement: 'Supplier Name: 示例供应商', value: '示例供应商', fact_path: 'Supplier Name',
+          evidence_refs: ['sourcing-evidence'], confidence: 0.9, validation_status: 'supported', validation_reasons: [],
+        }],
+        limitations: [], action_proposals: [], action_receipts: [], evidence_refs: ['sourcing-evidence'],
+      })
+      handlers.onDone?.({ answer: '已完成寻源候选整理。' })
+      return '已完成寻源候选整理。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '寻找制动系统供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect((await screen.findAllByText('供应商名称')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Supplier Name')).not.toBeInTheDocument()
+  })
+
   it('turns supplier review evidence into findings, basis, and procurement checks', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({

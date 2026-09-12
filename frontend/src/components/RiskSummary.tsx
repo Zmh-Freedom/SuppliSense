@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { getRiskColor, getRiskBg } from '../riskColors';
+import { getRiskColor, getRiskBg, getRiskLevelLabel } from '../riskColors';
 
 export default function RiskSummary({
   score,
@@ -21,13 +21,14 @@ export default function RiskSummary({
   const normalizedScore = score ?? 0;
   const color = getRiskColor(normalizedScore);
   const bg = getRiskBg(normalizedScore);
-  if (compact) return <div className="flex flex-col items-center shrink-0"><div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md" style={{ background: color }}>{score == null ? '—' : normalizedScore}</div><span className="text-xs mt-1 font-semibold" style={{ color }}>{level || '未知'}</span></div>;
+  const readableLevel = getRiskLevelLabel(level);
+  if (compact) return <div className="flex flex-col items-center shrink-0"><div className="w-20 h-20 rounded-full flex items-center justify-center text-white text-2xl font-bold shadow-md" style={{ background: color }}>{score == null ? '—' : normalizedScore}</div><span className="text-xs mt-1 font-semibold" style={{ color }}>{readableLevel}</span></div>;
   return (
     <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm" style={{ background: bg }} aria-label="风险摘要">
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full text-lg font-bold text-white" style={{ background: color }}>{score == null ? '—' : normalizedScore}</div>
         <div className="min-w-[110px]">
-          <div className="text-lg font-semibold" style={{ color }}>{level || '未知'}</div>
+          <div className="text-lg font-semibold" style={{ color }}>{readableLevel}</div>
           <div className="mt-0.5 text-[10px] text-gray-500">安全评分 · 分数越高风险越低</div>
           <div className="mt-1 flex flex-wrap gap-1.5">
             {isListed && <span className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-gray-500">上市</span>}

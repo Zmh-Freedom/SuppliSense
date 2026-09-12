@@ -5,7 +5,7 @@ import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel } from '../riskColors';
+import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel, getRiskLevelLabel } from '../riskColors';
 import { useDashboard } from '../hooks';
 import { queryKeys } from '../query-keys';
 import type { Prediction } from '../types';
@@ -279,7 +279,7 @@ export default function Dashboard() {
                       </td>
                       <td className="px-3 py-3">
                         <span className="inline-flex rounded-full px-2 py-1 text-[11px] font-medium" style={{ color: riskColor, background: riskBg }}>
-                          {score == null ? '暂无快照' : `${target.risk_level || '未知'} ${score}/100`}
+                          {score == null ? '暂无快照' : `${getRiskLevelLabel(target.risk_level)} ${score}/100`}
                         </span>
                       </td>
                       <td className="px-3 py-3 text-[var(--color-text-secondary)]">

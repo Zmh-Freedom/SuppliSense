@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { MonitorTarget } from '../types';
-import { getRiskBg, getRiskBgForLevel, getRiskColor, getRiskColorForLevel } from '../riskColors';
+import { getRiskBg, getRiskBgForLevel, getRiskColor, getRiskColorForLevel, getRiskLevelLabel } from '../riskColors';
 
 interface CoverageSummary {
   status?: string;
@@ -226,7 +226,7 @@ export default function MonitoringWorkbench({
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full px-2 py-1 text-[11px] font-medium" style={{ color: risk.color, background: risk.background }}>
-                            {target.risk_score != null ? `${target.risk_level || '未知'} ${target.risk_score}/100` : '暂无风险快照'}
+                            {target.risk_score != null ? `${getRiskLevelLabel(target.risk_level)} ${target.risk_score}/100` : '暂无风险快照'}
                           </span>
                           <span className="rounded-full px-2 py-1 text-[11px]" style={{ color: trend.color, background: trend.background }}>
                             {target.risk_change?.label || '暂无数据'}{target.risk_change?.delta != null ? ` ${target.risk_change.delta > 0 ? '+' : ''}${target.risk_change.delta}` : ''}

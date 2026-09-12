@@ -26,6 +26,16 @@ const GROUP_TITLES: Record<string, string> = {
   rejected: '不建议采用',
 };
 
+const REASON_CODE_LABELS: Record<string, string> = {
+  capability_match: '能力匹配',
+  category_match: '品类匹配',
+  historical_supplier: '历史合作',
+  risk_evidence: '风险证据',
+  identity_verified: '主体已核验',
+  identity_pending: '主体待核验',
+  insufficient_evidence: '证据不足',
+};
+
 function candidateId(candidate: SourcingRiskCandidate): string {
   return String(candidate.id ?? candidate.candidate_id ?? candidate.company_id ?? candidate.supplier_id ?? candidate.supplier_name ?? candidate.name ?? 'candidate');
 }
@@ -133,7 +143,7 @@ function StageTimeline({ status }: { status: string }) {
 
 function DecisionGroup({ title, decisions, candidates }: { title: string; decisions: SourcingRiskDecision[]; candidates: SourcingRiskCandidate[] }) {
   const candidateByCompany = new Map(candidates.map(candidate => [String(candidate.company_id ?? candidateId(candidate)), candidate]));
-  return <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">{title}</h3>{decisions.map((decision, index) => { const candidate = candidateByCompany.get(String(decision.company_id ?? decision.candidate_id)) ?? { supplier_name: decision.company_id ?? '候选供应商' }; return <div key={`${decision.company_id ?? decision.candidate_id ?? index}`} className="space-y-2"><SourcingRiskCandidateCard candidate={candidate} /><div className="flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">{decision.final_score != null && <span>综合评分 {decision.final_score.toFixed(1)}</span>}{decision.confidence != null && <span>证据置信度 {(decision.confidence * 100).toFixed(0)}%</span>}{decision.reason_codes?.map(code => <span key={code} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-hover)]">{code}</span>)}</div></div>; })}</section>;
+  return <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">{title}</h3>{decisions.map((decision, index) => { const candidate = candidateByCompany.get(String(decision.company_id ?? decision.candidate_id)) ?? { supplier_name: decision.company_id ?? '候选供应商' }; return <div key={`${decision.company_id ?? decision.candidate_id ?? index}`} className="space-y-2"><SourcingRiskCandidateCard candidate={candidate} /><div className="flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">{decision.final_score != null && <span>综合评分 {decision.final_score.toFixed(1)}</span>}{decision.confidence != null && <span>证据置信度 {(decision.confidence * 100).toFixed(0)}%</span>}{decision.reason_codes?.map(code => <span key={code} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-hover)]">{REASON_CODE_LABELS[code] ?? code}</span>)}</div></div>; })}</section>;
 }
 
 export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?: string }) {

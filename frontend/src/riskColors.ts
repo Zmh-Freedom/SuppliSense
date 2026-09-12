@@ -23,16 +23,23 @@ export function getRiskLevel(score: number): string {
   return HIGH.label;
 }
 
+export function getRiskLevelLabel(level?: string | null): string {
+  const normalized = String(level || '').toLowerCase();
+  return ({ low: LOW.label, medium: MEDIUM.label, high: HIGH.label, critical: '严重风险', unknown: '暂无法判断' } as Record<string, string>)[normalized] || level || '暂无法判断';
+}
+
 export function getRiskColorForLevel(level?: string | null): string {
-  if (level === LOW.label) return LOW.color;
-  if (level === MEDIUM.label) return MEDIUM.color;
-  if (level === HIGH.label) return HIGH.color;
+  const normalized = getRiskLevelLabel(level);
+  if (normalized === LOW.label) return LOW.color;
+  if (normalized === MEDIUM.label) return MEDIUM.color;
+  if (normalized === HIGH.label || normalized === '严重风险') return HIGH.color;
   return '#737373';
 }
 
 export function getRiskBgForLevel(level?: string | null): string {
-  if (level === LOW.label) return LOW.bg;
-  if (level === MEDIUM.label) return MEDIUM.bg;
-  if (level === HIGH.label) return HIGH.bg;
+  const normalized = getRiskLevelLabel(level);
+  if (normalized === LOW.label) return LOW.bg;
+  if (normalized === MEDIUM.label) return MEDIUM.bg;
+  if (normalized === HIGH.label || normalized === '严重风险') return HIGH.bg;
   return '#f5f5f4';
 }

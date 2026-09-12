@@ -99,6 +99,17 @@ const FACT_LABELS: Record<string, string> = {
   positive_count: '正面信息数量',
   summary: '舆情摘要',
   resolution: '主体检索结果',
+  supplier_name: '供应商名称',
+  candidate_type: '候选类型',
+  match_score: '匹配度',
+  final_rank: '推荐度',
+  match_reason: '匹配依据',
+  risk_summary: '风险摘要',
+  source: '候选来源',
+  source_type: '数据来源',
+  industry: '所属行业',
+  categories: '主营品类',
+  capabilities: '供货能力',
 };
 
 const FACT_PATH_ALIASES: Record<string, string> = {

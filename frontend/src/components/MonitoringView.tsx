@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { useDashboard, useWatchlist } from '../hooks';
+import { getRiskLevelLabel } from '../riskColors';
 import type { MonitorIdentityResolution, MonitorIntake, MonitorIntakeConfirmation, MonitorReviewTask, MonitorRiskDetail, MonitorTarget } from '../types';
 import MonitoringWorkbench from './MonitoringWorkbench';
 import MonitoringIntakePanel from './MonitoringIntakePanel';
@@ -347,7 +348,7 @@ function MonitoringTargetDetail({
 }) {
   const coverage = coverageOf(target);
   const action = target.next_action;
-  const riskText = target.risk_score == null ? '暂无快照' : `${target.risk_level || '未知'} · ${target.risk_score}/100`;
+  const riskText = target.risk_score == null ? '暂无快照' : `${getRiskLevelLabel(target.risk_level)} · ${target.risk_score}/100`;
   return (
     <div className="space-y-5">
       <button type="button" onClick={onBack} className="text-sm text-[var(--color-primary-bg)] hover:underline">← 返回监控工作台</button>
@@ -377,7 +378,7 @@ function MonitoringTargetDetail({
 
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-[var(--color-text)]">数据覆盖与复核依据</h2><span className="text-xs text-gray-400">缺口不会被解释为稳定</span></div>{coverage.dimensions?.length ? <div className="divide-y divide-[var(--color-border)]">{coverage.dimensions.map(dimension => <div key={dimension.key} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><div><span className="font-medium text-[var(--color-text)]">{dimension.label}</span><span className="ml-2 text-xs text-gray-400">{dimension.detail}</span></div><span className={`rounded-full px-2 py-1 text-[11px] ${dimension.status === 'available' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{dimension.status === 'available' ? '可用' : '未覆盖'}</span></div>)}</div> : <p className="text-sm text-gray-400">暂无数据覆盖明细。</p>}</section>
 
-      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{action?.reason || '等待更多监控数据后再安排复核。'}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{action?.label || '继续观察'}</span><span>优先级：{action?.priority || 'low'}</span></div></section>
+      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{action?.reason || '等待更多监控数据后再安排复核。'}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{action?.label || '继续观察'}</span><span>优先级：{priorityLabel(action?.priority)}</span></div></section>
 
       <ReviewTaskPanel target={target} task={task} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} />
 
@@ -400,13 +401,14 @@ function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRis
       const evidence = details && Object.keys(details).length
         ? Object.entries(details).map(([label, value]) => `${label}：${String(value)}`).join('；')
         : String(data['数据状态'] || '本轮未发现该维度的可解释风险项');
+      const readableEvidence = readableRiskEvidence(evidence);
       const score = typeof data['归一化'] === 'number' ? data['归一化'] : data['原始分'];
-      const evidenceText = evidence.toLowerCase();
+      const evidenceText = readableEvidence.toLowerCase();
       const missing = score == null || ['待补充', '未覆盖', '暂无', '缺少', '未取得'].some(token => evidenceText.includes(token));
       return {
         dimension: RISK_DIMENSION_LABELS[dimension] || dimension,
         score: score == null ? '—' : String(score),
-        evidence,
+        evidence: readableEvidence,
         attention: missing ? '当前未覆盖' : Number(score) > 0 ? '需关注' : '当前未见异常信号',
       };
     });
@@ -417,12 +419,24 @@ function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRis
   const judicialRows = Object.keys(judicialLabels).map(key => ({ label: judicialLabels[key], status: judicialStatus?.[key] || 'not_queried', count: snapshot.risk_detail?.[judicialCounts[key]] }));
 
   return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-1 text-xs text-gray-400">本轮快照：{snapshot.checked_at ? new Date(snapshot.checked_at).toLocaleString('zh-CN', { hour12: false }) : '时间未知'} · 评分体系 {snapshot.scoring_version || '—'}</p></div><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{snapshot.risk_level || '未知'} · {snapshot.risk_score ?? '—'}/100</span></div>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-1 text-xs text-gray-400">本轮快照：{snapshot.checked_at ? new Date(snapshot.checked_at).toLocaleString('zh-CN', { hour12: false }) : '时间未知'} · 评分体系 {snapshot.scoring_version || '—'}</p></div><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{getRiskLevelLabel(snapshot.risk_level)} · {snapshot.risk_score ?? '—'}/100</span></div>
     <p className="mt-4 text-sm leading-6 text-[var(--color-text-secondary)]">本轮结论基于已关联的公开财务、司法与内部供应商数据形成。评分较低不表示无需关注：下表列出本轮被识别到的风险信号及其原始依据。</p>
     <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-[var(--color-border)] text-xs text-gray-500"><tr><th className="pb-2 pr-4 font-medium">风险维度</th><th className="pb-2 pr-4 font-medium">本轮得分</th><th className="pb-2 pr-4 font-medium">判断</th><th className="pb-2 font-medium">依据</th></tr></thead><tbody className="divide-y divide-[var(--color-border)]">{rows.map(row => <tr key={row.dimension} className="align-top"><td className="py-3 pr-4 font-medium text-[var(--color-text)]">{row.dimension}</td><td className="py-3 pr-4 text-[var(--color-text-secondary)]">{row.score}</td><td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-[11px] ${row.attention === '需关注' ? 'bg-amber-50 text-amber-800' : row.attention === '当前未覆盖' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.attention}</span></td><td className="py-3 leading-5 text-[var(--color-text-secondary)]">{row.evidence}</td></tr>)}</tbody></table></div>
-    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3"><h3 className="text-xs font-semibold text-slate-700">司法数据覆盖</h3><div className="mt-2 grid gap-2 sm:grid-cols-2">{judicialRows.map(row => { const statusLabel = row.status === 'has_records' ? `有记录（${typeof row.count === 'number' ? row.count : 0}条）` : row.status === 'no_records' ? '明确无记录' : row.status === 'query_failed' ? '查询失败' : '暂无数据'; const tone = row.status === 'has_records' ? 'text-amber-700' : row.status === 'no_records' ? 'text-emerald-700' : 'text-gray-500'; return <div key={row.label} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs"><span className="text-slate-600">{row.label}</span><span className={tone}>{statusLabel}</span></div>; })}</div></div>
+    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3"><h3 className="text-xs font-semibold text-slate-700">司法数据覆盖</h3><div className="mt-2 grid gap-2 sm:grid-cols-2">{judicialRows.map(row => { const statusText = row.status === 'has_records' ? `有记录（${typeof row.count === 'number' ? row.count : 0}条）` : row.status === 'no_records' ? '明确无记录' : row.status === 'query_failed' ? '查询失败' : '暂无数据'; const tone = row.status === 'has_records' ? 'text-amber-700' : row.status === 'no_records' ? 'text-emerald-700' : 'text-gray-500'; return <div key={row.label} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs"><span className="text-slate-600">{row.label}</span><span className={tone}>{statusText}</span></div>; })}</div></div>
     {singleSnapshot && <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">目前仅有 1 条风险快照，因此系统只能展示本轮结论，尚不能判断风险是在改善、恶化还是保持稳定。</p>}
   </section>;
+}
+
+function priorityLabel(priority?: string | null): string {
+  const normalized = String(priority || '').toLowerCase();
+  return ({ high: '高', medium: '中', low: '低' } as Record<string, string>)[normalized] || '未设置';
+}
+
+function readableRiskEvidence(value: string): string {
+  return value
+    .replace(/LLM\s*不可用/gi, '该维度暂未形成可用结论')
+    .replace(/LLM\s*(?:unavailable|failed|error)/gi, '该维度暂未形成可用结论')
+    .replace(/\b(?:low|medium|high|critical)\s+priority\b/gi, '采购复核优先级');
 }
 
 function taskStatusLabel(status?: string): string {

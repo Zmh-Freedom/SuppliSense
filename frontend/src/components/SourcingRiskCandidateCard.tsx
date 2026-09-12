@@ -1,4 +1,5 @@
 import type { SourcingRiskCandidate, SourcingRiskEvidence } from '../types';
+import { getRiskLevelLabel } from '../riskColors';
 
 const IDENTITY_STATUS_LABELS: Record<string, string> = {
   exact: '主体已确认',
@@ -32,7 +33,7 @@ export default function SourcingRiskCandidateCard({ candidate, evidence, onVerif
         <span className="text-[10px] shrink-0 rounded-full px-2 py-0.5 bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]">{source}</span>
       </div>
       {candidate.identity_status && <p className="text-xs text-[var(--color-text-secondary)]">主体状态：{IDENTITY_STATUS_LABELS[candidate.identity_status] ?? '待确认'}</p>}
-      {candidate.risk_score != null && <p className="text-xs text-[var(--color-text-secondary)]">天眼查风险复核：{candidate.risk_level || '未知'} {candidate.risk_score}/100</p>}
+      {candidate.risk_score != null && <p className="text-xs text-[var(--color-text-secondary)]">天眼查风险复核：{getRiskLevelLabel(candidate.risk_level)} {candidate.risk_score}/100</p>}
       {(candidate.industry || candidate.categories?.length || candidate.capabilities?.length) && (
         <div className="space-y-1 text-xs text-[var(--color-text-secondary)]">
           {candidate.industry && <p>行业：{candidate.industry}</p>}
