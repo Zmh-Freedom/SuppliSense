@@ -34,6 +34,23 @@ def test_parse_requirement_requests_clarification_when_specification_is_missing(
     }
 
 
+def test_parse_requirement_uses_deterministic_historical_supplier_fallback(monkeypatch):
+    """Historical-supplier wording must not be blocked by an incomplete LLM extraction."""
+    monkeypatch.setattr(
+        requirement_service,
+        "extract_requirement",
+        lambda *_: {"category": None, "specification": None},
+    )
+
+    result = requirement_service.parse_requirement(
+        "后轮制动鼓有哪些历史合作供应商？再补充盖世候选"
+    )
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "后轮制动鼓"
+    assert result["requirement"]["specification"] == "后轮制动鼓"
+
+
 def test_parse_requirement_repairs_invalid_llm_output_once(monkeypatch):
     """Removing the single repair attempt would reject valid corrected JSON."""
     monkeypatch.setattr(

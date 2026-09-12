@@ -98,6 +98,22 @@ def missing_requirement_fields(requirement: dict[str, Any]) -> list[str]:
 def parse_requirement(raw_text: str, provided: dict | None = None) -> dict:
     """Extract, validate once, and route incomplete requirements to clarification."""
     provided_values = provided or {}
+
+    # Keep the durable V2 run aligned with the active Harness resolver for the
+    # two unambiguous sourcing forms that must never depend on model wording:
+    # material-number lookups and historical-supplier questions.  Rich free
+    # text still goes through the constrained LLM extractor below.
+    deterministic = _deterministic_requirement_from_text(raw_text, provided_values)
+    if deterministic is not None:
+        try:
+            requirement = SourcingRequirement.model_validate(deterministic)
+        except ValidationError:
+            # Explicit fields can still be invalid; let the normal repair path
+            # report the actual validation errors instead of masking them.
+            pass
+        else:
+            return _validated_result(requirement)
+
     try:
         candidate = _extract_candidate(raw_text, provided_values)
     except (TypeError, ValueError) as exc:
@@ -112,6 +128,18 @@ def parse_requirement(raw_text: str, provided: dict | None = None) -> dict:
         return _repair_or_clarify(raw_text, provided_values, exc.errors())
 
     return _validated_result(requirement)
+
+
+def _deterministic_requirement_from_text(
+    raw_text: str, provided: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Return only deterministic forms shared with the Harness resolver."""
+    if not (_MATERIAL_NUMBER_PATTERN.search(raw_text or "") or _HISTORICAL_SUPPLIER_PATTERN.search(raw_text or "")):
+        return None
+    fallback = _fallback_requirement_from_text(raw_text)
+    if not fallback:
+        return None
+    return {**fallback, **provided}
 
 
 def resolve_harness_requirement(

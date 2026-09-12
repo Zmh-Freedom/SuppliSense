@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { useSourcingRiskRun } from '../hooks/useSourcingRiskRun';
 import { queryKeys } from '../query-keys';
-import type { SourcingRiskCandidate, SourcingRiskDecision } from '../types';
+import type { SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskRequirement } from '../types';
 import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
 import AgentExecutionTrace from './AgentExecutionTrace';
@@ -59,6 +59,66 @@ function IdentityReviewCard({ runId, version, candidates }: { runId: string; ver
   );
 }
 
+const CLARIFICATION_LABELS: Record<string, { label: string; placeholder: string }> = {
+  category: { label: '采购品类', placeholder: '例如：制动系统、电子元器件' },
+  specification: { label: '物料或规格', placeholder: '例如：后轮制动鼓、IP67 工业摄像头' },
+};
+
+function ClarificationCard({
+  runId,
+  version,
+  requirement,
+  missingFields,
+}: {
+  runId: string;
+  version: number;
+  requirement: SourcingRiskRequirement;
+  missingFields: string[];
+}) {
+  const queryClient = useQueryClient();
+  const fields = missingFields.length > 0 ? missingFields : ['category', 'specification'];
+  const [answers, setAnswers] = useState<Record<string, string>>(() => Object.fromEntries(
+    fields.map(field => [field, String(requirement[field] ?? '')]),
+  ));
+  const clarify = useMutation({
+    mutationFn: () => api.post(`/agent-runs/${encodeURIComponent(runId)}/clarification`, {
+      expected_version: version,
+      answers,
+    }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(runId) }),
+  });
+  const canSubmit = fields.every(field => String(answers[field] ?? '').trim());
+
+  return (
+    <section className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-4">
+      <div>
+        <h3 className="font-semibold text-amber-900">请补充寻源条件</h3>
+        <p className="text-xs text-amber-800 mt-1">已有条件不足以安全比较供应商，补充后将继续当前任务。</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map(field => {
+          const config = CLARIFICATION_LABELS[field] ?? { label: field, placeholder: '请输入采购条件' };
+          return (
+            <label key={field} className="text-xs text-amber-900">
+              <span className="mb-1 block font-medium">{config.label}</span>
+              <input
+                value={answers[field] ?? ''}
+                onChange={event => setAnswers(current => ({ ...current, [field]: event.target.value }))}
+                placeholder={config.placeholder}
+                className="w-full rounded-lg border border-amber-200 px-3 py-2 text-sm bg-white text-[var(--color-text)]"
+              />
+            </label>
+          );
+        })}
+      </div>
+      <button type="button" disabled={!canSubmit || clarify.isPending} onClick={() => clarify.mutate()} className="text-sm rounded-xl bg-amber-700 text-white px-4 py-2 disabled:opacity-50">
+        {clarify.isPending ? '继续处理中…' : '继续寻源'}
+      </button>
+      {clarify.isError && <p className="text-xs text-red-600">提交失败，请刷新任务后重试。</p>}
+    </section>
+  );
+}
+
 function StageTimeline({ status }: { status: string }) {
   const currentIndex = STAGES.findIndex(([stage]) => stage === status);
   if (currentIndex < 0) return <p className="text-xs text-amber-700">未知阶段：{status}</p>;
@@ -75,6 +135,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
   const [activeRunId, setActiveRunId] = useState(initialRunId);
   const { data: run, isLoading, error, createRun, traceEvents } = useSourcingRiskRun(activeRunId);
   const isIdentityReview = run?.status === 'IDENTITY_REVIEW' || run?.next_action === 'identity_review_required';
+  const isClarifying = run?.status === 'CLARIFYING' || run?.next_action === 'clarification_required';
   const decisionsByGroup = useMemo(() => {
     const groups = new Map<string, SourcingRiskDecision[]>();
     for (const decision of run?.decisions ?? []) groups.set(decision.group, [...(groups.get(decision.group) ?? []), decision]);
@@ -83,6 +144,13 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
   const proposals = (run?.proposals ?? run?.action_proposals ?? []).filter(
     proposal => proposal.action_type === 'add_watchlist',
   );
+  const openChatForCandidate = (candidate: SourcingRiskCandidate, action: 'risk' | 'watchlist') => {
+    const name = candidateName(candidate);
+    const prompt = action === 'risk'
+      ? `请核验候选供应商“${name}”的主体，并继续进行风险检查`
+      : `请将候选供应商“${name}”加入风险监控清单，先完成主体核验并在写入前请求审批`;
+    window.location.assign(`/chat?q=${encodeURIComponent(prompt)}`);
+  };
   const runId = run?.id ?? run?.run_id ?? activeRunId;
 
   const submitRequirement = () => {
@@ -102,8 +170,8 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     {run && runId && <>
       <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}</div><span className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{run.status}</span></div><StageTimeline status={run.status} /></section>
       <AgentExecutionTrace events={traceEvents} />
-      {isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
-        {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} />)}</section>}
+      {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
+        {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} onContinueRisk={() => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={() => openChatForCandidate(candidate, 'watchlist')} />)}</section>}
         {[...decisionsByGroup.entries()].map(([group, decisions]) => <DecisionGroup key={group} title={GROUP_TITLES[group] ?? group} decisions={decisions} candidates={run.candidates ?? []} />)}
         {proposals.length > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">操作审批</h3>{proposals.map(proposal => <SourcingRiskApprovalCard key={proposal.id} proposal={proposal} runId={runId} runVersion={run.version} />)}</section>}
       </>}

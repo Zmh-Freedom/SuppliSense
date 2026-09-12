@@ -612,6 +612,7 @@ export interface SourcingRiskAgentRun {
   approvals?: SourcingRiskApproval[];
   raw_payload_statuses?: SourcingRiskRawPayloadStatus[];
   next_action?: string | null;
+  missing_fields?: string[];
   error_code?: string | null;
 }
 

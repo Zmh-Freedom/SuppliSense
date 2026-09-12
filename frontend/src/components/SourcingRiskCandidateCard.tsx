@@ -10,7 +10,7 @@ function EvidenceLabels({ evidence }: { evidence: SourcingRiskEvidence[] }) {
   return labels.length > 0 ? <div className="flex flex-wrap gap-1">{[...new Set(labels)].map(label => <span key={label} className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700">{label}</span>)}</div> : null;
 }
 
-export default function SourcingRiskCandidateCard({ candidate, evidence, onVerify, verifying = false }: { candidate: SourcingRiskCandidate; evidence?: SourcingRiskEvidence[]; onVerify?: () => void; verifying?: boolean }) {
+export default function SourcingRiskCandidateCard({ candidate, evidence, onVerify, onContinueRisk, onAddToWatchlist, verifying = false }: { candidate: SourcingRiskCandidate; evidence?: SourcingRiskEvidence[]; onVerify?: () => void; onContinueRisk?: () => void; onAddToWatchlist?: () => void; verifying?: boolean }) {
   const name = candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
   const source = candidate.source === 'gasgoo_manual_export'
     ? '盖世人工候选'
@@ -46,6 +46,12 @@ export default function SourcingRiskCandidateCard({ candidate, evidence, onVerif
         <button type="button" onClick={onVerify} disabled={verifying} className="w-fit rounded-lg border border-[var(--color-primary-bg)] px-2.5 py-1 text-xs font-medium text-[var(--color-primary-bg)] disabled:opacity-50">
           {verifying ? '天眼查核验中…' : '核验主体与风险'}
         </button>
+      )}
+      {(onContinueRisk || onAddToWatchlist) && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {onContinueRisk && <button type="button" onClick={onContinueRisk} className="rounded-lg border border-[var(--color-primary-bg)] px-2.5 py-1 text-xs font-medium text-[var(--color-primary-bg)]">继续风险核验</button>}
+          {onAddToWatchlist && <button type="button" onClick={onAddToWatchlist} className="rounded-lg border border-amber-600 px-2.5 py-1 text-xs font-medium text-amber-700">申请加入监控</button>}
+        </div>
       )}
       {candidate.source_updated_at && <p className="text-[10px] text-[var(--color-text-secondary)]">数据更新时间：{String(candidate.source_updated_at).slice(0, 10)}</p>}
       <EvidenceLabels evidence={candidateEvidence} />

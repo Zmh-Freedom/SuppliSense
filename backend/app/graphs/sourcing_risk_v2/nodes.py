@@ -24,7 +24,7 @@ from app.domains.sourcing_risk.evidence_service import (
 )
 from app.domains.sourcing_risk.identity_service import resolve_candidate_identity
 from app.domains.sourcing_risk.policy_service import freeze_policy_snapshot
-from app.domains.sourcing_risk.requirement_service import parse_requirement
+from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
 
 from app.graphs.sourcing_risk_v2.state import SourcingRiskGraphState
 from app.graphs.sourcing_risk_v2.trace import record_graph_trace
@@ -35,6 +35,16 @@ PROVIDER_DIMENSIONS = ("financial", "judicial", "sentiment", "sanctions", "esg",
 PROVIDER_MAX_CONCURRENCY = 6
 _provider_semaphore: asyncio.Semaphore | None = None
 _provider_semaphore_loop: asyncio.AbstractEventLoop | None = None
+
+
+def parse_requirement(raw_text: str, provided: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Compatibility seam backed by the active Harness requirement resolver.
+
+    Keeping the old symbol preserves graph test seams while ensuring the V2
+    workbench and chat use exactly one extraction and deterministic fallback
+    policy.
+    """
+    return resolve_harness_requirement(raw_text, provided)
 
 
 def append_typed_event(run_id: str, event_type: str, payload: dict[str, Any]) -> int | None:

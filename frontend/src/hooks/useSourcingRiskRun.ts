@@ -21,6 +21,11 @@ function applyEvent(run: SourcingRiskAgentRun, event: AgentRunEvent): SourcingRi
     ...run,
     ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
     ...(typeof payload.version === 'number' ? { version: payload.version } : {}),
+    ...(Array.isArray(payload.missing)
+      ? { missing_fields: payload.missing.filter(item => typeof item === 'string') as string[] }
+      : Array.isArray(payload.missing_fields)
+        ? { missing_fields: payload.missing_fields.filter(item => typeof item === 'string') as string[] }
+        : {}),
     ...(Array.isArray(payload.candidates) ? { candidates: payload.candidates as SourcingRiskAgentRun['candidates'] } : {}),
     ...(Array.isArray(payload.decisions) ? { decisions: payload.decisions as SourcingRiskAgentRun['decisions'] } : {}),
     ...(Array.isArray(payload.proposals) ? { proposals: payload.proposals as SourcingRiskAgentRun['proposals'] } : {}),
@@ -30,6 +35,9 @@ function applyEvent(run: SourcingRiskAgentRun, event: AgentRunEvent): SourcingRi
     ...(typeof payload.evidence_reviews === 'object' && payload.evidence_reviews !== null
       ? { evidence_reviews: payload.evidence_reviews as SourcingRiskAgentRun['evidence_reviews'] } : {}),
     ...(Array.isArray(payload.approvals) ? { approvals: payload.approvals as SourcingRiskAgentRun['approvals'] } : {}),
+    ...(event.eventType === 'clarification'
+      ? { status: 'CLARIFYING', next_action: 'clarification_required' }
+      : {}),
     ...(event.eventType === 'identity_review' ? { status: 'IDENTITY_REVIEW', next_action: 'identity_review_required' } : {}),
   };
 }

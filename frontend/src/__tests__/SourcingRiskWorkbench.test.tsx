@@ -22,6 +22,14 @@ const proposal = {
   payload: { company_name: '示例供应商' },
 };
 
+const clarificationRun = {
+  id: 'run-clarify',
+  status: 'CLARIFYING',
+  version: 2,
+  requirement: { requirement_text: '寻找制动系统供应商' },
+  missing_fields: ['category', 'specification'],
+};
+
 function renderWithQueryClient(node: React.ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -47,6 +55,27 @@ describe('SourcingRiskWorkbench', () => {
 
     expect(await screen.findByText('请确认企业主体')).toBeInTheDocument();
     expect(screen.queryByText('推荐供应商')).not.toBeInTheDocument();
+  });
+
+  it('shows missing sourcing fields and resumes the same run', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/agent-runs/run-clarify')) return Response.json(clarificationRun);
+      if (String(input).endsWith('/agent-runs/run-clarify/clarification')) return Response.json({ ...clarificationRun, status: 'CREATED', version: 3 });
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-clarify" />);
+
+    expect(await screen.findByText('请补充寻源条件')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('例如：制动系统、电子元器件'), { target: { value: '制动系统' } });
+    fireEvent.change(screen.getByPlaceholderText('例如：后轮制动鼓、IP67 工业摄像头'), { target: { value: '后轮制动鼓' } });
+    fireEvent.click(screen.getByRole('button', { name: '继续寻源' }));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/agent-runs/run-clarify/clarification'),
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining('"category":"制动系统"') }),
+    ));
   });
 
   it('sends the canonical approval decision URL, expected_version, and comment', async () => {

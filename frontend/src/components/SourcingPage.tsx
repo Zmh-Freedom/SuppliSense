@@ -53,12 +53,16 @@ export default function SourcingPage() {
     setExternalFailures([]);
     setSteps([{ label: '检索中', done: false }, { label: '评估中', done: false }, { label: '排序中', done: false }]);
 
-    const token = localStorage.getItem('token') || '';
     try {
       const res = await fetch(`/api/v1/sourcing/requests/${requestId}/search`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
+
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(typeof detail?.detail === 'string' ? detail.detail : `搜索请求失败（${res.status}）`);
+      }
 
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No stream');
