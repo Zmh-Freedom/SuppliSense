@@ -27,4 +27,15 @@ describe('auth helpers', () => {
     expect(getStoredUser()).toBeNull()
     expect(isAuthenticated()).toBe(false)
   })
+
+  it('clears only the current account chat cache on logout', () => {
+    setStoredUser('xiaoli.meng', 'purchaser')
+    localStorage.setItem('chat_sessions:xiaoli.meng', 'current')
+    localStorage.setItem('chat_sessions:minhao.zhou', 'other')
+
+    clearStoredUser()
+
+    expect(localStorage.getItem('chat_sessions:xiaoli.meng')).toBeNull()
+    expect(localStorage.getItem('chat_sessions:minhao.zhou')).toBe('other')
+  })
 })
