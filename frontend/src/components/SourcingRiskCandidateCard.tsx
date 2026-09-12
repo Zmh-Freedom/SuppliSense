@@ -1,5 +1,12 @@
 import type { SourcingRiskCandidate, SourcingRiskEvidence } from '../types';
 
+const IDENTITY_STATUS_LABELS: Record<string, string> = {
+  exact: '主体已确认',
+  candidates: '存在多个主体候选，待选择',
+  pending_verification: '主体待人工确认',
+  verified: '主体已确认',
+};
+
 function EvidenceLabels({ evidence }: { evidence: SourcingRiskEvidence[] }) {
   const labels = evidence.flatMap(item => {
     const values: string[] = [];
@@ -24,7 +31,7 @@ export default function SourcingRiskCandidateCard({ candidate, evidence, onVerif
         <h4 className="font-semibold text-sm text-[var(--color-text)]">{name}</h4>
         <span className="text-[10px] shrink-0 rounded-full px-2 py-0.5 bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]">{source}</span>
       </div>
-      {candidate.identity_status && <p className="text-xs text-[var(--color-text-secondary)]">主体状态：{candidate.identity_status}</p>}
+      {candidate.identity_status && <p className="text-xs text-[var(--color-text-secondary)]">主体状态：{IDENTITY_STATUS_LABELS[candidate.identity_status] ?? '待确认'}</p>}
       {candidate.risk_score != null && <p className="text-xs text-[var(--color-text-secondary)]">天眼查风险复核：{candidate.risk_level || '未知'} {candidate.risk_score}/100</p>}
       {(candidate.industry || candidate.categories?.length || candidate.capabilities?.length) && (
         <div className="space-y-1 text-xs text-[var(--color-text-secondary)]">

@@ -10,6 +10,38 @@ const TASK_LABELS: Record<string, string> = {
   completed: '已完成', failed: '失败', pending: '待执行', running: '执行中',
 };
 
+const TRACE_KEY_LABELS: Record<string, string> = {
+  run_id: '任务编号', status: '处理阶段', stage: '处理阶段', count: '数量',
+  source: '来源', source_stage: '来源阶段', provider: '数据服务',
+  pending_review_ids: '待复核候选', failed_dimensions: '未完成维度',
+  missing_requirements: '缺少条件', conflicting_requirements: '冲突条件',
+  checksum: '规则校验码', node: '处理环节', task_count: '子任务数量', task_ids: '处理事项',
+  target_supplier_names: '供应商范围', analysis_dimensions: '分析范围', stop_reason: '结束原因',
+  tool_call_count: '查询次数', iteration: '补全轮次', max_iterations: '最多轮次',
+};
+
+const TRACE_VALUE_LABELS: Record<string, string> = {
+  CREATED: '已创建', CLARIFYING: '等待补充寻源条件', POLICY_LOCKED: '规则已锁定',
+  LOCAL_SEARCHING: '正在检索本地候选', EXTERNAL_REVIEW: '外部候选待核验',
+  IDENTITY_RESOLVING: '正在核验企业主体', IDENTITY_REVIEW: '等待确认企业主体',
+  INVESTIGATING: '正在调查风险证据', EVIDENCE_REVIEW: '等待复核风险证据',
+  SCORING: '正在形成候选决策', READY_FOR_REVIEW: '等待采购复核',
+  ACTION_PENDING: '等待操作审批', ACTION_EXECUTING: '正在执行批准操作',
+  COMPLETED: '已完成', PARTIAL: '部分完成', NEEDS_REVIEW: '需要人工复核',
+  ACTION_FAILED: '操作失败', FAILED: '任务失败', CANCELLED: '已取消',
+  evidence_sufficient: '证据已足够', no_remediation_spec: '没有可执行补救方案',
+  load_run: '读取寻源任务', parse_requirement: '解析寻源条件', local_discovery: '检索历史合作候选',
+  external_discovery: '检索外部候选', identity: '主体身份', risk: '风险', esg: '可持续性',
+};
+
+function traceKeyLabel(key: string): string {
+  return TRACE_KEY_LABELS[key] ?? key;
+}
+
+function traceValueLabel(value: string): string {
+  return TRACE_VALUE_LABELS[value] ?? value;
+}
+
 function asText(value: unknown): string | null {
   return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
 }
@@ -25,8 +57,8 @@ function safeSummary(data: Record<string, unknown>): string[] {
     .filter(([key]) => !PRIVATE_KEYS.has(key.toLowerCase()))
     .flatMap(([key, value]) => {
       const text = asText(value);
-      if (text !== null && text) return [`${key}：${text}`];
-      if (Array.isArray(value) && value.length > 0) return [`${key}：${valueList(value).join('、')}`];
+      if (text !== null && text) return [`${traceKeyLabel(key)}：${traceValueLabel(text)}`];
+      if (Array.isArray(value) && value.length > 0) return [`${traceKeyLabel(key)}：${valueList(value).map(traceValueLabel).join('、')}`];
       return [];
     })
     .slice(0, 4);
@@ -63,7 +95,7 @@ function executionScope(events: AgentTraceEvent[]): { targets: string[]; dimensi
       for (const value of Array.isArray(event.data[key]) ? valueList(event.data[key]) : [asText(event.data[key])].filter((item): item is string => item !== null)) dimensions.add(value);
     }
   }
-  return { targets: [...targets].slice(-6), dimensions: [...dimensions].slice(-6) };
+  return { targets: [...targets].slice(-6), dimensions: [...dimensions].slice(-6).map(traceValueLabel) };
 }
 
 function issueSummary(events: AgentTraceEvent[]): string[] {
@@ -73,7 +105,7 @@ function issueSummary(events: AgentTraceEvent[]): string[] {
     if (event.kind === 'subtask_failed') issues.push(`子任务未完成：${asText(data.task_id) ?? '未命名任务'}`);
     for (const field of ['failed_dimensions', 'missing_requirements', 'conflicting_requirements']) {
       const items = valueList(data[field]);
-      if (items.length > 0) issues.push(`${field}：${items.join('、')}`);
+      if (items.length > 0) issues.push(`${traceKeyLabel(field)}：${items.map(traceValueLabel).join('、')}`);
     }
     if (event.kind === 'validator_completed' && data.can_recommend === false) {
       issues.push(`证据校验未达到推荐门槛${asText(data.stop_reason) ? `：${asText(data.stop_reason)}` : ''}`);
@@ -108,8 +140,8 @@ export default function AgentExecutionTrace({ events }: { events: AgentTraceEven
       {progress.taskIds.length > 0 && <div className="flex flex-wrap gap-1.5">{progress.taskIds.map(taskId => <span key={taskId} className="rounded-md bg-[var(--color-surface-hover)] px-2 py-1 text-xs text-[var(--color-text-secondary)]">{taskId} · {TASK_LABELS[progress.statuses.get(taskId) ?? 'pending'] ?? '待执行'}</span>)}</div>}
     </div>
     {(scope.targets.length > 0 || scope.dimensions.length > 0) && <div className="grid gap-2 sm:grid-cols-2"><div className="rounded-xl border border-[var(--color-border)] p-3"><p className="text-xs font-medium text-[var(--color-text)]">当前目标企业</p><p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{scope.targets.length > 0 ? scope.targets.join('、') : '事件尚未提供企业范围'}</p></div><div className="rounded-xl border border-[var(--color-border)] p-3"><p className="text-xs font-medium text-[var(--color-text)]">分析维度</p><p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{scope.dimensions.length > 0 ? scope.dimensions.join('、') : '事件尚未提供分析维度'}</p></div></div>}
-    {latestLoop && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-hover)] p-3 text-xs text-[var(--color-text-secondary)]"><p className="font-medium text-[var(--color-text)]">证据补全循环</p><p className="mt-1 leading-5">第 {asText(loopData.iteration) ?? '0'} / {asText(loopData.max_iterations) ?? '0'} 轮，工具调用 {asText(loopData.tool_call_count) ?? '0'} 次{asText(loopData.stop_reason) ? `；停止原因：${asText(loopData.stop_reason)}` : ''}</p></div>}
+    {latestLoop && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-hover)] p-3 text-xs text-[var(--color-text-secondary)]"><p className="font-medium text-[var(--color-text)]">证据补全循环</p><p className="mt-1 leading-5">第 {asText(loopData.iteration) ?? '0'} / {asText(loopData.max_iterations) ?? '0'} 轮，工具调用 {asText(loopData.tool_call_count) ?? '0'} 次{asText(loopData.stop_reason) ? `；停止原因：${traceValueLabel(asText(loopData.stop_reason)!)}` : ''}</p></div>}
     {issues.length > 0 && <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-medium text-amber-900">需要关注</p><ul className="mt-1 space-y-1 text-xs leading-5 text-amber-800">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul></div>}
-    <ol className="space-y-2" aria-live="polite">{events.slice(-12).reverse().map(event => <li key={event.eventId} className="rounded-xl border border-[var(--color-border)] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-[var(--color-text)]">{event.message}</p><span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)]">{event.status}</span></div><p className="mt-1 text-xs text-[var(--color-text-secondary)]">{event.source === 'agent_trace' ? 'Agent 任务事件' : '工作流节点事件'}{event.atMs !== undefined ? ` · ${Math.round(event.atMs)} ms` : ''}</p>{safeSummary(event.data).length > 0 && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{safeSummary(event.data).join('；')}</p>}</li>)}</ol>
+    <ol className="space-y-2" aria-live="polite">{events.slice(-12).reverse().map(event => <li key={event.eventId} className="rounded-xl border border-[var(--color-border)] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-[var(--color-text)]">{event.message}</p><span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)]">{traceValueLabel(event.status)}</span></div><p className="mt-1 text-xs text-[var(--color-text-secondary)]">{event.source === 'agent_trace' ? 'Agent 任务事件' : '工作流节点事件'}{event.atMs !== undefined ? ` · ${Math.round(event.atMs)} ms` : ''}</p>{safeSummary(event.data).length > 0 && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{safeSummary(event.data).join('；')}</p>}</li>)}</ol>
   </section>;
 }

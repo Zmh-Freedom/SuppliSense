@@ -19,9 +19,9 @@ describe('AgentExecutionTrace', () => {
 
     expect(screen.getByText('任务矩阵：0/2')).toBeInTheDocument();
     expect(screen.getByText('示例供应商')).toBeInTheDocument();
-    expect(screen.getByText('risk、esg')).toBeInTheDocument();
-    expect(screen.getByText('第 1 / 2 轮，工具调用 3 次；停止原因：evidence_sufficient')).toBeInTheDocument();
-    expect(screen.getAllByText('missing_requirements：风险证据')).toHaveLength(2);
+    expect(screen.getByText(/分析范围：风险、可持续性/)).toBeInTheDocument();
+    expect(screen.getByText('第 1 / 2 轮，工具调用 3 次；停止原因：证据已足够')).toBeInTheDocument();
+    expect(screen.getAllByText('缺少条件：风险证据')).toHaveLength(2);
     expect(screen.getByText('工作流节点事件 · 42 ms')).toBeInTheDocument();
     expect(screen.queryByText('must never be shown')).not.toBeInTheDocument();
   });

@@ -17,6 +17,8 @@ const STAGES = [
   ['NEEDS_REVIEW', '需要人工复核'], ['ACTION_FAILED', '操作执行失败'], ['FAILED', '任务失败'], ['CANCELLED', '已取消'],
 ] as const;
 
+const STATUS_LABELS: Record<string, string> = Object.fromEntries(STAGES);
+
 const GROUP_TITLES: Record<string, string> = {
   recommended: '推荐供应商',
   alternative: '备选供应商',
@@ -30,6 +32,10 @@ function candidateId(candidate: SourcingRiskCandidate): string {
 
 function candidateName(candidate: SourcingRiskCandidate): string {
   return candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
+}
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? '处理中';
 }
 
 function IdentityReviewCard({ runId, version, candidates }: { runId: string; version: number; candidates: SourcingRiskCandidate[] }) {
@@ -168,7 +174,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     {isLoading && <p className="text-sm text-[var(--color-text-secondary)]">正在加载任务…</p>}
     {error && <p className="text-sm text-red-500">任务加载失败，请稍后重试。</p>}
     {run && runId && <>
-      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}</div><span className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{run.status}</span></div><StageTimeline status={run.status} /></section>
+      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}</div><span className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{statusLabel(run.status)}</span></div><StageTimeline status={run.status} /></section>
       <AgentExecutionTrace events={traceEvents} />
       {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
         {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} onContinueRisk={() => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={() => openChatForCandidate(candidate, 'watchlist')} />)}</section>}

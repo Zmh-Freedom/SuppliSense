@@ -7,6 +7,18 @@ import type { AgentRunEvent, AgentTraceEvent, SourcingRiskAgentRun, SourcingRisk
 const EVENT_CURSOR_PREFIX = 'agent_run_event_cursor:';
 const RECONNECT_DELAY_MS = 1_000;
 const TERMINAL_STATUSES = new Set(['COMPLETED', 'PARTIAL', 'NEEDS_REVIEW', 'ACTION_FAILED', 'FAILED', 'CANCELLED']);
+const TRACE_KIND_LABELS: Record<string, string> = {
+  start: '开始寻源', end: '寻源流程结束', node_start: '流程节点开始', node_end: '流程节点结束',
+  load_run: '读取寻源任务', parse_requirement: '解析寻源条件', clarification: '等待补充寻源条件',
+  policy_locked: '锁定筛选规则', lock_policy: '锁定筛选规则', local_discovery: '检索历史合作候选',
+  external_discovery: '检索外部候选', discovery: '完成候选检索', identity_resolving: '核验企业主体',
+  identity_resolution: '完成主体核验', identity_review: '等待确认企业主体', investigation: '调查风险证据',
+  evidence_review: '复核风险证据', scoring: '形成候选决策', action: '执行采购动作',
+};
+
+function traceKindLabel(kind: string): string {
+  return TRACE_KIND_LABELS[kind] ?? '处理寻源任务';
+}
 
 function runIdOf(run: SourcingRiskAgentRun): string | undefined {
   return run.id ?? run.run_id;
@@ -71,7 +83,7 @@ function traceEventFrom(event: AgentRunEvent): AgentTraceEvent | null {
     eventId: event.eventId,
     kind,
     status: typeof payload.status === 'string' ? payload.status : '执行中',
-    message: `工作流节点：${kind}`,
+    message: traceKindLabel(kind),
     data: payload,
     source: 'graph_trace',
     atMs: typeof event.data.at_ms === 'number' ? event.data.at_ms : undefined,

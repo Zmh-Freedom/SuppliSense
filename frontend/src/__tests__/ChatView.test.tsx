@@ -351,7 +351,7 @@ describe('ChatView session lifecycle', () => {
             entity_id: 'entity:华东钢材供应有限公司',
             dimension: 'risk',
             statement: '华东钢材供应有限公司 risk_score 为 6',
-            value: 6,
+            value: 86,
             fact_path: 'risk_score',
             evidence_refs: ['risk-evidence'],
             confidence: 0.85,
@@ -387,7 +387,7 @@ describe('ChatView session lifecycle', () => {
           data_mode: 'formal',
           collected_at: '2026-09-05T09:00:00Z',
           facts: {
-            risk_score: 6,
+            risk_score: 86,
             risk_level: '低风险',
             risk_detail: { lawsuit_count: 0, administrative_penalty_count: 0 },
             data_coverage: { available_dimensions: ['financial', 'judicial'] },
@@ -418,8 +418,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByPlaceholderText('输入问题，如：对比海康威视和宝钢的风险'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    expect(screen.getByText('6/100')).toBeInTheDocument()
-    expect(screen.getByText('6/100').closest('tr')?.textContent).not.toContain('risk_score')
+    expect(screen.getByText('86/100')).toBeInTheDocument()
+    expect(screen.getByText('86/100').closest('tr')?.textContent).not.toContain('risk_score')
     expect(screen.getByText(/本轮围绕综合风险、财务风险形成 2 条判断，其中 2 条已有证据支持/)).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '指标/检查项' })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '判断' })).toBeInTheDocument()

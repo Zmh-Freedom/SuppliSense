@@ -104,6 +104,27 @@ describe('SourcingRiskWorkbench', () => {
     expect(screen.getByRole('link', { name: '邮箱（待核验）：sales@supplier.example.com' })).toHaveAttribute('href', 'mailto:sales@supplier.example.com');
   });
 
+  it('uses procurement wording for internal run and identity statuses', () => {
+    render(<SourcingRiskCandidateCard candidate={{ supplier_name: '待确认企业', identity_status: 'pending_verification' }} />);
+
+    expect(screen.getByText('主体状态：主体待人工确认')).toBeInTheDocument();
+    expect(screen.queryByText('pending_verification')).not.toBeInTheDocument();
+  });
+
+  it('does not expose the raw run status in the task badge', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/agent-runs/IDENTITY_REVIEW')) {
+        return Response.json({ ...identityReviewRun, id: 'IDENTITY_REVIEW', candidates: [] });
+      }
+      return new Response('', { status: 204 });
+    }));
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId="IDENTITY_REVIEW" />);
+
+    expect((await screen.findAllByText('企业主体人工复核')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('IDENTITY_REVIEW')).not.toBeInTheDocument();
+  });
+
   it.each([
     ['CREATED', '创建任务'], ['CLARIFYING', '等待需求澄清'], ['POLICY_LOCKED', '锁定规则'],
     ['LOCAL_SEARCHING', '检索本地候选'], ['EXTERNAL_REVIEW', '审核外部候选'], ['IDENTITY_RESOLVING', '核验企业主体'],
