@@ -1006,8 +1006,6 @@ def collect_public_news(
         fetch_sse_news(company_name, max_results=max_results),
         fetch_bse_news(company_name, max_results=max_results),
         fetch_hkex_news(company_name, max_results=max_results),
-        fetch_credit_china_news(company_name, max_results=max_results),
-        fetch_court_execution_news(company_name, max_results=max_results),
         fetch_samr_news(company_name, max_results=max_results),
         fetch_ccgp_news(company_name, max_results=max_results),
         fetch_yicai_auto_news(company_name, max_results=max_results),

@@ -102,8 +102,6 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         ("fetch_sse_news", "上海证券交易所公告"),
         ("fetch_bse_news", "北京证券交易所公告"),
         ("fetch_hkex_news", "香港交易所披露易"),
-        ("fetch_credit_china_news", "信用中国"),
-        ("fetch_court_execution_news", "中国执行信息公开网"),
         ("fetch_samr_news", "国家市场监督管理总局"),
         ("fetch_ccgp_news", "中国政府采购网"),
         ("fetch_yicai_auto_news", "第一财经汽车频道"),
@@ -117,7 +115,7 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
     result = news_sources.collect_public_news("示例公司")
 
     assert result["article_count"] == 1
-    assert len(result["sources"]) == 12
+    assert len(result["sources"]) == 10
     assert {source["source_name"] for source in result["sources"]} == {
         "盖世汽车公开资讯",
         "中国汽车工业协会",
@@ -125,8 +123,6 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         "上海证券交易所公告",
         "北京证券交易所公告",
         "香港交易所披露易",
-        "信用中国",
-        "中国执行信息公开网",
         "国家市场监督管理总局",
         "中国政府采购网",
         "第一财经汽车频道",
