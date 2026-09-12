@@ -220,17 +220,23 @@ def test_fetch_credit_china_news_parses_company_related_link(monkeypatch) -> Non
 
 def test_fetch_court_execution_news_returns_fetch_failed_when_query_blocked(monkeypatch) -> None:
     landing = '<form id="zhcx-search-form" action="findDisXgl.do"></form>'
+    captured = {}
 
     def fake_get(url: str, **_kwargs):
         return FakeResponse(landing, url)
 
     monkeypatch.setattr(news_sources, "_get", fake_get)
-    monkeypatch.setattr(news_sources, "_post", lambda *args, **kwargs: None)
+    def fake_post(url, **kwargs):
+        captured["url"] = url
+        return None
+
+    monkeypatch.setattr(news_sources, "_post", fake_post)
 
     result = news_sources.fetch_court_execution_news("青岛三祥科技股份有限公司")
 
     assert result["status"] == "fetch_failed"
     assert result["articles"] == []
+    assert captured["url"].endswith("/gkw/findDisXgl.do")
 
 
 def test_fetch_samr_news_parses_company_related_penalty(monkeypatch) -> None:

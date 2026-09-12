@@ -829,7 +829,14 @@ def fetch_court_execution_news(company_name: str, max_results: int = 12) -> dict
         return _result("中国执行信息公开网", [], error="执行信息公开网入口不可访问")
     soup = BeautifulSoup(landing.text, "html.parser")
     form = soup.select_one("form#zhcx-search-form") or soup.find("form", action=True)
-    action = urljoin(landing.url, str(form.get("action") if form else ""))
+    action_name = str(form.get("action") if form else "").strip()
+    # 页面表单使用相对 action，但站点实际将查询接口挂在 /gkw 根路径。
+    # 直接相对 landing URL 拼接会落到 /gkw/html/zhzxgk/ 并返回 404。
+    action = (
+        urljoin(landing.url, "/gkw/" + action_name.lstrip("/"))
+        if action_name
+        else ""
+    )
     if not action or action == landing.url:
         return _result("中国执行信息公开网", [], error="执行信息公开查询入口未找到")
     result = _post(
