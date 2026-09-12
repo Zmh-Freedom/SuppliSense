@@ -3343,7 +3343,7 @@
 - 根因：专用寻源风险 V2 使用 `parse_requirement` 的 LLM-only 校验路径，未复用 Harness 的物料号/历史合作确定性解析、回退和共享候选召回流程。
 - 修复方案：让专用寻源风险 V2 通过兼容接缝直接调用 Harness 的统一需求解析器，复用物料号/历史合作确定性兜底；候选召回继续使用已接入内部历史关系与盖世候选库的只读服务，避免维护第二套解析规则。
 - 验证结果：V2 与聊天入口已共享需求解析和确定性回退；后端寻源、Harness、Agent Run 定向测试 77 项通过，服务重启后 `/health/ready` 返回 MongoDB、Redis、PostgreSQL、寻源检查点均为 `ok`。真实浏览器复验受桌面浏览器桥接无法加载 request-header policy 阻塞，未将桥接故障计为产品失败。
-- 关联提交：`50709929 fix(sourcing): unify requirement parsing and clarify runs`。
+- 关联提交：`07eb47cf fix(sourcing): unify requirement parsing and clarify runs`。
 
 ## ISS-20260912-022 专用寻源进入澄清状态后无法继续
 
@@ -3355,4 +3355,4 @@
 - 根因：`SourcingRiskWorkbench` 只实现身份复核、候选和审批分支，未实现 `CLARIFYING` 状态的交互分支。
 - 修复方案：增加采购语言的澄清卡片，展示缺失的品类/规格等字段，提交后恢复同一 Agent Run；同时优先通过确定性解析减少不必要澄清。
 - 验证结果：前端已增加采购语言的澄清卡片、缺失字段输入和同一任务恢复调用；流式事件也会持久化澄清字段和状态。寻源工作台前端测试 24 项、Lint、TypeScript 和生产构建通过。真实浏览器桥接本轮无法重新建立，未将桥接故障计为产品失败。
-- 关联提交：`50709929 fix(sourcing): unify requirement parsing and clarify runs`。
+- 关联提交：`07eb47cf fix(sourcing): unify requirement parsing and clarify runs`。
