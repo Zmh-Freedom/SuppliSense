@@ -40,6 +40,30 @@ def test_fetch_gasgoo_public_news_parses_public_listing(monkeypatch) -> None:
     assert article["url"].endswith("11I1C103.shtml")
 
 
+def test_fetch_gasgoo_public_news_enriches_article_from_detail_page(monkeypatch) -> None:
+    listing = """
+    <div class="listArticle"><dl>
+      <dt><h2 class="bigtitle"><a href="/news/detail.shtml">青岛三祥科技股份有限公司项目进展</a></h2></dt>
+      <dd>列表摘要 2026-09-11</dd>
+    </dl></div>
+    """
+    detail = """
+    <html><head><title>青岛三祥科技股份有限公司项目进展</title></head>
+    <body><article><p>公司披露了新的产能建设安排，预计下半年完成设备调试。</p><p>公告日期：2026-09-11</p></article></body></html>
+    """
+
+    def fake_get(url: str, **_kwargs):
+        return FakeResponse(detail if url.endswith("/news/detail.shtml") else listing, url)
+
+    monkeypatch.setattr(news_sources, "_get", fake_get)
+    result = news_sources.fetch_gasgoo_public_news("青岛三祥科技股份有限公司")
+
+    article = result["articles"][0]
+    assert article["detail_fetched"] is True
+    assert "新的产能建设安排" in article["body"]
+    assert article["url"].endswith("/news/detail.shtml")
+
+
 def test_fetch_caam_news_only_returns_company_related_public_articles(monkeypatch) -> None:
     html = """
     <a href="/chn/1/cate_2/con_1.html">青岛三祥科技股份有限公司参与汽车行业会议</a>
@@ -270,6 +294,22 @@ def test_fetch_yicai_auto_news_parses_company_related_article(monkeypatch) -> No
     assert result["articles"][0]["source_name"] == "第一财经汽车频道"
     assert result["articles"][0]["source_type"] == "media"
     assert result["articles"][0]["published_at"] == "2026-09-11"
+
+
+def test_media_listing_keeps_original_url_and_detail_body(monkeypatch) -> None:
+    listing = '<a href="/news/103361202.html">青岛三祥科技股份有限公司扩建项目 2026-09-11</a>'
+    detail = '<html><body><main><h1>青岛三祥科技股份有限公司扩建项目</h1><p>项目完成了关键设备安装并进入试生产阶段。</p></main></body></html>'
+
+    def fake_get(url: str, **_kwargs):
+        return FakeResponse(detail if url.endswith("103361202.html") else listing, url)
+
+    monkeypatch.setattr(news_sources, "_get", fake_get)
+    result = news_sources.fetch_yicai_auto_news("青岛三祥科技股份有限公司")
+
+    article = result["articles"][0]
+    assert article["detail_fetched"] is True
+    assert "关键设备安装" in article["body"]
+    assert article["url"].endswith("103361202.html")
 
 
 def test_fetch_caixin_auto_news_parses_company_related_article(monkeypatch) -> None:

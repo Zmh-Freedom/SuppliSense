@@ -48,6 +48,7 @@ _SAMR_NOTICE_URL = "https://www.samr.gov.cn/jzxts/tzgg/"
 _CCGP_PENALTY_URL = "https://www.ccgp.gov.cn/jdjc/jdcf/"
 _YICAI_AUTO_URL = "https://www.yicai.com/news/automobile/"
 _CAIXIN_AUTO_URL = "https://www.caixin.com/auto/"
+_DETAIL_BODY_LIMIT = 6000
 
 # 交易所名称通常使用繁体或简称。这里只保留常见公开名称的轻量转换，
 # 找不到映射时适配器会安全返回 no_results，不会把未匹配误报成无风险。
@@ -313,10 +314,11 @@ def _article(
     source_type: str,
     published_at: str | None,
     publisher: str | None = None,
+    detail_fetched: bool = False,
 ) -> dict:
     item = {
         "title": _normalise_text(title),
-        "body": _normalise_text(body)[:1000],
+        "body": _normalise_text(body)[:_DETAIL_BODY_LIMIT],
         "url": url,
         "source": source_name,
         "source_name": source_name,
@@ -325,9 +327,45 @@ def _article(
         "date": published_at or "",
         "published_at": published_at,
         "retrieved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "detail_fetched": detail_fetched,
     }
     item["article_id"] = _article_id(item)
     return item
+
+
+def _extract_detail_article(
+    response: requests.Response,
+    *,
+    fallback_title: str,
+    fallback_body: str,
+) -> tuple[str, str, str | None, bool]:
+    """提取文章详情页正文，失败时安全回退到列表页摘要。"""
+    soup = BeautifulSoup(response.text, "html.parser")
+    for node in soup(["script", "style", "noscript", "svg", "nav", "footer", "header"]):
+        node.decompose()
+
+    title_node = soup.find("h1") or soup.find("h2") or soup.find("title")
+    title = _normalise_text(title_node.get_text(" ", strip=True) if title_node else fallback_title)
+    selectors = (
+        "article",
+        "[itemprop='articleBody']",
+        ".article-content",
+        ".articleContent",
+        ".article-body",
+        ".articleBody",
+        ".detail-content",
+        ".detailContent",
+        ".news-content",
+        ".newsContent",
+        "main",
+    )
+    body_node = next((soup.select_one(selector) for selector in selectors if soup.select_one(selector)), None)
+    body = _normalise_text(body_node.get_text(" ", strip=True) if body_node else "")
+    if len(body) < 20:
+        body = _normalise_text(fallback_body)
+    published_at = _parse_date(body) or _parse_date(title)
+    detail_fetched = bool(body_node and len(body) >= 20)
+    return title or fallback_title, body or fallback_body, published_at, detail_fetched
 
 
 def _get(
@@ -445,15 +483,22 @@ def fetch_gasgoo_public_news(company_name: str, max_results: int = 12) -> dict:
             if not _matches_company(company_name, f"{title} {body}"):
                 continue
             url = urljoin(response.url, str(link["href"]))
+            detail = _get(url)
+            detail_title, detail_body, published_at, detail_fetched = (
+                _extract_detail_article(detail, fallback_title=title, fallback_body=body)
+                if detail is not None
+                else (title, body, _parse_date(body), False)
+            )
             articles.append(
                 _article(
-                    title=title,
-                    body=body,
+                    title=detail_title,
+                    body=detail_body,
                     url=url,
                     source_name="盖世汽车公开资讯",
                     source_type="industry",
-                    published_at=_parse_date(body),
+                    published_at=published_at,
                     publisher="盖世汽车",
+                    detail_fetched=detail_fetched,
                 )
             )
     unique = _deduplicate(articles, max_results)
@@ -481,12 +526,14 @@ def fetch_caam_news(company_name: str, max_results: int = 12) -> dict:
         detail = _get(href)
         detail_title = title
         detail_body = parent_text
+        detail_fetched = False
         if detail is not None:
             detail_soup = BeautifulSoup(detail.text, "html.parser")
             title_node = detail_soup.find("h1") or detail_soup.find("title")
             body_node = detail_soup.find("article") or detail_soup.find("main") or detail_soup.body
             detail_title = _normalise_text(title_node.get_text(" ", strip=True) if title_node else title)
             detail_body = _normalise_text(body_node.get_text(" ", strip=True) if body_node else parent_text)
+            detail_fetched = bool(body_node and len(detail_body) >= 40)
         articles.append(
             _article(
                 title=detail_title,
@@ -496,6 +543,7 @@ def fetch_caam_news(company_name: str, max_results: int = 12) -> dict:
                 source_type="industry_official",
                 published_at=_parse_date(detail_body),
                 publisher="中国汽车工业协会",
+                detail_fetched=detail_fetched,
             )
         )
     return _result("中国汽车工业协会", _deduplicate(articles, max_results))
@@ -794,15 +842,22 @@ def _listing_articles(
             context = title
         if not _matches_company(company_name, f"{title} {context}"):
             continue
+        detail = None if href.lower().split("?", 1)[0].endswith((".pdf", ".zip")) else _get(href, timeout=10)
+        detail_title, detail_body, published_at, detail_fetched = (
+            _extract_detail_article(detail, fallback_title=title, fallback_body=context)
+            if detail is not None
+            else (title, context, _parse_date(context) or _parse_date(title), False)
+        )
         articles.append(
             _article(
-                title=title,
-                body=context,
+                title=detail_title,
+                body=detail_body,
                 url=href,
                 source_name=source_name,
                 source_type=source_type,
-                published_at=_parse_date(context) or _parse_date(title),
+                published_at=published_at,
                 publisher=publisher,
+                detail_fetched=detail_fetched,
             )
         )
     return articles

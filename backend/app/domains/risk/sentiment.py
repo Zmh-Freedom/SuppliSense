@@ -41,10 +41,13 @@ def _get_llm():
 
 
 SENTIMENT_MODEL = settings.LLM_MODEL
+_LLM_ARTICLE_BODY_LIMIT = 2400
 
 # ---- LLM prompt ----
 
 NEWS_SENTIMENT_PROMPT = """你是一个企业舆情分析师。请分析以下新闻，返回 JSON 对象（不要 markdown）：
+
+只根据输入的标题、正文和来源判断，不得补写输入中没有出现的事实。判断依据必须引用或概括输入中的可见事实；如果内容不足，明确写“正文信息不足，无法确认”。
 
 {
   "overall_sentiment": "negative" | "neutral" | "positive",
@@ -58,7 +61,8 @@ NEWS_SENTIMENT_PROMPT = """你是一个企业舆情分析师。请分析以下�
       "sentiment": "negative" | "neutral" | "positive",
       "confidence": 0.0-1.0,
       "risk_tags": ["匹配的风险标签"],
-      "summary": "20字摘要"
+      "summary": "20字摘要",
+      "judgement_basis": "引用标题或正文中的事实，说明为什么这样判断（80字以内）"
     }
   ]
 }
@@ -368,6 +372,7 @@ def analyze_sentiment(
             "articles_count": 0, "negative_count": 0, "neutral_count": 0, "positive_count": 0,
             "sentiment_score": 0.0, "risk_tags": [], "articles": [],
             "summary": "暂无相关新闻", "key_concerns": [],
+            "llm_analyzed": False, "analysis_mode": "no_data",
             "has_data": False,
         }
         _save_sentiment(company_name, result)
@@ -378,7 +383,7 @@ def analyze_sentiment(
         {
             "index": i,
             "title": a["title"],
-            "body": a["body"][:100],
+            "body": a["body"][:_LLM_ARTICLE_BODY_LIMIT],
             "source": a.get("source_name") or a.get("source", ""),
             "published_at": a.get("published_at") or a.get("date", ""),
         }
@@ -404,6 +409,10 @@ def analyze_sentiment(
                 "confidence": cls.get("confidence", 0.5),
                 "risk_tags": cls.get("risk_tags", []),
                 "summary": cls.get("summary", a["title"][:20]),
+                "judgement_basis": cls.get(
+                    "judgement_basis",
+                    "基于新闻标题及已抓取正文内容判断。",
+                ),
             })
 
         overall_score = llm_result.get("sentiment_score", _sentiment_score(articles))
@@ -418,6 +427,7 @@ def analyze_sentiment(
             "confidence": 0.5,
             "risk_tags": [],
             "summary": a["title"][:20],
+            "judgement_basis": "LLM 未返回结果，仅保留新闻原文，未形成可靠判断。",
         } for a in news_articles]
         overall_score = 0.0
         summary = ""
@@ -451,6 +461,8 @@ def analyze_sentiment(
         "articles": articles[:20],
         "summary": summary,
         "key_concerns": key_concerns,
+        "llm_analyzed": isinstance(llm_result, dict),
+        "analysis_mode": "llm" if isinstance(llm_result, dict) else "fallback",
         "has_data": True,
     }
 

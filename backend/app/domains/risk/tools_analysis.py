@@ -55,6 +55,10 @@ def sentiment_analysis(company_name: str) -> dict:
         "summary": result["summary"],
         "key_concerns": result.get("key_concerns", []),
         "risk_tags": [t["tag"] for t in result.get("risk_tags", [])],
+        "articles": result.get("articles", []),
+        "llm_analyzed": result.get("llm_analyzed"),
+        "analysis_mode": result.get("analysis_mode"),
+        "has_data": result.get("has_data", False),
     }, tool_name="sentiment_analysis", entity_id=f"entity:{company_name}", dimension="sentiment")
 
 

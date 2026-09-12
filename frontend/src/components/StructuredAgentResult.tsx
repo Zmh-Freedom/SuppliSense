@@ -4,6 +4,7 @@ import { EvidenceTable } from './ChatResultSections';
 import AgentTrendCharts from './AgentTrendCharts';
 import ActionSummary from './ActionSummary';
 import SupplierReviewConclusion from './SupplierReviewConclusion';
+import SentimentEvidence from './SentimentEvidence';
 
 const ANSWER_STATUS_META: Record<string, { label: string; className: string; icon: string }> = {
   completed: { label: '分析完成', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: '✓' },
@@ -548,6 +549,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           ? `当前结论仅代表已取得资料范围${hasRiskSignals ? '，请先核实上方风险信号' : ''}；涉及关键零件或大额订单时，建议完成采购复核后再决定。`
           : '当前已取得的数据未见需要立即暂停采购的信号，可按正常流程推进并持续关注指标变化。'}</p>
       </section>}
+      {!scopeQuery && <SentimentEvidence evidence={evidence || []} />}
     </div>}
 
     {answer && <SupplierReviewConclusion answer={answer} evidence={evidence || []} limitations={limitations} numericFact={numericFact} reviewClaims={reviewClaims} />}

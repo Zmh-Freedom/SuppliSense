@@ -216,6 +216,8 @@ class SentimentOutput(StrictToolOutput):
     key_concerns: list[Any] = Field(default_factory=list)
     risk_tags: list[Any] = Field(default_factory=list)
     articles: list[dict[str, Any]] = Field(default_factory=list)
+    llm_analyzed: bool | None = None
+    analysis_mode: str | None = None
     has_data: bool = False
 
 
