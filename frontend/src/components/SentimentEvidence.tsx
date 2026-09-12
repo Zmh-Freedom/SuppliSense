@@ -44,13 +44,14 @@ function sentimentMeta(value: string | undefined): { label: string; color: strin
 export default function SentimentEvidence({ evidence }: { evidence: AgentEvidenceRecord[] }) {
   const articles = articlesFromEvidence(evidence);
   if (articles.length === 0) return null;
+  const hasFallback = evidence.some(record => record.dimension === 'sentiment' && record.facts?.llm_analyzed === false);
 
   return (
     <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50/40 p-4" aria-label="逐条舆情新闻核验">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h4 className="font-semibold text-amber-950">逐条舆情新闻核验</h4>
-          <p className="mt-1 text-xs text-amber-900/70">每条报道均保留原文链接，并展示 LLM 判断和判断依据。</p>
+          <p className="mt-1 text-xs text-amber-900/70">每条报道均保留原文链接，并展示{hasFallback ? '当前可用的规则结果和判断边界' : ' LLM 判断和判断依据'}。</p>
         </div>
         <span className="text-xs text-amber-900/70">{articles.length} 条报道</span>
       </div>
@@ -77,7 +78,7 @@ export default function SentimentEvidence({ evidence }: { evidence: AgentEvidenc
                 <p className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-700">{article.body || '当前来源未提供正文，仅保留标题。'}</p>
               </details>
               <div className="mt-2 grid gap-1 text-xs leading-5">
-                <div><span className="font-medium text-gray-500">LLM 判断：</span>{article.summary || '未生成单篇摘要'}</div>
+                <div><span className="font-medium text-gray-500">{hasFallback ? '当前判断：' : 'LLM 判断：'}</span>{article.summary || '未生成单篇摘要'}</div>
                 <div><span className="font-medium text-gray-500">判断依据：</span>{article.judgement_basis || '基于新闻标题及已抓取正文内容判断。'}</div>
                 {article.risk_tags && article.risk_tags.length > 0 && <div><span className="font-medium text-gray-500">风险标签：</span><span className="text-red-600">{article.risk_tags.join(' · ')}</span></div>}
               </div>
