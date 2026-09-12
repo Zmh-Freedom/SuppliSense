@@ -46,6 +46,8 @@ _CREDIT_CHINA_URL = "https://www.creditchina.gov.cn/"
 _COURT_EXECUTION_SEARCH_URL = "https://zxgk.court.gov.cn/gkw/html/zhzxgk/index.html"
 _SAMR_NOTICE_URL = "https://www.samr.gov.cn/jzxts/tzgg/"
 _CCGP_PENALTY_URL = "https://www.ccgp.gov.cn/jdjc/jdcf/"
+_YICAI_AUTO_URL = "https://www.yicai.com/news/automobile/"
+_CAIXIN_AUTO_URL = "https://www.caixin.com/auto/"
 
 # 交易所名称通常使用繁体或简称。这里只保留常见公开名称的轻量转换，
 # 找不到映射时适配器会安全返回 no_results，不会把未匹配误报成无风险。
@@ -786,6 +788,10 @@ def _listing_articles(
             continue
         context_node = link.find_parent(["li", "tr", "dd"]) or link.parent
         context = _normalise_text(context_node.get_text(" ", strip=True))
+        # 部分媒体列表把所有文章直接放在同一个容器中，向上取父节点会
+        # 把整页标题拼进每条文章，造成公司名误命中。此时只用当前链接文本。
+        if len(context_node.find_all("a", href=True)) > 1:
+            context = title
         if not _matches_company(company_name, f"{title} {context}"):
             continue
         articles.append(
@@ -896,6 +902,40 @@ def fetch_ccgp_news(company_name: str, max_results: int = 12) -> dict:
     return _result("中国政府采购网", _deduplicate(articles, max_results))
 
 
+def fetch_yicai_auto_news(company_name: str, max_results: int = 12) -> dict:
+    """抓取第一财经汽车频道公开文章，作为行业舆情补充。"""
+    response = _get(_YICAI_AUTO_URL)
+    if response is None:
+        return _result("第一财经汽车频道", [], error="第一财经汽车频道不可访问")
+    articles = _listing_articles(
+        company_name,
+        response,
+        source_name="第一财经汽车频道",
+        source_type="media",
+        publisher="第一财经",
+        max_results=max_results,
+        href_prefix="yicai.com/news/",
+    )
+    return _result("第一财经汽车频道", _deduplicate(articles, max_results))
+
+
+def fetch_caixin_auto_news(company_name: str, max_results: int = 12) -> dict:
+    """抓取财新汽车频道公开文章，作为经营和产业链舆情补充。"""
+    response = _get(_CAIXIN_AUTO_URL)
+    if response is None:
+        return _result("财新汽车", [], error="财新汽车公开页面不可访问")
+    articles = _listing_articles(
+        company_name,
+        response,
+        source_name="财新汽车",
+        source_type="media",
+        publisher="财新传媒",
+        max_results=max_results,
+        href_prefix="caixin.com/",
+    )
+    return _result("财新汽车", _deduplicate(articles, max_results))
+
+
 def fetch_company_website_news(
     company_name: str,
     website_url: str | None,
@@ -970,6 +1010,8 @@ def collect_public_news(
         fetch_court_execution_news(company_name, max_results=max_results),
         fetch_samr_news(company_name, max_results=max_results),
         fetch_ccgp_news(company_name, max_results=max_results),
+        fetch_yicai_auto_news(company_name, max_results=max_results),
+        fetch_caixin_auto_news(company_name, max_results=max_results),
     ]
     articles = _deduplicate(
         (article for result in source_results for article in result["articles"]),

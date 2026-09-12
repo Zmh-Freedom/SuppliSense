@@ -106,6 +106,8 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         ("fetch_court_execution_news", "中国执行信息公开网"),
         ("fetch_samr_news", "国家市场监督管理总局"),
         ("fetch_ccgp_news", "中国政府采购网"),
+        ("fetch_yicai_auto_news", "第一财经汽车频道"),
+        ("fetch_caixin_auto_news", "财新汽车"),
     ):
         monkeypatch.setattr(
             news_sources,
@@ -115,7 +117,7 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
     result = news_sources.collect_public_news("示例公司")
 
     assert result["article_count"] == 1
-    assert len(result["sources"]) == 10
+    assert len(result["sources"]) == 12
     assert {source["source_name"] for source in result["sources"]} == {
         "盖世汽车公开资讯",
         "中国汽车工业协会",
@@ -127,6 +129,8 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         "中国执行信息公开网",
         "国家市场监督管理总局",
         "中国政府采购网",
+        "第一财经汽车频道",
+        "财新汽车",
     }
 
 
@@ -258,3 +262,43 @@ def test_fetch_ccgp_news_parses_company_related_penalty(monkeypatch) -> None:
     assert result["status"] == "ok"
     assert result["articles"][0]["source_type"] == "procurement_official"
     assert result["articles"][0]["published_at"] == "2026-09-01"
+
+
+def test_fetch_yicai_auto_news_parses_company_related_article(monkeypatch) -> None:
+    html = '<a href="/news/103361202.html">青岛三祥科技股份有限公司扩建项目 2026-09-11</a>'
+    monkeypatch.setattr(news_sources, "_get", lambda url, **_kwargs: FakeResponse(html, url))
+
+    result = news_sources.fetch_yicai_auto_news("青岛三祥科技股份有限公司")
+
+    assert result["status"] == "ok"
+    assert result["articles"][0]["source_name"] == "第一财经汽车频道"
+    assert result["articles"][0]["source_type"] == "media"
+    assert result["articles"][0]["published_at"] == "2026-09-11"
+
+
+def test_fetch_caixin_auto_news_parses_company_related_article(monkeypatch) -> None:
+    html = '<a href="https://www.caixin.com/2026-09-11/102483843.html">青岛三祥科技股份有限公司融资进展 2026-09-11</a>'
+    monkeypatch.setattr(news_sources, "_get", lambda url, **_kwargs: FakeResponse(html, url))
+
+    result = news_sources.fetch_caixin_auto_news("青岛三祥科技股份有限公司")
+
+    assert result["status"] == "ok"
+    assert result["articles"][0]["source_name"] == "财新汽车"
+    assert result["articles"][0]["source_type"] == "media"
+    assert result["articles"][0]["published_at"] == "2026-09-11"
+
+
+def test_media_listing_does_not_leak_company_match_from_sibling_article(monkeypatch) -> None:
+    html = """
+    <div class="list">
+      <a href="/news/1.html">普通行业新闻</a>
+      <a href="/news/2.html">欣旺达动力融资进展</a>
+    </div>
+    """
+    monkeypatch.setattr(news_sources, "_get", lambda url, **_kwargs: FakeResponse(html, url))
+
+    result = news_sources.fetch_yicai_auto_news("欣旺达动力")
+
+    assert result["status"] == "ok"
+    assert result["article_count"] == 1
+    assert "欣旺达动力" in result["articles"][0]["title"]
