@@ -11,6 +11,7 @@ from langchain_core.tools import StructuredTool
 
 from app.graphs.agent_core.evidence_ledger import build_evidence_record
 from app.graphs.harness import ExecutionBudget, build_harness_graph, run_harness
+from app.graphs.harness.graph import _summary
 from app.tools.executor import ToolExecutor
 from app.tools.registry import ToolRegistry, ToolSpec
 
@@ -475,3 +476,29 @@ def test_procurement_action_with_coverage_limit_does_not_request_user_materials(
     assert proposal["label"] == "当前不建议变更采购策略"
     assert "补充" not in proposal["label"]
     assert "采购人员" not in proposal["reason"]
+
+
+def test_sourcing_summary_does_not_double_count_merged_external_candidates() -> None:
+    from app.graphs.agent_core.answer_contract import AgentAnswer
+
+    merged = [
+        {"supplier_name": f"本地候选{i}", "source": "internal"}
+        for i in range(4)
+    ] + [
+        {"supplier_name": f"外部候选{i}", "source": "gasgoo_manual_export", "status": "staged_candidate"}
+        for i in range(10)
+    ]
+    summary = _summary(
+        AgentAnswer(status="completed", summary="已完成寻源"),
+        {
+            "current_task": {"analysis_dimensions": ["sourcing"]},
+            "task_specs": [{"tool_name": "discover_supplier_candidates"}],
+            "tool_outcomes": [{
+                "tool_name": "discover_supplier_candidates",
+                "data": {"candidates": merged, "external_candidates": merged[4:]},
+            }],
+        },
+    )
+
+    assert "已找到 14 家寻源候选" in summary
+    assert "已找到 24 家寻源候选" not in summary

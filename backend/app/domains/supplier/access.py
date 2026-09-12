@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.db.postgres import get_cursor
 
 
@@ -9,11 +11,22 @@ def is_admin(role: str) -> bool:
     return role == "admin"
 
 
+def _normalise_user_uuid(user_id: str) -> str | None:
+    """Return a canonical UUID for database lookups, or None for transient IDs."""
+    try:
+        return str(UUID(str(user_id)))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _feishu_open_id_for_user(user_id: str) -> str | None:
+    normalized_user_id = _normalise_user_uuid(user_id)
+    if not normalized_user_id:
+        return None
     with get_cursor() as (_, cur):
         cur.execute(
             "SELECT feishu_open_id FROM users WHERE id = %s::uuid AND is_active = TRUE",
-            (user_id,),
+            (normalized_user_id,),
         )
         row = cur.fetchone()
     return str(row[0]) if row and row[0] else None

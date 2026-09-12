@@ -29,6 +29,23 @@ def test_default_registry_has_unique_pydantic_contracts_and_policies() -> None:
     )
 
 
+def test_network_risk_tools_use_bounded_single_attempt_policy() -> None:
+    bounded = {
+        "lookup_company_identity",
+        "lookup_legal_risk",
+        "lookup_business_risk",
+        "lookup_company_news",
+        "lookup_company_profile",
+        "query_financials",
+        "sentiment_analysis",
+        "discover_supplier_candidates",
+    }
+    specs = {definition.spec.name: definition.spec for definition in TOOL_REGISTRY.definitions()}
+
+    assert all(specs[name].timeout_seconds == 30 for name in bounded)
+    assert all(specs[name].max_attempts == 1 for name in bounded)
+
+
 def _registry_for(tool_fn, *, side_effect: str = "read", attempts: int = 1) -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(

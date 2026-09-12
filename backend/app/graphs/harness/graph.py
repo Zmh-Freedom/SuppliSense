@@ -829,6 +829,8 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if "sourcing" in dimensions or "discover_supplier_candidates" in tool_names or "search_suppliers" in tool_names:
         candidate_count = 0
         external_count = 0
+        merged_candidate_count = 0
+        merged_contains_external = False
         for outcome in outcomes:
             if not isinstance(outcome, dict):
                 continue
@@ -838,12 +840,31 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
             candidates = data.get("candidates")
             if isinstance(candidates, list):
                 candidate_count = max(candidate_count, len(candidates))
+                merged_candidate_count = max(merged_candidate_count, len(candidates))
+                merged_contains_external = merged_contains_external or any(
+                    isinstance(candidate, dict)
+                    and (
+                        candidate.get("candidate_type") in {"external", "external_candidate"}
+                        or candidate.get("source") in {"gasgoo_manual_export", "staged_external", "external"}
+                        or candidate.get("status") == "staged_candidate"
+                    )
+                    for candidate in candidates
+                )
             for key in ("external_candidates", "external"):
                 value = data.get(key)
                 if isinstance(value, list):
                     external_count = max(external_count, len(value))
         if candidate_count or external_count:
-            return f"已找到 {candidate_count + external_count} 家寻源候选，其中 {external_count} 家为外部待核验候选；下面按历史合作与外部候选分开展示。"
+            # External discovery may return a merged ``candidates`` list and
+            # also expose ``external_candidates`` for the UI.  In that shape,
+            # adding both values double-counts the same candidates (for
+            # example, 14 merged rows + 10 external rows becomes 24).
+            total_count = (
+                merged_candidate_count
+                if merged_contains_external
+                else candidate_count + external_count
+            )
+            return f"已找到 {total_count} 家寻源候选，其中 {external_count} 家为外部待核验候选；下面按历史合作与外部候选分开展示。"
         return "已完成历史供应商和外部候选检索，但当前没有返回可用候选。"
     if answer.status == "completed":
         return "已完成基于有效证据的 Agent 分析。"

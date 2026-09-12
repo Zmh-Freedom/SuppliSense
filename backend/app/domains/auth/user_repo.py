@@ -42,8 +42,14 @@ def find_by_email(email: str) -> dict[str, Any] | None:
 
 
 def find_by_id(user_id: str) -> dict[str, Any] | None:
+    try:
+        normalized_user_id = str(uuid.UUID(str(user_id)))
+    except (AttributeError, TypeError, ValueError):
+        # JWT/test fixtures can carry a transient identifier.  Fail closed
+        # before PostgreSQL attempts to cast it to the UUID column type.
+        return None
     with get_cursor() as (conn, cur):
-        cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        cur.execute("SELECT * FROM users WHERE id = %s", (normalized_user_id,))
         row = cur.fetchone()
         if row:
             return _row_to_dict(cur, row)

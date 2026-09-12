@@ -345,13 +345,21 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 external_assessment_clarification,
                 review_scope_clarification,
             )
-            scope_clarification = await asyncio.to_thread(
-                review_scope_clarification,
-                resolved_target_names,
-                supplier_references,
-                user_id,
-                user_role,
-                req.message,
+            # Scope enforcement is meaningful only for a verified application
+            # account.  The protected route rejects invalid JWT subjects; the
+            # transient identifier branch is retained for legacy/test clients
+            # and must not be sent to PostgreSQL or produce a false stop.
+            scope_clarification = (
+                await asyncio.to_thread(
+                    review_scope_clarification,
+                    resolved_target_names,
+                    supplier_references,
+                    user_id,
+                    user_role,
+                    req.message,
+                )
+                if _is_uuid(user_id)
+                else None
             )
             if scope_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"

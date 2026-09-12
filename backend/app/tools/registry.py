@@ -126,6 +126,21 @@ _EVIDENCE_TOOLS = {
     "scenario_simulate", "list_formal_suppliers", "search_suppliers", "discover_supplier_candidates", "discover_web_suppliers", "investigate_supplier_monitoring", "resolve_monitor_identity", "get_monitor_review_queue",
     "lookup_company_identity", "lookup_legal_risk", "lookup_business_risk", "lookup_company_news", "lookup_company_profile",
 }
+# Network-backed lookups should fail fast inside one conversational turn.  A
+# second 60-second retry made a single risk question appear hung and delayed
+# the evidence summary even when the provider was unavailable.  Missing
+# dimensions remain visible as unavailable and can be retried explicitly by a
+# later turn.
+_BOUNDED_EXTERNAL_READ_TOOLS = {
+    "lookup_company_identity",
+    "lookup_legal_risk",
+    "lookup_business_risk",
+    "lookup_company_news",
+    "lookup_company_profile",
+    "query_financials",
+    "sentiment_analysis",
+    "discover_supplier_candidates",
+}
 _CAPABILITIES = {
     "search_company": "company_lookup", "assess_risk": "risk", "assess_business_risk": "business_risk",
     "assess_operational_risk": "operational_risk",
@@ -162,7 +177,12 @@ def build_default_tool_registry(tools: list[BaseTool]) -> ToolRegistry:
                 capability=_CAPABILITIES.get(name, "unclassified"),
                 side_effect="write" if name in _WRITE_TOOLS else "read",
                 approval_policy="required" if name in _WRITE_TOOLS else "none",
-                max_attempts=2 if name not in _WRITE_TOOLS else 1,
+                timeout_seconds=30 if name in _BOUNDED_EXTERNAL_READ_TOOLS else 60,
+                max_attempts=(
+                    1
+                    if name in _WRITE_TOOLS or name in _BOUNDED_EXTERNAL_READ_TOOLS
+                    else 2
+                ),
                 idempotent=name not in {"create_sourcing_request", "generate_report"},
                 evidence_required=name in _EVIDENCE_TOOLS,
             ),
