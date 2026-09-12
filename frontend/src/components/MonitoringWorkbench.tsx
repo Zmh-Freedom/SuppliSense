@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { MonitorTarget } from '../types';
-import { getRiskColor } from '../riskColors';
+import { getRiskBg, getRiskBgForLevel, getRiskColor, getRiskColorForLevel } from '../riskColors';
 
 interface CoverageSummary {
   status?: string;
@@ -80,10 +80,10 @@ function formatCheckedAt(value?: string | null): string {
 }
 
 function riskTone(target: MonitorTarget): { color: string; background: string } {
-  if (target.risk_level === '高风险') return { color: getRiskColor(70), background: '#fff1f2' };
-  if (target.risk_level === '中风险') return { color: getRiskColor(40), background: '#fffbeb' };
-  if (target.risk_level === '低风险') return { color: getRiskColor(10), background: '#ecfdf5' };
-  return { color: '#737373', background: '#f5f5f4' };
+  if (target.risk_score != null) {
+    return { color: getRiskColor(target.risk_score), background: getRiskBg(target.risk_score) };
+  }
+  return { color: getRiskColorForLevel(target.risk_level), background: getRiskBgForLevel(target.risk_level) };
 }
 
 function trendTone(status?: string): { color: string; background: string } {

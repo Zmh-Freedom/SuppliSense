@@ -12,17 +12,17 @@ import { queryKeys } from '../query-keys';
 import { useWatchlist } from '../hooks';
 import SentimentPanel from './SentimentPanel';
 import WatchlistPanel from './WatchlistPanel';
-import { getRiskColor, getRiskBg, getRiskLevel } from '../riskColors';
+import { getRiskColor, getRiskColorForLevel, getRiskBgForLevel, getRiskLevel } from '../riskColors';
 import RiskSummary from './RiskSummary';
 import Skeleton, { SkeletonChart } from './Skeleton';
 
 const LEVEL_COLOR: Record<string, string> = {
-  '高风险': getRiskColor(61), '中风险': getRiskColor(31), '低风险': getRiskColor(0),
-  '严重': getRiskColor(61), '中等': getRiskColor(31), '轻微': getRiskColor(0),
-  'critical': getRiskColor(61), 'high': getRiskColor(61), 'medium': getRiskColor(31), 'low': getRiskColor(0),
+  '高风险': getRiskColorForLevel('高风险'), '中风险': getRiskColorForLevel('中风险'), '低风险': getRiskColorForLevel('低风险'),
+  '严重': getRiskColorForLevel('高风险'), '中等': getRiskColorForLevel('中风险'), '轻微': getRiskColorForLevel('低风险'),
+  'critical': getRiskColorForLevel('高风险'), 'high': getRiskColorForLevel('高风险'), 'medium': getRiskColorForLevel('中风险'), 'low': getRiskColorForLevel('低风险'),
 };
 const LEVEL_BG: Record<string, string> = {
-  '高风险': getRiskBg(61), '中风险': getRiskBg(31), '低风险': getRiskBg(0),
+  '高风险': getRiskBgForLevel('高风险'), '中风险': getRiskBgForLevel('中风险'), '低风险': getRiskBgForLevel('低风险'),
 };
 
 type SubTab = 'overview' | 'financial' | 'risk' | 'relations';
@@ -247,11 +247,11 @@ function AssessContent({ initialName }: { initialName: string }) {
                           <stop offset="100%" stopColor="#333" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <ReferenceArea y1={60} y2={100} fill="#fef2f2" fillOpacity={0.6} />
-                      <ReferenceArea y1={30} y2={60} fill="#fffbeb" fillOpacity={0.6} />
-                      <ReferenceArea y1={0} y2={30} fill="#f0fdf4" fillOpacity={0.6} />
-                      <ReferenceLine y={60} stroke="#fca5a5" strokeDasharray="4 4" strokeWidth={1} />
-                      <ReferenceLine y={30} stroke="#86efac" strokeDasharray="4 4" strokeWidth={1} />
+                      <ReferenceArea y1={70} y2={100} fill="#f0fdf4" fillOpacity={0.6} />
+                      <ReferenceArea y1={40} y2={70} fill="#fffbeb" fillOpacity={0.6} />
+                      <ReferenceArea y1={0} y2={40} fill="#fef2f2" fillOpacity={0.6} />
+                      <ReferenceLine y={70} stroke="#86efac" strokeDasharray="4 4" strokeWidth={1} />
+                      <ReferenceLine y={40} stroke="#fca5a5" strokeDasharray="4 4" strokeWidth={1} />
                       <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} />
                       <XAxis dataKey="date" tick={{fontSize: 10, fill: '#999'}} axisLine={{stroke: '#eee'}} tickLine={false} />
                       <YAxis domain={[0, 100]} tick={{fontSize: 10, fill: '#999'}} axisLine={false} tickLine={false} width={24} />
@@ -271,9 +271,9 @@ function AssessContent({ initialName }: { initialName: string }) {
                     </LineChart>
                   </ResponsiveContainer>
                   <div className="flex justify-center gap-4 mt-3 text-[10px] text-gray-400">
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-100 border border-green-200" />低风险 0-30</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-200" />中风险 30-60</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-200" />高风险 60-100</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-100 border border-green-200" />低风险 70-100</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-50 border border-amber-200" />中风险 40-69</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-50 border border-red-200" />高风险 0-39</span>
                   </div>
                 </div>
               )}

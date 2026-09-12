@@ -5,7 +5,7 @@ import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { getRiskColor, getRiskBg } from '../riskColors';
+import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel } from '../riskColors';
 import { useDashboard } from '../hooks';
 import { queryKeys } from '../query-keys';
 import type { Prediction } from '../types';
@@ -86,9 +86,9 @@ export default function Dashboard() {
   );
 
   const levels = [
-    { key: '高风险', color: getRiskColor(61), bg: getRiskBg(61) },
-    { key: '中风险', color: getRiskColor(31), bg: getRiskBg(31) },
-    { key: '低风险', color: getRiskColor(0), bg: getRiskBg(0) },
+    { key: '高风险', color: getRiskColorForLevel('高风险'), bg: getRiskBgForLevel('高风险') },
+    { key: '中风险', color: getRiskColorForLevel('中风险'), bg: getRiskBgForLevel('中风险') },
+    { key: '低风险', color: getRiskColorForLevel('低风险'), bg: getRiskBgForLevel('低风险') },
     { key: '未知', color: '#999', bg: '#f5f5f5' },
   ];
 

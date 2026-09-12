@@ -13,6 +13,8 @@ const target: MonitorTarget = {
   identity_status: 'candidate',
   company_name: '待核验候选有限公司',
   display_name: '待核验候选有限公司',
+  risk_score: 85,
+  risk_level: '低风险',
   risk_change: { status: 'no_data', label: '暂无快照' },
   data_coverage: {
     status: 'partial',
@@ -42,6 +44,11 @@ function renderView(initialEntry: string) {
 }
 
 describe('MonitoringView', () => {
+  it('shows a high safety score in the low-risk green tone', () => {
+    renderView('/assess');
+    expect(screen.getByText('低风险 85/100')).toHaveStyle({ color: '#2d8c63' });
+  });
+
   it('investigates a supplier before adding it to monitoring', async () => {
     const user = userEvent.setup();
     vi.mocked(api.post).mockResolvedValueOnce({

@@ -22,3 +22,17 @@ export function getRiskLevel(score: number): string {
   if (score >= MEDIUM.min) return MEDIUM.label;
   return HIGH.label;
 }
+
+export function getRiskColorForLevel(level?: string | null): string {
+  if (level === LOW.label) return LOW.color;
+  if (level === MEDIUM.label) return MEDIUM.color;
+  if (level === HIGH.label) return HIGH.color;
+  return '#737373';
+}
+
+export function getRiskBgForLevel(level?: string | null): string {
+  if (level === LOW.label) return LOW.bg;
+  if (level === MEDIUM.label) return MEDIUM.bg;
+  if (level === HIGH.label) return HIGH.bg;
+  return '#f5f5f4';
+}
