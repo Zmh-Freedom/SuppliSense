@@ -10,6 +10,13 @@ const TASK_LABELS: Record<string, string> = {
   completed: '已完成', failed: '失败', pending: '待执行', running: '执行中',
 };
 
+const TASK_ID_LABELS: Array<[string, string]> = [
+  ['financial', '财务分析'], ['risk', '风险评估'], ['judicial', '司法风险核查'],
+  ['legal', '司法风险核查'], ['business', '经营风险核查'], ['sentiment', '舆情核查'],
+  ['news', '舆情核查'], ['esg', '可持续性评估'], ['continuity', '交易连续性核查'],
+  ['transaction', '交易连续性核查'], ['sourcing', '寻源候选核查'], ['monitor', '监控清单核查'],
+];
+
 const TRACE_KEY_LABELS: Record<string, string> = {
   run_id: '任务编号', status: '处理阶段', stage: '处理阶段', count: '数量',
   source: '来源', source_stage: '来源阶段', provider: '数据服务',
@@ -40,6 +47,11 @@ function traceKeyLabel(key: string): string {
 
 function traceValueLabel(value: string): string {
   return TRACE_VALUE_LABELS[value] ?? value;
+}
+
+function taskIdLabel(taskId: string): string {
+  const normalized = taskId.toLowerCase();
+  return TASK_ID_LABELS.find(([prefix]) => normalized.startsWith(prefix))?.[1] ?? '待处理事项';
 }
 
 function asText(value: unknown): string | null {
@@ -137,7 +149,7 @@ export default function AgentExecutionTrace({ events }: { events: AgentTraceEven
     <div className="space-y-2">
       <div className="flex justify-between gap-3 text-xs text-[var(--color-text-secondary)]"><span>任务矩阵：{progress.total > 0 ? `${progress.completed + progress.failed}/${progress.total}` : '等待计划生成'}</span><span>{percent}%</span></div>
       <div className="h-2 overflow-hidden rounded-full bg-[var(--color-surface-hover)]"><div className="h-full rounded-full bg-[var(--color-primary-bg)] transition-[width] duration-200 motion-reduce:transition-none" style={{ width: `${percent}%` }} /></div>
-      {progress.taskIds.length > 0 && <div className="flex flex-wrap gap-1.5">{progress.taskIds.map(taskId => <span key={taskId} className="rounded-md bg-[var(--color-surface-hover)] px-2 py-1 text-xs text-[var(--color-text-secondary)]">{taskId} · {TASK_LABELS[progress.statuses.get(taskId) ?? 'pending'] ?? '待执行'}</span>)}</div>}
+      {progress.taskIds.length > 0 && <div className="flex flex-wrap gap-1.5">{progress.taskIds.map(taskId => <span key={taskId} className="rounded-md bg-[var(--color-surface-hover)] px-2 py-1 text-xs text-[var(--color-text-secondary)]">{taskIdLabel(taskId)} · {TASK_LABELS[progress.statuses.get(taskId) ?? 'pending'] ?? '待执行'}</span>)}</div>}
     </div>
     {(scope.targets.length > 0 || scope.dimensions.length > 0) && <div className="grid gap-2 sm:grid-cols-2"><div className="rounded-xl border border-[var(--color-border)] p-3"><p className="text-xs font-medium text-[var(--color-text)]">当前目标企业</p><p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{scope.targets.length > 0 ? scope.targets.join('、') : '事件尚未提供企业范围'}</p></div><div className="rounded-xl border border-[var(--color-border)] p-3"><p className="text-xs font-medium text-[var(--color-text)]">分析维度</p><p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{scope.dimensions.length > 0 ? scope.dimensions.join('、') : '事件尚未提供分析维度'}</p></div></div>}
     {latestLoop && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-hover)] p-3 text-xs text-[var(--color-text-secondary)]"><p className="font-medium text-[var(--color-text)]">证据补全循环</p><p className="mt-1 leading-5">第 {asText(loopData.iteration) ?? '0'} / {asText(loopData.max_iterations) ?? '0'} 轮，工具调用 {asText(loopData.tool_call_count) ?? '0'} 次{asText(loopData.stop_reason) ? `；停止原因：${traceValueLabel(asText(loopData.stop_reason)!)}` : ''}</p></div>}
