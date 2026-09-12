@@ -76,17 +76,6 @@ def review_scope_clarification(
     if not analysis_request or "评估" in str(message or ""):
         return None
 
-    known_names: set[str] = set()
-    for reference in references:
-        if not isinstance(reference, dict):
-            continue
-        name = str(reference.get("name") or "").strip()
-        if name:
-            known_names.add(name.casefold())
-        aliases = reference.get("aliases")
-        if isinstance(aliases, list):
-            known_names.update(str(alias).strip().casefold() for alias in aliases if str(alias).strip())
-
     from app.domains.alert.service import get_watchlist_targets
     from app.domains.supplier.access import (
         can_access_formal_supplier_name,
@@ -103,7 +92,10 @@ def review_scope_clarification(
     for raw_name in target_names:
         name = str(raw_name).strip()
         folded = name.casefold()
-        if folded in known_names or folded in visible_monitor_names:
+        # Conversation references are context for name resolution only. They
+        # may originate from an old answer or an external sourcing candidate
+        # and therefore cannot authorize a risk assessment by themselves.
+        if folded in visible_monitor_names:
             continue
         if formal_supplier_exists_by_name(name):
             access = can_access_formal_supplier_name(name, user_id, user_role)
