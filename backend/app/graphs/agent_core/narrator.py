@@ -83,6 +83,15 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
     if not settings.LLM_API_KEY or not answer.claims:
         return answer
     claims = _claim_payload(answer)
+    article_count = next(
+        (
+            int(item["value"])
+            for item in claims
+            if item.get("fact_path") == "articles_count"
+            and isinstance(item.get("value"), (int, float))
+        ),
+        0,
+    )
     prompt = {
         "user_question": user_message,
         "validated_claims": claims,
@@ -93,6 +102,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             "只根据 validated_claims 和 limitations 写采购人员能直接理解的结论。",
             "不得新增公司、数字、日期、风险等级、来源或采购动作。",
             "如果存在 limitations，只能说明当前资料覆盖不足，不能把缺失数据推断成风险。",
+            "如果 validated_claims 中 articles_count 大于0，必须说明已有新闻可在下方逐条查看，不能写“未包含新闻原文”或“无法逐条列出原文”。",
             "不要输出表格，不要提及 Claim、证据复核点、Harness、工具、任务、模型或内部字段。",
             "用一段自然语言或不超过3条短句说明：发现了什么、意味着什么、下一步看什么。",
             "claim_refs 只能填写实际使用的 validated_claims 的 claim_id。",
@@ -121,6 +131,12 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         )
         content = response.choices[0].message.content or "{}"
         draft = NarrativeDraft.model_validate(json.loads(content))
+        if article_count > 0 and any(
+            phrase in draft.body_markdown
+            for phrase in ("未包含新闻原文", "无法逐条列出原文", "没有新闻原文")
+        ):
+            logger.warning("answer_narration_rejected", reason="article_evidence_contradiction")
+            return answer
         if not _validate_draft(draft, answer):
             logger.warning("answer_narration_rejected", reason="fact_or_reference_validation_failed")
             return answer

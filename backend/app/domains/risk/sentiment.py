@@ -129,7 +129,7 @@ def _search_news(company_name: str, max_results: int = 12) -> list[dict]:
     # check Redis cache first
     cached = _cached_search(company_name)
     if cached is not None:
-        logger.info("sentiment_search_cache_hit", company=company_name)
+        logger.info("sentiment_search_cache_hit", extra={"company": company_name})
         return cached
 
     import requests
@@ -363,7 +363,10 @@ def analyze_sentiment(
                         "date": item.get("publishTime", "") or item.get("newsDate", ""),
                     })
             if news_articles:
-                logger.info("sentiment_tianyancha_fallback", company=company_name, count=len(news_articles))
+                logger.info(
+                    "sentiment_tianyancha_fallback",
+                    extra={"company": company_name, "count": len(news_articles)},
+                )
 
     if not news_articles:
         result = {
@@ -404,7 +407,7 @@ def analyze_sentiment(
             cls = class_map.get(i, {})
             articles.append({
                 **a,
-                "body": a["body"][:150],
+                "body": a["body"][:6000],
                 "sentiment": cls.get("sentiment", "neutral"),
                 "confidence": cls.get("confidence", 0.5),
                 "risk_tags": cls.get("risk_tags", []),
@@ -544,7 +547,10 @@ def _check_negative_alert(company_name: str, result: dict) -> None:
                 "warning",
             )
         except Exception as exc:
-            logger.warning("scoped_sentiment_delivery_failed", company=company_name, error=str(exc))
+            logger.warning(
+                "scoped_sentiment_delivery_failed",
+                extra={"company": company_name, "error": str(exc)},
+            )
 
 
 # ---- Trend & Dashboard ----

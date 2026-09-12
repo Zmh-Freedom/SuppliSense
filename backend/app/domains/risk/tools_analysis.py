@@ -59,7 +59,15 @@ def sentiment_analysis(company_name: str) -> dict:
         "llm_analyzed": result.get("llm_analyzed"),
         "analysis_mode": result.get("analysis_mode"),
         "has_data": result.get("has_data", False),
-    }, tool_name="sentiment_analysis", entity_id=f"entity:{company_name}", dimension="sentiment")
+    }, tool_name="sentiment_analysis", entity_id=f"entity:{company_name}", dimension="sentiment", claim_fields=[
+        "overall_sentiment",
+        "sentiment_score",
+        "articles_count",
+        "negative_count",
+        "neutral_count",
+        "positive_count",
+        "summary",
+    ])
 
 
 @tool

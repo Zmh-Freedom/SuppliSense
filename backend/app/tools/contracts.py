@@ -207,6 +207,7 @@ class ContagionOutput(StrictToolOutput):
 class SentimentOutput(StrictToolOutput):
     company_name: str
     analyzed_at: str | None = None
+    overall_sentiment: str = "neutral"
     sentiment_score: float | None = None
     negative_count: int = Field(default=0, ge=0)
     neutral_count: int = Field(default=0, ge=0)

@@ -232,6 +232,13 @@ _CLAIM_LABELS = {
     "risk_detail.env_penalty_count": "环保处罚记录数",
     "risk_detail.data_coverage.coverage_ratio": "风险数据覆盖率",
     "risk_detail.data_coverage.assessment_status": "风险数据覆盖状态",
+    "overall_sentiment": "舆情总体倾向",
+    "sentiment_score": "舆情倾向评分",
+    "articles_count": "纳入分析的新闻数",
+    "negative_count": "负面新闻数",
+    "neutral_count": "中性新闻数",
+    "positive_count": "正面新闻数",
+    "summary": "舆情摘要",
 }
 _PERCENTAGE_CLAIMS = {
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",

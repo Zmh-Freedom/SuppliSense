@@ -91,8 +91,13 @@ const FACT_LABELS: Record<string, string> = {
   settlement_without_receipts_month_count: '结算与收货记录不一致月份数',
   formal_business_score: '商务风险评分',
   coverage: '数据覆盖率',
+  overall_sentiment: '舆情总体倾向',
   sentiment_score: '舆情倾向评分',
+  articles_count: '纳入分析的新闻数',
   negative_count: '负面信息数量',
+  neutral_count: '中性信息数量',
+  positive_count: '正面信息数量',
+  summary: '舆情摘要',
   resolution: '主体检索结果',
 };
 
