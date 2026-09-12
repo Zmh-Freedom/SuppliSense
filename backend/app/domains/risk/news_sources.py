@@ -30,7 +30,8 @@ _GASGOO_LISTING_URLS = (
     "https://auto.gasgoo.com/parts-news/C-103/4",
     "https://auto.gasgoo.com/parts-news/C-103/5",
 )
-_CAAM_HOME_URL = "http://www.caam.org.cn/"
+_CAAM_HOME_URL = "https://www.caam.org.cn/"
+_CAAM_HOME_FALLBACK_URL = "http://www.caam.org.cn/"
 
 
 def _normalise_text(value: object) -> str:
@@ -201,7 +202,7 @@ def fetch_gasgoo_public_news(company_name: str, max_results: int = 12) -> dict:
 
 def fetch_caam_news(company_name: str, max_results: int = 12) -> dict:
     """抓取中国汽车工业协会公开行业资讯。"""
-    response = _get(_CAAM_HOME_URL)
+    response = _get(_CAAM_HOME_URL) or _get(_CAAM_HOME_FALLBACK_URL)
     if response is None:
         return _result("中国汽车工业协会", [], error="官网公开页面不可访问")
 
