@@ -296,11 +296,13 @@ def collect_public_news(
     website_url: str | None = None,
     max_results: int = 12,
 ) -> dict:
-    """统一采集公开来源并返回合并后的文章和各来源状态。"""
+    """统一采集活动公开来源并返回合并后的文章和各来源状态。
+
+    ``website_url`` 暂时保留为兼容参数，但当前版本不会主动访问企业官网。
+    """
     source_results = [
         fetch_gasgoo_public_news(company_name, max_results=max_results),
         fetch_caam_news(company_name, max_results=max_results),
-        fetch_company_website_news(company_name, website_url, max_results=max_results),
     ]
     articles = _deduplicate(
         (article for result in source_results for article in result["articles"]),

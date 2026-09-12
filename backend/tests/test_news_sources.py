@@ -94,13 +94,11 @@ def test_collect_public_news_merges_and_deduplicates(monkeypatch) -> None:
         "fetch_caam_news",
         lambda *_args, **_kwargs: news_sources._result("中国汽车工业协会", [article]),
     )
-    monkeypatch.setattr(
-        news_sources,
-        "fetch_company_website_news",
-        lambda *_args, **_kwargs: news_sources._result("企业官网公告", []),
-    )
-
     result = news_sources.collect_public_news("示例公司")
 
     assert result["article_count"] == 1
-    assert len(result["sources"]) == 3
+    assert len(result["sources"]) == 2
+    assert {source["source_name"] for source in result["sources"]} == {
+        "盖世汽车公开资讯",
+        "中国汽车工业协会",
+    }
