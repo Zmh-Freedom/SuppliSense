@@ -28,6 +28,7 @@ const PROFILE: SupplierProfile = {
   },
   risk: { risk_score: 20, risk_level: '低风险', trend: [], alert_count: 1, in_watchlist: false },
   financial: { history: [{ period: '2025', revenue: 100, net_profit: 10 }], revenue_growth: 10 },
+  sentiment: { overall_sentiment: 'neutral', sentiment_score: 0, negative_ratio: 0, article_count: 0, top_tags: [] },
   alerts: [{ _id: 'a-1', severity: 'warning', changes: [{ field: '诉讼', old: 0, new: 1 }], created_at: '2026-08-20' }],
   relationships: { related_count: 1, branch_count: 0, dependency_count: 1, high_risk_related_count: 0, entities: [{ name: '关联供应商', relation_type: '供应链', supplier_id: 'related-1', risk_score: 15 }] },
   changelog: [{ changed_at: '2026-08-20T10:00:00+00:00', changed: { industry: { old: '旧行业', new: '仪器仪表制造业' } } }],
@@ -81,6 +82,8 @@ describe('SupplierProfilePage', () => {
     expect(await screen.findByText('联系方式与数据来源')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'https://example.com' })).toHaveAttribute('href', 'https://example.com');
     expect(screen.getAllByText('来源：company_website').length).toBeGreaterThan(0);
+    expect(screen.getByText('中性')).toBeInTheDocument();
+    expect(screen.queryByText('neutral')).not.toBeInTheDocument();
     expect(screen.getByText('诉讼：0 → 1')).toBeInTheDocument();
     expect(screen.getByText('1994-08-16')).toBeInTheDocument();
   });

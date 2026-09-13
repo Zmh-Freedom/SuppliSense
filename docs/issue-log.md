@@ -63,6 +63,18 @@
 - 验证结果：改用显式 readyState 比较后，前端全量测试 92 项、TypeScript、ESLint、生产构建和 `git diff --check` 均通过。
 - 关联提交：`c338784b`。
 
+## ISS-20260913-022 供应商画像概览直接展示英文舆情倾向
+
+- 发现日期：2026-09-13
+- 状态：已关闭
+- 优先级：P2
+- 现象：供应商画像概览卡片将接口返回的 `overall_sentiment=neutral` 直接渲染为英文 `neutral`，与页面其他舆情状态的中文表达不一致。
+- 影响：采购员需要自行理解英文状态，降低风险概览的可读性；同时暴露了后端枚举值，不符合面向采购业务的中文界面约定。
+- 根因：`SupplierProfilePage` 的概览卡片没有复用前端已有的舆情状态标签映射，直接展示 `sentiment.overall_sentiment` 原始值。
+- 修复方案：在画像概览展示层复用 `SENTIMENT_LABEL`，将 `negative/neutral/positive` 映射为“负面/中性/正面”；未知值使用中文“暂未覆盖”兜底，不修改 API 返回结构。
+- 验证结果：`SupplierProfilePage` 概览卡片已统一将 `negative/neutral/positive` 映射为“负面/中性/正面”，未知值显示“暂未覆盖”；新增画像回归断言确保 `neutral` 不会直接出现在页面。供应商画像定向测试 10 项、前端全量测试 92 项、TypeScript、ESLint、生产构建和 `git diff --check` 通过。
+- 关联提交：`689c08d6`。
+
 ## ISS-20260913-017 开发测试账号无法通过当前认证环境
 
 - 发现日期：2026-09-13
