@@ -21,11 +21,11 @@ function Lazy({ children }: { children: ReactNode }) {
 }
 
 export const TAB_ROUTES = [
-  { path: '/chat', label: 'AI 工作台', icon: 'agent', primary: true },
-  { path: '/', label: '总览', icon: 'dashboard' },
-  { path: '/sourcing', label: '智能寻源', icon: 'sourcing' },
+  { path: '/', label: '采购工作台', icon: 'dashboard', primary: true },
+  { path: '/sourcing', label: '寻源建议', icon: 'sourcing' },
   { path: '/assess', label: '风险监控', icon: 'assess' },
   { path: '/suppliers', label: '供应商库', icon: 'sourcing' },
+  { path: '/chat', label: '采购助手', icon: 'agent' },
   { path: '/settings', label: '设置', icon: 'settings' },
 ];
 
