@@ -3,7 +3,7 @@
 from datetime import date, datetime
 from uuid import UUID
 
-from psycopg2.errors import UniqueViolation
+from psycopg2 import errors as psycopg2_errors
 
 from app.core.errors import DomainError
 from app.core.metrics import record_company_identity_resolution
@@ -34,6 +34,7 @@ _ANALYST_RESTRICTED_UPDATE_FIELDS = {
 }
 _UPDATE_NON_NULL_FIELDS = {"legal_name", "identity_source"}
 _CREDIT_CODE_UNIQUE_CONSTRAINT = "companies_unified_social_credit_code_key"
+UniqueViolation = psycopg2_errors.lookup("23505")
 
 
 def create_company(

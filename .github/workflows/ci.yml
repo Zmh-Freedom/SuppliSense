@@ -102,7 +102,7 @@ jobs:
       - name: Enforce targeted Harness core coverage
         run: >-
           python -m pytest -q
-          -m "not integration and not agent_e2e"
+          -m "not integration"
           --cov=app.graphs.harness.graph
           --cov=app.graphs.harness.state
           --cov=app.graphs.agent_core.answer_contract
