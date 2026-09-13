@@ -349,6 +349,11 @@ function MonitoringTargetDetail({
   const coverage = coverageOf(target);
   const action = target.next_action;
   const riskText = target.risk_score == null ? '暂无快照' : `${getRiskLevelLabel(target.risk_level)} · ${target.risk_score}/100`;
+  const priorityTone = action?.priority === 'high'
+    ? 'border-red-200 bg-red-50 text-red-950'
+    : action?.priority === 'medium'
+      ? 'border-amber-200 bg-amber-50 text-amber-950'
+      : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]';
   return (
     <div className="space-y-5">
       <button type="button" onClick={onBack} className="text-sm text-[var(--color-primary-bg)] hover:underline">← 返回监控工作台</button>
@@ -362,6 +367,22 @@ function MonitoringTargetDetail({
           <div className="flex flex-wrap gap-2"><TaskActionButton target={target} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} /><button type="button" onClick={() => onAnalyze(target)} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-surface-hover)]">Agent 复核</button><button type="button" onClick={onRefresh} disabled={isRefreshing} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-secondary)] disabled:opacity-50">{isRefreshing ? '检查中…' : '重新检查'}</button></div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-5"><DetailMetric label="首次复核" value={initialAssessmentLabel(target)} /><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={action?.label || '继续观察'} /></div>
+      </section>
+
+      <section className={`rounded-2xl border p-5 shadow-sm ${priorityTone}`} aria-label="采购优先级摘要">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-[0.12em] opacity-70">采购优先级摘要</p>
+            <h2 className="mt-1 text-base font-semibold">下一步：{action?.label || '继续观察'}</h2>
+          </div>
+          <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-medium">优先级：{priorityLabel(action?.priority)}</span>
+        </div>
+        <p className="mt-3 text-sm leading-6">{action?.reason || '当前没有需要立即处理的变化，建议继续观察后续风险快照。'}</p>
+        <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
+          <div className="rounded-lg bg-white/60 px-3 py-2"><span className="opacity-70">当前风险：</span>{riskText}</div>
+          <div className="rounded-lg bg-white/60 px-3 py-2"><span className="opacity-70">风险变化：</span>{target.risk_change?.label || '暂无数据'}</div>
+          <div className="rounded-lg bg-white/60 px-3 py-2"><span className="opacity-70">数据覆盖：</span>{coverage.summary || '覆盖情况未知'}</div>
+        </div>
       </section>
 
       <IdentityResolutionPanel

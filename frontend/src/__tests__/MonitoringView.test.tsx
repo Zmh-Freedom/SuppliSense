@@ -64,7 +64,7 @@ describe('MonitoringView', () => {
     });
     renderView('/assess/monitor-1');
 
-    expect(await screen.findByText('低风险 · 85/100')).toBeInTheDocument();
+    expect((await screen.findAllByText('低风险 · 85/100')).length).toBeGreaterThan(0);
     expect(await screen.findByText('该维度暂未形成可用结论')).toBeInTheDocument();
     expect(screen.queryByText('LLM 不可用')).not.toBeInTheDocument();
   });
@@ -101,6 +101,8 @@ describe('MonitoringView', () => {
     expect(screen.getByRole('heading', { name: '风险监控' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '待核验候选有限公司' }));
     expect(await screen.findByText('监控对象 ID：monitor-1')).toBeInTheDocument();
+    expect(screen.getByText('采购优先级摘要')).toBeInTheDocument();
+    expect(screen.getByText('下一步：完成主体核验')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '完成主体核验' })).toBeInTheDocument();
     expect(screen.getByTestId('location')).toHaveTextContent('/assess/monitor-1');
   });
