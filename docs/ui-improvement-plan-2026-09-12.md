@@ -247,6 +247,6 @@
 | Phase 3 候选结果 | 已完成 | 候选单卡合并、采购语义理由与待确认项、证据明细、正式画像链接、外部候选和空结果状态；前端 89 项测试、TypeScript、ESLint、生产构建通过 | `67ebae0b`, `a4debd80` |
 | Phase 4 风险/画像 | 首轮完成 | 监控列表/画像定向 17 项测试、全量 91 项测试、TypeScript、ESLint、生产构建通过 | `e53d79d5` |
 | Phase 5 视觉/验收 | 进行中 | 全量 91 项测试、TypeScript、ESLint、生产构建通过；当前数据库管理员账号已完成总览 → 风险监控 → 监控详情 → 供应商画像真实浏览器验收，390px 核心页面无横向溢出；寻源任务已创建但停在主体确认，见 `ISS-20260913-018` | `cd147495`, `99fa0122` |
-| Phase 6 主流程收口 | 进行中 | `IDENTITY_REVIEW` 无可确认主体时显示明确原因、当前动作和返回修改需求；前端全量 92 项测试、TypeScript、ESLint、生产构建通过；后端主体核验运行态仍见 `ISS-20260913-018`，WebSocket warning 见 `ISS-20260913-019` | 待提交 |
+| Phase 6 主流程收口 | 进行中 | `IDENTITY_REVIEW` 无可确认主体时显示明确原因、当前动作和返回修改需求；前端全量 92 项测试、TypeScript、ESLint、生产构建通过；后端主体核验运行态仍见 `ISS-20260913-018`，WebSocket warning 见 `ISS-20260913-019` | `6c7c133c` |
 
 补充验收记录：本轮使用当前 PostgreSQL 中的启用管理员账号完成登录；历史固定开发账号不在当前数据库，见 `ISS-20260913-017`。浏览器截图保存在 `output/playwright/`：`acceptance-dashboard-desktop.png`、`acceptance-sourcing-mobile-390.png`、`acceptance-risk-monitor-mobile-390.png`、`acceptance-supplier-profile-mobile-390.png`。采购员角色和寻源主体确认闭环仍待有效采购员账号/可确认候选数据复验。后端运行时统一不包含在本计划默认实施范围。
