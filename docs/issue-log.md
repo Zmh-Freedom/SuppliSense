@@ -3545,4 +3545,4 @@
 - 根因：`.env.docker` 包含数据库密码、JWT 和外部服务密钥，按安全约定被 `.gitignore` 忽略，仓库不会提供可直接使用的真实配置。
 - 修复方案：基于 `.env.docker.example` 在本地生成仅用于配置校验的随机占位密钥，运行 Compose config 和完整发布门禁；保持 `.env.docker` 不纳入版本库，并在发布文档中说明生成方式。
 - 验证结果：基于 `.env.docker.example` 在本机生成随机校验密钥，确认无 `CHANGE_ME` 占位符；`docker compose --env-file .env.docker config --quiet` 通过。随后执行完整发布门禁，10 项全部 PASS（后端 976 项测试、前端 84 项测试、Lint、TypeScript、生产构建、数据库门禁和 Compose 配置均通过），`ready_for_release=true`。`.env.docker` 仍被 `.gitignore` 忽略，不包含在提交中。
-- 关联提交：`9bed9084`。
+- 关联提交：`c8ff0b17`。
