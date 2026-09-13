@@ -40,6 +40,7 @@ function renderWithQueryClient(node: React.ReactNode, initialEntries = ['/sourci
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   sessionStorage.clear();
 });
 
@@ -91,6 +92,25 @@ describe('SourcingRiskWorkbench', () => {
     ));
   });
 
+  it('can stop an active run through the existing cancel endpoint', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/agent-runs/run-active')) return Response.json({ ...clarificationRun, id: 'run-active', status: 'LOCAL_SEARCHING', version: 3 });
+      if (String(input).endsWith('/agent-runs/run-active/cancel')) return Response.json({ ...clarificationRun, id: 'run-active', status: 'CANCELLED', version: 4 });
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-active" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '停止任务' }));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/agent-runs/run-active/cancel'),
+      expect.objectContaining({ method: 'POST', body: expect.stringContaining('"expected_version":3') }),
+    ));
+  });
+
   it('sends the canonical approval decision URL, expected_version, and comment', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
       async () => Response.json({}),
@@ -134,18 +154,18 @@ describe('SourcingRiskWorkbench', () => {
 
     renderWithQueryClient(<SourcingRiskWorkbench initialRunId="IDENTITY_REVIEW" />);
 
-    expect((await screen.findAllByText('企业主体人工复核')).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText('核验主体与风险')).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('IDENTITY_REVIEW')).not.toBeInTheDocument();
   });
 
   it.each([
-    ['CREATED', '创建任务'], ['CLARIFYING', '等待需求澄清'], ['POLICY_LOCKED', '锁定规则'],
-    ['LOCAL_SEARCHING', '检索本地候选'], ['EXTERNAL_REVIEW', '审核外部候选'], ['IDENTITY_RESOLVING', '核验企业主体'],
-    ['IDENTITY_REVIEW', '企业主体人工复核'], ['INVESTIGATING', '调查风险证据'], ['EVIDENCE_REVIEW', '证据人工复核'],
-    ['SCORING', '形成候选决策'], ['READY_FOR_REVIEW', '人工复核'], ['ACTION_PENDING', '等待操作审批'],
-    ['ACTION_EXECUTING', '执行批准操作'], ['COMPLETED', '已完成'], ['PARTIAL', '部分完成'],
-    ['NEEDS_REVIEW', '需要人工复核'], ['ACTION_FAILED', '操作执行失败'], ['FAILED', '任务失败'], ['CANCELLED', '已取消'],
-  ])('maps %s to its durable timeline phase', async (status, label) => {
+    ['CREATED', '理解需求'], ['CLARIFYING', '理解需求'], ['POLICY_LOCKED', '检索候选'],
+    ['LOCAL_SEARCHING', '检索候选'], ['EXTERNAL_REVIEW', '检索候选'], ['IDENTITY_RESOLVING', '核验主体与风险'],
+    ['IDENTITY_REVIEW', '核验主体与风险'], ['INVESTIGATING', '核验主体与风险'], ['EVIDENCE_REVIEW', '核验主体与风险'],
+    ['SCORING', '形成寻源建议'], ['READY_FOR_REVIEW', '形成寻源建议'], ['ACTION_PENDING', '等待采购动作'],
+    ['ACTION_EXECUTING', '等待采购动作'], ['COMPLETED', '等待采购动作'], ['PARTIAL', '等待采购动作'],
+    ['NEEDS_REVIEW', '形成寻源建议'], ['ACTION_FAILED', '等待采购动作'],
+  ])('maps %s to its procurement progress phase', async (status, label) => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith(`/agent-runs/${status}`)) {
         return Response.json({ ...identityReviewRun, id: status, status, candidates: [], decisions: [] });
@@ -155,7 +175,28 @@ describe('SourcingRiskWorkbench', () => {
 
     renderWithQueryClient(<SourcingRiskWorkbench initialRunId={status} />);
 
-    expect(await screen.findByText(label, { selector: 'li[aria-current="step"]' })).toBeInTheDocument();
+    const currentStep = await vi.waitFor(() => {
+      const progress = screen.getByLabelText('采购业务进度');
+      const step = progress.querySelector('li[aria-current="step"]');
+      if (!step) throw new Error('当前采购进度尚未出现');
+      return step;
+    });
+    expect(currentStep).toHaveTextContent(label);
+  });
+
+  it.each([
+    ['FAILED', '任务未完成'], ['CANCELLED', '任务已取消'],
+  ])('shows a distinct business outcome for %s', async (status, label) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith(`/agent-runs/${status}`)) {
+        return Response.json({ ...identityReviewRun, id: status, status, candidates: [], decisions: [] });
+      }
+      return new Response('', { status: 204 });
+    }));
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId={status} />);
+
+    expect(await screen.findByText(label)).toBeInTheDocument();
   });
 
   it('reports a normal non-terminal event stream EOF as reconnectable', async () => {

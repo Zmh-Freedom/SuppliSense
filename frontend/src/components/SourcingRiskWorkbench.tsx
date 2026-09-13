@@ -9,16 +9,55 @@ import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
 import AgentExecutionTrace from './AgentExecutionTrace';
 
-const STAGES = [
-  ['CREATED', '创建任务'], ['CLARIFYING', '等待需求澄清'], ['POLICY_LOCKED', '锁定规则'],
-  ['LOCAL_SEARCHING', '检索本地候选'], ['EXTERNAL_REVIEW', '审核外部候选'], ['IDENTITY_RESOLVING', '核验企业主体'],
-  ['IDENTITY_REVIEW', '企业主体人工复核'], ['INVESTIGATING', '调查风险证据'], ['EVIDENCE_REVIEW', '证据人工复核'],
-  ['SCORING', '形成候选决策'], ['READY_FOR_REVIEW', '人工复核'], ['ACTION_PENDING', '等待操作审批'],
-  ['ACTION_EXECUTING', '执行批准操作'], ['COMPLETED', '已完成'], ['PARTIAL', '部分完成'],
-  ['NEEDS_REVIEW', '需要人工复核'], ['ACTION_FAILED', '操作执行失败'], ['FAILED', '任务失败'], ['CANCELLED', '已取消'],
+const BUSINESS_PHASES = [
+  { key: 'understand', label: '理解需求', statuses: ['CREATED', 'CLARIFYING'] },
+  { key: 'discover', label: '检索候选', statuses: ['POLICY_LOCKED', 'LOCAL_SEARCHING', 'EXTERNAL_REVIEW'] },
+  { key: 'verify', label: '核验主体与风险', statuses: ['IDENTITY_RESOLVING', 'IDENTITY_REVIEW', 'INVESTIGATING', 'EVIDENCE_REVIEW'] },
+  { key: 'recommend', label: '形成寻源建议', statuses: ['SCORING', 'READY_FOR_REVIEW', 'NEEDS_REVIEW'] },
+  { key: 'action', label: '等待采购动作', statuses: ['ACTION_PENDING', 'ACTION_EXECUTING', 'COMPLETED', 'PARTIAL', 'ACTION_FAILED'] },
 ] as const;
 
-const STATUS_LABELS: Record<string, string> = Object.fromEntries(STAGES);
+type StatusTone = 'info' | 'attention' | 'success' | 'danger' | 'neutral';
+
+const STATUS_COPY: Record<string, { label: string; description: string; tone: StatusTone }> = {
+  CREATED: { label: '正在理解需求', description: '已创建任务，正在解析采购条件。', tone: 'info' },
+  CLARIFYING: { label: '等待补充条件', description: '补充缺少的采购条件后，任务会在原任务上继续。', tone: 'attention' },
+  POLICY_LOCKED: { label: '规则已锁定', description: '筛选规则已固定，接下来会检索可比较的候选。', tone: 'info' },
+  LOCAL_SEARCHING: { label: '正在检索候选', description: '正在从已有供应商资料中查找匹配候选。', tone: 'info' },
+  EXTERNAL_REVIEW: { label: '正在补充外部候选', description: '本地候选不足，正在补充外部候选并标记待核验信息。', tone: 'attention' },
+  IDENTITY_RESOLVING: { label: '正在核验主体', description: '正在确认候选企业对应的真实经营主体。', tone: 'info' },
+  IDENTITY_REVIEW: { label: '等待确认主体', description: '请确认候选企业主体，确认前不会形成正式推荐。', tone: 'attention' },
+  INVESTIGATING: { label: '正在核验风险', description: '正在检查候选供应商的风险证据和数据覆盖。', tone: 'info' },
+  EVIDENCE_REVIEW: { label: '等待复核证据', description: '部分风险证据需要采购员复核后才能进入建议。', tone: 'attention' },
+  SCORING: { label: '正在形成建议', description: '正在综合匹配条件、风险证据和主体状态。', tone: 'info' },
+  READY_FOR_REVIEW: { label: '建议待查看', description: '候选与依据已准备好，请查看推荐理由和待确认项。', tone: 'success' },
+  ACTION_PENDING: { label: '等待采购动作审批', description: '已有采购动作需要审批确认，批准前不会写入监控清单。', tone: 'attention' },
+  ACTION_EXECUTING: { label: '正在执行采购动作', description: '已批准的采购动作正在执行，请等待回执。', tone: 'info' },
+  COMPLETED: { label: '建议已生成', description: '寻源建议已完成，可以查看候选、依据并选择后续动作。', tone: 'success' },
+  PARTIAL: { label: '部分结果可用', description: '部分数据源未完成，已有候选仍可查看，请结合覆盖状态判断。', tone: 'attention' },
+  NEEDS_REVIEW: { label: '等待人工复核', description: '候选或风险证据需要采购员确认，完成后再决定是否采用。', tone: 'attention' },
+  ACTION_FAILED: { label: '采购动作未完成', description: '采购动作执行失败，已获取的寻源结果仍会保留。', tone: 'danger' },
+  FAILED: { label: '任务未完成', description: '任务未能完成，已获取的内容会保留；请刷新后查看最新状态。', tone: 'danger' },
+  CANCELLED: { label: '任务已取消', description: '本次寻源已停止，已获取的内容会保留，也可以重新发起任务。', tone: 'neutral' },
+};
+
+const NEXT_ACTION_LABELS: Record<string, string> = {
+  clarification_required: '补充缺少的采购条件',
+  identity_review_required: '确认候选企业主体',
+  evidence_review_required: '复核风险证据',
+  review_required: '查看候选与寻源依据',
+  external_discovery_required: '等待外部候选补充',
+};
+
+const TERMINAL_RUN_STATUSES = new Set(['COMPLETED', 'PARTIAL', 'NEEDS_REVIEW', 'ACTION_FAILED', 'FAILED', 'CANCELLED']);
+
+const STATUS_TONE_CLASSES: Record<StatusTone, string> = {
+  info: 'border-blue-200 bg-blue-50 text-blue-800',
+  attention: 'border-amber-200 bg-amber-50 text-amber-900',
+  success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  danger: 'border-red-200 bg-red-50 text-red-800',
+  neutral: 'border-[var(--color-border)] bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]',
+};
 
 const GROUP_TITLES: Record<string, string> = {
   recommended: '推荐供应商',
@@ -43,10 +82,6 @@ function candidateId(candidate: SourcingRiskCandidate): string {
 
 function candidateName(candidate: SourcingRiskCandidate): string {
   return candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
-}
-
-function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? '处理中';
 }
 
 function IdentityReviewCard({ runId, version, candidates }: { runId: string; version: number; candidates: SourcingRiskCandidate[] }) {
@@ -136,10 +171,40 @@ function ClarificationCard({
   );
 }
 
-function StageTimeline({ status }: { status: string }) {
-  const currentIndex = STAGES.findIndex(([stage]) => stage === status);
-  if (currentIndex < 0) return <p className="text-xs text-amber-700">未知阶段：{status}</p>;
-  return <ol className="flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">{STAGES.map(([stage, label], index) => <li key={stage} aria-current={index === currentIndex ? 'step' : undefined} className={`rounded-full px-2.5 py-1 ${index <= currentIndex ? 'bg-[var(--color-primary-bg)] text-white' : 'bg-[var(--color-surface-hover)]'}`}>{label}</li>)}</ol>;
+function ProcurementProgress({ status, nextAction, errorCode }: { status: string; nextAction?: string | null; errorCode?: string | null }) {
+  const currentIndex = BUSINESS_PHASES.findIndex(phase => phase.statuses.some(stage => stage === status));
+  const statusCopy = STATUS_COPY[status] ?? { label: '任务处理中', description: '任务正在处理，请稍后刷新查看最新状态。', tone: 'info' as StatusTone };
+  const nextActionLabel = nextAction ? NEXT_ACTION_LABELS[nextAction] : null;
+  const isTerminalIssue = ['FAILED', 'ACTION_FAILED', 'CANCELLED'].includes(status);
+
+  return (
+    <section className="space-y-4" aria-labelledby="procurement-progress-heading">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 id="procurement-progress-heading" className="text-sm font-semibold text-[var(--color-text)]">采购进度</h4>
+          <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{statusCopy.description}</p>
+        </div>
+        <span role="status" className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS_TONE_CLASSES[statusCopy.tone]}`}>{statusCopy.label}</span>
+      </div>
+      <ol className="grid gap-2 sm:grid-cols-5" aria-label="采购业务进度">
+        {BUSINESS_PHASES.map((phase, index) => {
+          const isComplete = currentIndex >= 0 && index < currentIndex;
+          const isCurrent = currentIndex >= 0 && index === currentIndex;
+          return (
+            <li key={phase.key} aria-current={isCurrent ? 'step' : undefined} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${isCurrent ? 'border-[var(--color-primary-bg)] bg-[var(--color-primary-bg)]/10 text-[var(--color-text)]' : isComplete ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-[var(--color-border)] bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]'}`}>
+              <span aria-hidden="true" className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${isCurrent ? 'bg-[var(--color-primary-bg)] text-white' : isComplete ? 'bg-emerald-600 text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-secondary)]'}`}>{isComplete ? '✓' : index + 1}</span>
+              <span className="leading-4">{phase.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]">
+        <span><span className="font-medium text-[var(--color-text)]">当前动作：</span>{nextActionLabel ?? (status === 'COMPLETED' || status === 'PARTIAL' ? '查看寻源建议和证据' : '系统正在处理')}</span>
+        {errorCode && <span><span className="font-medium text-[var(--color-text)]">处理提示：</span>请刷新任务获取最新结果</span>}
+      </div>
+      {isTerminalIssue && <div role="status" className={`rounded-xl border px-3 py-2 text-xs leading-5 ${STATUS_TONE_CLASSES[statusCopy.tone]}`}>{statusCopy.description}</div>}
+    </section>
+  );
 }
 
 function DecisionGroup({ title, decisions, candidates }: { title: string; decisions: SourcingRiskDecision[]; candidates: SourcingRiskCandidate[] }) {
@@ -170,6 +235,14 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     window.location.assign(`/chat?q=${encodeURIComponent(prompt)}`);
   };
   const runId = run?.id ?? run?.run_id ?? activeRunId;
+  const cancelRun = useMutation({
+    mutationFn: () => {
+      if (!runId || !run) return Promise.reject(new Error('当前任务不可用'));
+      return api.post(`/agent-runs/${encodeURIComponent(runId)}/cancel`, { expected_version: run.version });
+    },
+    onSuccess: () => void refresh(),
+  });
+  const canCancel = Boolean(run && runId && !TERMINAL_RUN_STATUSES.has(run.status));
 
   const selectRun = (nextRunId?: string) => {
     setActiveRunId(nextRunId);
@@ -203,8 +276,11 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     {isLoading && <p className="text-sm text-[var(--color-text-secondary)]">正在加载任务…</p>}
     {error && <p className="text-sm text-red-500">任务加载失败，请稍后重试。</p>}
     {run && runId && <>
-      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3" aria-label="当前寻源任务"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3><span role="status" className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{statusLabel(run.status)}</span></div>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}<p className="mt-2 text-xs text-[var(--color-text-secondary)]">任务已保存到当前地址，刷新页面后可以继续查看结果或补充条件。</p></div><button type="button" onClick={() => void refresh()} disabled={isFetching} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50">{isFetching ? '刷新中…' : '刷新任务'}</button></div><StageTimeline status={run.status} /></section>
-      <AgentExecutionTrace events={traceEvents} />
+      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-4" aria-label="当前寻源任务"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}<p className="mt-2 text-xs text-[var(--color-text-secondary)]">任务已保存到当前地址，刷新页面后可以继续查看结果或补充条件。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void refresh()} disabled={isFetching} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50">{isFetching ? '刷新中…' : '刷新任务'}</button>{canCancel && <button type="button" onClick={() => { if (window.confirm('确定停止当前寻源任务吗？已获取的结果会保留。')) cancelRun.mutate(); }} disabled={cancelRun.isPending} className="min-h-[40px] rounded-lg border border-red-200 px-3 text-xs text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50">{cancelRun.isPending ? '停止中…' : '停止任务'}</button>}</div></div>{cancelRun.isError && <p role="alert" className="text-xs text-red-600">停止任务失败，任务仍在运行，请刷新后重试。</p>}<ProcurementProgress status={run.status} nextAction={run.next_action} errorCode={run.error_code} /></section>
+      <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-[var(--color-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-inset">查看执行细节<span className="ml-2 text-xs font-normal text-[var(--color-text-secondary)]">技术追踪、数据范围与证据校验</span></summary>
+        <div className="border-t border-[var(--color-border)] p-3"><AgentExecutionTrace events={traceEvents} /></div>
+      </details>
       {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
         {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} onContinueRisk={() => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={() => openChatForCandidate(candidate, 'watchlist')} />)}</section>}
         {[...decisionsByGroup.entries()].map(([group, decisions]) => <DecisionGroup key={group} title={GROUP_TITLES[group] ?? group} decisions={decisions} candidates={run.candidates ?? []} />)}
