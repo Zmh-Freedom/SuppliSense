@@ -75,7 +75,7 @@ function candidateName(candidate: SourcingRiskCandidate): string {
   return candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
 }
 
-function IdentityReviewCard({ runId, version, candidates }: { runId: string; version: number; candidates: SourcingRiskCandidate[] }) {
+function IdentityReviewCard({ runId, version, candidates, onEditRequirement }: { runId: string; version: number; candidates: SourcingRiskCandidate[]; onEditRequirement: () => void }) {
   const queryClient = useQueryClient();
   const [resolutions, setResolutions] = useState<Record<string, string>>({});
   const reviewCandidates = candidates.filter(candidate => candidate.identity_review || candidate.identity_status !== 'exact');
@@ -84,19 +84,27 @@ function IdentityReviewCard({ runId, version, candidates }: { runId: string; ver
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(runId) }),
   });
   const canSubmit = reviewCandidates.length > 0 && reviewCandidates.every(candidate => resolutions[candidateId(candidate)]);
+  const hasSelectableCandidate = reviewCandidates.some(candidate => (candidate.identity_candidates ?? []).length > 0);
+  const hasUnresolvedCandidates = reviewCandidates.some(candidate => (candidate.identity_candidates ?? []).length === 0);
+  const hasNoCandidates = reviewCandidates.length === 0;
 
   return (
     <section className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-4">
       <div>
-        <h3 className="font-semibold text-amber-900">请确认企业主体</h3>
-        <p className="text-xs text-amber-800 mt-1">主体未确认前不会给出供应商推荐。</p>
+        <h3 className="font-semibold text-amber-900">{hasNoCandidates || !hasSelectableCandidate ? '暂未找到可确认主体' : '请确认企业主体'}</h3>
+        <p className="text-xs text-amber-800 mt-1">主体未确认前不会给出供应商推荐。{hasNoCandidates || !hasSelectableCandidate ? '可以补充更明确的企业信息，或返回修改采购需求。' : ''}</p>
       </div>
+      {hasNoCandidates && <p className="rounded-xl border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-xs leading-5 text-amber-900">本次主体核验没有返回可选择的企业候选，当前任务不会被解释为已完成推荐。</p>}
       {reviewCandidates.map(candidate => {
         const id = candidateId(candidate);
         const options = candidate.identity_candidates ?? [];
         return <div key={id} className="bg-white/70 rounded-xl p-3 space-y-2"><p className="text-sm font-medium text-[var(--color-text)]">{candidateName(candidate)}</p>{options.length > 0 ? <select aria-label={`${candidateName(candidate)}主体`} value={resolutions[id] ?? ''} onChange={event => setResolutions(current => ({ ...current, [id]: event.target.value }))} className="w-full text-sm rounded-lg border border-amber-200 px-3 py-2 bg-white"><option value="">选择匹配的企业主体</option>{options.map(option => <option key={option.company_id} value={option.company_id}>{option.legal_name ?? option.name ?? option.company_id}</option>)}</select> : <p className="text-xs text-amber-800">暂无可确认主体，请补充企业信息后重试。</p>}</div>;
       })}
-      <button type="button" disabled={!canSubmit || resolve.isPending} onClick={() => resolve.mutate()} className="text-sm rounded-xl bg-amber-700 text-white px-4 py-2 disabled:opacity-50">提交主体确认</button>
+      <div className="flex flex-wrap gap-2">
+        {hasSelectableCandidate && <button type="button" disabled={!canSubmit || hasUnresolvedCandidates || resolve.isPending} onClick={() => resolve.mutate()} className="min-h-[44px] text-sm rounded-xl bg-amber-700 text-white px-4 py-2 disabled:opacity-50">提交主体确认</button>}
+        <button type="button" onClick={onEditRequirement} className="min-h-[44px] text-sm rounded-xl border border-amber-300 bg-white px-4 py-2 text-amber-900 hover:bg-amber-100">返回修改需求</button>
+      </div>
+      {hasUnresolvedCandidates && hasSelectableCandidate && <p className="text-xs text-amber-800">仍有候选缺少可确认主体，全部候选完成核验后才能提交。</p>}
       {resolve.isError && <p className="text-xs text-red-600">主体确认提交失败，请刷新后重试。</p>}
     </section>
   );
@@ -167,6 +175,8 @@ function ProcurementProgress({ status, nextAction, errorCode }: { status: string
   const statusCopy = STATUS_COPY[status] ?? { label: '任务处理中', description: '任务正在处理，请稍后刷新查看最新状态。', tone: 'info' as StatusTone };
   const nextActionLabel = nextAction ? NEXT_ACTION_LABELS[nextAction] : null;
   const isTerminalIssue = ['FAILED', 'ACTION_FAILED', 'CANCELLED'].includes(status);
+  const currentAction = nextActionLabel
+    ?? (status === 'IDENTITY_REVIEW' ? '确认主体后继续寻源' : status === 'CLARIFYING' ? '补充条件后继续寻源' : status === 'COMPLETED' || status === 'PARTIAL' ? '查看寻源建议和证据' : '系统正在处理');
 
   return (
     <section className="space-y-4" aria-labelledby="procurement-progress-heading">
@@ -190,7 +200,7 @@ function ProcurementProgress({ status, nextAction, errorCode }: { status: string
         })}
       </ol>
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--color-text-secondary)]">
-        <span><span className="font-medium text-[var(--color-text)]">当前动作：</span>{nextActionLabel ?? (status === 'COMPLETED' || status === 'PARTIAL' ? '查看寻源建议和证据' : '系统正在处理')}</span>
+        <span><span className="font-medium text-[var(--color-text)]">当前动作：</span>{currentAction}</span>
         {errorCode && <span><span className="font-medium text-[var(--color-text)]">处理提示：</span>请刷新任务获取最新结果</span>}
       </div>
       {isTerminalIssue && <div role="status" className={`rounded-xl border px-3 py-2 text-xs leading-5 ${STATUS_TONE_CLASSES[statusCopy.tone]}`}>{statusCopy.description}</div>}
@@ -291,6 +301,11 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     createRun.mutate({ requirement_text: value }, { onSuccess: created => selectRun(created.id ?? created.run_id) });
   };
 
+  const editRequirement = () => {
+    if (run?.requirement.requirement_text) setRequirementText(run.requirement.requirement_text);
+    selectRun();
+  };
+
   return <div className="space-y-6">
     <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 space-y-3">
       <div>
@@ -314,7 +329,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
         <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-[var(--color-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-inset">查看执行细节<span className="ml-2 text-xs font-normal text-[var(--color-text-secondary)]">技术追踪、数据范围与证据校验</span></summary>
         <div className="border-t border-[var(--color-border)] p-3"><AgentExecutionTrace events={traceEvents} /></div>
       </details>
-      {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
+      {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} onEditRequirement={editRequirement} /> : <>
         {(run.candidates?.length ?? 0) > 0 || (run.decisions?.length ?? 0) > 0 ? <CandidateResults candidates={run.candidates ?? []} decisions={run.decisions ?? []} evidenceByCompanyId={run.evidence_by_company_id} onContinueRisk={candidate => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={candidate => openChatForCandidate(candidate, 'watchlist')} /> : <CandidateEmptyState status={run.status} errorCode={run.error_code} />}
         {proposals.length > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">操作审批</h3>{proposals.map(proposal => <SourcingRiskApprovalCard key={proposal.id} proposal={proposal} runId={runId} runVersion={run.version} />)}</section>}
       </>}

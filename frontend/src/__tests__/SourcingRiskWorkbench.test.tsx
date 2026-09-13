@@ -55,8 +55,9 @@ describe('SourcingRiskWorkbench', () => {
 
     renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-1" />);
 
-    expect(await screen.findByText('请确认企业主体')).toBeInTheDocument();
+    expect(await screen.findByText('暂未找到可确认主体')).toBeInTheDocument();
     expect(screen.queryByText('推荐供应商')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '返回修改需求' })).toBeInTheDocument();
   });
 
   it('recovers an active run from the sourcing URL', async () => {
@@ -67,8 +68,22 @@ describe('SourcingRiskWorkbench', () => {
 
     renderWithQueryClient(<SourcingRiskWorkbench />, ['/sourcing?run=run-url']);
 
-    expect(await screen.findByText('请确认企业主体')).toBeInTheDocument();
+    expect(await screen.findByText('暂未找到可确认主体')).toBeInTheDocument();
     expect(screen.getByLabelText('采购需求')).toBeInTheDocument();
+  });
+
+  it('lets an unresolved identity run return to the editable requirement', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/agent-runs/run-edit')) return Response.json(identityReviewRun);
+      return new Response('', { status: 204 });
+    }));
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-edit" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: '返回修改需求' }));
+
+    expect(screen.getByLabelText('采购需求')).toHaveValue('采购工业摄像头');
+    expect(screen.queryByText('暂未找到可确认主体')).not.toBeInTheDocument();
   });
 
   it('shows missing sourcing fields and resumes the same run', async () => {
@@ -209,6 +224,7 @@ describe('SourcingRiskWorkbench', () => {
     renderWithQueryClient(<SourcingRiskWorkbench initialRunId="IDENTITY_REVIEW" />);
 
     expect((await screen.findAllByText('核验主体与风险')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('确认主体后继续寻源')).toBeInTheDocument();
     expect(screen.queryByText('IDENTITY_REVIEW')).not.toBeInTheDocument();
   });
 
