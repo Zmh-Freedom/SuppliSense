@@ -65,15 +65,19 @@ export default function Dashboard() {
 
   if (error) {
     return (
-      <div className="max-w-2xl mx-auto py-20 text-center">
-        <p className="text-gray-400 mb-4">加载失败，请检查后端服务</p>
-        <button onClick={refreshDashboard} disabled={isRefreshing} className="text-sm text-blue-500 hover:text-blue-600 disabled:opacity-50">重试</button>
+      <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
+        <ProcurementEntry onStartSourcing={() => navigate('/sourcing')} onViewMonitoring={() => navigate('/assess')} />
+        <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-12 text-center shadow-sm">
+          <p className="text-gray-400 mb-4">风险概览暂时加载失败，但你仍可以开始寻源或打开风险监控。</p>
+          <button onClick={refreshDashboard} disabled={isRefreshing} className="min-h-[44px] rounded-lg px-3 text-sm text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 disabled:opacity-50">重试加载风险概览</button>
+        </div>
       </div>
     );
   }
 
   if (isLoading || !data) return (
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
+      <ProcurementEntry onStartSourcing={() => navigate('/sourcing')} onViewMonitoring={() => navigate('/assess')} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
       </div>
@@ -94,8 +98,12 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
+      <ProcurementEntry onStartSourcing={() => navigate('/sourcing')} onViewMonitoring={() => navigate('/assess')} />
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">风险看板</h2>
+        <div>
+          <h2 className="text-lg font-semibold text-[var(--color-text)]">风险状态概览</h2>
+          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">先看需要关注的变化，再进入供应商详情核验。</p>
+        </div>
         <button onClick={refreshDashboard} disabled={isRefreshing} className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50 min-h-[36px] px-2 inline-flex items-center">{isRefreshing ? '刷新中…' : '刷新看板数据'}</button>
       </div>
       {refreshError && <p role="status" className="-mt-4 text-xs text-amber-700">{refreshError}</p>}
@@ -303,6 +311,44 @@ export default function Dashboard() {
       </section>
 
     </div>
+  );
+}
+
+function ProcurementEntry({ onStartSourcing, onViewMonitoring }: { onStartSourcing: () => void; onViewMonitoring: () => void }) {
+  return (
+    <section className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm">
+      <div className="grid gap-6 px-5 py-5 md:grid-cols-[1.2fr_1fr] md:items-center md:px-6 md:py-6">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.14em] text-[var(--color-primary-bg)]">采购工作台</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[var(--color-text)]">从寻源建议开始，把负责供应商的风险变化接起来</h1>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-[var(--color-text-secondary)]">输入采购需求，查看历史合作与外部候选；也可以直接关注负责供应商的风险变化、数据覆盖和下一步复核动作。</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-1 lg:grid-cols-2">
+          <button
+            type="button"
+            onClick={onStartSourcing}
+            className="group flex min-h-[76px] items-center justify-between rounded-xl bg-[var(--color-primary-bg)] px-4 py-3 text-left text-white transition-all duration-200 hover:bg-[var(--color-primary-hover)] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)] focus:ring-offset-2"
+          >
+            <span>
+              <span className="block text-sm font-semibold">开始新的寻源</span>
+              <span className="mt-1 block text-xs text-white/75">获取候选与核验提醒</span>
+            </span>
+            <svg className="h-5 w-5 transition-transform duration-200 group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </button>
+          <button
+            type="button"
+            onClick={onViewMonitoring}
+            className="group flex min-h-[76px] items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-left text-[var(--color-text)] transition-all duration-200 hover:border-[var(--color-primary-bg)]/40 hover:bg-[var(--color-surface-hover)] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)] focus:ring-offset-2"
+          >
+            <span>
+              <span className="block text-sm font-semibold">查看风险监控</span>
+              <span className="mt-1 block text-xs text-[var(--color-text-secondary)]">处理变化与待复核事项</span>
+            </span>
+            <svg className="h-5 w-5 text-[var(--color-primary-bg)] transition-transform duration-200 group-hover:translate-x-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 

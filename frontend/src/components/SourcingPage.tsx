@@ -146,16 +146,20 @@ export default function SourcingPage() {
     <div className="h-full py-6 px-6 overflow-auto">
       <div className="max-w-3xl mx-auto space-y-6">
         <div>
-          <h2 className="text-lg font-bold text-[var(--color-text)]">智能寻源</h2>
-          <p className="text-sm text-[var(--color-text-secondary)] mt-1">先从历史合作和外部候选中召回供应商，再进行主体与风险核验。</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-bold text-[var(--color-text)]">寻源建议</h2>
+            <span className="rounded-full bg-[var(--color-primary-bg)]/10 px-2 py-0.5 text-[11px] font-medium text-[var(--color-primary-bg)]">推荐入口</span>
+          </div>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-1">用自然语言描述采购需求，先获取历史合作与外部候选，再查看主体核验和风险提示。</p>
         </div>
 
         <SourcingRiskWorkbench />
 
         <details className="border-t border-[var(--color-border)] pt-4">
-          <summary className="cursor-pointer list-none text-sm font-medium text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">快速寻源（辅助入口）<span className="ml-2 text-xs font-normal text-gray-400">适用于已有明确规格的旧式提交</span></summary>
+          <summary className="cursor-pointer list-none text-sm font-medium text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">按字段填写（兼容入口）<span className="ml-2 text-xs font-normal text-gray-400">适用于已有明确品类和规格、需要按字段提交的需求</span></summary>
           <div className="pt-5">
-          <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-4">快速提交采购需求</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-1">按字段提交采购需求</h3>
+          <p className="mb-4 text-xs text-[var(--color-text-secondary)]">此入口沿用已有字段寻源流程；推荐优先使用上方自然语言入口，以便同时获得主体与风险核验提示。</p>
 
         {/* 采购需求表单 */}
         <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm space-y-4">
