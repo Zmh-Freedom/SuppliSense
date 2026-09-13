@@ -9,6 +9,18 @@
 - 修复过程中发现新的根因或回归问题，必须在原条目下补充，不得只依赖聊天记录。
 - 已关闭问题保留记录，不删除；如再次出现，新增复发记录并关联原问题。
 
+## ISS-20260913-008 CI 单元测试阶段未初始化 PostgreSQL 责任范围表
+
+- 发现日期：2026-09-13
+- 状态：已关闭
+- 优先级：P1
+- 现象：GitHub Actions 的 backend 单元测试阶段有 4 项 Agent 动作测试失败，报错 `psycopg2.errors.UndefinedTable: relation "supplier_responsibility_snapshots" does not exist`；前端任务成功，后端任务失败，后续测试阶段被跳过。
+- 影响：每次推送都会把 CI 标记为失败，无法完成 Harness、集成测试和 Agent E2E 的完整发布门禁。
+- 根因：责任范围接入后，工具执行器在包含供应商名称的测试动作上会读取 PostgreSQL 责任分配快照；CI 使用全新数据库，但单元测试阶段未先执行 `ensure_pg_schema()`，负责初始化 schema 的集成测试又排在后面。
+- 修复方案：在 backend 依赖安装完成后、单元测试开始前显式执行幂等的 PostgreSQL schema 初始化；保留现有测试分层和生产权限校验逻辑。
+- 验证结果：新增 CI schema 初始化步骤后，幂等执行 `ensure_pg_schema()` 成功；原失败的 Agent 动作/持久化定向测试 12 项通过；按 CI 单元阶段运行的非集成测试 699 项通过、277 项按标记排除，无失败。`.venv` 覆盖率复跑因本机 psycopg2 包版本不一致在收集阶段失败，未影响仓库 requirements 对齐的门禁结论。
+- 关联提交：待提交。
+
 ## ISS-20260913-005 首页首屏目标不对采购工作流
 
 - 发现日期：2026-09-13

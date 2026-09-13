@@ -87,6 +87,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Initialize PostgreSQL schema for unit tests
+        run: python -c "from app.db.init_pg import ensure_pg_schema; ensure_pg_schema()"
+
       - name: Run unit and graph tests with coverage
         run: >-
           python -m pytest -v
