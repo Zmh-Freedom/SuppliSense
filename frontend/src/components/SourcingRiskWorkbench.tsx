@@ -92,7 +92,7 @@ function IdentityReviewCard({ runId, version, candidates, onEditRequirement }: {
     <section className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-4">
       <div>
         <h3 className="font-semibold text-amber-900">{hasNoCandidates || !hasSelectableCandidate ? '暂未找到可确认主体' : '请确认企业主体'}</h3>
-        <p className="text-xs text-amber-800 mt-1">主体未确认前不会给出供应商推荐。{hasNoCandidates || !hasSelectableCandidate ? '可以补充更明确的企业信息，或返回修改采购需求。' : ''}</p>
+        <p className="text-xs text-amber-800 mt-1">主体未确认前不会形成正式推荐；已检索到的候选资料仍可先行比较。{hasNoCandidates || !hasSelectableCandidate ? '可以补充更明确的企业信息，或返回修改采购需求。' : ''}</p>
       </div>
       {hasNoCandidates && <p className="rounded-xl border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-xs leading-5 text-amber-900">本次主体核验没有返回可选择的企业候选，当前任务不会被解释为已完成推荐。</p>}
       {reviewCandidates.map(candidate => {
@@ -232,7 +232,7 @@ function candidateRecommendationRows(candidates: SourcingRiskCandidate[], decisi
   return rows.sort((left, right) => (order[left.decision?.group ?? 'unclassified'] ?? 4) - (order[right.decision?.group ?? 'unclassified'] ?? 4));
 }
 
-function CandidateResults({ candidates, decisions, evidenceByCompanyId, onContinueRisk, onAddToWatchlist }: { candidates: SourcingRiskCandidate[]; decisions: SourcingRiskDecision[]; evidenceByCompanyId?: Record<string, SourcingRiskEvidence[]>; onContinueRisk: (candidate: SourcingRiskCandidate) => void; onAddToWatchlist: (candidate: SourcingRiskCandidate) => void }) {
+function CandidateResults({ candidates, decisions, evidenceByCompanyId, onContinueRisk, onAddToWatchlist, actionsEnabled = true }: { candidates: SourcingRiskCandidate[]; decisions: SourcingRiskDecision[]; evidenceByCompanyId?: Record<string, SourcingRiskEvidence[]>; onContinueRisk: (candidate: SourcingRiskCandidate) => void; onAddToWatchlist: (candidate: SourcingRiskCandidate) => void; actionsEnabled?: boolean }) {
   const rows = candidateRecommendationRows(candidates, decisions);
   const groups = new Map<string, Array<{ candidate: SourcingRiskCandidate; decision?: SourcingRiskDecision }>>();
   rows.forEach(row => {
@@ -241,7 +241,7 @@ function CandidateResults({ candidates, decisions, evidenceByCompanyId, onContin
   });
   return <section className="space-y-4" aria-labelledby="sourcing-candidates-heading">
     <div><h3 id="sourcing-candidates-heading" className="text-sm font-semibold text-[var(--color-text)]">候选与依据</h3><p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">每个候选只展示一次；先看相关产品和推荐理由，再确认待核验信息与后续动作。</p></div>
-    {[...groups.entries()].map(([group, groupRows]) => <section key={group} className="space-y-3" aria-labelledby={`candidate-group-${group}`}><h4 id={`candidate-group-${group}`} className="text-sm font-semibold text-[var(--color-text-secondary)]">{GROUP_TITLES[group] ?? group} <span className="font-normal">（{groupRows.length}）</span></h4>{groupRows.map(({ candidate, decision }) => <SourcingRiskCandidateCard key={`${candidateId(candidate)}-${group}`} candidate={candidate} decision={decision} evidence={candidate.company_id ? evidenceByCompanyId?.[String(candidate.company_id)] : undefined} onContinueRisk={() => onContinueRisk(candidate)} onAddToWatchlist={() => onAddToWatchlist(candidate)} />)}</section>)}
+    {[...groups.entries()].map(([group, groupRows]) => <section key={group} className="space-y-3" aria-labelledby={`candidate-group-${group}`}><h4 id={`candidate-group-${group}`} className="text-sm font-semibold text-[var(--color-text-secondary)]">{GROUP_TITLES[group] ?? group} <span className="font-normal">（{groupRows.length}）</span></h4>{groupRows.map(({ candidate, decision }) => <SourcingRiskCandidateCard key={`${candidateId(candidate)}-${group}`} candidate={candidate} decision={decision} evidence={candidate.company_id ? evidenceByCompanyId?.[String(candidate.company_id)] : undefined} onContinueRisk={actionsEnabled ? () => onContinueRisk(candidate) : undefined} onAddToWatchlist={actionsEnabled ? () => onAddToWatchlist(candidate) : undefined} />)}</section>)}
   </section>;
 }
 
@@ -329,8 +329,9 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
         <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-[var(--color-text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-inset">查看执行细节<span className="ml-2 text-xs font-normal text-[var(--color-text-secondary)]">技术追踪、数据范围与证据校验</span></summary>
         <div className="border-t border-[var(--color-border)] p-3"><AgentExecutionTrace events={traceEvents} /></div>
       </details>
-      {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} onEditRequirement={editRequirement} /> : <>
-        {(run.candidates?.length ?? 0) > 0 || (run.decisions?.length ?? 0) > 0 ? <CandidateResults candidates={run.candidates ?? []} decisions={run.decisions ?? []} evidenceByCompanyId={run.evidence_by_company_id} onContinueRisk={candidate => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={candidate => openChatForCandidate(candidate, 'watchlist')} /> : <CandidateEmptyState status={run.status} errorCode={run.error_code} />}
+      {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : <>
+        {isIdentityReview && <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} onEditRequirement={editRequirement} />}
+        {(run.candidates?.length ?? 0) > 0 || (run.decisions?.length ?? 0) > 0 ? <CandidateResults candidates={run.candidates ?? []} decisions={isIdentityReview ? [] : run.decisions ?? []} evidenceByCompanyId={run.evidence_by_company_id} actionsEnabled={!isIdentityReview} onContinueRisk={candidate => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={candidate => openChatForCandidate(candidate, 'watchlist')} /> : !isIdentityReview && <CandidateEmptyState status={run.status} errorCode={run.error_code} />}
         {proposals.length > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">操作审批</h3>{proposals.map(proposal => <SourcingRiskApprovalCard key={proposal.id} proposal={proposal} runId={runId} runVersion={run.version} />)}</section>}
       </>}
     </>}

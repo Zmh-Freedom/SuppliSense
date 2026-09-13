@@ -42,6 +42,7 @@ describe('WSClient reconnect lifecycle', () => {
   it('does not reconnect after an intentional disconnect', () => {
     const client = new WSClient();
     client.connect();
+    vi.advanceTimersByTime(0);
     client.disconnect();
 
     vi.advanceTimersByTime(30_000);
@@ -52,9 +53,11 @@ describe('WSClient reconnect lifecycle', () => {
   it('keeps reconnecting after an unexpected close', () => {
     const client = new WSClient();
     client.connect();
+    vi.advanceTimersByTime(0);
     sockets[0]?.triggerClose();
 
     vi.advanceTimersByTime(1_000);
+    vi.advanceTimersByTime(0);
 
     expect(sockets).toHaveLength(2);
     client.disconnect();

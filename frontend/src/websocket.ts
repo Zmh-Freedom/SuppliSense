@@ -6,23 +6,39 @@ export class WSClient {
   private ws: WebSocket | null = null;
   private handlers: Map<string, Set<EventHandler<unknown>>> = new Map();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private reconnectEnabled = true;
 
   connect() {
     this.reconnectEnabled = true;
-    if (this.ws?.readyState === WebSocket.OPEN) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+    if (this.connectTimer) return;
+
+    // React StrictMode intentionally mounts, cleans up, and mounts effects
+    // again in development. Defer the actual handshake so that the first
+    // cleanup can cancel before a CONNECTING socket is created.
+    this.connectTimer = setTimeout(() => {
+      this.connectTimer = null;
+      if (!this.reconnectEnabled || (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING))) return;
+      this.open();
+    }, 0);
+  }
+
+  private open() {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const url = `${protocol}//${window.location.host}/ws`;
 
-    this.ws = new WebSocket(url);
+    const socket = new WebSocket(url);
+    this.ws = socket;
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) return;
       this.reconnectDelay = 1000;
     };
 
-    this.ws.onmessage = (msg) => {
+    socket.onmessage = (msg) => {
       try {
         const { event, data } = JSON.parse(msg.data);
         const handlers = this.handlers.get(event);
@@ -34,13 +50,14 @@ export class WSClient {
       }
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket) return;
       this.ws = null;
       if (this.reconnectEnabled) this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
-      this.ws?.close();
+    socket.onerror = () => {
+      if (this.ws === socket) socket.close();
     };
   }
 
@@ -49,7 +66,7 @@ export class WSClient {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
-      this.connect();
+      if (this.reconnectEnabled && !this.ws) this.open();
     }, this.reconnectDelay);
   }
 
@@ -75,8 +92,23 @@ export class WSClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.ws?.close();
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
+    const socket = this.ws;
     this.ws = null;
+    if (!socket) return;
+    if (socket.readyState === WebSocket.CONNECTING) {
+      // Closing a CONNECTING socket causes a browser warning. Let the
+      // handshake finish silently, then close the established connection.
+      socket.onmessage = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      socket.onopen = () => socket.close();
+      return;
+    }
+    socket.close();
   }
 
   destroy() {

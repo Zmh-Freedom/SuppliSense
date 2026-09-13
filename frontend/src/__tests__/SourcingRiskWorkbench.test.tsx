@@ -45,7 +45,7 @@ afterEach(() => {
 });
 
 describe('SourcingRiskWorkbench', () => {
-  it('shows an identity review card and does not display a recommendation', async () => {
+  it('shows retrieved candidate material without exposing a recommendation or action', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith('/agent-runs/run-1')) {
         return Response.json(identityReviewRun);
@@ -56,7 +56,10 @@ describe('SourcingRiskWorkbench', () => {
     renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-1" />);
 
     expect(await screen.findByText('暂未找到可确认主体')).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: '候选供应商：待确认企业' })).toBeInTheDocument();
     expect(screen.queryByText('推荐供应商')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续风险核验' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '申请加入监控' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '返回修改需求' })).toBeInTheDocument();
   });
 
