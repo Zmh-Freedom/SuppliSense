@@ -71,6 +71,20 @@ def test_scheduler_registers_one_stable_interval_outbox_job_when_enabled(
     assert outbox_job["replace_existing"] is True
 
 
+def test_scheduler_skips_feishu_supplier_sync_when_demo_data_is_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _FakeScheduler()
+    monkeypatch.setattr(scheduler, "_scheduler", fake)
+    monkeypatch.setattr(scheduler, "_scheduler_leadership", _Leader())
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "DEMO_DATA_FREEZE", True)
+
+    scheduler.start_scheduler()
+
+    assert "feishu_supplier_sync" not in fake.jobs
+
+
 def test_scheduler_does_not_start_without_postgres_leadership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

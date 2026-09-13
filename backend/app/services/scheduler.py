@@ -184,7 +184,7 @@ def start_scheduler() -> None:
     _add_job(_scheduled_sentiment, sentiment_cron, "sentiment_check")
     _add_job(_scheduled_notify, notify_cron, "alert_notify")
     _add_job(_scheduled_proactive, proactive_cron, "proactive_agent")
-    if settings.FEISHU_BITABLE_ENABLED:
+    if settings.FEISHU_BITABLE_ENABLED and not settings.DEMO_DATA_FREEZE:
         _add_job(_scheduled_feishu_supplier_sync, settings.FEISHU_SUPPLIER_SYNC_CRON, "feishu_supplier_sync")
     _add_outbox_job()
 

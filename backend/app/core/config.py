@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     ).lower() == "true"
     # Feishu Bitable supplier source integration
     FEISHU_BITABLE_ENABLED: bool = os.getenv("FEISHU_BITABLE_ENABLED", "false").lower() == "true"
+    # 比赛演示环境锁定当前正式供应商快照，避免定时或手动同步改变演示数据边界。
+    DEMO_DATA_FREEZE: bool = os.getenv("DEMO_DATA_FREEZE", "false").lower() == "true"
     FEISHU_APP_ID: str = os.getenv("FEISHU_APP_ID", "")
     FEISHU_APP_SECRET: str = os.getenv("FEISHU_APP_SECRET", "")
     FEISHU_BITABLE_APP_TOKEN: str = os.getenv("FEISHU_BITABLE_APP_TOKEN", "")

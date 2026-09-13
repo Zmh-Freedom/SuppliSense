@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import httpx
+import pytest
 
 from app.core.config import settings
 from app.services import feishu_bitable
@@ -16,6 +17,12 @@ from app.services.feishu_bitable import (
     normalize_supplier_record,
     normalize_supplier_transaction_record,
 )
+
+
+@pytest.fixture(autouse=True)
+def disable_demo_data_freeze_for_sync_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the local demo environment flag from changing unit-test semantics."""
+    monkeypatch.setattr(settings, "DEMO_DATA_FREEZE", False)
 
 
 class FakeResponse:
@@ -328,6 +335,39 @@ def test_sync_supplier_tables_links_three_snapshots_by_supplier_code(monkeypatch
     assert database.collections["supplier_contact_snapshots"].documents[0]["supplier_id"] == supplier_id
     assert result["errors"][0]["reason"] == "供应商代码缺失或无法关联主数据"
     assert result["errors"][0]["batch_id"] == result["batch_id"]
+
+
+def test_sync_supplier_tables_honors_demo_data_freeze_without_external_clients(monkeypatch) -> None:
+    class FrozenCollection:
+        def count_documents(self, query):
+            assert query == {"source": "feishu_bitable", "sync_status": "current"}
+            return 20
+
+    class FrozenDatabase:
+        def __getitem__(self, name):
+            assert name == "supplier_master_snapshots"
+            return FrozenCollection()
+
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "DEMO_DATA_FREEZE", True)
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: FrozenDatabase())
+    monkeypatch.setattr(
+        feishu_bitable,
+        "build_supplier_master_client",
+        lambda: (_ for _ in ()).throw(AssertionError("冻结模式不得创建外部客户端")),
+    )
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result == {
+        "enabled": True,
+        "frozen": True,
+        "synced": 0,
+        "skipped": 0,
+        "current_supplier_count": 20,
+        "status": "frozen",
+        "message": "比赛演示数据已冻结，未触发飞书同步",
+    }
 
 
 def test_sync_supplier_tables_persists_transaction_snapshot_when_configured(monkeypatch) -> None:

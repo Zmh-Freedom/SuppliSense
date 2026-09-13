@@ -164,3 +164,19 @@ def test_sync_monitor_targets_skips_initial_assessment_when_snapshot_exists(monk
     assert result["assessed"] == 0
     assert result["assessment_errors"] == []
     assert called is False
+
+
+def test_sync_supplier_responsibilities_honors_demo_data_freeze_without_external_client(monkeypatch):
+    monkeypatch.setattr(responsibility.settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(responsibility.settings, "DEMO_DATA_FREEZE", True)
+    monkeypatch.setattr(responsibility.settings, "FEISHU_SUPPLIER_ASSIGNMENT_TABLE_ID", "tbl-assignment")
+
+    class ForbiddenClient:
+        def list_records(self):
+            raise AssertionError("冻结模式不得读取责任分配表")
+
+    result = responsibility.sync_supplier_responsibilities(ForbiddenClient())
+
+    assert result["status"] == "frozen"
+    assert result["frozen"] is True
+    assert result["synced"] == 0

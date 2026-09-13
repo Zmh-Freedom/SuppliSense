@@ -945,6 +945,24 @@ def sync_supplier_tables() -> dict[str, Any]:
     """Synchronize configured supplier tables into local read-only snapshots."""
     if not settings.FEISHU_BITABLE_ENABLED:
         return {"enabled": False, "synced": 0, "skipped": 0, "status": "disabled"}
+    if settings.DEMO_DATA_FREEZE:
+        # 仅读取本地当前快照统计，不创建 Feishu client，也不触发任何外部请求。
+        current_count = 0
+        try:
+            current_count = get_db()["supplier_master_snapshots"].count_documents(
+                {"source": "feishu_bitable", "sync_status": "current"}
+            )
+        except (KeyError, TypeError, AttributeError):
+            current_count = 0
+        return {
+            "enabled": True,
+            "frozen": True,
+            "synced": 0,
+            "skipped": 0,
+            "current_supplier_count": current_count,
+            "status": "frozen",
+            "message": "比赛演示数据已冻结，未触发飞书同步",
+        }
 
     synced_at = datetime.now(timezone.utc)
     batch_id = str(uuid.uuid4())

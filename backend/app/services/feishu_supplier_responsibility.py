@@ -495,6 +495,15 @@ def sync_supplier_responsibilities(
     """Sync Feishu ownership rows after formal supplier master data is current."""
     if not settings.FEISHU_BITABLE_ENABLED:
         return {"enabled": False, "status": "disabled", "synced": 0, "invalid": 0}
+    if settings.DEMO_DATA_FREEZE:
+        return {
+            "enabled": True,
+            "frozen": True,
+            "status": "frozen",
+            "synced": 0,
+            "invalid": 0,
+            "message": "比赛演示数据已冻结，未触发飞书责任分配同步",
+        }
     if not settings.FEISHU_SUPPLIER_ASSIGNMENT_TABLE_ID:
         return {"enabled": False, "status": "not_configured", "synced": 0, "invalid": 0}
 
