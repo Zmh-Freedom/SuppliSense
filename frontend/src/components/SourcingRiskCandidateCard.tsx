@@ -1,4 +1,5 @@
 import type { SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskEvidence } from '../types';
+import { Link } from 'react-router-dom';
 import { getRiskLevelLabel } from '../riskColors';
 
 const IDENTITY_STATUS_LABELS: Record<string, string> = {
@@ -177,6 +178,7 @@ function CandidateDetails({ candidate, evidence, decision }: { candidate: Sourci
 export default function SourcingRiskCandidateCard({ candidate, evidence, decision, onVerify, onContinueRisk, onAddToWatchlist, verifying = false }: { candidate: SourcingRiskCandidate; evidence?: SourcingRiskEvidence[]; decision?: SourcingRiskDecision; onVerify?: () => void; onContinueRisk?: () => void; onAddToWatchlist?: () => void; verifying?: boolean }) {
   const name = candidate.supplier_name ?? candidate.name ?? '未命名候选企业';
   const candidateEvidence = evidence ?? candidate.evidence ?? candidate.evidence_by_dimension ?? [];
+  const profileId = candidate.supplier_id;
   const groupLabel = decision?.group ? GROUP_LABELS[decision.group] ?? '待确认' : null;
   const groupClass = decision?.group === 'recommended'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
@@ -202,6 +204,7 @@ export default function SourcingRiskCandidateCard({ candidate, evidence, decisio
         </div>
       </header>
       <CandidateDetails candidate={candidate} evidence={candidateEvidence} decision={decision} />
+      {profileId && candidate.source !== 'staged_external' && candidate.status !== 'staged_candidate' && <Link to={`/suppliers/${encodeURIComponent(profileId)}`} className="inline-flex min-h-[44px] items-center text-xs font-medium text-[var(--color-primary-bg)] hover:underline">查看供应商画像</Link>}
       {(onVerify || onContinueRisk || onAddToWatchlist) && <div className="flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
         {onVerify && candidate.identity_status !== 'exact' && <button type="button" onClick={onVerify} disabled={verifying} className="min-h-[44px] rounded-xl border border-[var(--color-primary-bg)] px-3 text-xs font-medium text-[var(--color-primary-bg)] disabled:opacity-50">{verifying ? '天眼查核验中…' : '核验主体与风险'}</button>}
         {onContinueRisk && <button type="button" onClick={onContinueRisk} className="min-h-[44px] rounded-xl border border-[var(--color-primary-bg)] px-3 text-xs font-medium text-[var(--color-primary-bg)]">继续风险核验</button>}

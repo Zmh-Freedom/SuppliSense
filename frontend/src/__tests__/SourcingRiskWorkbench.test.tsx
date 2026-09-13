@@ -118,7 +118,7 @@ describe('SourcingRiskWorkbench', () => {
       version: 4,
       next_action: 'review_required',
       requirement: { requirement_text: '采购工业摄像头', category: '摄像头' },
-      candidates: [{ company_id: 'company-1', supplier_name: '推荐供应商', categories: ['工业摄像头'], identity_status: 'exact', source: 'local', source_updated_at: '2026-09-12T00:00:00Z', match_reasons: ['category_match'] }],
+      candidates: [{ company_id: 'company-1', supplier_id: 'supplier-1', supplier_name: '推荐供应商', categories: ['工业摄像头'], identity_status: 'exact', source: 'local', source_updated_at: '2026-09-12T00:00:00Z', match_reasons: ['category_match'] }],
       decisions: [{ company_id: 'company-1', group: 'recommended', reason_codes: ['category_match'] }],
       evidence_by_company_id: { 'company-1': [{ evidence_id: 'evidence-1', dimension: 'financial', claim: '财务资料核验记录', source: 'local', source_reference: 'internal:financial:1', freshness_status: 'fresh', conflict_status: 'clear' }] },
     };
@@ -134,6 +134,7 @@ describe('SourcingRiskWorkbench', () => {
     expect(screen.getByText('相关产品 / 能力')).toBeInTheDocument();
     expect(screen.getByText(/采购品类匹配/)).toBeInTheDocument();
     expect(screen.getByText('查看证据明细（1）')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '查看供应商画像' })).toHaveAttribute('href', '/suppliers/supplier-1');
     expect(screen.queryByText(/综合评分/)).not.toBeInTheDocument();
   });
 
