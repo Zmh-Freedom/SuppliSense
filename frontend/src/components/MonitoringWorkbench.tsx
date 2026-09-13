@@ -93,6 +93,31 @@ function trendTone(status?: string): { color: string; background: string } {
   return { color: '#a16207', background: '#fffbeb' };
 }
 
+function priorityRank(priority?: string): number {
+  return ({ high: 0, medium: 1, low: 2 } as Record<string, number>)[priority || ''] ?? 3;
+}
+
+function changeRank(status?: string): number {
+  return ({ deteriorating: 0, no_data: 1, insufficient_data: 1, stable: 2, improving: 3 } as Record<string, number>)[status || ''] ?? 4;
+}
+
+function priorityLabel(priority?: string): string {
+  return ({ high: '高优先级', medium: '中优先级', low: '低优先级' } as Record<string, string>)[priority || ''] || '待判断';
+}
+
+function orderTargets(left: MonitorTarget, right: MonitorTarget): number {
+  const priority = priorityRank(left.next_action?.priority) - priorityRank(right.next_action?.priority);
+  if (priority !== 0) return priority;
+  const change = changeRank(left.risk_change?.status) - changeRank(right.risk_change?.status);
+  if (change !== 0) return change;
+  const leftCoverage = coverageOf(left).status === 'complete' ? 1 : 0;
+  const rightCoverage = coverageOf(right).status === 'complete' ? 1 : 0;
+  if (leftCoverage !== rightCoverage) return leftCoverage - rightCoverage;
+  const leftChecked = left.last_checked_at ? new Date(left.last_checked_at).getTime() : 0;
+  const rightChecked = right.last_checked_at ? new Date(right.last_checked_at).getTime() : 0;
+  return leftChecked - rightChecked;
+}
+
 export default function MonitoringWorkbench({
   targets,
   onInvestigate,
@@ -113,6 +138,7 @@ export default function MonitoringWorkbench({
   const [newName, setNewName] = useState('');
   const [open, setOpen] = useState(defaultOpen);
   const activeTargets = targets.filter(target => target.monitor_status !== 'removed');
+  const orderedTargets = [...activeTargets].sort(orderTargets);
   const reviewCount = activeTargets.filter(target => target.next_action?.priority === 'high').length;
   const insufficientCount = activeTargets.filter(target => coverageOf(target).status !== 'complete').length;
   const readyCount = activeTargets.filter(target => target.next_action?.priority === 'low').length;
@@ -152,7 +178,7 @@ export default function MonitoringWorkbench({
 
       {open && <div className="border-t border-[var(--color-border)] p-5">
         <div className="mb-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-xs leading-5 text-[var(--color-text-secondary)]">
-          这里管理的是需要持续复核的监控对象。外部候选在完成主体核验前只作为待核验对象展示；数据不足会明确标记，不会被解释为风险稳定。
+          这里管理的是需要持续复核的监控对象，列表已按下一步优先级、风险变化和数据覆盖排序。外部候选在完成主体核验前只作为待核验对象展示；数据不足会明确标记，不会被解释为风险稳定。
         </div>
 
         <form onSubmit={submit} className="mb-3 flex gap-2">
@@ -195,7 +221,7 @@ export default function MonitoringWorkbench({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
-                {activeTargets.map(target => {
+                {orderedTargets.map(target => {
                   const coverage = coverageOf(target);
                   const risk = riskTone(target);
                   const trend = trendTone(target.risk_change?.status);
@@ -238,7 +264,7 @@ export default function MonitoringWorkbench({
                         {coverage.missing_dimensions && coverage.missing_dimensions.length > 0 && <div className="mt-1 max-w-[150px] text-[10px] leading-4 text-gray-400">缺少：{coverage.missing_dimensions.slice(0, 2).join('、')}</div>}
                       </td>
                       <td className="px-3 py-3">
-                        <button type="button" onClick={() => onAction(target)} disabled={target.review_task?.status === 'pending_approval' || target.review_task?.status === 'executing'} className={`text-left text-xs font-medium hover:underline disabled:cursor-not-allowed disabled:no-underline ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</button>
+                        <div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => onAction(target)} disabled={target.review_task?.status === 'pending_approval' || target.review_task?.status === 'executing'} className={`text-left text-xs font-medium hover:underline disabled:cursor-not-allowed disabled:no-underline ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</button><span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{priorityLabel(target.next_action?.priority)}</span></div>
                         <div className="mt-1 max-w-[170px] text-[10px] leading-4 text-gray-400">{target.next_action?.reason || '等待更多监控数据'}</div>
                       </td>
                       <td className="px-3 py-3">

@@ -25,7 +25,7 @@ export function getRiskLevel(score: number): string {
 
 export function getRiskLevelLabel(level?: string | null): string {
   const normalized = String(level || '').toLowerCase();
-  return ({ low: LOW.label, medium: MEDIUM.label, high: HIGH.label, critical: '严重风险', unknown: '暂无法判断' } as Record<string, string>)[normalized] || level || '暂无法判断';
+  return ({ low: LOW.label, medium: MEDIUM.label, high: HIGH.label, critical: '严重风险', unknown: '暂无法判断', '未知': '暂无法判断', '暂无': '暂无法判断' } as Record<string, string>)[normalized] || level || '暂无法判断';
 }
 
 export function getRiskColorForLevel(level?: string | null): string {
