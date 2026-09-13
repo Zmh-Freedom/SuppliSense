@@ -710,7 +710,7 @@ export default function ChatView() {
                     <button
                       key={cap.label}
                       onClick={() => handleCapabilityClick(cap.prompt)}
-                      className="text-left bg-white border border-slate-200 rounded-xl p-3 hover:border-[var(--color-primary-bg)]/30 hover:shadow-sm hover:-translate-y-0.5 transition-all duration-200 group"
+                      className="group rounded-xl border border-slate-200 bg-white p-3 text-left transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-[var(--color-primary-bg)]/30 hover:shadow-sm"
                     >
                       <p className="text-sm font-medium text-[var(--color-text)] group-hover:text-[var(--color-primary-bg)] transition-colors">{cap.label}</p>
                       <p className="text-[11px] text-gray-400 mt-0.5 leading-tight">{cap.desc}</p>
@@ -751,8 +751,12 @@ export default function ChatView() {
 
       {/* input */}
       <div className="px-4 pb-6 pt-2">
-        <div className="flex items-center gap-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-1 focus-within:border-[var(--color-border-focus)] focus-within:shadow-sm transition-shadow">
+        <label htmlFor="chat-input" className="sr-only">向采购助手提问</label>
+        <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-1 shadow-sm transition-shadow focus-within:border-[var(--color-border-focus)] glass-surface">
           <input
+            id="chat-input"
+            name="chat-input"
+            autoComplete="off"
             ref={inputRef}
             value={input}
             onChange={e => { setInput(e.target.value); }}
@@ -762,8 +766,8 @@ export default function ChatView() {
                 send();
               }
             }}
-            placeholder="输入问题，如：对比海康威视和宝钢的风险"
-            className="flex-1 border-none outline-none py-2.5 text-sm bg-transparent placeholder-gray-300"
+            placeholder="输入问题，如：对比海康威视和宝钢的风险…"
+            className="flex-1 border-none bg-transparent py-2.5 text-sm placeholder-gray-300 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-inset"
           />
           <button
             onClick={() => send()}

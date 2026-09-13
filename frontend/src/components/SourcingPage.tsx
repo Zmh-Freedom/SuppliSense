@@ -170,7 +170,7 @@ export default function SourcingPage() {
                 value={form.category}
                 onChange={e => setForm(p => ({ ...p, category: e.target.value }))}
                 placeholder="如：安防设备、电子元器件"
-                className="w-full text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
+                className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
             </div>
             <div>
@@ -179,7 +179,7 @@ export default function SourcingPage() {
                 value={form.title}
                 onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
                 placeholder="如：2025Q3摄像头采购"
-                className="w-full text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
+                className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
             </div>
             <div className="col-span-2">
@@ -189,7 +189,7 @@ export default function SourcingPage() {
                 onChange={e => setForm(p => ({ ...p, spec: e.target.value }))}
                 placeholder="如：1080P红外夜视、IP67防水、支持PoE供电"
                 rows={2}
-                className="w-full text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)] resize-none"
+                className="w-full resize-none rounded-xl border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
             </div>
             <div>
@@ -198,7 +198,7 @@ export default function SourcingPage() {
                 value={form.region}
                 onChange={e => setForm(p => ({ ...p, region: e.target.value }))}
                 placeholder="如：广东、华东"
-                className="w-full text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
+                className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
             </div>
             <div>
@@ -208,7 +208,7 @@ export default function SourcingPage() {
                 onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))}
                 placeholder="如：1000"
                 type="number"
-                className="w-full text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
+                className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
             </div>
           </div>

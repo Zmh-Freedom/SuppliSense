@@ -43,6 +43,7 @@ export default function Layout() {
     <div className="flex h-screen">
       <NetworkStatus />
       <ErrorBoundary>
+        <a href="#main-content" className="skip-link">跳到主要内容</a>
         {/* Glass theme decorative blobs */}
         <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden hidden" id="glass-blobs">
           <div className="absolute w-[400px] h-[400px] rounded-full opacity-30 blur-[60px] animate-[float-blob_25s_ease-in-out_infinite_alternate]"
@@ -52,7 +53,7 @@ export default function Layout() {
 
         {/* Mobile hamburger */}
         <button
-          className="md:hidden fixed top-4 left-4 z-30 p-2 bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-lg shadow-sm"
+          className="md:hidden fixed left-4 top-4 z-30 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 shadow-sm glass-surface"
           onClick={() => setSidebarOpen(!sidebarOpen)}
           aria-label="菜单"
         >
@@ -94,7 +95,7 @@ export default function Layout() {
         </div>
 
         {/* Main content */}
-        <main className="flex-1 flex flex-col min-w-0 relative z-10">
+        <main id="main-content" tabIndex={-1} className="relative z-10 flex min-w-0 flex-1 flex-col focus:outline-none">
           <div className="flex-1 overflow-auto">
             <Outlet />
           </div>
@@ -117,14 +118,13 @@ export default function Layout() {
               const q = `?q=${encodeURIComponent(prompt)}`;
               navigate(`/chat${q}`);
             }}
-            className="fixed bottom-6 right-6 z-20 w-14 h-14 rounded-2xl bg-[var(--color-primary-bg)] text-white shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center group"
+            className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-20 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-primary-bg)] text-white shadow-lg transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-xl group"
             title="问 AI"
             aria-label="问 AI"
           >
             <svg className="w-6 h-6 group-hover:scale-110 transition-transform duration-200" viewBox="0 0 24 24" fill="currentColor" stroke="none">
               <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
             </svg>
-            <span className="absolute inset-0 rounded-2xl bg-[var(--color-primary-bg)] opacity-30 animate-ping pointer-events-none" style={{ animationDuration: '2.5s' }} />
           </button>
         )}
       </ErrorBoundary>

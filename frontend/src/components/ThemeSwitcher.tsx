@@ -8,8 +8,9 @@ export default function ThemeSwitcher() {
       {themes.map(t => (
         <button
           key={t.name}
+          type="button"
           onClick={() => setTheme(t.name)}
-          className={`text-[11px] px-3 py-1 rounded-full transition-all duration-200 ${
+          className={`min-h-[40px] rounded-full px-3 text-[11px] transition-colors duration-200 ${
             theme === t.name
               ? 'bg-[var(--color-primary-bg)] text-[var(--color-primary-text)] shadow-sm'
               : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]'

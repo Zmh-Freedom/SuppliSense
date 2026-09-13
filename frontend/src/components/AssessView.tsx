@@ -135,7 +135,7 @@ function AssessContent({ initialName }: { initialName: string }) {
                 onBlur={() => setShowSuggestions(false)}
                 onKeyDown={e => e.key === 'Enter' && assess()}
                 placeholder="输入企业名称搜索…"
-                className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] min-h-[44px]"
+                className="min-h-[44px] w-full rounded-xl border border-[var(--color-border)] px-4 py-2.5 text-sm focus:border-[var(--color-border-focus)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
               <AnimatePresence>
                 {showSuggestions && filteredSuggestions.length > 0 && (

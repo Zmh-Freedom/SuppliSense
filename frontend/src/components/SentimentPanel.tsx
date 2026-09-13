@@ -332,7 +332,7 @@ export default function SentimentPanel({ companyName, embedded }: { companyName?
                 </span>
                 <div className="w-20 h-1.5 rounded-full bg-gray-100 shrink-0">
                   <div
-                    className="h-full rounded-full bg-red-400 transition-all"
+                    className="h-full rounded-full bg-red-400"
                     style={{ width: `${barPct}%` }}
                   />
                 </div>

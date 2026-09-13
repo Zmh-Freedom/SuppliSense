@@ -85,7 +85,7 @@ describe('MonitoringView', () => {
     });
     renderView('/assess');
 
-    await user.type(screen.getByPlaceholderText('输入供应商名称、代码或统一社会信用代码'), '青岛三祥');
+    await user.type(screen.getByLabelText('供应商名称、代码或统一社会信用代码'), '青岛三祥');
     await user.click(screen.getByRole('button', { name: '开始调查' }));
 
     expect(await screen.findByRole('heading', { name: '供应商自动调查' })).toBeInTheDocument();

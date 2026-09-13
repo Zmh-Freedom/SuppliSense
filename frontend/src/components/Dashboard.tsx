@@ -122,7 +122,7 @@ export default function Dashboard() {
             <button
               key={item.label}
               onClick={() => navigate(`/chat?q=${encodeURIComponent(item.q)}`)}
-              className="text-left text-sm text-gray-600 bg-white border border-slate-200 rounded-xl px-4 py-2.5 hover:border-[var(--color-primary-bg)]/30 hover:shadow-sm hover:-translate-y-0.5 transition-all duration-200"
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-left text-sm text-gray-600 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:border-[var(--color-primary-bg)]/30 hover:shadow-sm"
             >
               {item.label}
             </button>
@@ -194,7 +194,7 @@ export default function Dashboard() {
               <div
                 key={l.key}
                 style={{ width: `${pct}%`, background: l.color }}
-                className="flex items-center justify-center text-xs text-white font-medium transition-all"
+                className="flex items-center justify-center text-xs font-medium text-white transition-[width,background-color]"
                 title={`${l.key}: ${count}`}
               >
                 {pct > 15 ? count : ''}
@@ -327,7 +327,7 @@ function ProcurementEntry({ onStartSourcing, onViewMonitoring }: { onStartSourci
           <button
             type="button"
             onClick={onStartSourcing}
-            className="group flex min-h-[76px] items-center justify-between rounded-xl bg-[var(--color-primary-bg)] px-4 py-3 text-left text-white transition-all duration-200 hover:bg-[var(--color-primary-hover)] hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)] focus:ring-offset-2"
+            className="group flex min-h-[76px] items-center justify-between rounded-xl bg-[var(--color-primary-bg)] px-4 py-3 text-left text-white transition-[box-shadow,background-color] duration-200 hover:bg-[var(--color-primary-hover)] hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-offset-2"
           >
             <span>
               <span className="block text-sm font-semibold">开始新的寻源</span>
@@ -338,7 +338,7 @@ function ProcurementEntry({ onStartSourcing, onViewMonitoring }: { onStartSourci
           <button
             type="button"
             onClick={onViewMonitoring}
-            className="group flex min-h-[76px] items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-left text-[var(--color-text)] transition-all duration-200 hover:border-[var(--color-primary-bg)]/40 hover:bg-[var(--color-surface-hover)] hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)] focus:ring-offset-2"
+            className="group flex min-h-[76px] items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-left text-[var(--color-text)] transition-[box-shadow,background-color,border-color] duration-200 hover:border-[var(--color-primary-bg)]/40 hover:bg-[var(--color-surface-hover)] hover:shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-offset-2"
           >
             <span>
               <span className="block text-sm font-semibold">查看风险监控</span>

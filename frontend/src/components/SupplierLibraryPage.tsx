@@ -86,7 +86,7 @@ export default function SupplierLibraryPage() {
             value={keyword}
             onChange={event => setKeyword(event.target.value)}
             placeholder="搜索供应商名称、统一社会信用代码..."
-            className="flex-1 text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)] focus:outline-none focus:border-[var(--color-focus-ring)]"
+            className="flex-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm focus:border-[var(--color-focus-ring)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
           />
           <button
             onClick={() => setShowAll(value => !value)}

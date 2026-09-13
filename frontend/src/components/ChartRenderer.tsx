@@ -75,7 +75,7 @@ function BarChartSimple({ data }: { data: ChartData }) {
           <span className="w-20 text-right text-gray-500 truncate shrink-0">{item.name}</span>
           <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
             <div
-              className="h-full rounded-full transition-all duration-500"
+              className="h-full rounded-full"
               style={{
                 width: `${Math.abs(Number(item.value ?? 0)) / maxVal * 100}%`,
                 backgroundColor: CHART_COLORS[i % CHART_COLORS.length],

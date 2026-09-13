@@ -37,7 +37,7 @@ export default function RiskSummary({
           </div>
         </div>
         <div className="min-w-[160px] flex-1 bg-[var(--color-border)] h-2 rounded-full">
-          <div className="h-full rounded-full transition-all duration-700" style={{ width: `${hasScore ? Math.max(0, Math.min(100, normalizedScore)) : 0}%`, background: color }} />
+          <div className="h-full rounded-full" style={{ width: `${hasScore ? Math.max(0, Math.min(100, normalizedScore)) : 0}%`, background: color }} />
         </div>
         {meta}
         {actions && <div className="flex items-center gap-2">{actions}</div>}

@@ -181,12 +181,16 @@ export default function MonitoringWorkbench({
           这里管理的是需要持续复核的监控对象，列表已按下一步优先级、风险变化和数据覆盖排序。外部候选在完成主体核验前只作为待核验对象展示；数据不足会明确标记，不会被解释为风险稳定。
         </div>
 
-        <form onSubmit={submit} className="mb-3 flex gap-2">
+        <form onSubmit={submit} className="mb-3 flex gap-2" aria-label="添加监控对象">
+          <label htmlFor="monitoring-target-query" className="sr-only">供应商名称、代码或统一社会信用代码</label>
           <input
+            id="monitoring-target-query"
+            name="monitoring-target-query"
+            autoComplete="off"
             value={newName}
             onChange={event => setNewName(event.target.value)}
-            placeholder="输入供应商名称、代码或统一社会信用代码"
-            className="min-h-[44px] flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm placeholder-gray-300 focus:border-[var(--color-border-focus)] focus:outline-none"
+            placeholder="输入供应商名称、代码或统一社会信用代码…"
+            className="min-h-[44px] flex-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-input-bg)] px-3 py-2 text-sm placeholder-gray-300 focus:border-[var(--color-border-focus)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
           />
           <button type="submit" disabled={isInvestigating || !newName.trim()} className="min-h-[44px] shrink-0 rounded-lg bg-[var(--color-primary-bg)] px-4 py-2 text-sm text-white transition-opacity hover:bg-[var(--color-primary-hover)] disabled:opacity-30">
             {isInvestigating ? '调查中…' : '开始调查'}

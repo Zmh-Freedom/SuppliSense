@@ -56,12 +56,13 @@ export default function LoginPage() {
               <label htmlFor="login-username" className="block text-sm text-[var(--color-text-secondary)] mb-1.5">用户名</label>
               <input
                 id="login-username"
+                name="username"
                 type="text"
                 value={username}
                 onChange={e => setUsername(e.target.value)}
-                placeholder="请输入用户名"
+                placeholder="请输入用户名…"
                 autoComplete="username"
-                className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] transition-colors"
+                className="w-full rounded-xl border border-[var(--color-border)] px-4 py-2.5 text-sm transition-colors focus:border-[var(--color-border-focus)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
                 autoFocus
               />
             </div>
@@ -70,23 +71,24 @@ export default function LoginPage() {
               <label htmlFor="login-password" className="block text-sm text-[var(--color-text-secondary)] mb-1.5">密码</label>
               <input
                 id="login-password"
+                name="password"
                 type="password"
                 value={password}
                 onChange={e => setPassword(e.target.value)}
-                placeholder="请输入密码"
+                placeholder="请输入密码…"
                 autoComplete="current-password"
-                className="w-full border border-[var(--color-border)] rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-[var(--color-border-focus)] transition-colors"
+                className="w-full rounded-xl border border-[var(--color-border)] px-4 py-2.5 text-sm transition-colors focus:border-[var(--color-border-focus)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)]"
               />
             </div>
 
             {error && (
-              <p className="text-sm text-red-500 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+              <p role="alert" aria-live="polite" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-500">{error}</p>
             )}
 
             <button
               type="submit"
               disabled={loading || !username.trim() || !password}
-              className="w-full bg-[var(--color-primary-bg)] text-white rounded-xl py-2.5 text-sm font-medium hover:bg-[var(--color-primary-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="min-h-[44px] w-full rounded-xl bg-[var(--color-primary-bg)] py-2.5 text-sm font-medium text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? '登录中…' : '登录'}
             </button>

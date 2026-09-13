@@ -32,6 +32,12 @@ function NavIcon({ name, className }: { name: string; className?: string }) {
   }
 }
 
+function formatAlertDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '时间未知';
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);
+}
+
 /* ---- inline alert bell for sidebar ---- */
 
 function AlertBell() {
@@ -60,7 +66,12 @@ function AlertBell() {
   const toggle = () => {
     if (!open && btnRef.current) {
       const rect = btnRef.current.getBoundingClientRect();
-      setPos({ top: rect.top, left: rect.right + 8 });
+      const panelWidth = Math.min(380, window.innerWidth - 16);
+      const panelHeight = Math.min(window.innerHeight * 0.7, 480);
+      setPos({
+        top: Math.max(8, Math.min(rect.top, window.innerHeight - panelHeight - 8)),
+        left: Math.max(8, Math.min(rect.right + 8, window.innerWidth - panelWidth - 8)),
+      });
     }
     setOpen(!open);
     setExpandedIdx(null);
@@ -90,7 +101,7 @@ function AlertBell() {
       {open && (
         <motion.div
           ref={panelRef}
-          className="fixed w-[380px] bg-white border border-[var(--color-border)] rounded-2xl shadow-xl z-50 overflow-hidden"
+          className="fixed z-50 w-[380px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl"
           style={{ top: pos.top, left: pos.left }}
           initial={{ opacity: 0, scale: 0.95, x: -8 }}
           animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -115,25 +126,30 @@ function AlertBell() {
                 const isExpanded = expandedIdx === i;
                 const isUnread = !doc.read;
                 return (
-                  <div key={doc._id}
-                    onClick={() => handleAlertClick(doc, i)}
-                    className={`px-4 py-3 border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-hover)] transition-colors cursor-pointer ${isExpanded ? 'bg-[var(--color-surface-hover)]' : ''}`}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
+                  <div key={doc._id} className="border-b border-[var(--color-border)] last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => handleAlertClick(doc, i)}
+                      aria-expanded={isExpanded}
+                      className={`block w-full px-4 py-3 text-left transition-colors hover:bg-[var(--color-surface-hover)] ${isExpanded ? 'bg-[var(--color-surface-hover)]' : ''}`}
+                    >
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-2">
                         {isUnread && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--color-primary-bg)]" />}
-                        <span className={`text-sm truncate ${isUnread ? 'font-semibold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'}`}>{doc.company_name}</span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-[10px] text-gray-400">{doc.created_at.slice(5, 16).replace('T', ' ')}</span>
+                        <span className={`truncate text-sm ${isUnread ? 'font-semibold text-[var(--color-text)]' : 'font-medium text-[var(--color-text)]'}`}>{doc.company_name}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                        <span className="text-[10px] text-gray-400">{formatAlertDate(doc.created_at)}</span>
                         <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${isCritical ? 'bg-red-500' : 'bg-amber-500'}`} />
-                      </div>
-                    </div>
-                    <p className={`text-xs text-gray-500 mt-1 ${isExpanded ? '' : 'line-clamp-1'}`}>
+                        </span>
+                      </span>
+                      <span className={`mt-1 block text-xs text-gray-500 ${isExpanded ? '' : 'line-clamp-1'}`}>
                       {doc.changes.map(c => `${c.field} ${c.old} → ${c.new}`).join(' · ')}
-                    </p>
+                      </span>
+                    </button>
                     {isExpanded && (
-                      <div className="mt-2 pt-2 border-t border-[var(--color-border)] flex items-center gap-2">
-                        <button onClick={(e) => { e.stopPropagation(); setOpen(false); setExpandedIdx(null); navigate(doc.monitor_target_id ? `/assess/${encodeURIComponent(doc.monitor_target_id)}` : `/assess`); }}
+                      <div className="mx-4 mb-3 flex items-center gap-2 border-t border-[var(--color-border)] pt-2">
+                        <button type="button" onClick={() => { setOpen(false); setExpandedIdx(null); navigate(doc.monitor_target_id ? `/assess/${encodeURIComponent(doc.monitor_target_id)}` : `/assess`); }}
                           className="text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 rounded-md px-2 py-1 transition-colors">
                           查看详情
                         </button>
@@ -191,7 +207,7 @@ export default function Sidebar({ onClose }: Props) {
     <aside className="w-56 h-screen border-r border-[var(--color-border)] bg-[var(--color-sidebar-bg)] glass-surface flex flex-col text-sm">
       {/* mobile close */}
       {onClose && (
-        <button className="md:hidden p-2 ml-auto text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">
+          <button className="md:hidden ml-auto flex min-h-[44px] min-w-[44px] items-center justify-center p-2 text-gray-400 hover:text-gray-600" onClick={onClose} aria-label="关闭菜单">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
             <path d="M5 5l10 10M15 5l-10 10" />
           </svg>
@@ -207,8 +223,8 @@ export default function Sidebar({ onClose }: Props) {
         <div className="flex items-center gap-1">
           <AlertBell />
           <div className="relative">
-            <button type="button" onClick={() => setAccountOpen(value => !value)} aria-label="账号菜单"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--color-primary-bg)] text-xs font-semibold text-white shadow-sm hover:opacity-90">
+            <button type="button" onClick={() => setAccountOpen(value => !value)} aria-label="账号菜单" aria-expanded={accountOpen}
+              className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full bg-[var(--color-primary-bg)] text-xs font-semibold text-white shadow-sm hover:opacity-90">
               {(user?.username || '用').slice(0, 1).toUpperCase()}
             </button>
             {accountOpen && <div className="absolute right-0 top-11 z-50 w-52 rounded-xl border border-[var(--color-border)] bg-white p-2 shadow-xl">
@@ -231,7 +247,7 @@ export default function Sidebar({ onClose }: Props) {
             <button
               key={tab.path}
               onClick={() => { navigate(tab.path); onClose?.(); }}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-colors min-h-[40px] text-left ${
+                className={`w-full flex min-h-[44px] items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors ${
                 isActive
                   ? 'bg-[var(--color-primary-bg)] text-white shadow-sm'
                   : isAgent
