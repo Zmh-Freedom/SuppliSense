@@ -69,6 +69,7 @@ def _format_final_answer(
     decision_summary: str,
     results: dict[str, AgentResult],
     pending_approvals: list[dict[str, Any]],
+    watchlist_statuses: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render evidence-backed worker outcomes without delegating facts to an LLM."""
     labels = {
@@ -78,7 +79,12 @@ def _format_final_answer(
         "compliance": "合规",
         "sourcing": "寻源",
     }
-    lines = [decision_summary]
+    if pending_approvals and not results:
+        lines = ["已识别加入风险监控请求，等待人工确认后写入监控清单。"]
+    elif watchlist_statuses and not pending_approvals and not results:
+        lines = []
+    else:
+        lines = [decision_summary]
     for task_id, result in results.items():
         label = labels.get(result.agent, task_id)
         if result.evidence:
@@ -92,6 +98,10 @@ def _format_final_answer(
         lines.append(
             f"已生成 {len(pending_approvals)} 项加入监控操作，等待人工确认后才会写入监控清单。"
         )
+    for status in watchlist_statuses or []:
+        if str(status.get("status")) == "already_watching":
+            name = str(status.get("company_name") or "该供应商")
+            lines.append(f"{name} 已在风险监控清单中，无需重复加入。")
     return "\n\n".join(lines)
 
 
@@ -188,7 +198,11 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
         requested_action = "add_watchlist"
     intent["requested_action"] = requested_action
     intent["request_watchlist"] = requested_action == "add_watchlist"
-    if "requirement" not in intent:
+    # Adding a supplier to monitoring is a write request, not a sourcing
+    # requirement.  Do not spend the 30-second sourcing LLM extraction budget
+    # on this branch; the target identity was already resolved by the shared
+    # conversation context and the action will be gated by approval.
+    if "requirement" not in intent and not intent.get("request_watchlist"):
         from app.domains.sourcing_risk.requirement_service import parse_requirement
 
         parsed = await _call_sync(parse_requirement, state.get("user_query", ""))
@@ -270,6 +284,7 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
     intent = state.get("intent", {})
     target_names = intent.get("target_supplier_names", []) if isinstance(intent, dict) else []
     references = state.get("supplier_references", [])
+    watchlist_statuses: list[dict[str, Any]] = []
 
     def monitor_target(company_name: str) -> dict[str, Any]:
         target: dict[str, Any] = {
@@ -296,9 +311,36 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
         if isinstance(existing, dict):
             target["monitor_status"] = existing.get("monitor_status") or "active"
             target["already_monitored"] = target["monitor_status"] == "active"
+            if target["already_monitored"]:
+                watchlist_statuses.append({
+                    "company_name": company_name,
+                    "monitor_target_id": existing.get("monitor_target_id"),
+                    "status": "already_watching",
+                })
             for field in ("monitor_target_id", "target_type", "supplier_id", "candidate_id", "company_id", "supplier_code", "identity_status"):
                 if existing.get(field) and not target.get(field):
                     target[field] = existing[field]
+        # The active formal-supplier read model is the Feishu snapshot, while
+        # ``resolve_supplier_id`` only checks the legacy ``suppliers``
+        # collection.  Resolve the stable Feishu responsibility identity here
+        # before deciding that an explicit add request needs clarification.
+        # Without this bridge a valid formal supplier is silently dropped from
+        # ``recommendations`` and the user receives an empty risk analysis
+        # instead of an approval proposal.
+        if not existing and not any(
+            target.get(field)
+            for field in ("supplier_id", "company_id", "candidate_id", "monitor_target_id")
+        ):
+            try:
+                from app.domains.supplier.access import formal_supplier_id_by_name
+
+                resolved_supplier_id = formal_supplier_id_by_name(company_name)
+            except Exception:
+                resolved_supplier_id = None
+            if resolved_supplier_id:
+                target["supplier_id"] = resolved_supplier_id
+                target["target_type"] = "formal_supplier"
+                target["identity_status"] = "verified"
         if not existing and not any(target.get(field) for field in ("supplier_id", "company_id", "candidate_id", "monitor_target_id")):
             try:
                 from app.domains.sourcing.supplier_repo import resolve_supplier_id
@@ -334,6 +376,7 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
         },
         "findings": findings,
         "recommendations": recommendations,
+        "watchlist_statuses": watchlist_statuses,
         "task_status": "EXECUTING",
     }
 
@@ -464,7 +507,10 @@ async def build_task_decision(state: AgentTaskState) -> dict[str, Any]:
             pending_approvals,
         )
     final_answer = _format_final_answer(
-        serialized["summary"], _agent_results(state), pending_approvals
+        serialized["summary"],
+        _agent_results(state),
+        pending_approvals,
+        list(state.get("watchlist_statuses") or []),
     )
     task_status = (
         "WAITING_HUMAN_APPROVAL" if pending_approvals else "DECISION_READY"

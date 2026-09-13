@@ -174,6 +174,17 @@ def extract_conversation_intent(
 def has_explicit_watchlist_request(message: str) -> bool:
     """Return whether the user explicitly asked to add a target to monitoring."""
     normalized = "".join(str(message or "").strip().lower().split())
+    # Do not turn a negated instruction into a durable write request.  This
+    # guard is intentionally evaluated before the positive phrases below so
+    # that "不要加入监控清单" cannot enter the approval workflow.
+    if any(token in normalized for token in (
+        "不要加入监控", "不加入监控", "别加入监控", "无需加入监控",
+        "不要纳入监控", "不纳入监控", "别纳入监控", "不要添加监控",
+    )) or (
+        any(token in normalized for token in ("不要把", "不把", "别把", "无需把"))
+        and any(token in normalized for token in ("加入监控", "纳入监控", "添加监控"))
+    ):
+        return False
     return any(token in normalized for token in (
         "加入监控", "加入风险监控", "纳入监控", "纳入风险监控",
         "加入到监控", "加入到风险监控", "添加监控", "添加到监控",

@@ -105,6 +105,18 @@ def test_small_talk_does_not_call_llm():
     assert intent_extractor.should_extract_conversation_intent("上海汽车制动系统有限公司") is True
 
 
+def test_watchlist_action_detection_accepts_common_phrases_and_rejects_negation():
+    assert intent_extractor.has_explicit_watchlist_request(
+        "把上海海拉电子有限公司加入监控清单"
+    ) is True
+    assert intent_extractor.has_explicit_watchlist_request(
+        "将青岛三祥科技股份有限公司纳入风险监控"
+    ) is True
+    assert intent_extractor.has_explicit_watchlist_request(
+        "不要把上海海拉电子有限公司加入监控清单"
+    ) is False
+
+
 def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix():
     """Every graph must consume the LLM-validated target from shared context."""
     extraction = intent_extractor.ConversationIntentExtraction(

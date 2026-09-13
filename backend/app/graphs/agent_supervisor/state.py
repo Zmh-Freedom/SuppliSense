@@ -37,6 +37,7 @@ class AgentTaskState(TypedDict, total=False):
     findings: list[dict[str, Any]]
     recommendations: list[dict[str, Any]]
     pending_approvals: list[dict[str, Any]]
+    watchlist_statuses: list[dict[str, Any]]
     action_receipts: list[dict[str, Any]]
     final_answer: str
     error: dict[str, Any] | None

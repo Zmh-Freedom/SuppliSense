@@ -276,6 +276,49 @@ def test_supervisor_creates_one_watchlist_proposal_per_structured_target(
     assert all(item["target"]["target_source"] == "conversation_state" for item in result["recommendations"])
 
 
+def test_supervisor_resolves_formal_feishu_identity_for_watchlist_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A current Feishu supplier must not be discarded as an unresolved company."""
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    monkeypatch.setattr(
+        "app.domains.supplier.access.formal_supplier_id_by_name",
+        lambda name: f"supplier:feishu:{name}",
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.supplier_repo.resolve_supplier_id",
+        lambda _name: None,
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.service._find_watchlist_target",
+        lambda **_kwargs: None,
+    )
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks(
+            {
+                "run_id": "feishu-formal-write",
+                "plan": {"tasks": []},
+                "intent": {
+                    "request_watchlist": True,
+                    "target_supplier_names": ["上海海拉电子有限公司"],
+                },
+                "supplier_references": [],
+            }
+        )
+    )
+
+    assert len(result["recommendations"]) == 1
+    target = result["recommendations"][0]["target"]
+    assert target["target_type"] == "formal_supplier"
+    assert target["supplier_id"] == "supplier:feishu:上海海拉电子有限公司"
+    assert target["identity_status"] == "verified"
+
+
 def test_identity_verification_does_not_create_watchlist_proposal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -327,6 +370,17 @@ def test_supervisor_final_answer_lists_worker_evidence_and_pending_monitoring() 
 
     assert "风险：供应商甲 综合风险：低风险。" in answer
     assert "等待人工确认" in answer
+
+
+def test_supervisor_final_answer_explains_idempotent_watchlist_add() -> None:
+    answer = supervisor_graph._format_final_answer(
+        "基于 0 条证据形成风险结论，综合可信度 0.00。",
+        {},
+        [],
+        [{"company_name": "上海海拉电子有限公司", "status": "already_watching"}],
+    )
+
+    assert answer == "上海海拉电子有限公司 已在风险监控清单中，无需重复加入。"
 
 
 def test_supervisor_rejects_past_persisted_expiration_even_if_client_approves(
