@@ -92,6 +92,32 @@ def create_sourcing_risk_run(
     return run
 
 
+def persist_parsed_requirement(run_id: str, parsed_requirement: dict[str, Any]) -> dict[str, Any] | None:
+    """Persist the validated requirement that the graph uses for discovery.
+
+    A newly created run stores the user's raw input first. The graph then adds
+    deterministic/validated fields before discovery; keeping that normalized
+    snapshot on the run row makes GET/SSE recovery describe the same scope the
+    graph actually executed.
+    """
+    run = get_run(run_id)
+    if run is None:
+        return None
+    current_requirement = dict(run.get("requirement") or {})
+    normalized_requirement = {**current_requirement, **dict(parsed_requirement)}
+    if normalized_requirement == current_requirement:
+        return run
+    updated = update_run_requirement(
+        run_id,
+        run["version"],
+        normalized_requirement,
+        run["status"],
+    )
+    if updated is None:
+        _raise_version_conflict()
+    return updated
+
+
 def get_sourcing_risk_run(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
     run = _get_authorized_run(run_id, user_id, user_role)
     detail = get_run_detail_collections(run_id)

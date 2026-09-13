@@ -777,6 +777,32 @@ def test_create_run_persists_created_event(monkeypatch: pytest.MonkeyPatch):
     assert events == [(result["id"], 1, "stage", {"status": "CREATED"})]
 
 
+def test_persist_parsed_requirement_merges_normalized_fields(monkeypatch: pytest.MonkeyPatch):
+    """Recovered run details must expose the same normalized scope used by discovery."""
+    run = _run("CREATED", 1)
+    updated_requirement = {
+        "requirement_text": "帮我为后轮制动鼓寻找历史供应商和外部候选",
+        "category": "后轮制动鼓",
+        "specification": "后轮制动鼓",
+    }
+    monkeypatch.setattr(service, "get_run", lambda *_: run)
+    monkeypatch.setattr(
+        service,
+        "update_run_requirement",
+        lambda run_id, expected_version, requirement, status: {
+            **run,
+            "version": expected_version + 1,
+            "status": status,
+            "requirement": requirement,
+        },
+    )
+
+    result = service.persist_parsed_requirement("run-id", updated_requirement)
+
+    assert result["version"] == 2
+    assert result["requirement"] == updated_requirement
+
+
 def test_identity_resolution_versions_a_durable_resume_event(monkeypatch: pytest.MonkeyPatch):
     """A stale reviewer must not overwrite a newer durable identity resolution."""
     events: list[dict] = []

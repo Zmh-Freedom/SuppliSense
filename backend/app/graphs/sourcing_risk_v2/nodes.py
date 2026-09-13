@@ -98,9 +98,21 @@ async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any
             raw_text = str(input_data.pop("requirement_text", raw_text))
             result = await asyncio.to_thread(parse_requirement, raw_text, input_data)
         if result.get("status") == "ready":
+            if raw_text:
+                await asyncio.to_thread(
+                    agent_run_service.persist_parsed_requirement,
+                    state["run_id"],
+                    dict(result["requirement"]),
+                )
             await _event(state["run_id"], "stage", {"stage": "requirement_ready"}, "CREATED")
             return {"status": "CREATED", "requirement": dict(result["requirement"]), "next_action": None}
         return {"status": "CLARIFYING", "next_action": "clarification_required", "error_code": None}
+    if raw_text:
+        await asyncio.to_thread(
+            agent_run_service.persist_parsed_requirement,
+            state["run_id"],
+            dict(result["requirement"]),
+        )
     await _event(state["run_id"], "stage", {"stage": "requirement_ready"}, "CREATED")
     return {"status": "CREATED", "requirement": dict(result["requirement"]), "next_action": None}
 
