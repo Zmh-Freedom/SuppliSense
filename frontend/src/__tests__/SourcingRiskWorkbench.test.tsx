@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SourcingRiskApprovalCard from '../components/SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from '../components/SourcingRiskCandidateCard';
@@ -30,11 +31,11 @@ const clarificationRun = {
   missing_fields: ['category', 'specification'],
 };
 
-function renderWithQueryClient(node: React.ReactNode) {
+function renderWithQueryClient(node: React.ReactNode, initialEntries = ['/sourcing']) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
+  return render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={initialEntries}>{node}</MemoryRouter></QueryClientProvider>);
 }
 
 afterEach(() => {
@@ -55,6 +56,18 @@ describe('SourcingRiskWorkbench', () => {
 
     expect(await screen.findByText('请确认企业主体')).toBeInTheDocument();
     expect(screen.queryByText('推荐供应商')).not.toBeInTheDocument();
+  });
+
+  it('recovers an active run from the sourcing URL', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/agent-runs/run-url')) return Response.json(identityReviewRun);
+      return new Response('', { status: 204 });
+    }));
+
+    renderWithQueryClient(<SourcingRiskWorkbench />, ['/sourcing?run=run-url']);
+
+    expect(await screen.findByText('请确认企业主体')).toBeInTheDocument();
+    expect(screen.getByLabelText('采购需求')).toBeInTheDocument();
   });
 
   it('shows missing sourcing fields and resumes the same run', async () => {

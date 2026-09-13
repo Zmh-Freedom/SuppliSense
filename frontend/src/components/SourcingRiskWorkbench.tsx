@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useSourcingRiskRun } from '../hooks/useSourcingRiskRun';
 import { queryKeys } from '../query-keys';
@@ -147,9 +148,10 @@ function DecisionGroup({ title, decisions, candidates }: { title: string; decisi
 }
 
 export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?: string }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [requirementText, setRequirementText] = useState('');
-  const [activeRunId, setActiveRunId] = useState(initialRunId);
-  const { data: run, isLoading, error, createRun, traceEvents } = useSourcingRiskRun(activeRunId);
+  const [activeRunId, setActiveRunId] = useState(initialRunId ?? searchParams.get('run') ?? undefined);
+  const { data: run, isLoading, isFetching, error, createRun, refresh, traceEvents } = useSourcingRiskRun(activeRunId);
   const isIdentityReview = run?.status === 'IDENTITY_REVIEW' || run?.next_action === 'identity_review_required';
   const isClarifying = run?.status === 'CLARIFYING' || run?.next_action === 'clarification_required';
   const decisionsByGroup = useMemo(() => {
@@ -169,22 +171,39 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
   };
   const runId = run?.id ?? run?.run_id ?? activeRunId;
 
+  const selectRun = (nextRunId?: string) => {
+    setActiveRunId(nextRunId);
+    const nextParams = new URLSearchParams(searchParams);
+    if (nextRunId) nextParams.set('run', nextRunId);
+    else nextParams.delete('run');
+    setSearchParams(nextParams, { replace: true });
+  };
+
   const submitRequirement = () => {
     const value = requirementText.trim();
     if (!value || createRun.isPending) return;
-    createRun.mutate({ requirement_text: value }, { onSuccess: created => setActiveRunId(created.id ?? created.run_id) });
+    createRun.mutate({ requirement_text: value }, { onSuccess: created => selectRun(created.id ?? created.run_id) });
   };
 
   return <div className="space-y-6">
     <section className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 space-y-3">
-      <div><h2 className="text-lg font-bold text-[var(--color-text)]">寻源风险工作台</h2><p className="text-xs text-[var(--color-text-secondary)] mt-1">本地优先检索、主体核验与证据驱动的供应商决策。</p></div>
-      <div className="flex gap-2"><input value={requirementText} onChange={event => setRequirementText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submitRequirement(); }} placeholder="例如：采购工业摄像头，IP67，华东交付" className="flex-1 text-sm rounded-xl border border-[var(--color-border)] px-3 py-2 bg-[var(--color-input-bg)]" /><button type="button" onClick={submitRequirement} disabled={!requirementText.trim() || createRun.isPending} className="text-sm rounded-xl bg-[var(--color-primary-bg)] text-white px-4 py-2 disabled:opacity-50">创建任务</button></div>
+      <div>
+        <h2 className="text-lg font-bold text-[var(--color-text)]">描述采购需求</h2>
+        <p id="sourcing-requirement-help" className="text-xs text-[var(--color-text-secondary)] mt-1">告诉我物料、规格、交付区域或其他限制条件，系统会先给出候选和需要核验的事项。</p>
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor="sourcing-requirement" className="text-xs font-medium text-[var(--color-text)]">采购需求</label>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <input id="sourcing-requirement" aria-describedby="sourcing-requirement-help" value={requirementText} onChange={event => setRequirementText(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') submitRequirement(); }} placeholder="例如：采购工业摄像头，IP67，华东交付" className="min-h-[44px] flex-1 rounded-xl border border-[var(--color-border)] px-3 py-2 text-sm bg-[var(--color-input-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--color-focus-ring)]" />
+          <button type="button" onClick={submitRequirement} disabled={!requirementText.trim() || createRun.isPending} className="min-h-[44px] rounded-xl bg-[var(--color-primary-bg)] px-4 text-sm text-white transition-colors hover:bg-[var(--color-primary-hover)] disabled:opacity-50">{createRun.isPending ? '提交中…' : '开始寻源'}</button>
+        </div>
+      </div>
       {createRun.isError && <p className="text-xs text-red-500">创建任务失败，请重试。</p>}
     </section>
     {isLoading && <p className="text-sm text-[var(--color-text-secondary)]">正在加载任务…</p>}
     {error && <p className="text-sm text-red-500">任务加载失败，请稍后重试。</p>}
     {run && runId && <>
-      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3"><div className="flex flex-wrap justify-between gap-2"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}</div><span className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{statusLabel(run.status)}</span></div><StageTimeline status={run.status} /></section>
+      <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-3" aria-label="当前寻源任务"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3><span role="status" className="text-xs rounded-full px-2 py-1 bg-[var(--color-surface-hover)]">{statusLabel(run.status)}</span></div>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}<p className="mt-2 text-xs text-[var(--color-text-secondary)]">任务已保存到当前地址，刷新页面后可以继续查看结果或补充条件。</p></div><button type="button" onClick={() => void refresh()} disabled={isFetching} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50">{isFetching ? '刷新中…' : '刷新任务'}</button></div><StageTimeline status={run.status} /></section>
       <AgentExecutionTrace events={traceEvents} />
       {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
         {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} onContinueRisk={() => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={() => openChatForCandidate(candidate, 'watchlist')} />)}</section>}
