@@ -87,6 +87,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Initialize PostgreSQL schema for unit tests
+        run: python -c "from app.db.init_pg import ensure_pg_schema; ensure_pg_schema()"
+
       - name: Run unit and graph tests with coverage
         run: >-
           python -m pytest -v
@@ -99,7 +102,7 @@ jobs:
       - name: Enforce targeted Harness core coverage
         run: >-
           python -m pytest -q
-          -m "not integration and not agent_e2e"
+          -m "not integration"
           --cov=app.graphs.harness.graph
           --cov=app.graphs.harness.state
           --cov=app.graphs.agent_core.answer_contract

@@ -47,6 +47,19 @@ def pytest_collection_modifyitems(items):
             item.add_marker(integration_marker)
 
 
+def pytest_ignore_collect(collection_path, config):
+    """Avoid importing integration modules when the mark expression excludes them.
+
+    Markers added by ``pytest_collection_modifyitems`` are too late to prevent
+    module imports.  Some integration modules import database-only exceptions,
+    so collecting them in the unit coverage job can fail before deselection.
+    """
+    if "not integration" not in str(getattr(config.option, "markexpr", "")):
+        return False
+    module_name = collection_path.stem
+    return module_name in _INTEGRATION_MODULES
+
+
 @pytest.fixture(autouse=True)
 def test_rollout_control_plane(monkeypatch):
     from app.core import rollout_gate
