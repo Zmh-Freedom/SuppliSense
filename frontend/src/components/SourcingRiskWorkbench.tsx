@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useSourcingRiskRun } from '../hooks/useSourcingRiskRun';
 import { queryKeys } from '../query-keys';
-import type { SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskRequirement } from '../types';
+import type { SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskEvidence, SourcingRiskRequirement } from '../types';
 import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
 import AgentExecutionTrace from './AgentExecutionTrace';
@@ -64,16 +64,7 @@ const GROUP_TITLES: Record<string, string> = {
   alternative: '备选供应商',
   needs_review: '需要复核',
   rejected: '不建议采用',
-};
-
-const REASON_CODE_LABELS: Record<string, string> = {
-  capability_match: '能力匹配',
-  category_match: '品类匹配',
-  historical_supplier: '历史合作',
-  risk_evidence: '风险证据',
-  identity_verified: '主体已核验',
-  identity_pending: '主体待核验',
-  insufficient_evidence: '证据不足',
+  unclassified: '候选供应商',
 };
 
 function candidateId(candidate: SourcingRiskCandidate): string {
@@ -207,9 +198,56 @@ function ProcurementProgress({ status, nextAction, errorCode }: { status: string
   );
 }
 
-function DecisionGroup({ title, decisions, candidates }: { title: string; decisions: SourcingRiskDecision[]; candidates: SourcingRiskCandidate[] }) {
-  const candidateByCompany = new Map(candidates.map(candidate => [String(candidate.company_id ?? candidateId(candidate)), candidate]));
-  return <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">{title}</h3>{decisions.map((decision, index) => { const candidate = candidateByCompany.get(String(decision.company_id ?? decision.candidate_id)) ?? { supplier_name: decision.company_id ?? '候选供应商' }; return <div key={`${decision.company_id ?? decision.candidate_id ?? index}`} className="space-y-2"><SourcingRiskCandidateCard candidate={candidate} /><div className="flex flex-wrap gap-2 text-xs text-[var(--color-text-secondary)]">{decision.final_score != null && <span>综合评分 {decision.final_score.toFixed(1)}</span>}{decision.confidence != null && <span>证据置信度 {(decision.confidence * 100).toFixed(0)}%</span>}{decision.reason_codes?.map(code => <span key={code} className="px-1.5 py-0.5 rounded bg-[var(--color-surface-hover)]">{REASON_CODE_LABELS[code] ?? code}</span>)}</div></div>; })}</section>;
+function candidateKeys(candidate: SourcingRiskCandidate): string[] {
+  return [candidate.company_id, candidate.candidate_id, candidate.id].filter((value): value is string => Boolean(value)).map(String);
+}
+
+function decisionKeys(decision: SourcingRiskDecision): string[] {
+  return [decision.company_id, decision.candidate_id].filter((value): value is string => Boolean(value)).map(String);
+}
+
+function candidateRecommendationRows(candidates: SourcingRiskCandidate[], decisions: SourcingRiskDecision[]): Array<{ candidate: SourcingRiskCandidate; decision?: SourcingRiskDecision }> {
+  const decisionByKey = new Map<string, SourcingRiskDecision>();
+  decisions.forEach(decision => decisionKeys(decision).forEach(key => decisionByKey.set(key, decision)));
+  const attached = new Set<SourcingRiskDecision>();
+  const rows = candidates.map(candidate => {
+    const decision = candidateKeys(candidate).map(key => decisionByKey.get(key)).find((item): item is SourcingRiskDecision => Boolean(item));
+    if (decision) attached.add(decision);
+    return { candidate, decision };
+  });
+  decisions.forEach(decision => {
+    if (!attached.has(decision)) rows.push({ candidate: { supplier_name: decision.company_id ?? '候选供应商' }, decision });
+  });
+  const order: Record<string, number> = { recommended: 0, alternative: 1, needs_review: 2, rejected: 3 };
+  return rows.sort((left, right) => (order[left.decision?.group ?? 'unclassified'] ?? 4) - (order[right.decision?.group ?? 'unclassified'] ?? 4));
+}
+
+function CandidateResults({ candidates, decisions, evidenceByCompanyId, onContinueRisk, onAddToWatchlist }: { candidates: SourcingRiskCandidate[]; decisions: SourcingRiskDecision[]; evidenceByCompanyId?: Record<string, SourcingRiskEvidence[]>; onContinueRisk: (candidate: SourcingRiskCandidate) => void; onAddToWatchlist: (candidate: SourcingRiskCandidate) => void }) {
+  const rows = candidateRecommendationRows(candidates, decisions);
+  const groups = new Map<string, Array<{ candidate: SourcingRiskCandidate; decision?: SourcingRiskDecision }>>();
+  rows.forEach(row => {
+    const group = row.decision?.group ?? 'unclassified';
+    groups.set(group, [...(groups.get(group) ?? []), row]);
+  });
+  return <section className="space-y-4" aria-labelledby="sourcing-candidates-heading">
+    <div><h3 id="sourcing-candidates-heading" className="text-sm font-semibold text-[var(--color-text)]">候选与依据</h3><p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">每个候选只展示一次；先看相关产品和推荐理由，再确认待核验信息与后续动作。</p></div>
+    {[...groups.entries()].map(([group, groupRows]) => <section key={group} className="space-y-3" aria-labelledby={`candidate-group-${group}`}><h4 id={`candidate-group-${group}`} className="text-sm font-semibold text-[var(--color-text-secondary)]">{GROUP_TITLES[group] ?? group} <span className="font-normal">（{groupRows.length}）</span></h4>{groupRows.map(({ candidate, decision }) => <SourcingRiskCandidateCard key={`${candidateId(candidate)}-${group}`} candidate={candidate} decision={decision} evidence={candidate.company_id ? evidenceByCompanyId?.[String(candidate.company_id)] : undefined} onContinueRisk={() => onContinueRisk(candidate)} onAddToWatchlist={() => onAddToWatchlist(candidate)} />)}</section>)}
+  </section>;
+}
+
+function CandidateEmptyState({ status, errorCode }: { status: string; errorCode?: string | null }) {
+  const isPartial = status === 'PARTIAL';
+  const isFailed = status === 'FAILED' || status === 'ACTION_FAILED';
+  const isProcessing = !['COMPLETED', 'PARTIAL', 'NEEDS_REVIEW', 'ACTION_FAILED', 'FAILED', 'CANCELLED'].includes(status);
+  const title = isPartial ? '部分来源完成，暂未形成可用候选' : isFailed ? '任务未完成，暂不判断为无候选' : isProcessing ? '候选仍在准备中' : '暂未找到可比较候选';
+  const description = isPartial
+    ? '已有结果会保留；请刷新任务查看后续候选，或调整采购条件后重新寻源。'
+    : isFailed
+      ? '请刷新任务查看最新状态；不要把任务失败理解为供应商不存在。'
+      : isProcessing
+        ? '系统仍在检索、核验或整理证据，候选结果准备好后会显示在这里。'
+        : '当前筛选条件下没有可展示候选，可以补充或放宽品类、规格和交付条件后重新寻源。';
+  return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5" aria-label="候选结果为空"><h3 className="text-sm font-semibold text-[var(--color-text)]">{title}</h3><p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>{errorCode && <p className="mt-2 text-xs text-[var(--color-text-secondary)]">任务仍保留，可通过“刷新任务”重新读取结果。</p>}</section>;
 }
 
 export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?: string }) {
@@ -219,11 +257,6 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
   const { data: run, isLoading, isFetching, error, createRun, refresh, traceEvents } = useSourcingRiskRun(activeRunId);
   const isIdentityReview = run?.status === 'IDENTITY_REVIEW' || run?.next_action === 'identity_review_required';
   const isClarifying = run?.status === 'CLARIFYING' || run?.next_action === 'clarification_required';
-  const decisionsByGroup = useMemo(() => {
-    const groups = new Map<string, SourcingRiskDecision[]>();
-    for (const decision of run?.decisions ?? []) groups.set(decision.group, [...(groups.get(decision.group) ?? []), decision]);
-    return groups;
-  }, [run?.decisions]);
   const proposals = (run?.proposals ?? run?.action_proposals ?? []).filter(
     proposal => proposal.action_type === 'add_watchlist',
   );
@@ -282,8 +315,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
         <div className="border-t border-[var(--color-border)] p-3"><AgentExecutionTrace events={traceEvents} /></div>
       </details>
       {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : isIdentityReview ? <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} /> : <>
-        {(run.candidates?.length ?? 0) > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">候选与证据</h3>{run.candidates?.map(candidate => <SourcingRiskCandidateCard key={candidateId(candidate)} candidate={candidate} evidence={run.evidence_by_company_id?.[String(candidate.company_id)]} onContinueRisk={() => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={() => openChatForCandidate(candidate, 'watchlist')} />)}</section>}
-        {[...decisionsByGroup.entries()].map(([group, decisions]) => <DecisionGroup key={group} title={GROUP_TITLES[group] ?? group} decisions={decisions} candidates={run.candidates ?? []} />)}
+        {(run.candidates?.length ?? 0) > 0 || (run.decisions?.length ?? 0) > 0 ? <CandidateResults candidates={run.candidates ?? []} decisions={run.decisions ?? []} evidenceByCompanyId={run.evidence_by_company_id} onContinueRisk={candidate => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={candidate => openChatForCandidate(candidate, 'watchlist')} /> : <CandidateEmptyState status={run.status} errorCode={run.error_code} />}
         {proposals.length > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">操作审批</h3>{proposals.map(proposal => <SourcingRiskApprovalCard key={proposal.id} proposal={proposal} runId={runId} runVersion={run.version} />)}</section>}
       </>}
     </>}

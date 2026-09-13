@@ -528,7 +528,10 @@ export interface SourcingRiskEvidence {
   freshness_status?: 'fresh' | 'stale' | 'unknown' | string;
   conflict_status?: 'clear' | 'conflicting' | 'unknown' | string;
   claim_code?: string;
+  claim?: string | null;
   source?: string;
+  source_reference?: string | null;
+  verification_status?: string | null;
 }
 
 export interface SourcingRiskCandidate {
