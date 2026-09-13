@@ -27,7 +27,7 @@ const PROFILE: SupplierProfile = {
     industry_source: 'tianyancha_baseinfo_cache', website_url_source: 'company_website', contact_phone_source: 'tianyancha_baseinfo', contact_email_source: 'company_website', source: 'manual', updated_at: '2026-08-20T10:00:00+00:00', status: 'active',
   },
   risk: { risk_score: 20, risk_level: '低风险', trend: [], alert_count: 1, in_watchlist: false },
-  financial: { history: [{ period: '2025', revenue: 100, net_profit: 10 }], revenue_growth: 10 },
+  financial: { history: [{ period: '2025', revenue: 100, net_profit: 10 }, { period: '2025-03-31', revenue: 24, net_profit: 2, debt_ratio: 0.4, cash_flow: 1.2 }], revenue_growth: 10 },
   sentiment: { overall_sentiment: 'neutral', sentiment_score: 0, negative_ratio: 0, article_count: 0, top_tags: [] },
   alerts: [{ _id: 'a-1', severity: 'warning', changes: [{ field: '诉讼', old: 0, new: 1 }], created_at: '2026-08-20' }],
   relationships: { related_count: 1, branch_count: 0, dependency_count: 1, high_risk_related_count: 0, entities: [{ name: '关联供应商', relation_type: '供应链', supplier_id: 'related-1', risk_score: 15 }] },
@@ -103,6 +103,21 @@ describe('SupplierProfilePage', () => {
     await screen.findByText('测试供应商有限公司');
     expect(screen.queryByRole('button', { name: '编辑主数据' })).not.toBeInTheDocument();
     expect(mocks.put).not.toHaveBeenCalled();
+  });
+
+  it('opens financial detail and filters annual and quarterly records', async () => {
+    const user = userEvent.setup();
+    renderProfile();
+    await screen.findByText('测试供应商有限公司');
+    await user.click(screen.getByRole('button', { name: '财务' }));
+    await user.click(screen.getByRole('button', { name: '查看财务明细' }));
+
+    expect(screen.getByRole('region', { name: '财务明细' })).toBeInTheDocument();
+    expect(screen.getAllByText('2025-03-31').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('季度', { exact: true }).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole('button', { name: '年度（1）' }));
+    expect(screen.getAllByText('2025', { exact: true }).length).toBeGreaterThan(0);
+    expect(screen.queryByText('2025-03-31')).not.toBeInTheDocument();
   });
 
   it('confirms reassessment before submitting a risk refresh', async () => {
