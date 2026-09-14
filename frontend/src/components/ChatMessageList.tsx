@@ -1,9 +1,8 @@
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import type { ComponentPropsWithoutRef, ComponentType } from 'react';
+import type { ComponentType } from 'react';
 import type { ApprovalData } from '../api';
 import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowSnapshot, ChartData, ChatMessage, SupplierIdentityCandidate, SupplierReference } from '../types';
 import ChartRenderer from './ChartRenderer';
+import AssistantRichText from './AssistantRichText';
 import AgentWorkflowPanel from './AgentWorkflowPanel';
 import type { AgentStatus } from './AgentWorkflowPanel';
 
@@ -24,19 +23,6 @@ export interface ChatStreamViewState {
   evidence: AgentEvidenceRecord[];
   workflowStatus: AgentWorkflowSnapshot;
 }
-
-const markdownComponents = {
-  code: ({ className, children, ...rest }: ComponentPropsWithoutRef<'code'> & { className?: string }) => {
-    if (className === 'language-chart') {
-      try {
-        return <ChartRenderer data={JSON.parse(String(children).replace(/\n/g, ''))} />;
-      } catch {
-        return <code className={className} {...rest}>{children}</code>;
-      }
-    }
-    return <code className={className} {...rest}>{children}</code>;
-  },
-};
 
 function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierReference; onAnalyze: (name: string) => void }) {
   return <article className="rounded-xl border border-amber-100 bg-amber-50/60 p-2.5 text-xs text-amber-950 space-y-1.5">
@@ -85,9 +71,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
           {message.role === 'user' ? '你' : 'AI'}
         </div>
         <div className={`${message.role === 'user' ? 'max-w-[80%]' : 'min-w-0 flex-1 max-w-5xl'} rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${message.role === 'user' ? 'bg-[var(--color-code-bg)] text-[var(--color-text)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'}`}>
-          <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.agentAnswer?.summary || message.content}</ReactMarkdown>
-          </div>
+          <AssistantRichText content={message.agentAnswer?.summary || message.content} label={message.agentAnswer ? '采购分析' : undefined} />
           {message.role === 'assistant' && message.identityCandidates && <SupplierIdentityChoices candidates={message.identityCandidates} onConfirm={onConfirmSupplier} />}
           {message.role === 'assistant' && message.references && message.references.length > 0 && <details className="group mt-3 border-t border-[var(--color-border)] pt-2">
             <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 py-1 text-left text-xs text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">
@@ -106,7 +90,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
         <AgentWorkflowPanel state={streamState} onApproval={onApproval} />
         {streamState.charts.map((chart, index) => <ChartRenderer key={`chart-${index}`} data={chart} />)}
         {streamState.answerChunks.length > 0 && <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
-          <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{streamState.agentAnswer?.summary || streamState.answerChunks.join('')}</ReactMarkdown></div>
+          <AssistantRichText content={streamState.agentAnswer?.summary || streamState.answerChunks.join('')} label={streamState.agentAnswer ? '采购分析' : undefined} />
           <span className="inline-block w-2 h-4 bg-[var(--color-primary-bg)] animate-pulse ml-1" />
           {streamState.references.length > 0 && <div className="mt-3 border-t border-[var(--color-border)] pt-2 text-xs text-gray-500">识别到：{streamState.references.map(reference => reference.name).join('、')}</div>}
           <StructuredAgentResult answer={streamState.agentAnswer ?? undefined} evidence={streamState.evidence} />
