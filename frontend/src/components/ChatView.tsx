@@ -767,7 +767,7 @@ export default function ChatView() {
               }
             }}
             placeholder="输入问题，如：对比海康威视和宝钢的风险…"
-            className="flex-1 border-none bg-transparent py-2.5 text-sm placeholder-gray-300 outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-inset"
+            className="flex-1 border-none bg-transparent py-2.5 text-sm placeholder-gray-300 outline-none focus-visible:ring-0"
           />
           <button
             onClick={() => send()}

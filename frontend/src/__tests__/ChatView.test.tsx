@@ -74,6 +74,14 @@ describe('ChatView session lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  it('uses the outer composer focus state without an inner input ring', () => {
+    renderChat()
+
+    const input = screen.getByLabelText('向采购助手提问')
+    expect(input).toHaveClass('focus-visible:ring-0')
+    expect(input).not.toHaveClass('focus-visible:ring-2')
+  })
+
   it('keeps a newly opened chat selected when an earlier stream completes', async () => {
     const completeStream = createPendingStream()
     const user = userEvent.setup()
