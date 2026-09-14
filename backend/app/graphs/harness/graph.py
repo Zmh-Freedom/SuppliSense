@@ -804,6 +804,43 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         if answer.status in {"partial", "needs_review"} or answer.limitations:
             return result + "以上预测仅基于已取得资料，部分维度尚未覆盖；采购动作请先按下方提示核实。"
         return result + "可结合当前风险复核结果安排后续采购动作。"
+    network_claims = [
+        claim for claim in answer.claims
+        if claim.dimension == "risk_network"
+    ]
+    if "contagion_analysis" in tool_names or network_claims:
+        subject = "、".join(dict.fromkeys(target_names[:3])) or "该供应商"
+        if not network_claims:
+            return f"已完成 {subject} 的供应链关系与传染风险检索，但当前没有可验证的关联主体或传染路径结论。"
+        values = {
+            str(claim.fact_path): claim.value
+            for claim in network_claims
+            if claim.fact_path and claim.value is not None
+        }
+        summary_parts = [f"已完成 {subject} 的供应链关系与传染风险分析"]
+        related_count = values.get("related_count")
+        branch_count = values.get("branch_count")
+        dependency_count = values.get("dependency_count")
+        same_industry_count = values.get("same_industry_count")
+        high_risk_count = values.get("high_risk_related_count")
+        if isinstance(related_count, (int, float)):
+            summary_parts.append(f"识别到关联主体 {int(related_count)} 家")
+        if isinstance(branch_count, (int, float)) and branch_count > 0:
+            summary_parts.append(f"其中分支机构 {int(branch_count)} 家")
+        if isinstance(dependency_count, (int, float)) and dependency_count > 0:
+            summary_parts.append(f"供应链依赖 {int(dependency_count)} 条")
+        if isinstance(same_industry_count, (int, float)) and same_industry_count > 0:
+            summary_parts.append(f"同行业关联 {int(same_industry_count)} 家")
+        if isinstance(high_risk_count, (int, float)):
+            summary_parts.append(
+                f"高风险关联主体 {int(high_risk_count)} 家"
+                if high_risk_count > 0
+                else "当前未发现高风险关联主体"
+            )
+        result = "；".join(summary_parts) + "。"
+        if answer.status in {"partial", "needs_review"} or answer.limitations:
+            return result + "以上判断仅基于当前已取得的关联、供应链和监控数据，未覆盖的关系不代表不存在；采购动作请先核实。"
+        return result + "可结合下方关联实体和关系图进一步核查潜在传导路径。"
     if target_names and answer.claims:
         # Put the procurement conclusion before the evidence table.  Every
         # sentence below is assembled from validated Claims, so this remains a

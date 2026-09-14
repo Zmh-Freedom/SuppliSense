@@ -696,9 +696,9 @@ export default function ChatView() {
                     <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
                   </svg>
                 </div>
-                <h2 className="text-xl font-bold text-[var(--color-text)]">AI 工作台</h2>
+                <h2 className="text-xl font-bold text-[var(--color-text)]">采购助手</h2>
                 <p className="text-sm text-gray-500 leading-relaxed">
-                  基于公开风险、上市公司财务和内部采购月度数据，生成可追溯的供应商复核任务
+                  用自然语言获取寻源建议，持续核验负责供应商的风险变化
                 </p>
               </div>
 

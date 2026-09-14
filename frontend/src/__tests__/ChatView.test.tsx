@@ -119,7 +119,17 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
     await completeStream()
 
-    expect(screen.getByText('AI 工作台')).toBeInTheDocument()
+    expect(screen.getByText('采购助手')).toBeInTheDocument()
+  })
+
+  it('labels the assistant consistently and uses the network-risk quick capability prompt', async () => {
+    renderChat()
+
+    expect(screen.getByText('采购助手')).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /关系图谱.*供应链关系与传染风险/ }))
+
+    expect(screen.getByLabelText('向采购助手提问')).toHaveValue('分析青岛三祥科技股份有限公司的供应链关系和传染风险')
   })
 
   it('does not load another account\'s legacy or scoped chat history', () => {

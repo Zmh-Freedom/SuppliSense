@@ -245,6 +245,11 @@ _CLAIM_LABELS = {
     "max_score": "风险预测满分",
     "prediction_signal_summary": "风险预测信号",
     "has_data": "预测数据可用",
+    "related_count": "关联主体数量",
+    "branch_count": "分支机构数量",
+    "dependency_count": "供应链依赖数量",
+    "same_industry_count": "同行业关联数量",
+    "high_risk_related_count": "高风险关联主体数量",
 }
 _PERCENTAGE_CLAIMS = {
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",

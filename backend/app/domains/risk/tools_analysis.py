@@ -28,7 +28,19 @@ def contagion_analysis(company_name: str) -> dict:
     from app.domains.risk.contagion import analyze_contagion
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence(analyze_contagion(company_name), tool_name="contagion_analysis", entity_id=f"entity:{company_name}", dimension="risk_network")
+    return attach_tool_evidence(
+        analyze_contagion(company_name),
+        tool_name="contagion_analysis",
+        entity_id=f"entity:{company_name}",
+        dimension="risk_network",
+        claim_fields=[
+            "related_count",
+            "branch_count",
+            "dependency_count",
+            "same_industry_count",
+            "high_risk_related_count",
+        ],
+    )
 
 
 @tool

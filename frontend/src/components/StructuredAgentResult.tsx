@@ -24,6 +24,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   esg: 'ESG',
   sentiment: '舆情',
   sourcing: '寻源',
+  risk_network: '供应链关系与传染风险',
   risk_monitoring: '风险监控',
   identity_review: '主体身份',
 };
@@ -39,6 +40,7 @@ const DIMENSION_BADGE_CLASSES: Record<string, string> = {
   esg: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   sentiment: 'border-amber-200 bg-amber-50 text-amber-700',
   sourcing: 'border-violet-200 bg-violet-50 text-violet-700',
+  risk_network: 'border-purple-200 bg-purple-50 text-purple-700',
   identity_review: 'border-purple-200 bg-purple-50 text-purple-700',
 };
 
@@ -110,6 +112,11 @@ const FACT_LABELS: Record<string, string> = {
   industry: '所属行业',
   categories: '主营品类',
   capabilities: '供货能力',
+  related_count: '关联主体数量',
+  branch_count: '分支机构数量',
+  dependency_count: '供应链依赖数量',
+  same_industry_count: '同行业关联数量',
+  high_risk_related_count: '高风险关联主体数量',
 };
 
 const FACT_PATH_ALIASES: Record<string, string> = {
@@ -379,6 +386,7 @@ function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
   }
   if (answer.claims.length > 0 && answer.summary && (
     answer.summary.includes('供应商复核') || answer.summary.includes('综合风险评分') || answer.summary.includes('寻源候选')
+    || answer.summary.includes('供应链关系') || answer.summary.includes('传染风险')
   )) {
     return answer.summary;
   }

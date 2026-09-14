@@ -303,6 +303,77 @@ def test_predict_risk_binds_prediction_fields_to_claims(monkeypatch) -> None:
     }
 
 
+def test_contagion_summary_answers_network_question_before_generic_review() -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="待生成",
+        claims=[
+            ValidatedClaim(
+                claim_id="network-related", entity_id="entity:supplier", dimension="risk_network",
+                statement="青岛三祥科技股份有限公司 关联主体数量：3",
+                value=3, fact_path="related_count", evidence_refs=["network"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="network-dependency", entity_id="entity:supplier", dimension="risk_network",
+                statement="青岛三祥科技股份有限公司 供应链依赖数量：2",
+                value=2, fact_path="dependency_count", evidence_refs=["network"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="network-high-risk", entity_id="entity:supplier", dimension="risk_network",
+                statement="青岛三祥科技股份有限公司 高风险关联主体数量：1",
+                value=1, fact_path="high_risk_related_count", evidence_refs=["network"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="risk", entity_id="entity:supplier", dimension="risk",
+                statement="青岛三祥科技股份有限公司 综合风险评分：93/100",
+                value=93, fact_path="risk_score", evidence_refs=["risk"], confidence=0.9,
+                validation_status="supported",
+            ),
+        ],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+        },
+        "task_specs": [{"tool_name": "contagion_analysis"}],
+        "tool_outcomes": [],
+    })
+
+    assert "供应链关系与传染风险分析" in summary
+    assert "关联主体 3 家" in summary
+    assert "供应链依赖 2 条" in summary
+    assert "高风险关联主体 1 家" in summary
+    assert "供应商复核" not in summary
+
+
+def test_contagion_analysis_binds_network_fields_to_claims(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.risk.contagion.analyze_contagion",
+        lambda _name: {
+            "company_name": "测试供应商有限公司",
+            "related_count": 3,
+            "branch_count": 1,
+            "dependency_count": 2,
+            "same_industry_count": 0,
+            "high_risk_related_count": 1,
+            "related_entities": [],
+        },
+    )
+
+    from app.domains.risk import tools_analysis
+
+    result = tools_analysis.contagion_analysis.invoke({"company_name": "测试供应商有限公司"})
+
+    assert {claim["fact_path"] for claim in result["claims"]} == {
+        "related_count", "branch_count", "dependency_count", "same_industry_count", "high_risk_related_count",
+    }
+
+
 @pytest.mark.parametrize(
     ("message", "tool_name"),
     [
