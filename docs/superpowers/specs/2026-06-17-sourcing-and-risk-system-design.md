@@ -549,7 +549,7 @@ P4（可选，未来演进）
 
 | 文件 | 处理 |
 |------|------|
-| `specs/2026-06-16-agent-capability-enhancement-design.md` | 内容整合进本 spec §4/§6/§8，原文件归档到 `docs/archive/` |
+| `specs/2026-06-16-agent-capability-enhancement-design.md` | 内容已整合进本 spec §4/§6/§8，原文件已删除 |
 | `plans/2026-06-16-agent-capability-enhancement.md` | 整合后删除（详细任务级 plan 由后续 writing-plans 重新生成） |
 | `plans/2026-06-16-enterprise-upgrade-zh.md` | 保留为子文档，本 spec §6 引用；不删除 |
 | `presentation/2026-06-16-project-progress.md` | 本期不改；后续 P3 阶段同步更新 |

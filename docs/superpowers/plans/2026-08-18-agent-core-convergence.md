@@ -21,10 +21,10 @@
 
 本计划是已完成的 Agent 核心收敛实施记录；后续供应商推荐、风险监控和飞书数据源开发以 `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` 为唯一有效计划，并以以下活动文档为准：
 
-- `docs/superpowers/specs/2026-08-18-agent-unified-architecture.md`：架构、职责和业务边界；
+- 当前架构、职责和业务边界：以 `docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md` 为准；
 - `docs/release/agent-acceptance-and-evaluation.md`：测试、评测与质量门槛。
 
-历史 V2 和 Supervisor 设计/计划已移动至 `docs/archive/agent-design/`，仅用于实现追溯，不再与本计划竞争。
+历史 V2 和 Supervisor 设计/计划已清理；实现追溯以 Git 历史、问题日志和本计划的验收记录为准。
 
 复用现有能力：
 

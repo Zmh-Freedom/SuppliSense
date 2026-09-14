@@ -10,9 +10,9 @@
 本文件保留当时的 Agent 契约骨架、实施顺序和验收记录。实际代码审计发现多项契约尚未贯穿生产活动链路，后续修复、任务顺序和验收门槛统一以 2026-09-03-agent-harness-hardening-plan.md 为准。
 
 - `docs/superpowers/plans/2026-08-27-sourcing-risk-feishu-plan.md` 已完成并转为历史实施记录。
-- `docs/superpowers/specs/2026-08-18-agent-unified-architecture.md` 是历史架构基线，不再允许作为新功能继续扩展多套执行图。
+- 原 2026-08-18 统一架构设计已被清理；当前架构、任务顺序和验收门槛统一以 2026-09-03 加固计划为准。
 - `docs/release/agent-acceptance-and-evaluation.md` 保留历史验收记录；本文件第 12 节是 Harness 改造后的活动验收门槛。
-- `docs/archive/agent-design/` 中的 V2、Supervisor 文档只用于追溯，不参与新决策。
+- 历史 V2、Supervisor 设计与实施文档已清理；需要追溯时以 Git 历史、问题日志和本计划的验收记录为准。
 - 实施中发现的问题必须先写入 `docs/issue-log.md`，再修复并回填验证结果和提交号。
 
 ## 2. 背景与审计结论
