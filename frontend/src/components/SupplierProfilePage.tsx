@@ -6,13 +6,14 @@ import '@xyflow/react/dist/style.css';
 import { Line, LineChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api } from '../api';
 import BusinessRiskCard from './BusinessRiskCard';
+import SentimentPanel from './SentimentPanel';
 import { queryKeys } from '../query-keys';
 import type { ProfileBasicInfo, ProfileRiskSnapshotHistory, SupplierProfile } from '../types';
 import { getRiskColor, getRiskLevelLabel } from '../riskColors';
 import { SENTIMENT_LABEL } from '../theme';
 import RiskSummary from './RiskSummary';
 
-type ProfileTab = 'overview' | 'risk' | 'financial' | 'relationships' | 'changelog';
+type ProfileTab = 'overview' | 'risk' | 'financial' | 'sentiment' | 'relationships' | 'changelog';
 type PendingAction = 'assess' | 'watch' | 'unwatch' | null;
 
 export default function SupplierProfilePage() {
@@ -87,10 +88,11 @@ export default function SupplierProfilePage() {
     </section>
     {pendingAction && <ConfirmationCard message={confirmationCopy[pendingAction]} busy={isBusy} onConfirm={confirmAction} onCancel={() => setPendingAction(null)} />}
     {notice && <p role="status" className="mb-4 rounded-xl border border-[var(--color-border)] bg-gray-50 px-4 py-3 text-sm text-[var(--color-text-secondary)]">{notice}</p>}
-    <nav className="flex gap-1 mb-4 border-b border-[var(--color-border)] pb-0" aria-label="供应商画像标签">{([['overview', '概览'], ['risk', '风险'], ['financial', '财务'], ['relationships', '关联'], ['changelog', '日志']] as const).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`px-4 py-2 text-sm rounded-t-lg transition-colors ${tab === key ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-transparent font-semibold text-[var(--color-primary-bg)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`} style={tab === key ? { marginBottom: -1 } : undefined}>{label}</button>)}</nav>
+    <nav className="flex gap-1 mb-4 overflow-x-auto border-b border-[var(--color-border)] pb-0" aria-label="供应商画像标签">{([['overview', '概览'], ['risk', '风险'], ['financial', '财务'], ['sentiment', '舆情'], ['relationships', '关联'], ['changelog', '日志']] as const).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`shrink-0 px-4 py-2 text-sm rounded-t-lg transition-colors ${tab === key ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-transparent font-semibold text-[var(--color-primary-bg)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`} style={tab === key ? { marginBottom: -1 } : undefined}>{label}</button>)}</nav>
     {tab === 'overview' && <OverviewTab basicInfo={basicInfo} risk={risk} sentiment={sentiment} compliance={compliance} alerts={alerts} />}
     {tab === 'risk' && <RiskTab supplierId={id!} companyName={basicInfo.name} compliance={compliance} esg={esg} />}
     {tab === 'financial' && <FinancialTab financial={financial} />}
+    {tab === 'sentiment' && <section aria-label="舆情新闻详情"><SentimentPanel companyName={basicInfo.name} embedded /></section>}
     {tab === 'relationships' && <RelationshipsTab relationships={relationships} centerName={basicInfo.name} />}
     {tab === 'changelog' && <ChangelogTab changelog={changelog} supplierId={id!} />}
   </div>;

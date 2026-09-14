@@ -61,6 +61,33 @@ const RISK_SNAPSHOTS = {
   ],
 };
 
+const SENTIMENT_DETAIL = {
+  company_name: '测试供应商有限公司',
+  analyzed_at: '2026-09-10T10:00:00+00:00',
+  articles_count: 1,
+  negative_count: 0,
+  neutral_count: 1,
+  positive_count: 0,
+  sentiment_score: 0,
+  risk_tags: [],
+  articles: [{
+    title: '测试供应商发布年度经营信息',
+    body: '这是新闻正文摘要。',
+    url: 'https://news.example.com/article-1',
+    source: '公开来源',
+    published_at: '2026-09-09T08:00:00+00:00',
+    sentiment: 'neutral',
+    confidence: 0.8,
+    risk_tags: [],
+    summary: '经营信息保持稳定',
+    judgement_basis: '标题未体现明显风险或利好。',
+  }],
+  summary: '舆情整体中性',
+  key_concerns: [],
+  has_data: true,
+  llm_analyzed: true,
+};
+
 function renderProfile() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={['/suppliers/supplier-1']}><Routes><Route path="/suppliers/:id" element={<SupplierProfilePage />} /></Routes></MemoryRouter></QueryClientProvider>);
@@ -69,7 +96,7 @@ function renderProfile() {
 describe('SupplierProfilePage', () => {
   beforeEach(() => {
     mocks.get.mockImplementation((path: string) => Promise.resolve(
-      path.startsWith('/risk/business/') ? BUSINESS_RISK : path === '/alert/snapshots' ? RISK_SNAPSHOTS : PROFILE,
+      path.startsWith('/risk/business/') ? BUSINESS_RISK : path === '/alert/snapshots' ? RISK_SNAPSHOTS : path.startsWith('/sentiment/') ? SENTIMENT_DETAIL : PROFILE,
     ));
     mocks.post.mockResolvedValue({});
     mocks.put.mockResolvedValue({});
@@ -118,6 +145,17 @@ describe('SupplierProfilePage', () => {
     await user.click(screen.getByRole('button', { name: '年度（1）' }));
     expect(screen.getAllByText('2025', { exact: true }).length).toBeGreaterThan(0);
     expect(screen.queryByText('2025-03-31')).not.toBeInTheDocument();
+  });
+
+  it('shows sentiment article summaries and original links in the supplier profile', async () => {
+    const user = userEvent.setup();
+    renderProfile();
+    await screen.findByText('测试供应商有限公司');
+    await user.click(screen.getByRole('button', { name: '舆情' }));
+
+    expect(await screen.findByText('测试供应商发布年度经营信息')).toBeInTheDocument();
+    expect(screen.getByText('经营信息保持稳定')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '测试供应商发布年度经营信息' })).toHaveAttribute('href', 'https://news.example.com/article-1');
   });
 
   it('confirms reassessment before submitting a risk refresh', async () => {
