@@ -42,6 +42,7 @@ def test_normalize_supplier_record_maps_formal_supplier_fields() -> None:
         "fields": {
             "供应商代码": "S-1",
             "供应商名称": "深圳市示例科技有限公司",
+            "公司网址": "https://example.com",
             "统一社会信用代码": "91440300TEST",
             "主营品类": "摄像头模组，电子元器件",
             "经营地区": ["广东", "华东"],
@@ -59,6 +60,7 @@ def test_normalize_supplier_record_maps_formal_supplier_fields() -> None:
     assert result["regions"] == ["广东", "华东"]
     assert result["status"] == "active"
     assert result["contact_phone"] == "13800138000"
+    assert result["website_url"] == "https://example.com"
 
 
 def test_upsert_snapshot_does_not_put_immutable_id_in_set() -> None:
@@ -335,6 +337,44 @@ def test_sync_supplier_tables_links_three_snapshots_by_supplier_code(monkeypatch
     assert database.collections["supplier_contact_snapshots"].documents[0]["supplier_id"] == supplier_id
     assert result["errors"][0]["reason"] == "供应商代码缺失或无法关联主数据"
     assert result["errors"][0]["batch_id"] == result["batch_id"]
+
+
+def test_sync_supplier_tables_reuses_stable_snapshot_when_feishu_record_id_changes(monkeypatch) -> None:
+    database = MultiFakeDatabase()
+    database.collections["feishu_supplier_identity_map"].documents.append({
+        "_id": "identity-1",
+        "source_system": "feishu_bitable",
+        "supplier_code": "S-1",
+        "source_record_id": "old-master-1",
+        "supplier_id": "supplier:feishu:stable-1",
+    })
+    database.collections["supplier_master_snapshots"].documents.append({
+        "_id": "supplier:feishu:stable-1",
+        "supplier_id": "supplier:feishu:stable-1",
+        "source": "feishu_bitable",
+        "source_record_id": "old-master-1",
+        "supplier_code": "S-1",
+        "name": "企业一",
+        "sync_status": "stale",
+    })
+    monkeypatch.setattr(feishu_bitable, "get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_TRANSACTION_TABLE_ID", "")
+    monkeypatch.setattr(feishu_bitable, "build_supplier_master_client", lambda: RecordsClient([
+        {"record_id": "new-master-1", "fields": {"供应商代码": "S-1", "供应商名称": "企业一更新"}},
+    ]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_capability_client", lambda: RecordsClient([]))
+    monkeypatch.setattr(feishu_bitable, "build_supplier_contact_client", lambda: RecordsClient([]))
+
+    result = feishu_bitable.sync_supplier_tables()
+
+    assert result["status"] == "ok"
+    snapshot = database.collections["supplier_master_snapshots"].documents[0]
+    identity = database.collections["feishu_supplier_identity_map"].documents[0]
+    assert snapshot["_id"] == "supplier:feishu:stable-1"
+    assert snapshot["source_record_id"] == "new-master-1"
+    assert snapshot["name"] == "企业一更新"
+    assert identity["source_record_id"] == "new-master-1"
 
 
 def test_sync_supplier_tables_honors_demo_data_freeze_without_external_clients(monkeypatch) -> None:

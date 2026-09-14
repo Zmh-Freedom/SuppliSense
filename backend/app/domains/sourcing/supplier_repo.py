@@ -698,13 +698,14 @@ def formal_supplier_exists_by_name(name: str) -> bool:
 
 
 def _enrich_supplier_library_items(db: Any, items: list[dict[str, Any]]) -> None:
-    """Merge current capability snapshots into the supplier-library read model."""
+    """Merge current capability and contact snapshots into the supplier-library read model."""
     supplier_ids = [
         str(item.get("supplier_id") or item.get("_id"))
         for item in items
         if item.get("supplier_id") or item.get("_id")
     ]
     capabilities = _load_supplier_snapshots(db, "supplier_capability_snapshots", supplier_ids)
+    contacts = _load_supplier_snapshots(db, "supplier_contact_snapshots", supplier_ids)
 
     for item in items:
         supplier_id = str(item.get("supplier_id") or item.get("_id"))
@@ -726,6 +727,18 @@ def _enrich_supplier_library_items(db: Any, items: list[dict[str, Any]]) -> None
             *(keyword for capability in capability_items for keyword in capability.get("product_keywords", [])),
         ])
         item["capabilities"] = capability_items
+        contact_items = [
+            _public_contact_snapshot(snapshot)
+            for snapshot in contacts.get(supplier_id, [])
+        ]
+        primary_contact = next(
+            (contact for contact in contact_items if contact.get("is_primary_contact")),
+            contact_items[0] if contact_items else {},
+        )
+        item["contacts"] = contact_items
+        item["contact_person"] = item.get("contact_person") or primary_contact.get("contact_name")
+        item["contact_phone"] = item.get("contact_phone") or primary_contact.get("phone")
+        item["contact_email"] = item.get("contact_email") or primary_contact.get("email")
 
 
 def _supplier_read_collection(db: Any) -> Any:

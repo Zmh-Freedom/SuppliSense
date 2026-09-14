@@ -648,6 +648,11 @@ export interface SupplierEntry {
   regions: string[];
   products?: string[];
   capabilities?: Array<Record<string, unknown>>;
+  contacts?: Array<Record<string, unknown>>;
+  contact_person?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  website_url?: string;
   status: string;
   source?: string;
 }

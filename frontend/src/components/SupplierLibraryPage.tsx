@@ -147,6 +147,13 @@ export default function SupplierLibraryPage() {
                       {supplier.legal_person && <span>法人：{supplier.legal_person}</span>}
                       {supplier.establish_time && <span>成立：{formatEstablishTime(supplier.establish_time)}</span>}
                     </div>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500">
+                      {supplier.website_url && <a href={supplier.website_url} target="_blank" rel="noreferrer" className="text-[var(--color-primary-bg)] hover:underline">官网</a>}
+                      {supplier.contact_phone && <span>电话：{supplier.contact_phone}</span>}
+                      {supplier.contact_email && <a href={`mailto:${supplier.contact_email}`} className="text-[var(--color-primary-bg)] hover:underline">邮箱：{supplier.contact_email}</a>}
+                      {supplier.contact_person && <span>联系人：{supplier.contact_person}</span>}
+                      {!supplier.website_url && !supplier.contact_phone && !supplier.contact_email && <span className="text-gray-400">联系方式待补全</span>}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button

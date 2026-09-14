@@ -95,7 +95,7 @@ def _build_basic_info(master: dict, enrichment: dict | None = None) -> dict:
         "regions": master.get("regions", []),
         "scale": master.get("scale"),
         "address": master.get("address"),
-        "contact_person": master.get("contact_person"),
+        "contact_person": master.get("contact_person") or enrichment.get("contact_person"),
         "contact_phone": contact_phone,
         "contact_email": contact_email,
         "website_url": website_url,
@@ -141,6 +141,37 @@ def _load_cached_enrichment(master: dict) -> dict:
             default_source=str(candidate.get("source") or "staged_external"),
             updated_at=candidate.get("updated_at"),
         )
+
+    supplier_id = str(master.get("supplier_id") or master.get("_id") or "")
+    if supplier_id:
+        try:
+            contacts = db["supplier_contact_snapshots"]
+        except (KeyError, TypeError, AttributeError):
+            contacts = None
+        if contacts is not None:
+            contact = contacts.find_one(
+                {
+                    "source": "feishu_bitable",
+                    "sync_status": "current",
+                    "supplier_id": supplier_id,
+                    "is_primary_contact": True,
+                }
+            ) or contacts.find_one({
+                "source": "feishu_bitable",
+                "sync_status": "current",
+                "supplier_id": supplier_id,
+            })
+            if contact:
+                result["contact_person"] = contact.get("contact_name")
+                _merge_enrichment_fields(
+                    result,
+                    {
+                        "contact_phone": contact.get("phone"),
+                        "contact_email": contact.get("email"),
+                    },
+                    default_source="feishu_supplier_contact",
+                    updated_at=contact.get("verified_at"),
+                )
 
     baseinfo = db["baseinfo"].find_one({"name": name})
     parsed_baseinfo = _parse_baseinfo_result(baseinfo)

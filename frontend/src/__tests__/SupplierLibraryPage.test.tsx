@@ -30,6 +30,10 @@ describe('SupplierLibraryPage', () => {
         categories: ['汽车零部件'],
         products: ['制动卡钳、制动', '制动', '制动卡钳'],
         regions: ['华东'],
+        website_url: 'https://example.com',
+        contact_person: '张三',
+        contact_phone: '13800000000',
+        contact_email: 'zhangsan@example.com',
         status: 'active',
         source: 'feishu_bitable',
       }],
@@ -45,6 +49,10 @@ describe('SupplierLibraryPage', () => {
     expect(screen.getByText('制动卡钳, 制动')).toBeInTheDocument();
     expect(screen.queryByText('制动卡钳、制动, 制动, 制动卡钳')).not.toBeInTheDocument();
     expect(screen.getByText('来源：飞书')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '官网' })).toHaveAttribute('href', 'https://example.com');
+    expect(screen.getByText('电话：13800000000')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '邮箱：zhangsan@example.com' })).toHaveAttribute('href', 'mailto:zhangsan@example.com');
+    expect(screen.getByText('联系人：张三')).toBeInTheDocument();
     expect(screen.getByText(/已启用飞书同步时以飞书正式供应商数据为准/)).toBeInTheDocument();
   });
 });

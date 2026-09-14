@@ -162,7 +162,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "contact_person": ("contact_person", "contactPerson", "供应商负责人", "联系人"),
     "contact_phone": ("contact_phone", "phone", "telephone", "联系电话", "电话"),
     "contact_email": ("contact_email", "email", "邮箱", "电子邮箱"),
-    "website_url": ("website_url", "website", "companyWebsite", "官网", "企业网址"),
+    "website_url": ("website_url", "website", "companyWebsite", "官网", "企业网址", "公司网址"),
     "status": ("supplier_status", "status", "供应商状态", "合作状态"),
     "supplier_level": ("supplier_level", "level", "供应商等级"),
     "is_formal_supplier": ("is_formal_supplier", "isFormalSupplier", "是否正式供应商"),
@@ -801,6 +801,11 @@ def _resolve_supplier_id(db: Any, supplier_code: str, source_record_id: str) -> 
             "source_record_id": source_record_id,
         })
     if existing and existing.get("supplier_id"):
+        if existing.get("source_record_id") != source_record_id:
+            collection.update_one(
+                {"_id": existing.get("_id")} if existing.get("_id") is not None else query,
+                {"$set": {"source_record_id": source_record_id, "updated_at": datetime.now(timezone.utc)}},
+            )
         return str(existing["supplier_id"])
 
     supplier_id = f"supplier:feishu:{uuid.uuid4()}"
@@ -1051,10 +1056,20 @@ def sync_supplier_tables() -> dict[str, Any]:
                 ))
                 continue
             normalized["sync_batch_id"] = batch_id
+            snapshot_query = {"source": "feishu_bitable", "source_record_id": record_id}
+            existing_snapshot = (
+                master_collection.find_one({"_id": supplier_id})
+                if hasattr(master_collection, "find_one") else None
+            )
+            if existing_snapshot is not None:
+                # Feishu can recreate a row with a new record_id. Keep the stable
+                # local _id and update that snapshot in place instead of creating
+                # a second document with the same Mongo _id.
+                snapshot_query = {"_id": supplier_id}
             _upsert_snapshot(
                 master_collection,
                 normalized,
-                query={"source": "feishu_bitable", "source_record_id": record_id},
+                query=snapshot_query,
             )
             supplier_ids[code] = supplier_id
             table_results["supplier_master"]["synced"] += 1

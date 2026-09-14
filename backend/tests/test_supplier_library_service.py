@@ -71,6 +71,7 @@ class FakeDatabase:
                     "categories": [],
                     "regions": [],
                     "status": "active",
+                    "website_url": "https://example.com",
                     "source": "feishu_bitable",
                     "sync_status": "current",
                 }],
@@ -87,7 +88,15 @@ class FakeDatabase:
                     "supply_regions": ["华东"],
                 }],
             ),
-            "supplier_contact_snapshots": FakeCollection("supplier_contact_snapshots", []),
+            "supplier_contact_snapshots": FakeCollection("supplier_contact_snapshots", [{
+                "supplier_id": supplier_id,
+                "source": "feishu_bitable",
+                "sync_status": "current",
+                "contact_name": "张三",
+                "phone": "13800000000",
+                "email": "zhangsan@example.com",
+                "is_primary_contact": True,
+            }]),
         }
 
     def __getitem__(self, name: str) -> FakeCollection:
@@ -106,6 +115,10 @@ def test_list_suppliers_merges_current_capability_snapshot(monkeypatch) -> None:
     assert item["products"] == ["制动卡钳", "制动", "卡钳"]
     assert item["regions"] == ["华东"]
     assert item["capabilities"][0]["product_name"] == "制动卡钳"
+    assert item["website_url"] == "https://example.com"
+    assert item["contact_person"] == "张三"
+    assert item["contact_phone"] == "13800000000"
+    assert item["contact_email"] == "zhangsan@example.com"
 
 
 def test_get_supplier_reads_current_feishu_master_by_view_or_stable_id(monkeypatch) -> None:
@@ -146,7 +159,7 @@ def test_list_formal_suppliers_reads_active_feishu_directory(monkeypatch) -> Non
         "categories": ["汽车零部件"],
         "regions": ["华东"],
         "products": ["制动卡钳", "制动", "卡钳"],
-        "website_url": None,
+        "website_url": "https://example.com",
         "source": "feishu_bitable",
         "source_updated_at": None,
     }]
