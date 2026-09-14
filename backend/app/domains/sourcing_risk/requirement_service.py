@@ -15,6 +15,9 @@ _REGION_NAMES = ("华东", "华南", "华北", "西南", "西北", "东北")
 _SOURCING_REQUEST_PATTERN = re.compile(
     r"(?:找|推荐|寻找|采购|需要)(?P<target>.+?)(?:供应商|厂家|厂商)"
 )
+_NATURAL_PURCHASE_PATTERN = re.compile(
+    r"(?:找|推荐|寻找|采购|购买|需要)\s*(?P<target>[^，,。；;\n]+)"
+)
 _MATERIAL_NUMBER_PATTERN = re.compile(r"物料号(?:为|是|[:：])?\s*(?P<material>\d{4,})")
 _HISTORICAL_SUPPLIER_PATTERN = re.compile(r"(?P<material>.+?)(?:有)?哪些历史合作供应商")
 
@@ -114,6 +117,17 @@ def parse_requirement(raw_text: str, provided: dict | None = None) -> dict:
         else:
             return _validated_result(requirement)
 
+    natural = _natural_language_requirement_from_text(raw_text)
+    if natural is not None:
+        try:
+            requirement = SourcingRequirement.model_validate({**natural, **provided_values})
+        except ValidationError:
+            # Keep the normal LLM/repair path for explicitly invalid fields.
+            pass
+        else:
+            if not missing_requirement_fields(requirement.model_dump()):
+                return _validated_result(requirement)
+
     try:
         candidate = _extract_candidate(raw_text, provided_values)
     except (TypeError, ValueError) as exc:
@@ -169,6 +183,9 @@ def resolve_harness_requirement(
     fallback = _fallback_requirement_from_text(raw_text)
     if fallback:
         return _harness_ready(fallback, extraction_source="deterministic_fallback")
+    natural = _natural_language_requirement_from_text(raw_text)
+    if natural:
+        return _harness_ready(natural, extraction_source="deterministic_fallback")
     return {"status": "clarification_required", "missing": ["category"], "extraction_source": "unresolved"}
 
 
@@ -265,6 +282,41 @@ def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
         **({"risk_limit": risk_limit} if risk_limit else {}),
         **({"region": region, "supply_region": region} if region else {}),
         "must_have": [],
+        "optional_conditions": [],
+    }
+
+
+def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | None:
+    """Extract the minimum required fields from common procurement phrasing."""
+    match = _NATURAL_PURCHASE_PATTERN.search(message or "")
+    if not match:
+        return None
+
+    target = match.group("target").strip(" ：:的")
+    target = re.split(r"(?:要求|规格|技术要求|需要满足|优先|交付|到货|数量|预算|认证)", target, maxsplit=1)[0]
+    category = target.strip(" ：:的")
+    if not category or _contains_multiple_categories(category):
+        return None
+
+    specification: str | None = None
+    specification_match = re.search(
+        r"(?:要求|规格|技术要求|需要满足)\s*(?P<spec>.+?)(?=(?:优先|交付|到货|数量|预算|地区|区域)|$)",
+        message or "",
+    )
+    if specification_match:
+        specification = specification_match.group("spec").strip(" ：:，,。；;")
+
+    region = next((name for name in _REGION_NAMES if name in (message or "")), None)
+    if not specification:
+        return None
+
+    return {
+        "category": category,
+        "product": category,
+        "specification": specification,
+        "region": region,
+        "supply_region": region,
+        "must_have": [item.strip() for item in re.split(r"[，,、]", specification) if item.strip()],
         "optional_conditions": [],
     }
 

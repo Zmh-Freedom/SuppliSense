@@ -33,6 +33,20 @@ def test_harness_requirement_extracts_broad_category_without_inventing_constrain
     assert result["requirement"]["must_have"] == []
 
 
+def test_harness_requirement_extracts_complete_natural_language_purchase_request(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+
+    result = resolve_harness_requirement(
+        "采购工业摄像头，要求 IP67，支持 PoE，优先华东地区交付"
+    )
+
+    assert result["status"] == "ready"
+    assert result["extraction_source"] == "deterministic_fallback"
+    assert result["requirement"]["category"] == "工业摄像头"
+    assert result["requirement"]["specification"] == "IP67，支持 PoE"
+    assert result["requirement"]["region"] == "华东"
+
+
 def test_harness_requirement_extracts_material_number_for_read_only_sourcing(monkeypatch) -> None:
     monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
 

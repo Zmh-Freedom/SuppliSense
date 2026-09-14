@@ -34,6 +34,19 @@ def test_parse_requirement_requests_clarification_when_specification_is_missing(
     }
 
 
+def test_parse_requirement_extracts_complete_natural_language_purchase_request(monkeypatch):
+    monkeypatch.setattr(requirement_service.settings, "LLM_API_KEY", "")
+
+    result = requirement_service.parse_requirement(
+        "采购工业摄像头，要求 IP67，支持 PoE，优先华东地区交付"
+    )
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "工业摄像头"
+    assert result["requirement"]["specification"] == "IP67，支持 PoE"
+    assert result["requirement"]["region"] == "华东"
+
+
 def test_parse_requirement_uses_deterministic_historical_supplier_fallback(monkeypatch):
     """Historical-supplier wording must not be blocked by an incomplete LLM extraction."""
     monkeypatch.setattr(
