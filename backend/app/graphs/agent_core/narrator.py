@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from typing import Any
@@ -41,6 +42,17 @@ def _normalized_numbers(text: str) -> set[str]:
     }
 
 
+def _numeric_values(text: str) -> set[float]:
+    """Normalize formatting-only numeric changes made by the narrator."""
+    values: set[float] = set()
+    for token in _NUMBER_PATTERN.findall(text):
+        try:
+            values.add(float(token.rstrip("%")))
+        except ValueError:
+            continue
+    return values
+
+
 def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
     return [
         {
@@ -74,30 +86,48 @@ def _requested_topic_terms(user_message: str) -> tuple[str, ...]:
     return ()
 
 
-def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer, user_message: str = "") -> bool:
-    """Fail closed when the prose adds entities or numeric facts."""
+def _draft_validation_error(
+    draft: NarrativeDraft,
+    answer: AgentAnswer,
+    user_message: str = "",
+) -> str | None:
+    """Return a stable rejection reason when prose exceeds validated facts."""
     claims = _claim_payload(answer)
     claim_ids = {str(item["claim_id"]) for item in claims}
     if claims and not draft.claim_refs:
-        return False
+        return "missing_claim_refs"
     if not set(draft.claim_refs).issubset(claim_ids):
-        return False
+        return "unknown_claim_ref"
     source_text = " ".join(str(item.get("statement") or "") for item in claims)
     allowed_numbers = _normalized_numbers(source_text) | {"100"}
-    if any(number not in allowed_numbers for number in _normalized_numbers(draft.body_markdown)):
-        return False
+    allowed_numeric_values = _numeric_values(source_text) | {100.0}
+    for number in _normalized_numbers(draft.body_markdown):
+        if number in allowed_numbers:
+            continue
+        try:
+            numeric_value = float(number.rstrip("%"))
+        except ValueError:
+            return "invalid_number"
+        if not any(math.isclose(numeric_value, allowed, rel_tol=1e-9, abs_tol=1e-9) for allowed in allowed_numeric_values):
+            return f"unsupported_number:{number}"
     allowed_companies = set(_COMPANY_PATTERN.findall(source_text))
-    if any(name not in allowed_companies for name in _COMPANY_PATTERN.findall(draft.body_markdown)):
-        return False
+    for name in _COMPANY_PATTERN.findall(draft.body_markdown):
+        if name not in allowed_companies:
+            return f"unsupported_company:{name}"
     narrative_text = f"{draft.headline}\n{draft.body_markdown}"
     topic_terms = _requested_topic_terms(user_message)
     if topic_terms and not any(term in narrative_text for term in topic_terms):
-        return False
+        return "missing_requested_topic"
     # A narrative must not turn a recommendation into a completed write action.
     forbidden_success = ("已加入监控", "已完成审批", "已切换供应商", "已暂停采购")
     if not answer.action_receipts and any(token in draft.body_markdown for token in forbidden_success):
-        return False
-    return True
+        return "forbidden_success_action"
+    return None
+
+
+def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer, user_message: str = "") -> bool:
+    """Fail closed when the prose adds entities or numeric facts."""
+    return _draft_validation_error(draft, answer, user_message) is None
 
 
 def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
@@ -156,15 +186,22 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             timeout=float(os.getenv("LLM_NARRATION_TIMEOUT", "8")),
         )
         content = response.choices[0].message.content or "{}"
-        draft = NarrativeDraft.model_validate(json.loads(content))
+        payload = json.loads(content)
+        if isinstance(payload, dict) and payload.get("type") == "json_object":
+            nested_payload = payload.get("content")
+            payload = nested_payload if isinstance(nested_payload, dict) else {
+                key: value for key, value in payload.items() if key != "type"
+            }
+        draft = NarrativeDraft.model_validate(payload)
         if article_count > 0 and any(
             phrase in draft.body_markdown
             for phrase in ("未包含新闻原文", "无法逐条列出原文", "没有新闻原文")
         ):
             logger.warning("answer_narration_rejected", reason="article_evidence_contradiction")
             return answer
-        if not _validate_draft(draft, answer, user_message):
-            logger.warning("answer_narration_rejected", reason="fact_or_reference_validation_failed")
+        validation_error = _draft_validation_error(draft, answer, user_message)
+        if validation_error is not None:
+            logger.warning("answer_narration_rejected", reason=validation_error)
             return answer
         return answer.model_copy(update={"summary": f"{draft.headline}\n\n{draft.body_markdown}"})
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
