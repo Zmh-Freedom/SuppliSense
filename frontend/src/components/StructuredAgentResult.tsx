@@ -5,7 +5,7 @@ import AgentTrendCharts from './AgentTrendCharts';
 import ActionSummary from './ActionSummary';
 import SupplierReviewConclusion from './SupplierReviewConclusion';
 import SentimentEvidence from './SentimentEvidence';
-import { isNetworkAnswer } from './answerCapabilities';
+import { getAnswerCapability, getAnswerCapabilityMeta } from './answerCapabilities';
 
 const ANSWER_STATUS_META: Record<string, { label: string; className: string; icon: string }> = {
   completed: { label: '分析完成', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: '✓' },
@@ -379,7 +379,8 @@ function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
   if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：'))) {
     return answer.summary || '已完成当前责任范围内供应商的风险变化检查，下面列出每家的变化状态。';
   }
-  if (isNetworkAnswer(answer)) {
+  const capability = getAnswerCapability(answer);
+  if (capability !== 'generic') {
     return answer.summary
       .split(/\n\n/, 1)[0]
       .replace(/^#{1,3}\s*/, '')
@@ -543,7 +544,8 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const scopeQuery = isWatchlist || isTrend;
   const financialMissing = limitations.some(item => item.includes('财务'));
   const hasRiskSignals = Boolean(answer?.claims.some(claim => claimGroup(claim) === 'risk' && claim.fact_path?.startsWith('risk_detail.')));
-  const isNetwork = isNetworkAnswer(answer);
+  const capability = getAnswerCapability(answer);
+  const capabilityMeta = getAnswerCapabilityMeta(capability);
 
   return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 分析结果">
     {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} />}
@@ -551,7 +553,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">{scopeQuery ? '▣' : '②'}</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">{scopeQuery ? '采购视图' : '业务结论'}</p></div>
-          <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">{isWatchlist && !isTrend ? '我的监控清单' : isTrend ? '我负责供应商的风险变化' : isNetwork ? '供应链关系与传染风险' : '本轮分析结果'}</h3>
+          <h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">{isWatchlist && !isTrend ? '我的监控清单' : isTrend ? '我负责供应商的风险变化' : capability !== 'generic' ? capabilityMeta.label : '本轮分析结果'}</h3>
         </div>
         {status && !scopeQuery && <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${status.className}`}>
           <span aria-hidden="true">{status.icon}</span>{status.label}
@@ -580,10 +582,10 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           })}</tbody>
         </table>
       </div></EvidenceTable>}
-      {answer.claims.length > 0 && !scopeQuery && <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-sm leading-6 text-violet-950" aria-label={isNetwork ? '关系分析建议' : '采购建议'}>
-        <h4 className="font-semibold">{isNetwork ? '关系分析建议' : '采购建议'}</h4>
-        <p className="mt-1">{isNetwork
-          ? '建议结合关联实体、分支机构、供应链依赖和同行业关联查看关系图谱；如发现高风险关联主体，再安排定向供应商复核。'
+      {answer.claims.length > 0 && !scopeQuery && <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-sm leading-6 text-violet-950" aria-label={capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}>
+        <h4 className="font-semibold">{capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}</h4>
+        <p className="mt-1">{capability !== 'generic'
+          ? capabilityMeta.suggestion
           : answer.status === 'needs_review' || financialMissing
           ? `当前结论仅代表已取得资料范围${hasRiskSignals ? '，请先核实上方风险信号' : ''}；涉及关键零件或大额订单时，建议完成采购复核后再决定。`
           : '当前已取得的数据未见需要立即暂停采购的信号，可按正常流程推进并持续关注指标变化。'}</p>

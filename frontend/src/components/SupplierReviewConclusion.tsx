@@ -1,6 +1,6 @@
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import { ReviewChecklist } from './ChatResultSections';
-import { isNetworkAnswer } from './answerCapabilities';
+import { getAnswerCapability, getAnswerCapabilityMeta } from './answerCapabilities';
 
 function ReviewList({ title, items, className, ordered = false }: { title: string; items: string[]; className: string; ordered?: boolean }) {
   if (items.length === 0) return null;
@@ -14,7 +14,11 @@ export default function SupplierReviewConclusion({ answer, evidence, limitations
   numericFact: (facts: Record<string, unknown> | undefined, key: string) => number | null;
   reviewClaims: (answer: AgentAnswer, paths: string[]) => string[];
 }) {
-  if (isNetworkAnswer(answer)) return null;
+  const capability = getAnswerCapability(answer);
+  if (capability === 'network') return null;
+  const capabilityMeta = getAnswerCapabilityMeta(capability);
+  const reviewLabel = capability === 'generic' ? '采购复核结论' : `${capabilityMeta.label}复核结论`;
+  const reviewHeading = capability === 'generic' ? '发现问题、查看依据、明确下一步' : `发现${capabilityMeta.label}信号，查看依据并明确下一步`;
   const businessFacts = evidence.find(record => record.dimension === 'business_risk')?.facts;
   const netProfitGrowth = answer.claims.find(claim => claim.fact_path === 'net_profit_growth')?.value;
   const lawsuitCount = answer.claims.find(claim => claim.fact_path === 'risk_detail.lawsuit_count')?.value;
@@ -69,8 +73,8 @@ export default function SupplierReviewConclusion({ answer, evidence, limitations
     boundaries.push('结算变化只是复核信号，不能单独推断供应中断、付款逾期或供应商经营风险。');
   }
   if (findings.length === 0) return null;
-  return <ReviewChecklist><section className="mt-4 border-t border-[var(--color-border)] px-4 pb-4 pt-4 sm:px-5" aria-label="采购复核结论">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">③</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">采购复核结论</p></div><h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">发现问题、查看依据、明确下一步</h3></div><span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">需采购人员核实</span></div>
+  return <ReviewChecklist><section className="mt-4 border-t border-[var(--color-border)] px-4 pb-4 pt-4 sm:px-5" aria-label={reviewLabel}>
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">③</span><p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-secondary)]">{reviewLabel}</p></div><h3 className="mt-1 text-base font-semibold text-[var(--color-text)]">{reviewHeading}</h3></div><span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-medium text-violet-700">需采购人员核实</span></div>
     <div className="mt-3 grid gap-3 lg:grid-cols-3"><ReviewList title="发现了什么" items={[...new Set(findings)]} className="border-amber-200 bg-amber-50/70 text-amber-950" /><ReviewList title="依据是什么" items={[...new Set(basis)]} className="border-sky-200 bg-sky-50/70 text-sky-950" /><ReviewList title="采购人员需要核实什么" items={[...new Set(checks)]} className="border-violet-200 bg-violet-50/70 text-violet-950" ordered /></div>
     {boundaries.length > 0 && <div className="mt-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)]/55 p-3 text-xs leading-5 text-[var(--color-text-secondary)]"><p className="font-medium text-[var(--color-text)]">数据边界</p><ul className="mt-1.5 list-disc space-y-1 pl-4">{[...new Set(boundaries)].map(item => <li key={item}>{item}</li>)}</ul></div>}
   </section></ReviewChecklist>;

@@ -532,6 +532,33 @@ describe('ChatView session lifecycle', () => {
     expect(screen.queryByText('Supplier Name')).not.toBeInTheDocument()
   })
 
+  it('keeps a financial question in the financial analysis route', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '已完成华东钢材供应有限公司的财务分析。',
+        claims: [{
+          claim_id: 'financial-profit', entity_id: 'entity:华东钢材', dimension: 'financial',
+          statement: '华东钢材供应有限公司 净利润同比增长率：-10%', value: -0.1, fact_path: 'net_profit_growth',
+          evidence_refs: ['financial-evidence'], confidence: 0.9, validation_status: 'supported', validation_reasons: [],
+        }],
+        limitations: [], action_proposals: [], action_receipts: [], evidence_refs: ['financial-evidence'],
+      })
+      handlers.onDone?.({ answer: '已完成华东钢材供应有限公司的财务分析。' })
+      return '已完成华东钢材供应有限公司的财务分析。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向采购助手提问'), '分析华东钢材供应有限公司的财务情况')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect((await screen.findAllByRole('heading', { name: '财务分析' })).length).toBe(2)
+    expect(screen.getByText('财务分析建议')).toBeInTheDocument()
+    expect(screen.getByText('财务分析复核结论')).toBeInTheDocument()
+    expect(screen.queryByText('采购复核结论')).not.toBeInTheDocument()
+  })
+
   it('keeps supply-chain analysis out of the generic supplier review cards', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({
