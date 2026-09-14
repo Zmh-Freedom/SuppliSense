@@ -1,5 +1,6 @@
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import { ReviewChecklist } from './ChatResultSections';
+import { isNetworkAnswer } from './answerCapabilities';
 
 function ReviewList({ title, items, className, ordered = false }: { title: string; items: string[]; className: string; ordered?: boolean }) {
   if (items.length === 0) return null;
@@ -13,6 +14,7 @@ export default function SupplierReviewConclusion({ answer, evidence, limitations
   numericFact: (facts: Record<string, unknown> | undefined, key: string) => number | null;
   reviewClaims: (answer: AgentAnswer, paths: string[]) => string[];
 }) {
+  if (isNetworkAnswer(answer)) return null;
   const businessFacts = evidence.find(record => record.dimension === 'business_risk')?.facts;
   const netProfitGrowth = answer.claims.find(claim => claim.fact_path === 'net_profit_growth')?.value;
   const lawsuitCount = answer.claims.find(claim => claim.fact_path === 'risk_detail.lawsuit_count')?.value;

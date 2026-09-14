@@ -532,6 +532,39 @@ describe('ChatView session lifecycle', () => {
     expect(screen.queryByText('Supplier Name')).not.toBeInTheDocument()
   })
 
+  it('keeps supply-chain analysis out of the generic supplier review cards', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '已完成青岛三祥科技股份有限公司的供应链关系与传染风险分析。',
+        claims: [
+          {
+            claim_id: 'network-related', entity_id: 'entity:三祥', dimension: 'risk_network',
+            statement: '青岛三祥科技股份有限公司 关联主体数量：8', value: 8, fact_path: 'related_count',
+            evidence_refs: ['network-evidence'], confidence: 0.85, validation_status: 'supported', validation_reasons: [],
+          },
+          {
+            claim_id: 'generic-lawsuit', entity_id: 'entity:三祥', dimension: 'risk',
+            statement: '青岛三祥科技股份有限公司 诉讼记录数：20', value: 20, fact_path: 'risk_detail.lawsuit_count',
+            evidence_refs: ['risk-evidence'], confidence: 0.85, validation_status: 'supported', validation_reasons: [],
+          },
+        ],
+        limitations: [], action_proposals: [], action_receipts: [], evidence_refs: ['network-evidence', 'risk-evidence'],
+      })
+      handlers.onDone?.({ answer: '已完成青岛三祥科技股份有限公司的供应链关系与传染风险分析。' })
+      return '已完成青岛三祥科技股份有限公司的供应链关系与传染风险分析。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向采购助手提问'), '分析青岛三祥科技股份有限公司的供应链关系和传染风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect((await screen.findAllByRole('heading', { name: '供应链关系与传染风险' })).length).toBe(2)
+    expect(screen.getByText('关系分析建议')).toBeInTheDocument()
+    expect(screen.queryByText('采购复核结论')).not.toBeInTheDocument()
+  })
+
   it('turns supplier review evidence into findings, basis, and procurement checks', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({
