@@ -690,6 +690,84 @@ def _required_evidence_items(tasks: list[HarnessTask]) -> list[dict[str, str]]:
     return items
 
 
+_SUMMARY_ROUTE_DEFINITIONS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("risk_network", ("供应链关系", "关联关系", "传染风险", "风险传染"), ("contagion_analysis",)),
+    ("risk_prediction", ("预测", "未来", "趋势预测"), ("predict_risk",)),
+    ("sentiment", ("舆情", "新闻", "负面信息"), ("sentiment_analysis", "lookup_company_news")),
+    ("financial", ("财务", "财务数据"), ("query_financials",)),
+    ("compliance", ("合规", "制裁", "黑名单"), ("check_sanctions",)),
+    ("esg", ("ESG", "esg", "环境社会治理"), ("esg_assessment",)),
+    ("risk_trend", ("历史变化", "风险趋势", "风险变化", "变化情况", "趋势"), ("analyze_trend",)),
+    ("legal_risk", ("司法", "诉讼", "被执行", "失信", "限制消费"), ("lookup_legal_risk",)),
+    ("business_risk", ("经营风险", "行政处罚", "经营异常", "严重违法", "股权质押", "欠税"), ("lookup_business_risk", "assess_business_risk")),
+    ("report", ("报告", "导出报告"), ("generate_report",)),
+    ("sourcing", ("替代供应商", "备选供应商", "供应商替代"), ("find_alternatives",)),
+    ("company_profile", ("工商资料", "注册资本", "注册地址", "历史变更", "股东", "分支机构"), ("lookup_company_profile",)),
+    ("identity_review", ("主体身份", "主体核验", "统一社会信用代码", "登记状态"), ("lookup_company_identity",)),
+    ("risk_comparison", ("对比", "比较", "横向"), ("compare_companies",)),
+    ("quality", ("质量", "质量风险"), ("assess_operational_risk",)),
+    ("delivery", ("交付", "交付风险"), ("assess_operational_risk",)),
+)
+
+
+def _primary_summary_capability(message: str, tool_names: set[str], dimensions: set[str]) -> str | None:
+    """Choose the user's explicitly requested capability for the lead summary."""
+    matched: list[tuple[int, int, str]] = []
+    for priority, (capability, tokens, tools) in enumerate(_SUMMARY_ROUTE_DEFINITIONS):
+        if not tool_names.intersection(tools):
+            continue
+        positions = [message.find(token) for token in tokens if message.find(token) >= 0]
+        if positions:
+            matched.append((min(positions), priority, capability))
+    if matched:
+        return min(matched)[2]
+
+    # These tools are only appended for explicit capability requests. Do not
+    # use query_financials/assess_business_risk here: generic supplier review
+    # intentionally includes those dimensions as supporting evidence.
+    explicit_only_tools = {
+        "contagion_analysis", "predict_risk", "analyze_trend", "compare_companies",
+        "find_alternatives", "generate_report", "lookup_company_profile",
+        "lookup_company_identity", "lookup_legal_risk", "lookup_company_news",
+    }
+    for capability, _tokens, tools in _SUMMARY_ROUTE_DEFINITIONS:
+        if tool_names.intersection(tools).intersection(explicit_only_tools):
+            return capability
+    # Do not infer a specialized lead from dimensions alone. Generic supplier
+    # review intentionally carries financial/business dimensions as supporting
+    # evidence, even though the user did not ask for a financial report.
+    return None
+
+
+def _latest_tool_data(outcomes: list[Any], tool_names: set[str]) -> dict[str, Any]:
+    for outcome in reversed(outcomes):
+        if not isinstance(outcome, dict):
+            continue
+        tool_name = str(outcome.get("tool_name") or outcome.get("tool") or "")
+        data = outcome.get("data")
+        if tool_name in tool_names and isinstance(data, dict):
+            return data
+    return {}
+
+
+def _claim_values(claims: list[Any]) -> dict[str, Any]:
+    return {
+        str(claim.fact_path): claim.value
+        for claim in claims
+        if claim.fact_path and claim.value is not None
+    }
+
+
+def _summary_subject(target_names: list[str]) -> str:
+    return "、".join(dict.fromkeys(target_names[:3])) or "该供应商"
+
+
+def _summary_with_boundary(answer: AgentAnswer, result: str, normal_suffix: str) -> str:
+    if answer.status in {"partial", "needs_review"} or answer.limitations:
+        return result + "以上结论仅基于当前已取得资料，部分维度尚未覆盖；采购动作请先按下方提示核实。"
+    return result + normal_suffix
+
+
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     current_task = state.get("current_task") or {}
     target_names = [
@@ -709,6 +787,11 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         if isinstance(item, dict)
     }
     outcomes = state.get("tool_outcomes") or []
+    primary_capability = _primary_summary_capability(
+        str(current_task.get("user_message") or ""),
+        tool_names,
+        dimensions,
+    )
     latest_data: dict[str, Any] = {}
     for outcome in outcomes:
         if not isinstance(outcome, dict):
@@ -756,6 +839,143 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         if not available:
             return f"已检查当前责任范围内 {len(companies)} 家供应商，但最近 {period} 个月的风险快照不足，暂时无法判断上升或下降。"
         return f"已完成当前责任范围内 {len(companies)} 家供应商最近 {period} 个月的风险变化检查，下面直接列出每家的变化状态和下一步建议。"
+    subject = _summary_subject(target_names)
+    if primary_capability == "financial":
+        financial_claims = [claim for claim in answer.claims if claim.dimension == "financial"]
+        values = _claim_values(financial_claims)
+        if not financial_claims:
+            return f"已完成 {subject} 的财务数据查询，但当前没有可验证的财务指标结果。"
+        labels = {
+            "revenue_growth": "营业收入同比",
+            "net_profit_growth": "净利润同比",
+            "debt_ratio": "资产负债率",
+            "cash_flow": "经营现金流",
+            "roe": "净资产收益率",
+            "net_profit_margin": "净利率",
+        }
+        parts = [f"已完成 {subject} 的财务分析"]
+        for path, label in labels.items():
+            value = values.get(path)
+            if not isinstance(value, (int, float)):
+                continue
+            if path in {"revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin"}:
+                parts.append(f"{label} {value * 100:.1f}%")
+            else:
+                parts.append(f"{label} {value:g}")
+        return _summary_with_boundary(answer, "；".join(parts) + "。", "可结合财务明细和报告期趋势继续核查。")
+    if primary_capability == "sentiment":
+        sentiment_claims = [claim for claim in answer.claims if claim.dimension in {"sentiment", "news"}]
+        values = _claim_values(sentiment_claims)
+        if not sentiment_claims:
+            return f"已完成 {subject} 的舆情检索，但当前没有可验证的新闻或负面信息结果。"
+        sentiment_labels = {"negative": "负面", "neutral": "中性", "positive": "正面"}
+        parts = [f"已完成 {subject} 的舆情分析"]
+        if values.get("overall_sentiment") is not None:
+            parts.append(f"总体倾向：{sentiment_labels.get(str(values['overall_sentiment']), str(values['overall_sentiment']))}")
+        if isinstance(values.get("articles_count"), (int, float)):
+            parts.append(f"纳入新闻 {int(values['articles_count'])} 条")
+        if isinstance(values.get("negative_count"), (int, float)) and values["negative_count"] > 0:
+            parts.append(f"负面新闻 {int(values['negative_count'])} 条")
+        return _summary_with_boundary(answer, "；".join(parts) + "。", "可在下方逐条查看新闻摘要和来源链接。")
+    if primary_capability == "compliance":
+        compliance_claims = [claim for claim in answer.claims if claim.dimension == "compliance"]
+        values = _claim_values(compliance_claims)
+        if not compliance_claims:
+            return f"已完成 {subject} 的合规筛查，但当前没有可验证的筛查结果。"
+        clean = values.get("clean")
+        match_count = values.get("match_count")
+        result = f"已完成 {subject} 的合规与制裁筛查；" + (
+            "当前未发现名单命中"
+            if clean is True
+            else f"发现名单命中 {int(match_count)} 条" if isinstance(match_count, (int, float)) else "发现需要人工核验的名单信号"
+        ) + "。"
+        return _summary_with_boundary(answer, result, "可结合命中记录和主体信息继续人工核验。")
+    if primary_capability == "esg":
+        esg_claims = [claim for claim in answer.claims if claim.dimension == "esg"]
+        values = _claim_values(esg_claims)
+        if not esg_claims:
+            return f"已完成 {subject} 的 ESG 评估，但当前没有可验证的 ESG 结果。"
+        parts = [f"已完成 {subject} 的 ESG 评估"]
+        if values.get("total_score") is not None:
+            parts.append(f"综合评分 {values['total_score']}/100")
+        if values.get("total_level") is not None:
+            parts.append(f"等级：{values['total_level']}")
+        return _summary_with_boundary(answer, "；".join(parts) + "。", "可结合环境、社会和治理分项继续核查。")
+    if primary_capability == "risk_trend":
+        trend_claims = [claim for claim in answer.claims if claim.dimension == "risk_trend"]
+        values = _claim_values(trend_claims)
+        data = _latest_tool_data(outcomes, {"analyze_trend"})
+        trend = values.get("trend", data.get("trend"))
+        period = values.get("period_months", data.get("period_months"))
+        if trend is None:
+            return f"已完成 {subject} 的历史风险趋势查询，但当前风险快照不足，暂时无法判断变化方向。"
+        trend_label = {"恶化": "风险恶化", "改善": "风险改善", "稳定": "风险基本稳定"}.get(str(trend), str(trend))
+        period_text = f"最近 {int(period)} 个月" if isinstance(period, (int, float)) else "当前观察周期"
+        return _summary_with_boundary(answer, f"已完成 {subject} {period_text}的历史风险趋势分析；判断为：{trend_label}。", "可结合历史风险快照查看具体变化节点。")
+    if primary_capability in {"legal_risk", "business_risk"}:
+        risk_claims = [claim for claim in answer.claims if claim.dimension == primary_capability]
+        if not risk_claims:
+            label = "司法风险" if primary_capability == "legal_risk" else "经营风险"
+            return f"已完成 {subject} 的{label}检索，但当前没有可验证的明细结果。"
+        label = "司法风险" if primary_capability == "legal_risk" else "经营风险"
+        positive = sum(1 for claim in risk_claims if isinstance(claim.value, (int, float)) and claim.value > 0)
+        return _summary_with_boundary(
+            answer,
+            f"已完成 {subject} 的{label}检索；覆盖 {len(risk_claims)} 项检查，其中 {positive} 项存在记录。",
+            "可展开下方明细查看具体记录和来源状态。",
+        )
+    if primary_capability == "report":
+        report_claims = [claim for claim in answer.claims if claim.dimension == "report"]
+        values = _claim_values(report_claims)
+        data = _latest_tool_data(outcomes, {"generate_report"})
+        report_format = values.get("format", data.get("format"))
+        if not report_format:
+            return f"已执行 {subject} 的风险报告生成请求，但当前没有返回可下载的报告结果。"
+        size = values.get("size_bytes", data.get("size_bytes"))
+        length = values.get("length", data.get("length"))
+        detail = f"格式：{report_format}"
+        if isinstance(size, (int, float)):
+            detail += f"，文件大小 {int(size)} 字节"
+        elif isinstance(length, (int, float)):
+            detail += f"，内容长度 {int(length)} 字符"
+        return _summary_with_boundary(answer, f"已完成 {subject} 的风险报告生成；{detail}。", "可在报告入口下载并继续复核明细。")
+    if primary_capability == "sourcing":
+        sourcing_claims = [claim for claim in answer.claims if claim.dimension == "sourcing"]
+        values = _claim_values(sourcing_claims)
+        data = _latest_tool_data(outcomes, {"find_alternatives"})
+        count = values.get("alternatives_count", data.get("alternatives_count"))
+        if not isinstance(count, (int, float)):
+            return f"已完成 {subject} 的替代供应商检索，但当前没有返回可用候选。"
+        return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "可结合候选风险评分和供货能力继续比较。")
+    if primary_capability == "company_profile":
+        profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]
+        if not profile_claims:
+            return f"已完成 {subject} 的工商资料检索，但当前没有可验证的工商资料结果。"
+        return _summary_with_boundary(answer, f"已完成 {subject} 的工商资料检索；已覆盖 {len(profile_claims)} 项资料域结果。", "可继续查看注册信息、股东、变更和分支机构明细。")
+    if primary_capability == "identity_review":
+        identity_claims = [claim for claim in answer.claims if claim.dimension == "identity_review"]
+        if not identity_claims:
+            return f"已完成 {subject} 的主体信息检索，但当前没有可验证的主体结果。"
+        return _summary_with_boundary(answer, f"已完成 {subject} 的企业主体信息检索，找到 {len(identity_claims)} 条主体核验结果。", "仍需结合监控对象绑定流程确认正式主体。")
+    if primary_capability == "risk_comparison":
+        comparison_claims = [claim for claim in answer.claims if claim.dimension == "risk_comparison"]
+        values = _claim_values(comparison_claims)
+        data = _latest_tool_data(outcomes, {"compare_companies"})
+        count = values.get("count", data.get("count"))
+        count_text = f"共 {int(count)} 家企业" if isinstance(count, (int, float)) else "已完成企业横向比较"
+        return _summary_with_boundary(answer, f"已完成企业风险对比；{count_text}。", "可结合下方指标比较各企业差异。")
+    if primary_capability in {"quality", "delivery"}:
+        operational_claims = [claim for claim in answer.claims if claim.dimension == primary_capability]
+        values = _claim_values(operational_claims)
+        label = "质量" if primary_capability == "quality" else "交付"
+        if not operational_claims:
+            return f"已完成 {subject} 的{label}风险查询，但当前没有可验证的{label}数据。"
+        detail = []
+        if values.get("risk_score") is not None:
+            detail.append(f"评分 {values['risk_score']}/100")
+        if values.get("risk_level") is not None:
+            detail.append(f"等级：{values['risk_level']}")
+        return _summary_with_boundary(answer, f"已完成 {subject} 的{label}风险分析；" + "，".join(detail) + "。", f"可结合{label}明细和时间趋势继续核查。")
     if {"lookup_company_news", "sentiment_analysis"}.intersection(tool_names):
         sentiment_claims = [claim for claim in answer.claims if claim.dimension in {"sentiment", "news"}]
         if not sentiment_claims:

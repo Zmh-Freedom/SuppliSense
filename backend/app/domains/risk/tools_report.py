@@ -11,13 +11,21 @@ def generate_report(company_name: str, report_type: str = "excel") -> dict:
         report_type: 报告格式，可选值: excel, html
     """
     from app.domains.risk.report_service import generate_excel, generate_html_report
+    from app.tools.evidence import attach_tool_evidence
 
     if report_type == "html":
         content = generate_html_report(company_name)
-        return {"company_name": company_name, "format": "html", "length": len(content), "content": content}
+        result = {"company_name": company_name, "format": "html", "length": len(content), "content": content}
     else:
         content = generate_excel(company_name)
-        return {"company_name": company_name, "format": "excel", "size_bytes": len(content), "message": "Excel 报告已生成"}
+        result = {"company_name": company_name, "format": "excel", "size_bytes": len(content), "message": "Excel 报告已生成"}
+    return attach_tool_evidence(
+        result,
+        tool_name="generate_report",
+        entity_id=f"entity:{company_name}",
+        dimension="report",
+        claim_fields=["format", "length", "size_bytes"],
+    )
 
 
 @tool

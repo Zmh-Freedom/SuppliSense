@@ -56,7 +56,25 @@ def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
     ]
 
 
-def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer) -> bool:
+def _requested_topic_terms(user_message: str) -> tuple[str, ...]:
+    """Return a small topic guard so narration cannot erase the question."""
+    topic_rules = (
+        (("供应链关系", "关联关系", "传染风险", "风险传染"), ("供应链", "关联", "传染")),
+        (("财务", "营收", "净利润"), ("财务", "营收", "净利润")),
+        (("舆情", "新闻", "负面信息"), ("舆情", "新闻", "负面")),
+        (("合规", "制裁", "黑名单"), ("合规", "制裁", "名单")),
+        (("ESG", "esg", "环境社会治理"), ("ESG", "环境", "社会", "治理")),
+        (("趋势", "变化"), ("趋势", "变化", "恶化", "改善", "稳定")),
+        (("司法", "诉讼", "被执行", "失信"), ("司法", "诉讼", "被执行", "失信")),
+        (("报告", "导出"), ("报告", "导出")),
+    )
+    for request_tokens, response_tokens in topic_rules:
+        if any(token in user_message for token in request_tokens):
+            return response_tokens
+    return ()
+
+
+def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer, user_message: str = "") -> bool:
     """Fail closed when the prose adds entities or numeric facts."""
     claims = _claim_payload(answer)
     claim_ids = {str(item["claim_id"]) for item in claims}
@@ -70,6 +88,10 @@ def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer) -> bool:
         return False
     allowed_companies = set(_COMPANY_PATTERN.findall(source_text))
     if any(name not in allowed_companies for name in _COMPANY_PATTERN.findall(draft.body_markdown)):
+        return False
+    narrative_text = f"{draft.headline}\n{draft.body_markdown}"
+    topic_terms = _requested_topic_terms(user_message)
+    if topic_terms and not any(term in narrative_text for term in topic_terms):
         return False
     # A narrative must not turn a recommendation into a completed write action.
     forbidden_success = ("已加入监控", "已完成审批", "已切换供应商", "已暂停采购")
@@ -94,6 +116,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
     )
     prompt = {
         "user_question": user_message,
+        "deterministic_summary": answer.summary,
         "validated_claims": claims,
         "limitations": answer.limitations,
         "current_status": answer.status,
@@ -104,7 +127,10 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             "如果存在 limitations，只能说明当前资料覆盖不足，不能把缺失数据推断成风险。",
             "如果 validated_claims 中 articles_count 大于0，必须说明已有新闻可在下方逐条查看，不能写“未包含新闻原文”或“无法逐条列出原文”。",
             "不要输出表格，不要提及 Claim、证据复核点、Harness、工具、任务、模型或内部字段。",
-            "用一段自然语言或不超过3条短句说明：发现了什么、意味着什么、下一步看什么。",
+            "不要只复述综合风险评分或套用‘供应商复核’；必须先回答用户明确请求的主能力。",
+            "用 3-5 个简短段落展开：第一段给出主结论；第二段说明关键依据；第三段解释对采购的影响和数据边界；最后给出下一步核验建议。",
+            "如果用户同时询问多个能力，先回答最明确、最具体的能力，再把其他已验证维度作为补充，不要遗漏主问题。",
+            "关系分析必须区分直接供应链依赖、分支机构和同行业关联；只有 Claim 明确支持时，才能称为直接供应链关系或风险传染路径。",
             "claim_refs 只能填写实际使用的 validated_claims 的 claim_id。",
         ],
         "response_schema": NarrativeDraft.model_json_schema(),
@@ -126,7 +152,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             # budget on hidden reasoning before emitting JSON.  Keep the
             # visible answer short, but leave enough room for the object to
             # finish instead of returning a truncated/empty content field.
-            max_tokens=1200,
+            max_tokens=1800,
             timeout=float(os.getenv("LLM_NARRATION_TIMEOUT", "8")),
         )
         content = response.choices[0].message.content or "{}"
@@ -137,7 +163,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         ):
             logger.warning("answer_narration_rejected", reason="article_evidence_contradiction")
             return answer
-        if not _validate_draft(draft, answer):
+        if not _validate_draft(draft, answer, user_message):
             logger.warning("answer_narration_rejected", reason="fact_or_reference_validation_failed")
             return answer
         return answer.model_copy(update={"summary": f"{draft.headline}\n\n{draft.body_markdown}"})

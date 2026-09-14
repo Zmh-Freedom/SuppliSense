@@ -105,7 +105,13 @@ def find_alternatives(company_name: str) -> dict:
     from app.domains.risk.alternative_service import find_alternatives as _find
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence(_find(company_name), tool_name="find_alternatives", entity_id=f"entity:{company_name}", dimension="sourcing")
+    return attach_tool_evidence(
+        _find(company_name),
+        tool_name="find_alternatives",
+        entity_id=f"entity:{company_name}",
+        dimension="sourcing",
+        claim_fields=["source_industry", "source_risk_score", "alternatives_count"],
+    )
 
 
 @tool
@@ -148,7 +154,13 @@ def compare_companies(company_names: list[str]) -> dict:
 
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence({"count": len(results), "companies": results}, tool_name="compare_companies", entity_id="comparison", dimension="risk_comparison")
+    return attach_tool_evidence(
+        {"count": len(results), "companies": results},
+        tool_name="compare_companies",
+        entity_id="comparison",
+        dimension="risk_comparison",
+        claim_fields=["count"],
+    )
 
 
 @tool
@@ -191,7 +203,13 @@ def analyze_trend(company_name: str, period_months: int = 6) -> dict:
 
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence({"company_name": company_name, "period_months": period_months, "trend": trend, "data": data}, tool_name="analyze_trend", entity_id=f"entity:{company_name}", dimension="risk_trend")
+    return attach_tool_evidence(
+        {"company_name": company_name, "period_months": period_months, "trend": trend, "data": data},
+        tool_name="analyze_trend",
+        entity_id=f"entity:{company_name}",
+        dimension="risk_trend",
+        claim_fields=["trend", "period_months"],
+    )
 
 
 @tool

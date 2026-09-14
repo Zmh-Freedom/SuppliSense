@@ -282,6 +282,56 @@ def test_prediction_summary_surfaces_prediction_before_generic_review() -> None:
     assert "供应商复核" not in summary
 
 
+@pytest.mark.parametrize(
+    ("message", "tool_name", "dimension", "fact_path", "value", "expected"),
+    [
+        ("查看测试供应商的财务数据", "query_financials", "financial", "net_profit_growth", -0.1, "财务分析"),
+        ("分析测试供应商的舆情", "sentiment_analysis", "sentiment", "overall_sentiment", "neutral", "舆情分析"),
+        ("对测试供应商进行合规筛查", "check_sanctions", "compliance", "clean", True, "合规与制裁筛查"),
+        ("评估测试供应商的 ESG 风险", "esg_assessment", "esg", "total_score", 20, "ESG 评估"),
+        ("查看测试供应商最近 6 个月的风险趋势", "analyze_trend", "risk_trend", "trend", "稳定", "历史风险趋势分析"),
+        ("查询测试供应商的司法风险", "lookup_legal_risk", "legal_risk", None, 2, "司法风险检索"),
+        ("生成测试供应商的风险评估报告", "generate_report", "report", "format", "html", "风险报告生成"),
+    ],
+)
+def test_summary_routes_explicit_capability_before_generic_review(
+    message: str,
+    tool_name: str,
+    dimension: str,
+    fact_path: str | None,
+    value: object,
+    expected: str,
+) -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="待生成",
+        claims=[ValidatedClaim(
+            claim_id=f"{tool_name}-claim",
+            entity_id="entity:supplier",
+            dimension=dimension,
+            statement=f"测试供应商 {fact_path or '司法检查'}：{value}",
+            value=value,
+            fact_path=fact_path,
+            evidence_refs=[tool_name],
+            confidence=0.85,
+            validation_status="supported",
+        )],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "user_message": message,
+            "target_supplier_names": ["测试供应商有限公司"],
+            "analysis_dimensions": [dimension],
+        },
+        "task_specs": [{"tool_name": tool_name}],
+        "tool_outcomes": [],
+    })
+
+    assert expected in summary
+    assert "供应商复核" not in summary
+
+
 def test_predict_risk_binds_prediction_fields_to_claims(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.domains.risk.predictor.predict_company",

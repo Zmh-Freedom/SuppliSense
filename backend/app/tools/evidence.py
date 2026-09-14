@@ -250,6 +250,15 @@ _CLAIM_LABELS = {
     "dependency_count": "供应链依赖数量",
     "same_industry_count": "同行业关联数量",
     "high_risk_related_count": "高风险关联主体数量",
+    "trend": "风险趋势",
+    "period_months": "趋势观察周期（月）",
+    "alternatives_count": "替代供应商数量",
+    "source_industry": "目标企业所属行业",
+    "source_risk_score": "目标企业当前安全评分",
+    "format": "报告格式",
+    "length": "报告字符数",
+    "size_bytes": "报告文件大小（字节）",
+    "count": "企业数量",
 }
 _PERCENTAGE_CLAIMS = {
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",
