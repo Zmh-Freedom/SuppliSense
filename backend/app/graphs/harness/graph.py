@@ -768,6 +768,42 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         ]
         if not requested_claims:
             return "本轮已完成司法/经营风险检索，但当前没有可验证的明细结果，暂不下确定性结论。"
+    prediction_claims = [
+        claim for claim in answer.claims
+        if claim.dimension == "risk_prediction"
+    ]
+    if prediction_claims:
+        subject = "、".join(dict.fromkeys(target_names[:3])) or "该供应商"
+        values = {
+            str(claim.fact_path): claim.value
+            for claim in answer.claims
+            if claim.fact_path and claim.value is not None
+        }
+        probability_labels = {
+            "high": "高概率恶化",
+            "medium": "可能恶化",
+            "low": "大概率稳定",
+            "unknown": "当前未覆盖",
+        }
+        probability = str(values.get("probability") or "unknown")
+        prediction_label = str(values.get("label") or probability_labels.get(probability, "当前未覆盖"))
+        prediction_has_data = values.get("has_data") is not False and probability != "unknown"
+        summary_parts = [f"已完成 {subject} 未来 6-12 个月风险趋势预测"]
+        if not prediction_has_data:
+            summary_parts.append("当前预测数据不足，暂无法可靠判断风险恶化概率")
+        else:
+            summary_parts.append(f"风险恶化判断：{prediction_label}")
+            warning_score = values.get("warning_score")
+            max_score = values.get("max_score")
+            if isinstance(warning_score, (int, float)) and isinstance(max_score, (int, float)):
+                summary_parts.append(f"预警分数 {warning_score:g}/{max_score:g}")
+            signal_summary = str(values.get("prediction_signal_summary") or "").strip()
+            if signal_summary:
+                summary_parts.append("主要信号：" + signal_summary)
+        result = "；".join(summary_parts) + "。"
+        if answer.status in {"partial", "needs_review"} or answer.limitations:
+            return result + "以上预测仅基于已取得资料，部分维度尚未覆盖；采购动作请先按下方提示核实。"
+        return result + "可结合当前风险复核结果安排后续采购动作。"
     if target_names and answer.claims:
         # Put the procurement conclusion before the evidence table.  Every
         # sentence below is assembled from validated Claims, so this remains a

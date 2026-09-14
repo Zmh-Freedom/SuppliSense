@@ -229,6 +229,7 @@ class PredictionOutput(StrictToolOutput):
     warning_score: int = 0
     max_score: int | None = None
     signals: list[dict[str, Any]] = Field(default_factory=list)
+    prediction_signal_summary: str = ""
     has_data: bool = False
 
 

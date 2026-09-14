@@ -13,6 +13,7 @@ from app.graphs.agent_core.adapter import _enforce_scope_query_intent
 from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
 from app.graphs.harness.graph import _build_default_plan, _summary
+from app.domains.risk import tools_risk
 from app.tools import TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor
 
@@ -200,6 +201,92 @@ def test_supplier_review_summary_answers_the_business_question_first() -> None:
     assert "综合安全评分 7/100" in summary
     assert "净利润同比下降 18.1%" in summary
     assert "证据复核点" not in summary
+
+
+def test_prediction_summary_surfaces_prediction_before_generic_review() -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="待生成",
+        claims=[
+            ValidatedClaim(
+                claim_id="prediction-probability", entity_id="entity:supplier", dimension="risk_prediction",
+                statement="青岛三祥科技股份有限公司 未来 6-12 个月风险恶化概率：可能恶化",
+                value="medium", fact_path="probability", evidence_refs=["prediction"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="prediction-label", entity_id="entity:supplier", dimension="risk_prediction",
+                statement="青岛三祥科技股份有限公司 风险预测结论：可能恶化",
+                value="可能恶化", fact_path="label", evidence_refs=["prediction"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="prediction-score", entity_id="entity:supplier", dimension="risk_prediction",
+                statement="青岛三祥科技股份有限公司 风险预警分数：4",
+                value=4, fact_path="warning_score", evidence_refs=["prediction"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="prediction-max", entity_id="entity:supplier", dimension="risk_prediction",
+                statement="青岛三祥科技股份有限公司 风险预测满分：14",
+                value=14, fact_path="max_score", evidence_refs=["prediction"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="prediction-data", entity_id="entity:supplier", dimension="risk_prediction",
+                statement="青岛三祥科技股份有限公司 预测数据可用：是",
+                value=True, fact_path="has_data", evidence_refs=["prediction"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="prediction-signals", entity_id="entity:supplier", dimension="risk_prediction",
+                statement="青岛三祥科技股份有限公司 风险预测信号：营收轻微下滑",
+                value="营收轻微下滑", fact_path="prediction_signal_summary", evidence_refs=["prediction"], confidence=0.85,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="risk", entity_id="entity:supplier", dimension="risk",
+                statement="青岛三祥科技股份有限公司 综合风险评分：93/100",
+                value=93, fact_path="risk_score", evidence_refs=["risk"], confidence=0.9,
+                validation_status="supported",
+            ),
+        ],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+        },
+        "task_specs": [{"tool_name": "predict_risk"}],
+        "tool_outcomes": [],
+    })
+
+    assert "未来 6-12 个月风险趋势预测" in summary
+    assert "风险恶化判断：可能恶化" in summary
+    assert "营收轻微下滑" in summary
+    assert "供应商复核" not in summary
+
+
+def test_predict_risk_binds_prediction_fields_to_claims(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.domains.risk.predictor.predict_company",
+        lambda _name: {
+            "company_name": "测试供应商有限公司",
+            "probability": "medium",
+            "label": "可能恶化",
+            "warning_score": 4,
+            "max_score": 14,
+            "prediction_signal_summary": "营收轻微下滑",
+            "has_data": True,
+        },
+    )
+
+    result = tools_risk.predict_risk.invoke({"company_name": "测试供应商有限公司"})
+
+    assert {claim["fact_path"] for claim in result["claims"]} == {
+        "probability", "label", "warning_score", "max_score", "prediction_signal_summary", "has_data",
+    }
 
 
 @pytest.mark.parametrize(

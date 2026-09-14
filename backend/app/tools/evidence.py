@@ -239,6 +239,12 @@ _CLAIM_LABELS = {
     "neutral_count": "中性新闻数",
     "positive_count": "正面新闻数",
     "summary": "舆情摘要",
+    "probability": "未来 6-12 个月风险恶化概率",
+    "label": "风险预测结论",
+    "warning_score": "风险预警分数",
+    "max_score": "风险预测满分",
+    "prediction_signal_summary": "风险预测信号",
+    "has_data": "预测数据可用",
 }
 _PERCENTAGE_CLAIMS = {
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",
@@ -253,6 +259,13 @@ def _claim_statement(subject: str, path: str, value: Any) -> str:
 
 
 def _format_claim_value(path: str, value: Any) -> str:
+    if path == "probability":
+        return {
+            "high": "高概率恶化",
+            "medium": "可能恶化",
+            "low": "大概率稳定",
+            "unknown": "当前未覆盖",
+        }.get(str(value), str(value))
     if path in _PERCENTAGE_CLAIMS and isinstance(value, (int, float)):
         return f"{value * 100:.1f}%"
     if path == "risk_detail.major_lawsuit" and isinstance(value, bool):

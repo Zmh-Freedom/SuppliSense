@@ -51,7 +51,24 @@ def predict_risk(company_name: str) -> dict:
         return {"status": "not_found", "error": "未找到企业数据", "company_name": company_name}
     from app.tools.evidence import attach_tool_evidence
 
-    return attach_tool_evidence(result, tool_name="predict_risk", entity_id=f"entity:{company_name}", dimension="risk_prediction")
+    signals = result.get("signals") or []
+    signal_summary = "、".join(
+        f"{item.get('signal')}（{item.get('detail')}）" if item.get("detail") else str(item.get("signal"))
+        for item in signals[:5]
+        if isinstance(item, dict) and item.get("signal")
+    )
+    result = {**result, "prediction_signal_summary": signal_summary}
+    return attach_tool_evidence(
+        result,
+        tool_name="predict_risk",
+        entity_id=f"entity:{company_name}",
+        dimension="risk_prediction",
+        claim_fields=[
+            "probability", "label", "warning_score", "max_score",
+            "prediction_signal_summary", "has_data",
+        ],
+        claim_subject=company_name,
+    )
 
 
 @tool
