@@ -697,6 +697,69 @@ def formal_supplier_exists_by_name(name: str) -> bool:
     return collection.count_documents(filters, limit=1) > 0
 
 
+def find_formal_supplier_candidates(query: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Find current formal suppliers that may match a short or conversational name.
+
+    This is candidate recall only.  Callers must still ask the purchaser to
+    confirm the canonical supplier before using the identity for risk analysis.
+    """
+    value = _normalise_match_text(query)
+    if len(value) < 2:
+        return []
+
+    db = get_db()
+    collection = _supplier_read_collection(db)
+    filters = _current_supplier_filter(collection, {
+        "status": {"$in": ["active", "approved"]},
+    })
+    candidates: list[dict[str, Any]] = []
+    safe_limit = max(1, min(limit, 10))
+    for item in collection.find(filters):
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        supplier_id = str(item.get("supplier_id") or item.get("_id") or "").strip()
+        aliases = [
+            alias.strip()
+            for alias in _string_list(item.get("aliases"))
+            if alias.strip()
+        ]
+        short_name = str(item.get("short_name") or "").strip()
+        if short_name:
+            aliases.append(short_name)
+        fields = [("name", name), *(('alias', alias) for alias in dict.fromkeys(aliases))]
+        match_type = ""
+        match_score = 0.0
+        for field_type, field_value in fields:
+            normalized = _normalise_match_text(field_value)
+            if value == normalized:
+                match_type = "exact_name" if field_type == "name" else "exact_alias"
+                match_score = 1.0 if field_type == "name" else 0.98
+                break
+            if value in normalized or normalized in value:
+                score = 0.92 if field_type == "name" else 0.88
+                if score > match_score:
+                    match_type = "name_contains" if field_type == "name" else "alias_contains"
+                    match_score = score
+        supplier_code = str(item.get("supplier_code") or "").strip()
+        if supplier_code and value == _normalise_match_text(supplier_code):
+            match_type = "supplier_code"
+            match_score = 0.99
+        if match_score <= 0:
+            continue
+        candidates.append({
+            "supplier_id": supplier_id,
+            "supplier_name": name,
+            "short_name": short_name or None,
+            "supplier_code": supplier_code or None,
+            "match_type": match_type,
+            "match_score": match_score,
+        })
+
+    candidates.sort(key=lambda item: (-float(item["match_score"]), item["supplier_name"]))
+    return candidates[:safe_limit]
+
+
 def _enrich_supplier_library_items(db: Any, items: list[dict[str, Any]]) -> None:
     """Merge current capability and contact snapshots into the supplier-library read model."""
     supplier_ids = [

@@ -82,6 +82,31 @@ describe('ChatView session lifecycle', () => {
     expect(input).not.toHaveClass('focus-visible:ring-2')
   })
 
+  it('offers a canonical supplier choice after a short-name clarification', async () => {
+    let calls = 0
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      calls += 1
+      if (calls === 1) {
+        handlers.onClarification?.({
+          message: '请确认正式供应商',
+          missing: ['supplier_identity'],
+          candidates: [{ supplier_id: 'supplier:网易云', supplier_name: '杭州网易云音乐科技有限公司', short_name: '网易云' }],
+        })
+      }
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向采购助手提问'), '分析网易云音乐的风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    const candidate = await screen.findByRole('button', { name: /杭州网易云音乐科技有限公司.*网易云/ })
+    await user.click(candidate)
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledTimes(2))
+    expect(mocks.chatStream.mock.calls[1][0]).toBe('杭州网易云音乐科技有限公司')
+  })
+
   it('keeps a newly opened chat selected when an earlier stream completes', async () => {
     const completeStream = createPendingStream()
     const user = userEvent.setup()

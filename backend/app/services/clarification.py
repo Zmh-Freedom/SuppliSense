@@ -50,6 +50,58 @@ _INNER_NOISE = ["多角度", "多维度", "分别", "同时", "全面", "综合"
 class ClarificationNeeded:
     message: str
     missing: list[str] = field(default_factory=list)
+    candidates: list[dict] = field(default_factory=list)
+
+
+def formal_supplier_identity_clarification(
+    target_names: list[str],
+    message: str,
+) -> ClarificationNeeded | None:
+    """Ask the purchaser to confirm a fuzzy formal-supplier identity.
+
+    The LLM may extract a conversational name such as ``网易云音乐``.  The
+    database resolver only recalls current formal candidates; no candidate is
+    treated as verified until the purchaser confirms the displayed canonical
+    name (or clicks its confirmation button in the UI).
+    """
+    del message  # Reserved for future LLM disambiguation context.
+    from app.domains.sourcing.supplier_repo import find_formal_supplier_candidates
+    from app.domains.supplier.access import formal_supplier_exists_by_name
+
+    for raw_name in target_names:
+        name = str(raw_name or "").strip()
+        if not name or formal_supplier_exists_by_name(name):
+            continue
+        try:
+            candidates = find_formal_supplier_candidates(name)
+        except Exception:
+            candidates = []
+        if len(candidates) == 1:
+            candidate = candidates[0]
+            canonical_name = str(candidate.get("supplier_name") or "").strip()
+            return ClarificationNeeded(
+                message=(
+                    f"我理解你提到的“{name}”可能是正式供应商“{canonical_name}”。"
+                    "为避免把风险数据关联到错误主体，请确认后继续。"
+                ),
+                missing=["supplier_identity"],
+                candidates=candidates,
+            )
+        if candidates:
+            names = "；".join(
+                str(item.get("supplier_name") or "").strip()
+                for item in candidates
+                if str(item.get("supplier_name") or "").strip()
+            )
+            return ClarificationNeeded(
+                message=(
+                    f"“{name}”对应多个可能的正式供应商：{names}。"
+                    "请确认要分析哪一家，避免误关联风险数据。"
+                ),
+                missing=["supplier_identity"],
+                candidates=candidates,
+            )
+    return None
 
 
 def review_scope_clarification(

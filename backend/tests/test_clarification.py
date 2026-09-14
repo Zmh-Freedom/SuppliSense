@@ -102,6 +102,29 @@ class TestClarification:
         assert "不能直接生成供应商风险评分" in result.message
         assert "评估该企业风险" in result.message
 
+    def test_short_formal_supplier_name_requests_identity_confirmation(self, monkeypatch):
+        monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: False)
+        monkeypatch.setattr(
+            "app.domains.sourcing.supplier_repo.find_formal_supplier_candidates",
+            lambda _: [{
+                "supplier_id": "supplier:网易云",
+                "supplier_name": "杭州网易云音乐科技有限公司",
+                "short_name": "网易云",
+                "supplier_code": "8330267",
+                "match_type": "name_contains",
+                "match_score": 0.92,
+            }],
+        )
+
+        from app.services.clarification import formal_supplier_identity_clarification
+
+        result = formal_supplier_identity_clarification(["网易云音乐"], "分析网易云音乐的风险")
+
+        assert result is not None
+        assert result.missing == ["supplier_identity"]
+        assert "杭州网易云音乐科技有限公司" in result.message
+        assert result.candidates[0]["supplier_id"] == "supplier:网易云"
+
     def test_historical_reference_does_not_authorize_unknown_subject(self, monkeypatch):
         monkeypatch.setattr("app.domains.alert.service.get_watchlist_targets", lambda **_: [])
         monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: False)

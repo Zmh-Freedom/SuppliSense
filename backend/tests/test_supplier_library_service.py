@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.domains.sourcing.supplier_repo import (
     get_supplier,
     get_supplier_by_name,
+    find_formal_supplier_candidates,
     list_formal_suppliers,
     list_suppliers,
 )
@@ -68,6 +69,7 @@ class FakeDatabase:
                     "_id": "master-1",
                     "supplier_id": supplier_id,
                     "name": "示例汽车零部件有限公司",
+                    "short_name": "示例汽车零部件",
                     "categories": [],
                     "regions": [],
                     "status": "active",
@@ -163,3 +165,14 @@ def test_list_formal_suppliers_reads_active_feishu_directory(monkeypatch) -> Non
         "source": "feishu_bitable",
         "source_updated_at": None,
     }]
+
+
+def test_find_formal_supplier_candidates_matches_short_name(monkeypatch) -> None:
+    database = FakeDatabase()
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.get_db", lambda: database)
+    monkeypatch.setattr(settings, "FEISHU_BITABLE_ENABLED", True)
+
+    result = find_formal_supplier_candidates("示例汽车零部件")
+
+    assert result[0]["supplier_name"] == "示例汽车零部件有限公司"
+    assert result[0]["match_type"] == "exact_alias"

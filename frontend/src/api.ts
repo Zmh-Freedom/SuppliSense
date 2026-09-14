@@ -156,7 +156,7 @@ export interface StreamCallbacks {
   onAgentAnswer?: (data: import('./types').AgentAnswer) => void;
   onEvidence?: (data: { records: import('./types').AgentEvidenceRecord[]; coverage?: Record<string, unknown> }) => void;
   onError?: (data: { message: string }) => void;
-  onClarification?: (data: { message: string; missing: string[]; status?: string; stage?: string }) => void;
+  onClarification?: (data: { message: string; missing: string[]; candidates?: import('./types').SupplierIdentityCandidate[]; status?: string; stage?: string }) => void;
   onApprovalRequired?: (data: ApprovalData) => void;
   onChartData?: (data: import('./types').ChartData) => void;
   onReferences?: (data: { items: import('./types').SupplierReference[] }) => void;

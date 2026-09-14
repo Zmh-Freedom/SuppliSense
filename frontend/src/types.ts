@@ -264,6 +264,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   references?: SupplierReference[];
+  identityCandidates?: SupplierIdentityCandidate[];
   workflow?: AgentWorkflowSnapshot;
   agentAnswer?: AgentAnswer;
   evidence?: AgentEvidenceRecord[];
@@ -274,6 +275,15 @@ export interface ChatMessage {
     session_id: string;
     status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
   };
+}
+
+export interface SupplierIdentityCandidate {
+  supplier_id: string;
+  supplier_name: string;
+  short_name?: string | null;
+  supplier_code?: string | null;
+  match_type?: string;
+  match_score?: number;
 }
 
 export interface AgentClaim {

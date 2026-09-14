@@ -343,8 +343,17 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             )
             from app.services.clarification import (
                 external_assessment_clarification,
+                formal_supplier_identity_clarification,
                 review_scope_clarification,
             )
+            identity_clarification = await asyncio.to_thread(
+                formal_supplier_identity_clarification,
+                resolved_target_names,
+                req.message,
+            )
+            if identity_clarification:
+                yield f"event: clarification\ndata: {json.dumps({'message': identity_clarification.message, 'missing': identity_clarification.missing, 'missing_fields': identity_clarification.missing, 'candidates': identity_clarification.candidates, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
+                return
             # Scope enforcement is meaningful only for a verified application
             # account.  The protected route rejects invalid JWT subjects; the
             # transient identifier branch is retained for legacy/test clients

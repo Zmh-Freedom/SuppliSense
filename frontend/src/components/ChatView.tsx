@@ -362,7 +362,7 @@ export default function ChatView() {
           receivedTerminalEvent = true;
           const clarificationWorkflow = { ...workflowAccRef.current, status: 'stopped' as const, stage: data.stage || 'understand', message: data.message };
           workflowAccRef.current = clarificationWorkflow;
-          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, workflow: clarificationWorkflow }];
+          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, identityCandidates: data.candidates, workflow: clarificationWorkflow }];
           persist(sid, clarifiedMsgs);
           setStreamState(null);
           setLoading(false);
@@ -743,6 +743,7 @@ export default function ChatView() {
           streamState={streamState}
           loading={loading}
           onAnalyzeReference={name => setInput(`继续分析 ${name} 的风险`)}
+          onConfirmSupplier={name => send(name)}
           onApproval={handleApproval}
           StructuredAgentResult={StructuredAgentResult}
         />
