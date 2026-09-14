@@ -3,7 +3,7 @@
 ## 启动检查
 
 1. 启动后端和前端。
-2. 打开 `http://127.0.0.1:5173/login`。
+2. 打开 `http://127.0.0.1:5174/login`。
 3. 确认后端 `http://127.0.0.1:8000/health/ready` 返回 `status=ready`，且 MongoDB、Redis、PostgreSQL、Harness checkpointer 均为 `ok`。
 
 ## 主流程

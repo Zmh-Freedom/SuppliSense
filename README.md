@@ -159,9 +159,9 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-打开 `http://127.0.0.1:5173`。后端就绪检查：`http://127.0.0.1:8000/health/ready`。如本地后端使用其他端口，在 `frontend/.env.local` 设置相同的 `SUPPLISENSE_BACKEND_PORT` 后再启动 Vite。
+打开 `http://127.0.0.1:5174`。后端就绪检查：`http://127.0.0.1:8000/health/ready`。如本地后端使用其他端口，在 `frontend/.env.local` 设置相同的 `SUPPLISENSE_BACKEND_PORT` 后再启动 Vite。
 
-局域网演示可使用 `http://<本机局域网 IP>:5173`。开发环境的 `backend/.env` 必须设置 `COOKIE_SECURE=false`，否则浏览器不会在 HTTP 地址保存登录 Cookie；生产环境使用 HTTPS 时必须恢复为 `true`。
+局域网演示可使用 `http://<本机局域网 IP>:5174`。开发环境的 `backend/.env` 必须设置 `COOKIE_SECURE=false`，否则浏览器不会在 HTTP 地址保存登录 Cookie；生产环境使用 HTTPS 时必须恢复为 `true`。
 
 ### Docker Compose
 

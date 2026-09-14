@@ -84,7 +84,7 @@ def test_event_endpoint_cors_preflight_allows_last_event_id(agent_client):
     response = agent_client.options(
         f"/api/v1/agent-runs/{RUN_ID}/events",
         headers={
-            "Origin": "http://localhost:5173",
+            "Origin": "http://localhost:5174",
             "Access-Control-Request-Method": "GET",
             "Access-Control-Request-Headers": "Last-Event-ID",
         },

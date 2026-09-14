@@ -170,7 +170,7 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-开发环境通常访问 `http://127.0.0.1:5173`，后端就绪检查为 `http://127.0.0.1:8000/health/ready`。
+开发环境通常访问 `http://127.0.0.1:5174`，后端就绪检查为 `http://127.0.0.1:8000/health/ready`。
 
 ### 10.2 Docker 部署
 

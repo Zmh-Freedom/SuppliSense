@@ -18,6 +18,8 @@ export default defineConfig(({ mode }) => {
     ],
     server: {
       host: '0.0.0.0',
+      port: 5174,
+      strictPort: true,
       headers: {
         // 局域网演示始终获取当前入口与模块，避免客户端停留在旧 ChatView。
         'Cache-Control': 'no-store',

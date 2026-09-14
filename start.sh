@@ -64,6 +64,6 @@ echo "✅ 服务已启动"
 if [[ "$MODE" == "production" ]]; then
     echo "🌐 http://localhost"
 else
-    echo "🌐 后端: http://localhost:8000，前端: http://localhost:5173"
+    echo "🌐 后端: http://localhost:8000，前端: http://127.0.0.1:5174"
 fi
 echo "⏹️  停止: ./stop.sh"
