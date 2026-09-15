@@ -216,9 +216,9 @@ export default function Sidebar({ onClose }: Props) {
 
       {/* brand + alert bell */}
       <div className="px-4 pt-5 pb-3 flex items-center justify-between">
-        <div>
-          <h1 className="text-sm font-bold text-[var(--color-text)] tracking-tight">SuppliSense</h1>
-          <p className="text-[11px] text-gray-400 mt-0.5">AI 寻源与供应商风险</p>
+        <div className="min-w-0">
+          <h1 className="max-w-[148px] text-[13px] font-bold leading-5 tracking-tight text-[var(--color-text)]">供应商智能寻源与风险监控工作台</h1>
+          <p className="mt-0.5 text-[11px] text-gray-400">采购助手</p>
         </div>
         <div className="flex items-center gap-1">
           <AlertBell />
