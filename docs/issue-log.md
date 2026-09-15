@@ -376,7 +376,7 @@
 - 根因：数据库系统目录中登记了 `vector 0.8.3` 扩展，但当前 PostgreSQL 容器镜像缺少对应的 pgvector 动态库，`pg_dump` 在读取索引定义时触发加载失败。
 - 修复方案：使用与当前 PostgreSQL 16 数据目录兼容且包含 pgvector 的临时镜像挂载同一数据库卷，在原 PostgreSQL 容器停止后完成逻辑导出；导出完成后恢复原 Compose PostgreSQL 容器。保留 collation 版本提示，未对线上数据库执行刷新或重建操作。
 - 验证结果：MongoDB `tianyancha` 已生成 `backups/tianyancha_20260915.archive`（595 MB）；PostgreSQL `sra` 已生成 `backups/sra_20260915.dump`（13 MB）。两份文件均完成 SHA-256 校验；原 `sra-postgres` 容器恢复为 `healthy`，`pg_isready` 通过。备份过程中未删除或修改业务数据。
-- 关联提交：待提交。
+- 关联提交：`fc529193`。
 
 ## ISS-20260913-004 风险复核自然语言结果仍泄露英文内部字段
 - 发现日期：2026-09-13
