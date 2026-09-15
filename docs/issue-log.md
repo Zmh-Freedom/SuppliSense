@@ -366,6 +366,18 @@
 - 验证结果：2026-09-14 使用真实浏览器复现；本次参赛材料改用寻源任务与候选复核入口截图规避技术字段，产品代码待修复后重新验收。
 - 关联提交：待提交。
 
+## ISS-20260915-001 PostgreSQL 逻辑备份因缺失 pgvector 动态库失败
+
+- 发现日期：2026-09-15
+- 状态：已关闭
+- 优先级：P1
+- 现象：执行 PostgreSQL `pg_dump` 备份 `sra` 数据库时，数据库返回 `could not access file "$libdir/vector"`，标准逻辑备份未完成；同时提示数据库默认 collation 版本与当前系统不一致。
+- 影响：跨电脑迁移所需的 PostgreSQL 备份暂未生成，MongoDB 备份不受影响；原数据库数据和业务服务未被修改。
+- 根因：数据库系统目录中登记了 `vector 0.8.3` 扩展，但当前 PostgreSQL 容器镜像缺少对应的 pgvector 动态库，`pg_dump` 在读取索引定义时触发加载失败。
+- 修复方案：使用与当前 PostgreSQL 16 数据目录兼容且包含 pgvector 的临时镜像挂载同一数据库卷，在原 PostgreSQL 容器停止后完成逻辑导出；导出完成后恢复原 Compose PostgreSQL 容器。保留 collation 版本提示，未对线上数据库执行刷新或重建操作。
+- 验证结果：MongoDB `tianyancha` 已生成 `backups/tianyancha_20260915.archive`（595 MB）；PostgreSQL `sra` 已生成 `backups/sra_20260915.dump`（13 MB）。两份文件均完成 SHA-256 校验；原 `sra-postgres` 容器恢复为 `healthy`，`pg_isready` 通过。备份过程中未删除或修改业务数据。
+- 关联提交：待提交。
+
 ## ISS-20260913-004 风险复核自然语言结果仍泄露英文内部字段
 - 发现日期：2026-09-13
 - 状态：待修复

@@ -78,6 +78,7 @@ docker-compose.override.yml
 
 # Backups
 backups/*.archive
+backups/*.dump
 backups/backup.log
 .env.docker
 
