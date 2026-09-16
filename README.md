@@ -65,6 +65,8 @@ SuppliSense 面向采购团队，把外部企业信息、上市公司财报、�
 
 普通聊天统一进入 Harness Runtime。每一轮运行的计划、工具结果、证据和最终结论都持久化；浏览器 SSE 在最终结果前断开时，前端会按运行 ID 自动回放未消费事件，避免用户因网络波动重复提交。
 
+供应商主体解析会优先使用当前轮次的完整企业名称，再由 LLM 补充意图和分析维度。正式供应商校验、候选召回和责任范围解析使用同一套名称归一化规则，兼容全角/半角标点、复制带入的空格和大小写差异。例如“查找纬湃汽车电子（长春）有限公司的最新舆情和新闻动态”和“查找纬湃汽车电子(长春)有限公司的最新舆情和新闻动态”都会绑定到同一正式供应商，不会重复进入候选确认。
+
 ## 数据来源与解释边界
 
 | 来源 | 用途 | 不能据此直接得出的结论 |
@@ -161,6 +163,8 @@ npm run dev -- --host 0.0.0.0
 
 打开 `http://127.0.0.1:5174`。后端就绪检查：`http://127.0.0.1:8000/health/ready`。如本地后端使用其他端口，在 `frontend/.env.local` 设置相同的 `SUPPLISENSE_BACKEND_PORT` 后再启动 Vite。
 
+后端代码更新后，开发环境通常由 `--reload` 自动重载；如果页面仍表现为旧逻辑，先确认 `health/ready` 返回 `ready`，再完整停止并重新启动后端进程。若前端保留了旧会话状态，建议刷新页面或新建会话后验证。
+
 局域网演示可使用 `http://<本机局域网 IP>:5174`。开发环境的 `backend/.env` 必须设置 `COOKIE_SECURE=false`，否则浏览器不会在 HTTP 地址保存登录 Cookie；生产环境使用 HTTPS 时必须恢复为 `true`。
 
 ### Docker Compose
@@ -213,6 +217,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 # 后端
 cd backend
 source .venv/bin/activate
+python -m pytest -m 'not integration' -q
 python -m pytest -m agent_e2e -v
 python -m pytest tests/test_agent_harness_p0.py tests/test_agent_supervisor_graph.py -q
 
@@ -223,7 +228,7 @@ npm test -- --run
 npm run build
 ```
 
-真实浏览器验证至少覆盖：登录与退出、采购员责任范围、跨范围供应商拒绝、主体确认、风险监控任务审批、寻源结果来源标识，以及聊天 SSE 断线后的结果回放。
+真实浏览器验证至少覆盖：登录与退出、采购员责任范围、跨范围供应商拒绝、主体确认、完整企业名的全角/半角标点与复制空格变体、风险监控任务审批、寻源结果来源标识，以及聊天 SSE 断线后的结果回放。
 
 ## 文档
 
