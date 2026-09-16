@@ -214,6 +214,11 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);
+  const externalIdentity = state.approval?.args.external_identity;
+  const externalProfile = externalIdentity && typeof externalIdentity === 'object' && !Array.isArray(externalIdentity)
+    ? externalIdentity as Record<string, unknown>
+    : null;
+  const isExternalIdentityConfirmation = Boolean(externalProfile);
 
   const handleApproval = (approved: boolean) => {
     setApprovalTarget(approved ? 'approve' : 'reject');
@@ -322,8 +327,18 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
                 <div className="min-w-0 space-y-1">
                   <h3 className="text-sm font-semibold text-amber-950">{approvalHeadingLabel(state.approval.status)}</h3>
                   <p className="break-words text-xs text-amber-900">{state.approval.message}</p>
-                  <p className="break-words font-mono text-[11px] text-amber-800">动作：{state.approval.tool}</p>
-                  <pre className="max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words text-[11px] text-amber-800">目标/参数：{compactJson(state.approval.args)}</pre>
+                  {isExternalIdentityConfirmation && externalProfile ? <div className="mt-2 space-y-1 rounded-lg border border-amber-200 bg-white/70 p-3 text-xs text-amber-950">
+                    <p className="font-semibold">请确认外部企业主体</p>
+                    <p>企业名称：{String(externalProfile.company_name || state.approval.args.company_name || '未提供')}</p>
+                    <p>统一社会信用代码：{String(externalProfile.unified_social_credit_code || '未提供')}</p>
+                    <p>登记状态：{String(externalProfile.registration_status || '未提供')}</p>
+                    <p>法定代表人：{String(externalProfile.legal_person || '未提供')}</p>
+                    <p>资料来源：{String(externalProfile.source || '外部企业资料')}</p>
+                    <p className="pt-1 text-[11px] text-amber-800">批准后将创建或复用正式主体，并加入风险监控清单。</p>
+                  </div> : <>
+                    <p className="break-words font-mono text-[11px] text-amber-800">动作：{state.approval.tool}</p>
+                    <pre className="max-h-32 max-w-full overflow-auto whitespace-pre-wrap break-words text-[11px] text-amber-800">目标/参数：{compactJson(state.approval.args)}</pre>
+                  </>}
                 </div>
               </div>
               {state.approval.status === 'approved' ? <p className="text-[11px] text-emerald-800">该操作已获批准，执行结果见本轮回答。</p> :
@@ -332,7 +347,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
                     <p className="text-[11px] text-amber-900">影响：批准后将执行上述动作；拒绝则停止该写操作。</p>
                     <div className="flex flex-wrap gap-2">
                       <button type="button" disabled={state.approvalSubmitting || state.approval.status === 'submitting'} onClick={() => handleApproval(true)} className="min-h-[44px] rounded-lg bg-emerald-600 px-4 text-xs font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
-                        {state.approvalSubmitting && (approvalTarget === 'approve' || approvalTarget === null) ? '批准提交中…' : '批准动作'}
+                        {state.approvalSubmitting && (approvalTarget === 'approve' || approvalTarget === null) ? (isExternalIdentityConfirmation ? '确认提交中…' : '批准提交中…') : isExternalIdentityConfirmation ? '确认主体并加入监控' : '批准动作'}
                       </button>
                       <button type="button" disabled={state.approvalSubmitting || state.approval.status === 'submitting'} onClick={() => handleApproval(false)} className="min-h-[44px] rounded-lg border border-gray-300 bg-white px-4 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
                         {state.approvalSubmitting && (approvalTarget === 'reject' || approvalTarget === null) ? '拒绝提交中…' : '拒绝动作'}

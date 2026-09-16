@@ -86,6 +86,72 @@ def create_company(
     return _command_result(company)
 
 
+def confirm_external_company(
+    profile: dict,
+    actor_id: str | None,
+    actor_role: str,
+) -> dict:
+    """Confirm a provider-backed external identity for a purchaser action.
+
+    This is intentionally narrower than the general company-create endpoint:
+    it accepts only an external profile that carries a trusted source and a
+    unified social credit code.  The operation is idempotent—an already
+    verified owner of the same credit code is reused, while a pending owner is
+    verified in the same transaction before the monitoring write proceeds.
+    """
+    _require_writer_role(actor_role)
+    legal_name = str(profile.get("company_name") or profile.get("legal_name") or "").strip()
+    if not legal_name:
+        raise DomainError("COMPANY_EXTERNAL_IDENTITY_INVALID", "外部主体缺少企业名称", 422)
+    credit_code = normalize_credit_code(
+        profile.get("unified_social_credit_code")
+        or profile.get("unifiedSocialCreditCode")
+        or profile.get("creditCode")
+    )
+    identity_source = str(profile.get("identity_source") or "tianyancha").strip()
+    source_reference = str(profile.get("source_reference") or "").strip() or None
+    _require_verification_evidence(credit_code, identity_source, source_reference)
+    registration_status = profile.get("registration_status") or profile.get("regStatus")
+
+    try:
+        with get_cursor() as (_, cur):
+            current = company_repo.find_by_credit_code_with_cursor(cur, credit_code)
+            if current is not None:
+                if current.get("merged_into_id") is not None:
+                    raise DomainError("COMPANY_MERGED_SUBJECT", "统一社会信用代码对应的企业已合并", 409)
+                if current.get("verification_status") == "verified":
+                    return _command_result(current)
+                company = company_repo.verify_company(
+                    cur,
+                    current["id"],
+                    int(current["identity_version"]),
+                    credit_code,
+                    identity_source,
+                    source_reference,
+                    actor_id,
+                )
+                if company is None:
+                    raise DomainError("COMPANY_VERSION_CONFLICT", "企业身份版本已变更，请重试", 409)
+                _write_audit_and_event(cur, company, "verified", actor_id)
+            else:
+                company = company_repo.insert_company(
+                    cur,
+                    legal_name=legal_name,
+                    normalized_name=normalize_company_name(legal_name),
+                    unified_social_credit_code=credit_code,
+                    registration_status=registration_status,
+                    verification_status="verified",
+                    identity_source=identity_source,
+                    source_reference=source_reference,
+                    created_by=actor_id,
+                    verified_by=actor_id,
+                )
+                _write_audit_and_event(cur, company, "created", actor_id)
+    except UniqueViolation as exc:
+        _raise_unique_violation(exc, credit_code)
+    return _command_result(company)
+
+
 def update_company(
     company_id: str,
     data: CompanyUpdateInput,

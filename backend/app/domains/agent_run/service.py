@@ -686,7 +686,15 @@ def create_supervisor_action_proposals(
             action_type,
             action_payload,
             f"supervisor:{run_id}:{original_id}",
-            candidate_id=target.get("candidate_id"),
+            # An external identity candidate ID is an evidence key, not an
+            # ``agent_run_candidates`` row.  Passing it to the durable action
+            # binder would incorrectly reject an otherwise valid confirmation
+            # with “候选企业不属于任务”.
+            candidate_id=(
+                target.get("candidate_id")
+                if not isinstance(target.get("external_identity"), dict)
+                else None
+            ),
             user_id=user_id,
             user_role="purchaser",
             expected_version=int(run["version"]),

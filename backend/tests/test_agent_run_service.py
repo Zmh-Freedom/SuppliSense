@@ -119,6 +119,43 @@ def test_create_supervisor_action_proposals_returns_existing_proposal_ids(
     assert created[0]["args"][3] == "supervisor:run-id:decision-id"
 
 
+def test_create_supervisor_external_identity_proposal_does_not_bind_evidence_key_as_run_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """External identity evidence must reach the write tool without Run-scoped candidate lookup."""
+    from app.domains.sourcing_risk import action_service
+
+    run = _run("CREATED", 3)
+    captured: dict = {}
+    monkeypatch.setattr(service, "get_orchestration_run", lambda *_: run)
+    monkeypatch.setattr(
+        action_service,
+        "create_action_proposal",
+        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {"id": "proposal-external"},
+    )
+
+    service.create_supervisor_action_proposals("run-id", [{
+        "approval_id": "decision-external",
+        "action_type": "add_watchlist",
+        "target": {
+            "company_name": "外部主体有限公司",
+            "target_type": "external_candidate",
+            "target_source": "conversation_state",
+            "candidate_id": "external_identity:tyc:外部主体有限公司",
+            "external_identity": {
+                "company_name": "外部主体有限公司",
+                "unified_social_credit_code": "91450200MAA7L76A5R",
+                "source_reference": "tyc:外部主体有限公司",
+            },
+        },
+        "reason": "用户确认主体后加入监控",
+        "impact": "创建正式主体并加入监控",
+        "status": "pending",
+    }])
+
+    assert captured["kwargs"]["candidate_id"] is None
+
+
 def test_approve_supervisor_action_proposal_uses_existing_approval_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ):

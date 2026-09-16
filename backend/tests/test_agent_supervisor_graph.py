@@ -367,6 +367,56 @@ def test_supervisor_does_not_reuse_session_candidate_id_for_watchlist(
     }]
 
 
+def test_supervisor_exposes_external_identity_for_approval_gated_monitoring(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cached external profile becomes a reviewable confirmation action, not a dead end."""
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    monkeypatch.setattr("app.domains.alert.service._find_watchlist_target", lambda **_kwargs: None)
+    monkeypatch.setattr("app.domains.supplier.access.formal_supplier_id_by_name", lambda _name: None)
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.resolve_supplier_id", lambda _name: None)
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_external_profile",
+        lambda _name: ({
+            "company_name": "外部主体有限公司",
+            "unified_social_credit_code": "91450200MAA7L76A5R",
+            "registration_status": "存续",
+            "legal_person": "张三",
+            "source_reference": "tyc:外部主体有限公司",
+        }, {"status": "available"}),
+    )
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks({
+            "run_id": "external-confirm-run",
+            "plan": {"tasks": []},
+            "intent": {
+                "request_watchlist": True,
+                "target_supplier_names": ["外部主体有限公司"],
+            },
+            "supplier_references": [],
+        })
+    )
+
+    assert len(result["recommendations"]) == 1
+    target = result["recommendations"][0]["target"]
+    assert target["target_type"] == "external_candidate"
+    assert target["external_identity"]["unified_social_credit_code"] == "91450200MAA7L76A5R"
+    assert result["watchlist_statuses"] == []
+
+    answer = supervisor_graph._format_final_answer(
+        "基于 0 条证据形成风险结论，综合可信度 0.00。",
+        {},
+        [{"target": target}],
+    )
+    assert "统一社会信用代码：91450200MAA7L76A5R" in answer
+    assert "确认后将完成主体绑定并加入风险监控" in answer
+
+
 def test_supervisor_keeps_stable_supplier_identity_when_reference_has_candidate_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

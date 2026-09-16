@@ -400,6 +400,7 @@ def add_to_watchlist(
     candidate_id: str | None = None,
     company_id: str | None = None,
     supplier_code: str | None = None,
+    external_identity: dict | None = None,
 ) -> dict:
     """将企业加入监控清单（需要用户确认）。
 
@@ -411,12 +412,32 @@ def add_to_watchlist(
         supplier_id: 正式供应商稳定 ID
         candidate_id: 外部候选稳定 ID
         company_id: 法定企业稳定 ID
+        external_identity: 已取得并由采购员确认的外部主体资料
     """
     del target_source
     from app.graphs.approval import needs_approval, request_approval
     from app.tools.executor import get_active_tool_context
 
     active_context = get_active_tool_context()
+    # An external profile is not a local candidate ID.  Once the purchaser
+    # explicitly approves this action, promote the evidence to a canonical
+    # company first, then continue through the existing idempotent watchlist
+    # writer.  This keeps the old formal-supplier path unchanged.
+    if target_type == "external_candidate" and not company_id and external_identity:
+        from app.domains.company.service import confirm_external_company
+
+        actor_id = active_context.user_id if active_context else None
+        actor_role = "purchaser"
+        confirmed_company = confirm_external_company(
+            external_identity,
+            actor_id,
+            actor_role,
+        )
+        company_id = confirmed_company["company_id"]
+        target_type = "company"
+        # The external candidate key is evidence provenance, not the durable
+        # monitor identity.  Do not persist it as the target's primary key.
+        candidate_id = None
     from app.domains.alert.service import _find_watchlist_target
     existing_target = _find_watchlist_target(
         monitor_target_id=monitor_target_id,

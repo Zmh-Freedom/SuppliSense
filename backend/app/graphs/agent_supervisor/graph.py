@@ -79,7 +79,26 @@ def _format_final_answer(
         "compliance": "合规",
         "sourcing": "寻源",
     }
-    if pending_approvals and not results:
+    external_approvals = [
+        approval for approval in pending_approvals
+        if isinstance(approval.get("target"), dict)
+        and isinstance(approval["target"].get("external_identity"), dict)
+    ]
+    if external_approvals and not results:
+        lines = ["已找到外部主体候选，请核对下方企业资料；确认后将完成主体绑定并加入风险监控。"]
+        for approval in external_approvals:
+            profile = approval["target"]["external_identity"]
+            name = str(profile.get("company_name") or approval["target"].get("company_name") or "该企业")
+            details = [
+                f"企业名称：{name}",
+                f"统一社会信用代码：{profile.get('unified_social_credit_code') or '未提供'}",
+                f"登记状态：{profile.get('registration_status') or '未提供'}",
+                f"法定代表人：{profile.get('legal_person') or '未提供'}",
+                f"资料来源：{profile.get('source') or '外部企业资料'}",
+            ]
+            lines.append("；".join(details) + "。")
+            lines.append("请确认这就是要监控的企业；确认后系统会创建或复用正式主体，并建立首个风险基线。")
+    elif pending_approvals and not results:
         lines = ["已识别加入风险监控请求，等待人工确认后写入监控清单。"]
     elif watchlist_statuses and not pending_approvals and not results:
         lines = []
@@ -348,6 +367,28 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
                 target["supplier_id"] = resolved_supplier_id
                 target["target_type"] = "formal_supplier"
                 target["identity_status"] = "verified"
+        # A cached external identity is sufficient to present a concrete,
+        # approval-gated confirmation card.  It is deliberately not treated
+        # as a verified local company until the approved write promotes it in
+        # ``confirm_external_company``.
+        if not existing and not any(
+            target.get(field)
+            for field in ("supplier_id", "company_id", "candidate_id", "monitor_target_id")
+        ):
+            try:
+                from app.domains.alert.intake_service import _load_external_profile
+
+                external_profile, _ = _load_external_profile(company_name)
+            except Exception:
+                external_profile = None
+            if isinstance(external_profile, dict):
+                target["target_type"] = "external_candidate"
+                target["identity_status"] = "candidate"
+                target["candidate_id"] = f"external_identity:{external_profile.get('source_reference') or company_name}"
+                target["external_identity"] = {
+                    **external_profile,
+                    "source": "天眼查工商主体查询",
+                }
         if not existing and not any(target.get(field) for field in ("supplier_id", "company_id", "candidate_id", "monitor_target_id")):
             try:
                 from app.domains.sourcing.supplier_repo import resolve_supplier_id
@@ -380,7 +421,7 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
             "requires_approval": True,
         } for target in resolved_targets
           if not target.get("already_monitored")
-          and not target.get("identity_required"))
+          and (not target.get("identity_required") or target.get("external_identity")))
     return {
         "agent_results": {
             task_id: result.model_dump(mode="json")
