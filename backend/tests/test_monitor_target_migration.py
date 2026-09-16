@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.domains.alert import service as alert_service
+from app.domains.alert import tools as alert_tools
 from app.graphs.agent_supervisor.agents import AgentTaskContext, _run_risk
 from app.graphs.agent_supervisor.contracts import PlannerTask
 from app.schemas import RiskCalculateResponse
@@ -187,6 +188,32 @@ def test_resolve_watchlist_identity_includes_cached_external_identity(monkeypatc
     assert result["candidates"][0]["registration_number"] == "450205000188432"
     assert result["candidates"][0]["verification_status"] == "pending_verification"
     assert "才能绑定监控" in result["candidates"][0]["binding_note"]
+
+
+def test_resolve_monitor_identity_chat_path_includes_external_identity(monkeypatch):
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {"resolution": "pending_verification", "exact": None, "candidates": []},
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_external_profile",
+        lambda query: ({
+            "company_name": query,
+            "unified_social_credit_code": "91450200MAA7L76A5R",
+            "registration_number": "450205000188432",
+            "registration_status": "存续",
+            "legal_person": "廖鸿胡",
+            "source_reference": f"tyc:{query}",
+        }, {"status": "available"}),
+    )
+
+    result = alert_tools.resolve_monitor_identity.func(company_name="赛克瑞浦动力电池系统有限公司")
+
+    assert result["resolution"] == "candidates"
+    assert result["candidates"][0]["candidate_type"] == "external_identity"
+    assert result["candidates"][0]["unified_social_credit_code"] == "91450200MAA7L76A5R"
+    assert result["candidates"][0]["registration_number"] == "450205000188432"
+    assert result["candidates"][0]["verification_status"] == "pending_verification"
 
 
 def test_confirm_watchlist_identity_binds_verified_company_and_audit(monkeypatch):

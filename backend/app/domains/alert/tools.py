@@ -48,6 +48,7 @@ def resolve_monitor_identity(
     不会自动绑定主体，也不会修改监控清单。
     """
     from app.domains.alert.service import resolve_watchlist_identity
+    from app.domains.alert.intake_service import _external_identity_candidate, _load_external_profile
     from app.domains.company.service import search_identity
     from app.tools.evidence import attach_tool_evidence
 
@@ -62,6 +63,19 @@ def resolve_monitor_identity(
                 "query": query,
                 **search_identity(query, limit=10),
             }
+            # Chat主体核验没有 monitor_target_id 时不能走
+            # resolve_watchlist_identity，但仍应复用同一份外部主体资料。
+            # 否则监控页面能看到天眼查候选，聊天入口却会错误地返回“没有候选”。
+            if not result.get("exact") and not result.get("candidates"):
+                external_profile, enterprise_state = _load_external_profile(query)
+                if external_profile:
+                    result.update({
+                        "resolution": "candidates",
+                        "candidates": [_external_identity_candidate(external_profile, query)],
+                        "source": "天眼查工商主体查询",
+                        "source_mode": enterprise_state.get("status") if isinstance(enterprise_state, dict) else "available",
+                        "external_profile": external_profile,
+                    })
         else:
             return {"status": "invalid", "message": "主体核验缺少监控对象 ID 或企业名称"}
     except ValueError as exc:
