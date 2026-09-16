@@ -48,3 +48,37 @@ def test_cached_sentiment_accepts_no_data_marker():
         "星际测试有限公司",
         {"articles": [], "has_data": False},
     ) is True
+
+
+def test_empty_sentiment_cache_triggers_realtime_news_search(monkeypatch):
+    calls = []
+    company = "星际测试有限公司"
+
+    monkeypatch.setattr(sentiment, "get_db", lambda: object())
+    monkeypatch.setattr(
+        sentiment,
+        "_get_cached_sentiment",
+        lambda _company: {"articles": [], "has_data": False, "is_stale": False},
+    )
+
+    def search(_company, max_results=12):
+        calls.append((_company, max_results))
+        return [{"title": f"{company}发布经营公告", "body": "公司披露经营信息", "url": "https://example.com/news"}]
+
+    monkeypatch.setattr(sentiment, "_search_news", search)
+    monkeypatch.setattr(
+        sentiment,
+        "_call_llm",
+        lambda _prompt: {
+            "overall_sentiment": "neutral",
+            "sentiment_score": 0,
+            "articles": [{"index": 0, "sentiment": "neutral", "confidence": 0.8}],
+        },
+    )
+    monkeypatch.setattr(sentiment, "_save_sentiment", lambda *_args: None)
+
+    result = sentiment.analyze_sentiment(company, emit_alerts=False)
+
+    assert calls == [(company, 12)]
+    assert result is not None
+    assert result["articles_count"] == 1

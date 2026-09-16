@@ -394,10 +394,15 @@ def analyze_sentiment(
         cached = _get_cached_sentiment(company_name)
         if cached and not cached.get("is_stale", False):
             cached_articles = cached.get("articles") or []
-            # 旧的 MongoDB 结果可能在主体过滤上线前写入，不能因为命中
-            # 6 小时缓存就绕过相关性校验。无文章的明确无数据结果可以直接复用。
-            if _cached_sentiment_is_relevant(company_name, cached, max_results):
+            # 有文章的缓存可以复用，但“暂无相关新闻”不是稳定事实：
+            # 新新闻可能在上一次采集后刚刚发布，因此无数据缓存必须实时复查。
+            if cached_articles and _cached_sentiment_is_relevant(company_name, cached, max_results):
                 return cached
+            if not cached_articles:
+                logger.info(
+                    "sentiment_empty_cache_realtime_refresh",
+                    extra={"company": company_name},
+                )
             filtered_cached = _filter_search_articles(company_name, cached_articles, max_results)
             logger.info(
                 "sentiment_cache_rejected_for_relevance",
