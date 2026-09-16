@@ -102,6 +102,9 @@ def _format_final_answer(
         if str(status.get("status")) == "already_watching":
             name = str(status.get("company_name") or "该供应商")
             lines.append(f"{name} 已在风险监控清单中，无需重复加入。")
+        elif str(status.get("status")) == "identity_required":
+            name = str(status.get("company_name") or "该企业")
+            lines.append(f"{name} 尚未完成主体核验，暂不能加入风险监控清单；请先确认正式企业主体。")
     return "\n\n".join(lines)
 
 
@@ -295,7 +298,11 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
             if not isinstance(reference, dict) or reference.get("name") != company_name:
                 continue
             for field in (
-                "monitor_target_id", "target_type", "supplier_id", "candidate_id",
+                # A conversation reference list spans multiple turns and may
+                # contain a candidate from an earlier sourcing Run.  Candidate
+                # IDs are Run-scoped and cannot safely be reused for a write;
+                # stable supplier/company/monitor IDs remain safe here.
+                "monitor_target_id", "target_type", "supplier_id",
                 "company_id", "supplier_code", "identity_status",
             ):
                 value = reference.get(field)
@@ -348,6 +355,11 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
                 target["identity_required"] = not bool(resolve_supplier_id(company_name))
             except Exception:
                 target["identity_required"] = True
+        if target.get("identity_required"):
+            watchlist_statuses.append({
+                "company_name": company_name,
+                "status": "identity_required",
+            })
         if target.get("candidate_id") and not target.get("supplier_id"):
             target.setdefault("target_type", "external_candidate")
         elif target.get("supplier_id"):

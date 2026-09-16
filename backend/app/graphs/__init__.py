@@ -13,6 +13,11 @@ LLM_MAX_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "10"))
 
 def format_llm_error(e: Exception) -> str:
     """将 LLM API 错误翻译为中文提示。"""
+    # Domain validation failures can surface through the same streaming error
+    # boundary as provider failures. Keep the user-facing business message
+    # instead of mislabeling it as an LLM outage.
+    if hasattr(e, "code") and hasattr(e, "message"):
+        return str(getattr(e, "message"))
     msg = str(e)
     if "Insufficient Balance" in msg or "402" in msg:
         return "LLM API 余额不足，请联系管理员充值"

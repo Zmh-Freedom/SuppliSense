@@ -12,6 +12,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
+from app.core.errors import DomainError
 from app.domains.agent_run import service as agent_run_service
 from app.api import chat as chat_api
 from app.graphs import approval
@@ -319,6 +320,94 @@ def test_supervisor_resolves_formal_feishu_identity_for_watchlist_proposal(
     assert target["identity_status"] == "verified"
 
 
+def test_supervisor_does_not_reuse_session_candidate_id_for_watchlist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A candidate from an earlier sourcing run must not become a new write target."""
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    monkeypatch.setattr(
+        "app.domains.alert.service._find_watchlist_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.domains.supplier.access.formal_supplier_id_by_name",
+        lambda _name: None,
+    )
+    monkeypatch.setattr(
+        "app.domains.sourcing.supplier_repo.resolve_supplier_id",
+        lambda _name: None,
+    )
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks(
+            {
+                "run_id": "new-watchlist-run",
+                "plan": {"tasks": []},
+                "intent": {
+                    "request_watchlist": True,
+                    "target_supplier_names": ["跨任务候选有限公司"],
+                },
+                "supplier_references": [{
+                    "name": "跨任务候选有限公司",
+                    "candidate_id": "candidate-from-earlier-run",
+                    "target_type": "external_candidate",
+                }],
+            }
+        )
+    )
+
+    assert result["recommendations"] == []
+    assert result["watchlist_statuses"] == [{
+        "company_name": "跨任务候选有限公司",
+        "status": "identity_required",
+    }]
+
+
+def test_supervisor_keeps_stable_supplier_identity_when_reference_has_candidate_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale candidate field must not hide a valid formal supplier identity."""
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    monkeypatch.setattr(
+        "app.domains.alert.service._find_watchlist_target",
+        lambda **_kwargs: None,
+    )
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks(
+            {
+                "run_id": "formal-watchlist-run",
+                "plan": {"tasks": []},
+                "intent": {
+                    "request_watchlist": True,
+                    "target_supplier_names": ["正式供应商有限公司"],
+                },
+                "supplier_references": [{
+                    "name": "正式供应商有限公司",
+                    "candidate_id": "candidate-from-earlier-run",
+                    "supplier_id": "supplier-formal-1",
+                    "company_id": "company-formal-1",
+                    "target_type": "formal_supplier",
+                }],
+            }
+        )
+    )
+
+    assert len(result["recommendations"]) == 1
+    target = result["recommendations"][0]["target"]
+    assert target["supplier_id"] == "supplier-formal-1"
+    assert target["company_id"] == "company-formal-1"
+    assert "candidate_id" not in target
+
+
 def test_identity_verification_does_not_create_watchlist_proposal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -381,6 +470,27 @@ def test_supervisor_final_answer_explains_idempotent_watchlist_add() -> None:
     )
 
     assert answer == "上海海拉电子有限公司 已在风险监控清单中，无需重复加入。"
+
+
+def test_supervisor_final_answer_explains_identity_required_watchlist_add() -> None:
+    answer = supervisor_graph._format_final_answer(
+        "基于 0 条证据形成风险结论，综合可信度 0.00。",
+        {},
+        [],
+        [{"company_name": "待核验企业有限公司", "status": "identity_required"}],
+    )
+
+    assert answer == "待核验企业有限公司 尚未完成主体核验，暂不能加入风险监控清单；请先确认正式企业主体。"
+
+
+def test_domain_action_error_is_not_presented_as_llm_failure() -> None:
+    from app.graphs import format_llm_error
+
+    message = format_llm_error(
+        DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)
+    )
+
+    assert message == "候选企业不属于任务"
 
 
 def test_supervisor_rejects_past_persisted_expiration_even_if_client_approves(
