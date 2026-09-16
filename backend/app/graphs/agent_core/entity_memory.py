@@ -384,7 +384,10 @@ def _ordered_mention_ids(message: str, mentions: list[EntityMention]) -> list[st
 
 def _explicit_company_names(message: str) -> list[str]:
     names: list[str] = []
-    for match in _COMPANY_NAME_PATTERN.finditer(message):
+    # Keep entity binding stable when copied text contains spaces inside a
+    # legal name, such as before a parenthesized branch name.
+    compact_message = re.sub(r"[\s　]+", "", str(message or ""))
+    for match in _COMPANY_NAME_PATTERN.finditer(compact_message):
         name = match.group(1).strip()
         if match.start(1) > 0 and name.startswith("和"):
             name = name[1:].strip()

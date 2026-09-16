@@ -113,3 +113,13 @@ def test_memory_from_state_does_not_leak_between_sessions() -> None:
     assert restored.session_id == "session-a"
     assert other.target_supplier_names == []
     assert other.needs_clarification is True
+
+
+def test_explicit_company_name_ignores_copied_spaces_inside_branch_name() -> None:
+    result = resolve_turn(
+        "查找纬湃汽车电子 （长春）有限公司的最新舆情和新闻动态",
+        session_id="session-a",
+    )
+
+    assert result.target_supplier_names == ["纬湃汽车电子（长春）有限公司"]
+    assert result.reason == "explicit_name_or_code"

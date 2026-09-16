@@ -293,7 +293,12 @@ def _explicit_target_names(message: str, references: list[dict[str, Any]]) -> li
 def _explicit_company_names(message: str) -> list[str]:
     """Extract full legal entity names from the current message without LLM guessing."""
     names: list[str] = []
-    for match in _COMPANY_NAME_PATTERN.finditer(message):
+    # Copy/paste from documents often inserts a space before a parenthesized
+    # branch name (for example ``电子 （长春）有限公司``). Parse a compact view
+    # so the full legal name remains authoritative; the stored canonical name
+    # is still taken from the matched text, not from an LLM guess.
+    compact_message = re.sub(r"[\s　]+", "", str(message or ""))
+    for match in _COMPANY_NAME_PATTERN.finditer(compact_message):
         name = match.group(1).strip()
         if match.start(1) > 0 and name.startswith("和"):
             name = name[1:].strip()

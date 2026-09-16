@@ -2,6 +2,7 @@
 
 import uuid
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 
@@ -602,7 +603,13 @@ def _sourcing_family(value: str) -> str:
 
 
 def _normalise_match_text(value: str) -> str:
-    return "".join(str(value or "").casefold().split())
+    """Normalize user-entered supplier text for identity and capability matching."""
+    return "".join(unicodedata.normalize("NFKC", str(value or "")).casefold().split())
+
+
+def normalize_supplier_identity(value: str) -> str:
+    """Return the canonical comparison form used for supplier identity matching."""
+    return _normalise_match_text(value)
 
 
 def list_suppliers(
@@ -694,7 +701,22 @@ def formal_supplier_exists_by_name(name: str) -> bool:
         "name": {"$regex": f"^{value}$", "$options": "i"},
         "status": {"$in": ["active", "approved"]},
     })
-    return collection.count_documents(filters, limit=1) > 0
+    if collection.count_documents(filters, limit=1) > 0:
+        return True
+
+    # The read model stores the Feishu spelling, while a browser may submit
+    # equivalent full-/half-width punctuation or copied whitespace. Keep the
+    # indexed exact query as the fast path, then compare active directory rows
+    # with the same normalization used by candidate recall.
+    normalized_value = normalize_supplier_identity(value)
+    if not normalized_value:
+        return False
+    for item in collection.find(_current_supplier_filter(collection, {
+        "status": {"$in": ["active", "approved"]},
+    })):
+        if normalize_supplier_identity(str(item.get("name") or "")) == normalized_value:
+            return True
+    return False
 
 
 def find_formal_supplier_candidates(query: str, limit: int = 5) -> list[dict[str, Any]]:

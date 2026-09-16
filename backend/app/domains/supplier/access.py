@@ -89,6 +89,11 @@ def can_access_supplier(supplier_id: str, user_id: str, role: str) -> bool:
 
 def formal_supplier_id_by_name(name: str) -> str | None:
     """Resolve only current formal suppliers; external candidates stay outside this gate."""
+    from app.domains.sourcing.supplier_repo import normalize_supplier_identity
+
+    normalized_name = normalize_supplier_identity(name)
+    if not normalized_name:
+        return None
     with get_cursor() as (_, cur):
         cur.execute(
             """
@@ -100,7 +105,22 @@ def formal_supplier_id_by_name(name: str) -> str | None:
             (name.strip(),),
         )
         row = cur.fetchone()
-    return str(row[0]) if row else None
+        if row:
+            return str(row[0])
+
+        # Match the active Feishu responsibility snapshot with the same
+        # punctuation/whitespace normalization used by the Mongo read model.
+        cur.execute(
+            """
+            SELECT supplier_id, supplier_name FROM supplier_responsibility_snapshots
+            WHERE source_active = TRUE AND sync_status = 'current'
+              AND supplier_id IS NOT NULL AND supplier_name IS NOT NULL
+            """,
+        )
+        for supplier_id, supplier_name in cur.fetchall():
+            if normalize_supplier_identity(str(supplier_name)) == normalized_name:
+                return str(supplier_id)
+    return None
 
 
 def formal_supplier_exists_by_name(name: str) -> bool:

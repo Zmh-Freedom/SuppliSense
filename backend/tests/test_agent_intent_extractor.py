@@ -411,6 +411,7 @@ def test_deterministic_company_name_resolution_removes_operation_prefixes():
         "看一下青岛三祥科技股份有限公司的财务数据",
         "核查青岛三祥科技股份有限公司是否有合规风险",
         "查找一下青岛三祥科技股份有限公司的风险",
+        "查找纬湃汽车电子 （长春）有限公司的最新舆情和新闻动态",
         "预测青岛三祥科技股份有限公司未来风险趋势",
         "生成青岛三祥科技股份有限公司的风险评估报告",
         "确认青岛三祥科技股份有限公司这个主体",
@@ -425,6 +426,8 @@ def test_deterministic_company_name_resolution_removes_operation_prefixes():
         assert result["current_task"]["target_supplier_names"] == (
             ["青岛三祥科技股份有限公司", "上海海拉电子有限公司"]
             if "对比" in message
+            else ["纬湃汽车电子（长春）有限公司"]
+            if "纬湃" in message
             else ["青岛三祥科技股份有限公司"]
         )
 
