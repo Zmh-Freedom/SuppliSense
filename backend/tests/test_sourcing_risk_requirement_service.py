@@ -4,6 +4,8 @@ from collections.abc import Callable
 import json
 from typing import Any
 
+import pytest
+
 from app.domains.sourcing_risk import requirement_service
 
 
@@ -164,6 +166,25 @@ def test_sourcing_fallback_removes_conversational_filler(monkeypatch):
 
     assert result["status"] == "ready"
     assert result["requirement"]["category"] == "蓄电池"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "做一下蓄电池的寻源",
+        "看一下蓄电池的供应商",
+        "帮我查一下做蓄电池的供应商",
+    ],
+)
+def test_sourcing_fallback_accepts_common_query_verbs(monkeypatch, message):
+    """Common conversational sourcing phrasing must enter the candidate flow."""
+    monkeypatch.setattr(requirement_service.settings, "LLM_API_KEY", "")
+
+    result = requirement_service.resolve_harness_requirement(message)
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "蓄电池"
+    assert result["requirement"]["specification"] == "蓄电池"
 
 
 def test_parse_requirement_repairs_unparseable_initial_adapter_response(monkeypatch):

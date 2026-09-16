@@ -278,6 +278,12 @@ def infer_task_type(message: str) -> Literal["sourcing", "analysis", "none"]:
         token in text for token in ("查询", "哪些", "列表", "目录", "清单", "有多少")
     ):
         return "sourcing"
+    if "寻源" in text:
+        return "sourcing"
+    if re.search(r"(?:做|查看|看|查)(?:一下|下)?\s*.+?(?:供应商|厂家|厂商)", text) and not any(
+        token in text for token in _ANALYSIS_TOKENS
+    ):
+        return "sourcing"
     has_supplier_target = any(token in text for token in ("供应商", "厂家", "厂商"))
     has_discovery_verb = any(token in text for token in ("找", "推荐", "寻找", "采购", "搜寻", "寻源", "有哪些", "历史合作", "补充"))
     if has_supplier_target and has_discovery_verb:

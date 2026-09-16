@@ -296,6 +296,9 @@ def test_llm_intent_keeps_risk_filter_as_sourcing_task(monkeypatch):
 
 def test_deterministic_intent_marks_sourcing_without_llm():
     assert intent_extractor.infer_task_type("帮我找钢材供应商") == "sourcing"
+    assert intent_extractor.infer_task_type("做一下蓄电池的寻源") == "sourcing"
+    assert intent_extractor.infer_task_type("看一下蓄电池的供应商") == "sourcing"
+    assert intent_extractor.infer_task_type("帮我查一下做蓄电池的供应商") == "sourcing"
     assert intent_extractor.infer_task_type("查询当前正式供应商") == "sourcing"
     assert intent_extractor.infer_task_type("分析甲公司当前风险") == "analysis"
     assert intent_extractor.infer_task_type("复核青岛三祥科技股份有限公司") == "analysis"

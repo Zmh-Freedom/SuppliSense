@@ -13,7 +13,8 @@ REQUIRED_FIELDS = ("category", "specification")
 MULTI_CATEGORY_SEPARATORS = ("、", ",", "，", "/")
 _REGION_NAMES = ("华东", "华南", "华北", "西南", "西北", "东北")
 _SOURCING_REQUEST_PATTERN = re.compile(
-    r"(?:找|推荐|寻找|采购|需要)(?P<target>.+?)(?:供应商|厂家|厂商)"
+    r"(?:找|推荐|寻找|采购|需要|查找|搜索|查看|查|看|做)"
+    r"(?:一下|下)?(?P<target>.+?)(?:供应商|厂家|厂商|寻源)"
 )
 _NATURAL_PURCHASE_PATTERN = re.compile(
     r"(?:找|推荐|寻找|采购|购买|需要)\s*(?P<target>[^，,。；;\n]+)"
