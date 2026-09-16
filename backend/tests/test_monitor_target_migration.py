@@ -216,6 +216,37 @@ def test_resolve_monitor_identity_chat_path_includes_external_identity(monkeypat
     assert result["candidates"][0]["verification_status"] == "pending_verification"
 
 
+def test_resolve_monitor_identity_falls_back_to_explicit_name_when_target_is_missing(monkeypatch):
+    monkeypatch.setattr(
+        "app.domains.alert.service.resolve_watchlist_identity",
+        lambda target_id: (_ for _ in ()).throw(ValueError("监控对象不存在")),
+    )
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {"resolution": "pending_verification", "exact": None, "candidates": []},
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_external_profile",
+        lambda query: ({
+            "company_name": query,
+            "unified_social_credit_code": "91450200MAA7L76A5R",
+            "registration_number": "450205000188432",
+            "registration_status": "存续",
+            "legal_person": "廖鸿胡",
+            "source_reference": f"tyc:{query}",
+        }, {"status": "available"}),
+    )
+
+    result = alert_tools.resolve_monitor_identity.func(
+        monitor_target_id="not-persisted-target",
+        company_name="赛克瑞浦动力电池系统有限公司",
+    )
+
+    assert result["monitor_target_id"] == "not-persisted-target"
+    assert result["resolution"] == "candidates"
+    assert result["candidates"][0]["candidate_type"] == "external_identity"
+
+
 def test_confirm_watchlist_identity_binds_verified_company_and_audit(monkeypatch):
     target = {
         "monitor_target_id": "monitor-identity-1",

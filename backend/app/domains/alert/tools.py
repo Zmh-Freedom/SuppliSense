@@ -52,42 +52,52 @@ def resolve_monitor_identity(
     from app.domains.company.service import search_identity
     from app.tools.evidence import attach_tool_evidence
 
+    def _resolve_by_company_name(name: str) -> dict:
+        resolved = {
+            "monitor_target_id": None,
+            "query": name,
+            **search_identity(name, limit=10),
+        }
+        # When chat is not bound to a persisted monitoring target, keep the
+        # same external-profile fallback as the monitoring intake flow.
+        if not resolved.get("exact") and not resolved.get("candidates"):
+            external_profile, enterprise_state = _load_external_profile(name)
+            if external_profile:
+                resolved.update({
+                    "resolution": "candidates",
+                    "candidates": [_external_identity_candidate(external_profile, name)],
+                    "source": "天眼查工商主体查询",
+                    "source_mode": enterprise_state.get("status") if isinstance(enterprise_state, dict) else "available",
+                    "external_profile": external_profile,
+                })
+        return resolved
+
     target_id = str(monitor_target_id or "").strip() or None
     query = str(company_name or "").strip()
     try:
         if target_id:
             result = resolve_watchlist_identity(target_id)
         elif query:
-            result = {
-                "monitor_target_id": None,
-                "query": query,
-                **search_identity(query, limit=10),
-            }
-            # Chat主体核验没有 monitor_target_id 时不能走
-            # resolve_watchlist_identity，但仍应复用同一份外部主体资料。
-            # 否则监控页面能看到天眼查候选，聊天入口却会错误地返回“没有候选”。
-            if not result.get("exact") and not result.get("candidates"):
-                external_profile, enterprise_state = _load_external_profile(query)
-                if external_profile:
-                    result.update({
-                        "resolution": "candidates",
-                        "candidates": [_external_identity_candidate(external_profile, query)],
-                        "source": "天眼查工商主体查询",
-                        "source_mode": enterprise_state.get("status") if isinstance(enterprise_state, dict) else "available",
-                        "external_profile": external_profile,
-                    })
+            result = _resolve_by_company_name(query)
         else:
             return {"status": "invalid", "message": "主体核验缺少监控对象 ID 或企业名称"}
     except ValueError as exc:
-        return {
-            "status": "not_found",
-            "monitor_target_id": target_id,
-            "query": query,
-            "resolution": "not_found",
-            "exact": None,
-            "candidates": [],
-            "message": str(exc),
-        }
+        # A previous add-to-monitor proposal may carry a target ID before the
+        # target is persisted. Do not discard the explicit company name from
+        # the current message in that case.
+        if query:
+            result = _resolve_by_company_name(query)
+            result["monitor_target_id"] = target_id
+        else:
+            return {
+                "status": "not_found",
+                "monitor_target_id": target_id,
+                "query": query,
+                "resolution": "not_found",
+                "exact": None,
+                "candidates": [],
+                "message": str(exc),
+            }
 
     resolution = str(result.get("resolution") or "pending_verification")
     exact = result.get("exact")
