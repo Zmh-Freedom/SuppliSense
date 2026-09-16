@@ -218,6 +218,8 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
     for source, target in aliases.items():
         if not payload.get(target) and payload.get(source) is not None:
             payload[target] = payload[source]
+    if not payload.get("category"):
+        payload["category"] = payload.get("product") or payload.get("material")
     allowed = set(SourcingRequirement.model_fields)
     validated = SourcingRequirement.model_validate(
         {key: value for key, value in payload.items() if key in allowed}

@@ -99,6 +99,71 @@ def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeyp
     assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
 
 
+def test_llm_extractor_accepts_wrapped_json_object_response(monkeypatch):
+    payload = {
+        "type": "json_object",
+        "content": {
+            "capability": "risk_network",
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": [],
+            "task_type": "analysis",
+        },
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "分析青岛三祥科技股份有限公司的供应链关系",
+        [],
+    )
+
+    assert result is not None
+    assert result.capability == "risk_network"
+    assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
+
+
+def test_llm_extractor_retries_once_after_empty_response(monkeypatch):
+    calls = 0
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            content = "" if calls == 1 else json.dumps({
+                "capability": "sourcing",
+                "scope": "product_category",
+                "sourcing_requirement": {"product": "蓄电池"},
+                "task_type": "sourcing",
+            })
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent("做一下蓄电池的寻源", [])
+
+    assert result is not None
+    assert result.capability == "sourcing"
+    assert calls == 2
+
+
 def test_llm_extractor_rejects_watchlist_action_for_identity_verification(monkeypatch):
     """The word monitoring in a target description is not a write request."""
     class FakeCompletions:
@@ -338,6 +403,29 @@ def test_deterministic_intent_marks_sourcing_without_llm():
     assert intent_extractor.infer_task_type("查询当前正式供应商") == "sourcing"
     assert intent_extractor.infer_task_type("分析甲公司当前风险") == "analysis"
     assert intent_extractor.infer_task_type("复核青岛三祥科技股份有限公司") == "analysis"
+
+
+def test_deterministic_company_name_resolution_removes_operation_prefixes():
+    cases = [
+        "帮我分析青岛三祥科技股份有限公司的综合风险",
+        "看一下青岛三祥科技股份有限公司的财务数据",
+        "核查青岛三祥科技股份有限公司是否有合规风险",
+        "预测青岛三祥科技股份有限公司未来风险趋势",
+        "生成青岛三祥科技股份有限公司的风险评估报告",
+        "确认青岛三祥科技股份有限公司这个主体",
+        "对比青岛三祥科技股份有限公司和上海海拉电子有限公司的风险",
+    ]
+
+    for message in cases:
+        result = adapter.build_execution_context(
+            session_id="prefix-cleanup",
+            user_message=message,
+        )
+        assert result["current_task"]["target_supplier_names"] == (
+            ["青岛三祥科技股份有限公司", "上海海拉电子有限公司"]
+            if "对比" in message
+            else ["青岛三祥科技股份有限公司"]
+        )
 
 
 def test_supplier_review_builds_default_real_evidence_task_matrix():

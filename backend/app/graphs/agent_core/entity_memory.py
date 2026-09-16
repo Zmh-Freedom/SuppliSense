@@ -129,7 +129,15 @@ _ORDINAL_TARGETS = (
 _EXCLUSION_TOKENS = ("除了", "除去", "排除")
 _SUPPLIER_CODE_PATTERN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9][A-Za-z0-9_\-/]{1,63})(?![A-Za-z0-9])")
 _COMPANY_NAME_PREFIXES = (
-    "请复核", "复核", "请对", "对", "将", "把", "分析", "评估", "查询", "查看", "监控", "请", "帮我",
+    "请帮我分析一下", "帮我分析一下", "请复核一下", "复核一下", "请分析一下", "分析一下",
+    "请评估一下", "评估一下", "请查询一下", "查询一下", "请查看一下", "查看一下",
+    "请核查一下", "核查一下", "请预测一下", "预测一下", "请确认一下", "确认一下",
+    "请生成一下", "生成一下", "请生成", "生成",
+    "请看一下", "看一下", "请对比一下", "对比一下", "比较一下",
+    "请复核", "复核", "请分析", "分析", "请评估", "评估", "请查询", "查询",
+    "请查看", "查看", "请核查", "核查", "请预测", "预测", "请确认", "确认",
+    "请生成", "生成",
+    "请对比", "对比", "比较", "请对", "对", "将", "把", "比", "请", "帮我",
 )
 
 
@@ -378,10 +386,15 @@ def _explicit_company_names(message: str) -> list[str]:
     names: list[str] = []
     for match in _COMPANY_NAME_PATTERN.finditer(message):
         name = match.group(1).strip()
-        for prefix in _COMPANY_NAME_PREFIXES:
-            if name.startswith(prefix):
-                name = name[len(prefix):].strip()
-                break
+        if match.start(1) > 0 and name.startswith("和"):
+            name = name[1:].strip()
+        previous = None
+        while name and name != previous:
+            previous = name
+            for prefix in _COMPANY_NAME_PREFIXES:
+                if name.startswith(prefix):
+                    name = name[len(prefix):].strip()
+                    break
         if name and name not in names:
             names.append(name)
     return names

@@ -189,7 +189,7 @@ def test_sourcing_fallback_accepts_common_query_verbs(monkeypatch, message):
 
 def test_llm_requirement_is_validated_without_reparsing_user_wording():
     result = requirement_service.resolve_harness_requirement_from_llm({
-        "category": "蓄电池",
+        "category": None,
         "product": "蓄电池",
     })
 

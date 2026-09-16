@@ -30,7 +30,7 @@ _MONITOR_TARGET_ID_PATTERN = re.compile(
     r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"
 )
 _TARGET_LEADING_FILLER_PATTERN = re.compile(
-    r"^(?:(?:请|帮我|麻烦)\s*)?(?:查看|查询|分析|评估|复核|监控|看看)\s*(?:一下|下)?\s*"
+    r"^(?:(?:请|帮我|麻烦)\s*)?(?:查看|查询|分析|评估|复核|监控|看看|核查|预测|确认|生成|对比|比较|处理)\s*(?:一下|下)?\s*"
     r"|^(?:一下|下)\s*"
 )
 
@@ -143,33 +143,53 @@ def extract_conversation_intent(
             "This is read-only intent extraction and must not execute an action.",
         ],
     }
-    try:
-        client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
+    client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
+    base_messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是供应商分析系统的意图与实体解析器。"
+                "只能返回符合用户消息和 JSON Schema 的结构化结果，"
+                "不得执行工具、写入数据或编造企业与风险事实。"
+            ),
+        },
+        {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+    ]
+
+    def request_extraction(messages: list[dict[str, str]]) -> ConversationIntentExtraction:
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "你是供应商分析系统的意图与实体解析器。"
-                        "只能返回符合用户消息和 JSON Schema 的结构化结果，"
-                        "不得执行工具、写入数据或编造企业与风险事实。"
-                    ),
-                },
-                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-            ],
+            messages=messages,
             temperature=0,
             response_format={"type": "json_object"},
-            max_tokens=500,
+            max_tokens=700,
             timeout=float(os.getenv("LLM_INTENT_EXTRACTION_TIMEOUT", "8")),
         )
-        content = response.choices[0].message.content or "{}"
-        extracted = ConversationIntentExtraction.model_validate(
+        content = response.choices[0].message.content or ""
+        if not content.strip():
+            raise ValueError("LLM 意图响应为空")
+        return ConversationIntentExtraction.model_validate(
             _normalize_llm_payload(json.loads(content))
         )
+
+    try:
+        extracted = request_extraction(base_messages)
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
         logger.warning("conversation_intent_extraction_invalid", error=str(exc))
-        return None
+        try:
+            extracted = request_extraction([
+                *base_messages,
+                {
+                    "role": "user",
+                    "content": "上一轮响应为空或不是合法结构。请重新返回完整 JSON 对象，不要 Markdown、解释或截断。",
+                },
+            ])
+        except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as retry_exc:
+            logger.warning("conversation_intent_extraction_retry_invalid", error=str(retry_exc))
+            return None
+        except Exception as retry_exc:
+            logger.warning("conversation_intent_extraction_retry_failed", error=str(retry_exc))
+            return None
     except Exception as exc:
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
         return None
@@ -351,6 +371,15 @@ def _normalize_llm_payload(payload: Any) -> Any:
     """Accept Chinese dimension labels while retaining the strict public contract."""
     if not isinstance(payload, dict):
         return payload
+    wrapped_content = payload.get("content")
+    if payload.get("type") == "json_object" and isinstance(wrapped_content, (dict, str)):
+        if isinstance(wrapped_content, str):
+            try:
+                wrapped_content = json.loads(wrapped_content)
+            except json.JSONDecodeError:
+                return payload
+        if isinstance(wrapped_content, dict):
+            payload = wrapped_content
     dimension_map = {
         "风险": "risk",
         "风险评估": "risk",
