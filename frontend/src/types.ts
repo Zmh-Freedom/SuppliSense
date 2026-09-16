@@ -195,7 +195,9 @@ export interface MonitorIdentityCandidate {
   supplier_code?: string | null;
   legal_name: string;
   unified_social_credit_code?: string | null;
+  registration_number?: string | null;
   registration_status?: string | null;
+  legal_person?: string | null;
   verification_status: 'verified' | 'pending_verification' | string;
   match_type: 'credit_code' | 'legal_name' | 'alias' | 'prefix' | string;
   confidence: number;
@@ -222,11 +224,14 @@ export interface MonitorIntakeCandidate {
   supplier_code?: string | null;
   legal_name: string;
   unified_social_credit_code?: string | null;
+  registration_number?: string | null;
   registration_status?: string | null;
+  legal_person?: string | null;
   verification_status: string;
   match_type: string;
   confidence: number;
   source: string;
+  binding_note?: string | null;
 }
 
 export interface MonitorIntake {
@@ -238,6 +243,7 @@ export interface MonitorIntake {
   external_profile?: {
     company_name?: string;
     unified_social_credit_code?: string | null;
+    registration_number?: string | null;
     registration_status?: string | null;
     legal_person?: string | null;
     industry?: string | null;

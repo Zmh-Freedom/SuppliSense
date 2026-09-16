@@ -475,6 +475,7 @@ const MATCH_TYPE_LABELS: Record<string, string> = {
   legal_name: '法定名称匹配',
   alias: '别名匹配',
   prefix: '名称前缀匹配',
+  external_profile: '外部工商资料匹配',
 };
 
 function IdentityResolutionPanel({
@@ -514,7 +515,7 @@ function IdentityResolutionPanel({
       const candidateKey = candidate.company_id || candidate.candidate_id || candidate.supplier_id || candidate.legal_name;
       return <div key={candidateKey} className="rounded-xl border border-indigo-100 bg-white px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0"><div className="font-medium text-[var(--color-text)]">{candidate.legal_name}</div><div className="mt-1 text-xs text-gray-500">{candidate.unified_social_credit_code || '未提供统一社会信用代码'} · {MATCH_TYPE_LABELS[candidate.match_type] || '名称匹配'}{candidate.source ? ` · ${candidate.source}` : ''}</div>{candidate.supplier_code && <div className="mt-1 text-xs text-gray-500">供应商代码：{candidate.supplier_code}</div>}{candidate.binding_note && <div className="mt-2 text-xs text-amber-700">{candidate.binding_note}</div>}</div>
+          <div className="min-w-0"><div className="font-medium text-[var(--color-text)]">{candidate.legal_name}</div><div className="mt-1 text-xs text-gray-500">{[candidate.unified_social_credit_code ? `统一社会信用代码：${candidate.unified_social_credit_code}` : null, candidate.registration_number ? `注册号：${candidate.registration_number}` : null].filter(Boolean).join(' · ') || '未提供统一社会信用代码'} · {MATCH_TYPE_LABELS[candidate.match_type] || '名称匹配'}{candidate.source ? ` · ${candidate.source}` : ''}</div>{candidate.registration_status && <div className="mt-1 text-xs text-gray-500">登记状态：{candidate.registration_status}{candidate.legal_person ? ` · 法定代表人：${candidate.legal_person}` : ''}</div>}{candidate.supplier_code && <div className="mt-1 text-xs text-gray-500">供应商代码：{candidate.supplier_code}</div>}{candidate.binding_note && <div className="mt-2 text-xs text-amber-700">{candidate.binding_note}</div>}</div>
           <div className="text-right"><div className="text-sm font-semibold text-indigo-700">{Math.round(candidate.confidence * 100)}%</div><div className="text-[10px] text-gray-400">匹配置信度</div></div>
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className={`rounded-full px-2 py-1 text-[11px] ${canConfirm ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{canConfirm ? '主体已核验，可绑定' : '主体尚未核验，不能绑定'}</span>{canConfirm && <button type="button" disabled={isConfirming} onClick={() => onConfirm(candidate.company_id!, sourceReference.trim() || undefined, comment.trim() || undefined)} className="rounded-lg bg-indigo-700 px-3 py-2 text-xs text-white hover:bg-indigo-800 disabled:opacity-50">{isConfirming ? '确认中…' : '确认此主体'}</button>}</div>

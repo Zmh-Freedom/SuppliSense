@@ -157,6 +157,38 @@ def test_resolve_watchlist_identity_includes_feishu_supplier_candidate(monkeypat
     assert "待核验正式企业主体" in result["candidates"][0]["binding_note"]
 
 
+def test_resolve_watchlist_identity_includes_cached_external_identity(monkeypatch):
+    target = {
+        "monitor_target_id": "monitor-external-identity-1",
+        "company_name": "赛克瑞浦动力电池系统有限公司",
+        "display_name": "赛克瑞浦动力电池系统有限公司",
+    }
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_: target)
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {"resolution": "pending_verification", "exact": None, "candidates": []},
+    )
+    monkeypatch.setattr("app.domains.alert.intake_service._load_local_candidates", lambda query: [])
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_external_profile",
+        lambda query: ({
+            "company_name": query,
+            "registration_number": "450205000188432",
+            "registration_status": "存续",
+            "legal_person": "廖鸿胡",
+            "source_reference": f"tyc:{query}",
+        }, {"key": "enterprise", "label": "企业工商与风险", "status": "available", "detail": "已取得天眼查快照"}),
+    )
+
+    result = alert_service.resolve_watchlist_identity("monitor-external-identity-1")
+
+    assert result["resolution"] == "candidates"
+    assert result["candidates"][0]["candidate_type"] == "external_identity"
+    assert result["candidates"][0]["registration_number"] == "450205000188432"
+    assert result["candidates"][0]["verification_status"] == "pending_verification"
+    assert "才能绑定监控" in result["candidates"][0]["binding_note"]
+
+
 def test_confirm_watchlist_identity_binds_verified_company_and_audit(monkeypatch):
     target = {
         "monitor_target_id": "monitor-identity-1",

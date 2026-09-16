@@ -780,7 +780,11 @@ def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
     if target is None:
         raise ValueError("监控对象不存在")
     from app.domains.company.service import search_identity
-    from app.domains.alert.intake_service import _load_local_candidates
+    from app.domains.alert.intake_service import (
+        _external_identity_candidate,
+        _load_external_profile,
+        _load_local_candidates,
+    )
 
     query = str(target.get("display_name") or target.get("company_name") or "").strip()
     if not query:
@@ -794,6 +798,7 @@ def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
     safe_limit = max(1, min(limit, 20))
     result = search_identity(query, limit=safe_limit)
     local_candidates = _load_local_candidates(query)
+    external_profile, _ = _load_external_profile(query)
     canonical_candidates = []
     if isinstance(result.get("exact"), dict):
         canonical_candidates.append(result["exact"])
@@ -825,6 +830,18 @@ def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
             continue
         seen.add(key)
         merged.append(item)
+
+    # A name may be absent from both the canonical company table and the
+    # current supplier snapshot while Tianyancha already has usable identity
+    # evidence.  Surface that evidence as a read-only external candidate; it
+    # deliberately has no company_id, so the existing binding guard keeps it
+    # out of the monitor until an administrator verifies a canonical subject.
+    if external_profile and not canonical_candidates:
+        external = _external_identity_candidate(external_profile, query)
+        external_key = str(external.get("source_reference") or external["legal_name"])
+        if external_key not in seen:
+            merged.append(external)
+            seen.add(external_key)
 
     exact = result.get("exact") if isinstance(result.get("exact"), dict) else None
     if exact is None and merged:

@@ -127,4 +127,35 @@ describe('MonitoringView', () => {
     expect(await screen.findByText('主体已核验，可绑定')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: '确认此主体' })).toBeInTheDocument();
   });
+
+  it('shows cached external identity evidence without allowing direct binding', async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes('/identity-candidates')) return Promise.resolve({
+        monitor_target_id: 'monitor-1',
+        query: '赛克瑞浦动力电池系统有限公司',
+        resolution: 'candidates',
+        candidates: [{
+          candidate_type: 'external_identity',
+          candidate_id: 'external_identity:tyc:赛克瑞浦动力电池系统有限公司',
+          legal_name: '赛克瑞浦动力电池系统有限公司',
+          unified_social_credit_code: '91450200MAA7L76A5R',
+          registration_number: '450205000188432',
+          registration_status: '存续',
+          legal_person: '廖鸿胡',
+          verification_status: 'pending_verification',
+          match_type: 'external_profile',
+          confidence: 0.95,
+          source: '天眼查工商主体查询',
+          binding_note: '已取得外部主体资料，但尚未绑定本地主体；需管理员完成主体核验后才能绑定监控。',
+        }],
+      });
+      return Promise.resolve({});
+    });
+    renderView('/assess/monitor-1');
+    expect(await screen.findByText('赛克瑞浦动力电池系统有限公司')).toBeInTheDocument();
+    expect(await screen.findByText(/统一社会信用代码：91450200MAA7L76A5R/)).toBeInTheDocument();
+    expect(screen.getByText(/注册号：450205000188432/)).toBeInTheDocument();
+    expect(screen.getByText('主体尚未核验，不能绑定')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '确认此主体' })).not.toBeInTheDocument();
+  });
 });

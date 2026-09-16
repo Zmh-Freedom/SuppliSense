@@ -287,11 +287,15 @@ def lookup_company_identity(company_name: str, unified_social_credit_code: str =
         profile.get("creditCode")
         or profile.get("taxNumber")
         or profile.get("unifiedSocialCreditCode")
-    )
+    ) or None
+    registration_number = _text(
+        profile.get("regNumber") or profile.get("registrationNumber")
+    ) or None
     candidate = {
         "external_id": f"tyc:{profile.get('id')}" if profile.get("id") else None,
         "legal_name": _text(profile.get("name")) or name,
-        "unified_social_credit_code": credit_code or None,
+        "unified_social_credit_code": credit_code,
+        "registration_number": registration_number,
         "legal_person": _text(profile.get("legalPersonName")),
         "registration_status": _text(profile.get("regStatus")),
         "registered_address": _text(profile.get("regLocation")),
@@ -311,6 +315,7 @@ def lookup_company_identity(company_name: str, unified_social_credit_code: str =
         "source_message": source_message,
         "queried_at": _now(),
         "limitations": ["天眼查候选不能替代监控对象主体绑定，仍需用户确认"]
+        + (["本轮仅返回注册号，尚未取得统一社会信用代码"] if not credit_code and registration_number else [])
         + (["统一社会信用代码与用户提供值不一致"] if conflict else []),
         "evidence": _provider_evidence(
             tool_name="lookup_company_identity",
@@ -325,7 +330,7 @@ def lookup_company_identity(company_name: str, unified_social_credit_code: str =
             tool_name="lookup_company_identity",
             company_name=name,
             dimension="identity_review",
-            statement=f"天眼查返回主体：{candidate['legal_name']}，统一社会信用代码：{credit_code or '未提供'}",
+            statement=f"天眼查返回主体：{candidate['legal_name']}，统一社会信用代码：{credit_code or '未提供'}，注册号：{registration_number or '未提供'}",
             value=candidate,
         )],
     }

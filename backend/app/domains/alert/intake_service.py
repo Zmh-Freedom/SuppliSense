@@ -137,14 +137,48 @@ def _load_external_profile(query: str) -> tuple[dict | None, dict]:
     profile = _baseinfo_result(cached)
     if not profile:
         return None, source_state
+    credit_code = _text(
+        profile.get("creditCode")
+        or profile.get("unifiedSocialCreditCode")
+        or profile.get("taxNumber")
+    ) or None
+    registration_number = _text(
+        profile.get("regNumber") or profile.get("registrationNumber")
+    ) or None
     return {
         "company_name": _text(profile.get("name")) or query,
-        "unified_social_credit_code": profile.get("regNumber"),
+        "unified_social_credit_code": credit_code,
+        "registration_number": registration_number,
         "registration_status": profile.get("regStatus"),
         "legal_person": profile.get("legalPersonName"),
         "industry": profile.get("industry"),
         "source_reference": f"tyc:{_text(profile.get('name')) or query}",
     }, source_state
+
+
+def _external_identity_candidate(profile: dict, query: str) -> dict:
+    """Expose external identity evidence without pretending it is canonical."""
+    legal_name = _text(profile.get("company_name")) or query
+    credit_code = _text(profile.get("unified_social_credit_code")) or None
+    registration_number = _text(profile.get("registration_number")) or None
+    return {
+        "candidate_id": f"external_identity:{_text(profile.get('source_reference')) or legal_name}",
+        "candidate_type": "external_identity",
+        "company_id": None,
+        "supplier_id": None,
+        "supplier_code": None,
+        "legal_name": legal_name,
+        "unified_social_credit_code": credit_code,
+        "registration_number": registration_number,
+        "registration_status": _text(profile.get("registration_status")) or None,
+        "legal_person": _text(profile.get("legal_person")) or None,
+        "verification_status": "pending_verification",
+        "match_type": "external_profile",
+        "confidence": 0.95,
+        "source": "天眼查工商主体查询",
+        "source_reference": _text(profile.get("source_reference")) or None,
+        "binding_note": "已取得外部主体资料，但尚未绑定本地主体；需管理员完成主体核验后才能绑定监控。",
+    }
 
 
 def _candidate_context(candidate: dict | None, query: str) -> tuple[str, str | None, str | None]:
@@ -223,12 +257,23 @@ def investigate_supplier_monitoring(query: str) -> dict:
     if len(normalized_query) < 2:
         raise ValueError("请输入至少两个字符的企业名称、供应商代码或统一社会信用代码")
     candidates = _load_local_candidates(normalized_query)
-    selected = candidates[0] if len(candidates) == 1 else None
     external_profile, enterprise_state = _load_external_profile(normalized_query)
+    if not candidates and external_profile:
+        candidates = [_external_identity_candidate(external_profile, normalized_query)]
+    selected = (
+        candidates[0]
+        if len(candidates) == 1 and any(
+            candidates[0].get(field) for field in ("company_id", "supplier_id")
+        )
+        else None
+    )
     dimensions, findings, evidence = _data_coverage(selected, normalized_query, enterprise_state)
     return _serialize({
         "query": normalized_query,
-        "status": "ready_for_selection" if candidates else "needs_identity_confirmation",
+        "status": "ready_for_selection" if selected or any(
+            candidate.get("company_id") or candidate.get("supplier_id")
+            for candidate in candidates
+        ) else "needs_identity_confirmation",
         "candidates": candidates,
         "selected_candidate_id": selected.get("candidate_id") if selected else None,
         "external_profile": external_profile,
@@ -264,6 +309,8 @@ def select_monitor_intake_candidate(intake_id: str, candidate_id: str, user_id: 
     candidate = next((item for item in document.get("candidates", []) if item.get("candidate_id") == candidate_id), None)
     if not isinstance(candidate, dict):
         raise ValueError("请选择本次调查返回的主体候选")
+    if candidate.get("candidate_type") == "external_identity" and not candidate.get("company_id"):
+        raise ValueError("天眼查外部资料尚未绑定本地主体，请先完成主体核验")
     dimensions, findings, evidence = _data_coverage(candidate, _text(document.get("query")), {"key": "enterprise", "label": "企业工商与风险", "status": "available" if document.get("external_profile") else "missing", "detail": "已取得企业资料" if document.get("external_profile") else "尚未取得企业资料"})
     get_db()[INTAKE_COLLECTION].update_one({"_id": document["_id"]}, {"$set": {"selected_candidate_id": candidate_id, "status": "ready_for_confirmation", "data_coverage": {"dimensions": dimensions, "missing_dimensions": [item["label"] for item in dimensions if item["status"] != "available"]}, "findings": findings, "evidence_summary": evidence, "updated_at": _now()}})
     return get_monitor_intake(intake_id, user_id) or {}
@@ -279,6 +326,8 @@ def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
     candidate = next((item for item in document.get("candidates", []) if item.get("candidate_id") == selected_id), None)
     if not isinstance(candidate, dict):
         raise ValueError("请先选择一个主体候选")
+    if not candidate.get("company_id") and candidate.get("candidate_type") == "external_identity":
+        raise ValueError("天眼查外部资料尚未绑定本地主体，请先完成主体核验")
 
     from app.domains.alert.service import add_to_watchlist, get_watchlist_target_summaries, save_snapshot
     from app.domains.risk.service import calculate_company_risk_preview

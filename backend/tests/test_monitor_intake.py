@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 from bson import ObjectId
+import pytest
 
 from app.domains.alert import intake_service
 
@@ -81,3 +82,51 @@ def test_monitor_intake_reads_current_feishu_supplier_master(monkeypatch):
     assert candidates[0]["supplier_code"] == "8370069"
     assert candidates[0]["source"] == "飞书正式供应商主数据"
     assert snapshots.find.called
+
+
+def test_monitor_intake_surfaces_external_identity_when_internal_sources_are_missing(monkeypatch):
+    db = {"monitor_intakes": MagicMock()}
+    monkeypatch.setattr(intake_service, "get_db", lambda: db)
+    monkeypatch.setattr(intake_service, "_load_local_candidates", lambda query: [])
+    monkeypatch.setattr(
+        intake_service,
+        "_load_external_profile",
+        lambda query: ({
+            "company_name": query,
+            "registration_number": "450205000188432",
+            "registration_status": "存续",
+            "legal_person": "廖鸿胡",
+            "source_reference": f"tyc:{query}",
+        }, {"key": "enterprise", "label": "企业工商与风险", "status": "available", "detail": "已取得天眼查快照"}),
+    )
+    monkeypatch.setattr(intake_service, "_data_coverage", lambda selected, query, state: ([], [], []))
+
+    result = intake_service.investigate_supplier_monitoring("赛克瑞浦动力电池系统有限公司")
+
+    assert result["status"] == "needs_identity_confirmation"
+    assert result["selected_candidate_id"] is None
+    assert result["candidates"][0]["candidate_type"] == "external_identity"
+    assert result["candidates"][0]["registration_number"] == "450205000188432"
+    assert result["candidates"][0]["verification_status"] == "pending_verification"
+    assert "管理员完成主体核验" in result["candidates"][0]["binding_note"]
+
+
+def test_monitor_intake_rejects_external_identity_without_canonical_company(monkeypatch):
+    db = {"monitor_intakes": MagicMock()}
+    db["monitor_intakes"].find_one.return_value = {
+        "_id": "mongo-2",
+        "intake_id": "intake-2",
+        "created_by": "user-1",
+        "query": "赛克瑞浦动力电池系统有限公司",
+        "selected_candidate_id": "external_identity:tyc:赛克瑞浦动力电池系统有限公司",
+        "candidates": [{
+            "candidate_id": "external_identity:tyc:赛克瑞浦动力电池系统有限公司",
+            "candidate_type": "external_identity",
+            "legal_name": "赛克瑞浦动力电池系统有限公司",
+            "company_id": None,
+        }],
+    }
+    monkeypatch.setattr(intake_service, "get_db", lambda: db)
+
+    with pytest.raises(ValueError, match="尚未绑定本地主体"):
+        intake_service.confirm_monitor_intake("intake-2", "user-1")

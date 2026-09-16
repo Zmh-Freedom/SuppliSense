@@ -44,16 +44,22 @@ export default function MonitoringIntakePanel({
       <section className="rounded-xl border border-indigo-100 bg-white p-4">
         <div className="text-xs font-medium text-indigo-700">调查线索</div>
         <div className="mt-1 text-sm font-semibold text-[var(--color-text)]">{intake.query}</div>
-        {intake.external_profile && <div className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950">外部主体资料：{intake.external_profile.company_name || intake.query} · {intake.external_profile.unified_social_credit_code || '未返回统一社会信用代码'}{intake.external_profile.registration_status ? ` · ${intake.external_profile.registration_status}` : ''}</div>}
+        {intake.external_profile && <div className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs leading-5 text-indigo-950">外部主体资料：{intake.external_profile.company_name || intake.query} · {[intake.external_profile.unified_social_credit_code ? `统一社会信用代码：${intake.external_profile.unified_social_credit_code}` : null, intake.external_profile.registration_number ? `注册号：${intake.external_profile.registration_number}` : null].filter(Boolean).join(' · ') || '未返回统一社会信用代码'}{intake.external_profile.registration_status ? ` · ${intake.external_profile.registration_status}` : ''}{intake.external_profile.legal_person ? ` · 法定代表人：${intake.external_profile.legal_person}` : ''}</div>}
       </section>
 
       <section>
         <div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="text-sm font-semibold text-[var(--color-text)]">主体候选</h3><span className="text-xs text-gray-500">仅从本次调查结果中选择</span></div>
         {intake.candidates.length === 0 ? <div className="mt-3 rounded-xl border border-dashed border-amber-200 bg-white px-4 py-4 text-sm text-amber-900">未找到可安全绑定的本地主体。请补充供应商代码、统一社会信用代码或天眼查链接后重新调查。</div> : <div className="mt-3 space-y-2">{intake.candidates.map(candidate => {
           const isSelected = selected?.candidate_id === candidate.candidate_id;
-          return <button type="button" key={candidate.candidate_id} onClick={() => onSelect(candidate.candidate_id)} className={`w-full rounded-xl border p-4 text-left transition ${isSelected ? 'border-indigo-500 bg-white ring-2 ring-indigo-100' : 'border-indigo-100 bg-white hover:border-indigo-300'}`}>
-            <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-medium text-[var(--color-text)]">{candidate.legal_name}</div><div className="mt-1 text-xs text-gray-500">{candidate.source} · {candidate.match_type} · {candidate.unified_social_credit_code || '未提供统一社会信用代码'}</div>{candidate.supplier_code && <div className="mt-1 text-xs text-gray-400">内部供应商代码：{candidate.supplier_code}</div>}</div><span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700">匹配 {Math.round(candidate.confidence * 100)}%</span></div>
-          </button>;
+          const isExternalIdentity = candidate.candidate_type === 'external_identity';
+          const identityNumber = [
+            candidate.unified_social_credit_code ? `统一社会信用代码：${candidate.unified_social_credit_code}` : null,
+            candidate.registration_number ? `注册号：${candidate.registration_number}` : null,
+          ].filter(Boolean).join(' · ') || '未提供统一社会信用代码';
+          const content = <div className={`w-full rounded-xl border p-4 text-left ${isSelected ? 'border-indigo-500 bg-white ring-2 ring-indigo-100' : 'border-indigo-100 bg-white'}`}>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="font-medium text-[var(--color-text)]">{candidate.legal_name}</div><div className="mt-1 text-xs text-gray-500">{candidate.source} · {candidate.match_type} · {identityNumber}</div>{candidate.registration_status && <div className="mt-1 text-xs text-gray-500">登记状态：{candidate.registration_status}{candidate.legal_person ? ` · 法定代表人：${candidate.legal_person}` : ''}</div>}{candidate.supplier_code && <div className="mt-1 text-xs text-gray-400">内部供应商代码：{candidate.supplier_code}</div>}{candidate.binding_note && <div className="mt-2 text-xs leading-5 text-amber-700">{candidate.binding_note}</div>}</div><span className="rounded-full bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700">匹配 {Math.round(candidate.confidence * 100)}%</span></div>
+          </div>;
+          return isExternalIdentity ? <div key={candidate.candidate_id}>{content}</div> : <button type="button" key={candidate.candidate_id} onClick={() => onSelect(candidate.candidate_id)} className="w-full rounded-xl text-left transition hover:opacity-95">{content}</button>;
         })}</div>}
       </section>
 
