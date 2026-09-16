@@ -40,12 +40,12 @@ interface ChatMessageListProps {
   streamState: ChatStreamViewState | null;
   loading: boolean;
   onAnalyzeReference: (name: string) => void;
-  onConfirmSupplier: (name: string) => void;
+  onConfirmSupplier: (candidate: SupplierIdentityCandidate, originalMessage?: string) => void;
   onApproval: (approved: boolean) => void;
   StructuredAgentResult: ComponentType<{ answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }>;
 }
 
-function SupplierIdentityChoices({ candidates, onConfirm }: { candidates: SupplierIdentityCandidate[]; onConfirm: (name: string) => void }) {
+function SupplierIdentityChoices({ candidates, originalMessage, onConfirm }: { candidates: SupplierIdentityCandidate[]; originalMessage?: string; onConfirm: (candidate: SupplierIdentityCandidate, originalMessage?: string) => void }) {
   if (candidates.length === 0) return null;
   return <div className="mt-3 border-t border-[var(--color-border)] pt-3" role="group" aria-label="正式供应商候选">
     <p className="mb-2 text-xs text-[var(--color-text-secondary)]">请选择正式供应商：</p>
@@ -53,7 +53,7 @@ function SupplierIdentityChoices({ candidates, onConfirm }: { candidates: Suppli
       {candidates.map(candidate => <button
         key={candidate.supplier_id}
         type="button"
-        onClick={() => onConfirm(candidate.supplier_name)}
+        onClick={() => onConfirm(candidate, originalMessage)}
         className="min-h-11 rounded-xl border border-[var(--color-primary-bg)]/25 bg-[var(--color-primary-bg)]/5 px-3 py-2 text-left text-xs text-[var(--color-text)] transition-colors hover:border-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10"
       >
         <span className="block font-medium">{candidate.supplier_name}</span>
@@ -72,7 +72,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
         </div>
         <div className={`${message.role === 'user' ? 'max-w-[80%]' : 'min-w-0 flex-1 max-w-5xl'} rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${message.role === 'user' ? 'bg-[var(--color-code-bg)] text-[var(--color-text)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'}`}>
           <AssistantRichText content={message.agentAnswer?.summary || message.content} label={message.agentAnswer ? '采购分析' : undefined} />
-          {message.role === 'assistant' && message.identityCandidates && <SupplierIdentityChoices candidates={message.identityCandidates} onConfirm={onConfirmSupplier} />}
+          {message.role === 'assistant' && message.identityCandidates && <SupplierIdentityChoices candidates={message.identityCandidates} originalMessage={message.clarificationMessage} onConfirm={onConfirmSupplier} />}
           {message.role === 'assistant' && message.references && message.references.length > 0 && <details className="group mt-3 border-t border-[var(--color-border)] pt-2">
             <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 py-1 text-left text-xs text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">
               <span>本轮识别供应商（{message.references.length} 家）</span><span className="flex items-center gap-1.5"><span>按需展开查看</span><span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span></span>

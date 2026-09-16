@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { chatRunEventStream, chatStream, dispatchStreamEvent, resumeChat } from '../api';
 import type { ApprovalData, StreamCallbacks } from '../api';
-import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowLifecycle, AgentWorkflowSnapshot, ChatMessage, SupplierReference } from '../types';
+import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowLifecycle, AgentWorkflowSnapshot, ChatMessage, SupplierIdentityCandidate, SupplierReference } from '../types';
 import type { AgentStatus } from './AgentWorkflowPanel';
 import ChatMessageList, { type ChatStreamViewState } from './ChatMessageList';
 import StructuredAgentResult from './StructuredAgentResult';
@@ -106,6 +106,53 @@ function normalizeApprovalAnswer(answer: string, approved?: boolean): string {
   return waitingText.test(answer)
     ? answer.replace(waitingText, '分析已完成；如需执行加入监控，请在下方“执行详情”中确认。')
     : answer;
+}
+
+function restoreConfirmedSupplierQuestion(
+  originalMessage: string | undefined,
+  candidate: SupplierIdentityCandidate,
+): string {
+  const canonicalName = candidate.supplier_name.trim();
+  const original = originalMessage?.trim();
+  if (!original) return `查看${canonicalName}的风险情况`;
+
+  let restored = original;
+  const aliases = [candidate.short_name, canonicalName]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .sort((left, right) => right.length - left.length);
+  const alias = aliases.find(value => value !== canonicalName && restored.includes(value));
+  if (alias) {
+    // A short name can be a prefix of the name used in the question (for
+    // example “网易云音乐” vs. “网易云”). Consume the overlapping suffix
+    // already present in the canonical name so it is not duplicated.
+    const canonicalAliasIndex = canonicalName.indexOf(alias);
+    const canonicalTail = canonicalAliasIndex >= 0
+      ? canonicalName.slice(canonicalAliasIndex + alias.length)
+      : '';
+    const aliasIndex = restored.indexOf(alias);
+    let overlap = 0;
+    while (
+      overlap < canonicalTail.length
+      && aliasIndex + alias.length + overlap < restored.length
+      && restored[aliasIndex + alias.length + overlap] === canonicalTail[overlap]
+    ) overlap += 1;
+    restored = restored.replace(`${alias}${canonicalTail.slice(0, overlap)}`, canonicalName);
+  }
+
+  // Keep the original analysis wording, but remove a spoken filler that a
+  // model may have accidentally treated as part of the company name.
+  restored = restored.replace(/(查看|查询|分析|评估|复核|监控|看看)(一下|下)(?=[\u4e00-\u9fffA-Za-z0-9])/g, '$1');
+  if (restored.includes(canonicalName)) return restored;
+
+  // Legacy clarification records may not contain the original question. In
+  // that case send an explicit, executable risk request instead of a bare
+  // company name, which has no analysis dimension for the Harness to plan.
+  if (restored.includes('舆情') || restored.includes('新闻')) return `分析${canonicalName}的舆情和新闻动态`;
+  if (restored.includes('财务')) return `查看${canonicalName}的财务情况`;
+  if (restored.includes('供应链') || restored.includes('传染')) return `分析${canonicalName}的供应链关系和传染风险`;
+  if (restored.includes('合规') || restored.includes('制裁') || restored.includes('司法') || restored.includes('诉讼')) return `分析${canonicalName}的合规与司法风险`;
+  if (restored.includes('趋势')) return `预测${canonicalName}未来6-12个月的风险趋势`;
+  return `查看${canonicalName}的风险情况`;
 }
 
 export default function ChatView() {
@@ -362,7 +409,7 @@ export default function ChatView() {
           receivedTerminalEvent = true;
           const clarificationWorkflow = { ...workflowAccRef.current, status: 'stopped' as const, stage: data.stage || 'understand', message: data.message };
           workflowAccRef.current = clarificationWorkflow;
-          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, identityCandidates: data.candidates, workflow: clarificationWorkflow }];
+          const clarifiedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: data.message, identityCandidates: data.candidates, clarificationMessage: text, workflow: clarificationWorkflow }];
           persist(sid, clarifiedMsgs);
           setStreamState(null);
           setLoading(false);
@@ -743,7 +790,7 @@ export default function ChatView() {
           streamState={streamState}
           loading={loading}
           onAnalyzeReference={name => setInput(`继续分析 ${name} 的风险`)}
-          onConfirmSupplier={name => send(name)}
+          onConfirmSupplier={(candidate, originalMessage) => send(restoreConfirmedSupplierQuestion(originalMessage, candidate))}
           onApproval={handleApproval}
           StructuredAgentResult={StructuredAgentResult}
         />

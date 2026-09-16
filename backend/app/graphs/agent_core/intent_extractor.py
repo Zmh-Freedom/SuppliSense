@@ -28,6 +28,20 @@ _GENERIC_RISK_QUERY_TOKENS = (
 _MONITOR_TARGET_ID_PATTERN = re.compile(
     r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"
 )
+_TARGET_LEADING_FILLER_PATTERN = re.compile(
+    r"^(?:(?:请|帮我|麻烦)\s*)?(?:查看|查询|分析|评估|复核|监控|看看)\s*(?:一下|下)?\s*"
+    r"|^(?:一下|下)\s*"
+)
+
+
+def _normalize_extracted_target(target: str) -> str:
+    """Remove conversational prefixes accidentally copied into an entity name."""
+    value = str(target or "").strip()
+    previous = None
+    while value and value != previous:
+        previous = value
+        value = _TARGET_LEADING_FILLER_PATTERN.sub("", value, count=1).strip()
+    return value.strip(" ：:，,。？！!?")
 
 
 class ConversationIntentExtraction(BaseModel):
@@ -52,7 +66,11 @@ class ConversationIntentExtraction(BaseModel):
     @field_validator("target_supplier_names")
     @classmethod
     def normalize_targets(cls, value: list[str]) -> list[str]:
-        return list(dict.fromkeys(item.strip() for item in value if item.strip()))
+        return list(dict.fromkeys(
+            normalized
+            for item in value
+            if isinstance(item, str) and (normalized := _normalize_extracted_target(item))
+        ))
 
     @field_validator("analysis_dimensions")
     @classmethod
@@ -145,10 +163,20 @@ def extract_conversation_intent(
         message,
         list(extracted.analysis_dimensions),
     )
+    # When the current message contains a legal entity name, the deterministic
+    # parser is authoritative.  This prevents an LLM from returning a copied
+    # conversational filler such as “一下青岛三祥科技股份有限公司” and
+    # triggering a false identity clarification on one deployment/model.
+    from app.services.conversation_state import resolve_supplier_target_selection
+
+    deterministic_target = resolve_supplier_target_selection(message, supplier_references)
+    validated_targets = validate_extracted_targets(
+        extracted.target_supplier_names, supplier_references
+    )
+    if deterministic_target.reason in {"explicit_full_name", "explicit_name_or_alias"}:
+        validated_targets = deterministic_target.target_supplier_names
     validated = extracted.model_copy(update={
-        "target_supplier_names": validate_extracted_targets(
-            extracted.target_supplier_names, supplier_references
-        ),
+        "target_supplier_names": validated_targets,
         "analysis_dimensions": extracted_dimensions,
         "task_type": inferred_task_type if inferred_task_type != "none" else extracted.task_type,
         # The model may over-read the word “监控” in a read-only identity

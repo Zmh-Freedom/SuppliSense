@@ -71,6 +71,34 @@ def test_llm_extractor_runs_for_entity_only_follow_up(monkeypatch):
     assert calls[0]["messages"][0]["role"] == "system"
 
 
+def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeypatch):
+    """Model wording must not turn ``一下`` into part of the legal name."""
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                    "target_supplier_names": ["一下青岛三祥科技股份有限公司"],
+                    "analysis_dimensions": ["risk"],
+                    "task_type": "analysis",
+                })))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "查看一下青岛三祥科技股份有限公司的风险情况",
+        [],
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
+
+
 def test_llm_extractor_rejects_watchlist_action_for_identity_verification(monkeypatch):
     """The word monitoring in a target description is not a write request."""
     class FakeCompletions:

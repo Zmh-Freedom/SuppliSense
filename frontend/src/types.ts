@@ -265,6 +265,8 @@ export interface ChatMessage {
   content: string;
   references?: SupplierReference[];
   identityCandidates?: SupplierIdentityCandidate[];
+  /** Original question retained while the user confirms a supplier identity. */
+  clarificationMessage?: string;
   workflow?: AgentWorkflowSnapshot;
   agentAnswer?: AgentAnswer;
   evidence?: AgentEvidenceRecord[];

@@ -104,7 +104,7 @@ describe('ChatView session lifecycle', () => {
     await user.click(candidate)
 
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledTimes(2))
-    expect(mocks.chatStream.mock.calls[1][0]).toBe('杭州网易云音乐科技有限公司')
+    expect(mocks.chatStream.mock.calls[1][0]).toBe('分析杭州网易云音乐科技有限公司的风险')
   })
 
   it('keeps a newly opened chat selected when an earlier stream completes', async () => {
