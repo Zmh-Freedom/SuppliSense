@@ -348,6 +348,7 @@ def _enforce_scope_query_intent(
     scope_tokens = (
         "监控清单", "监控列表", "我负责的供应商", "我管理的供应商",
         "本人负责供应商", "本人负责的供应商", "本人管理供应商", "本人管理的供应商",
+        "我所监控的供应商", "我监控的供应商", "当前监控供应商",
         "我科室", "本部门", "待复核", "待审核", "待处理事项",
     )
     if not any(token in str(user_message or "") for token in scope_tokens):

@@ -59,4 +59,15 @@ describe('StructuredAgentResult', () => {
     expect(screen.getByText('基本稳定')).toBeInTheDocument();
     expect(screen.getByText('较周期初+0分')).toBeInTheDocument();
   });
+
+  it('shows a scope-level score overview instead of a generic detail instruction', () => {
+    const overviewAnswer: AgentAnswer = {
+      ...answer,
+      summary: '已完成当前用户责任范围内 3 家供应商的本月风险概览；3 家已有安全评分，平均 76.7/100（分数越高风险越低）；风险等级：中风险 1 家、低风险 2 家；本月变化：恶化 1 家、基本稳定 1 家、仅有1次评分 1 家；需要优先复核 1 家。',
+    };
+    render(<StructuredAgentResult answer={overviewAnswer} evidence={evidence} />);
+
+    expect(screen.getByText(/平均 76\.7\/100/)).toBeInTheDocument();
+    expect(screen.queryByText(/可直接打开详情/)).not.toBeInTheDocument();
+  });
 });

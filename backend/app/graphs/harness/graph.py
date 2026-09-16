@@ -309,11 +309,15 @@ def _scope_query_task(
     capability = str(current_task.get("capability") or "")
     scope = str(current_task.get("scope") or "")
     trend_requested = capability in {"risk_trend", "risk_prediction"} or any(
-        token in message for token in ("风险变化", "风险趋势", "趋势", "变化情况")
+        token in message for token in (
+            "风险变化", "风险趋势", "风险情况", "风险状态", "风险概览",
+            "风险评分", "风险等级", "趋势", "变化情况", "本月",
+        )
     )
     monitoring_scope = any(token in message for token in (
         "监控清单", "监控列表", "我负责的供应商", "我管理的供应商",
         "本人负责供应商", "本人负责的供应商", "本人管理供应商", "本人管理的供应商",
+        "我所监控的供应商", "我监控的供应商", "当前监控供应商",
         "我科室", "本部门",
     ))
     if scope != "responsible_suppliers" and not monitoring_scope:
@@ -817,6 +821,84 @@ def _summary_with_boundary(answer: AgentAnswer, result: str, normal_suffix: str)
     return result + normal_suffix
 
 
+def _watchlist_level_label(value: Any) -> str:
+    labels = {
+        "low": "低风险",
+        "medium": "中风险",
+        "high": "高风险",
+        "critical": "严重风险",
+        "unknown": "暂无法判断",
+        "未知": "暂无法判断",
+        "暂无": "暂无法判断",
+    }
+    normalized = str(value or "").strip()
+    return labels.get(normalized.lower(), normalized or "暂无法判断")
+
+
+def _watchlist_risk_overview(
+    companies: list[dict[str, Any]],
+    period_months: int,
+    scope: str,
+) -> str:
+    """Build a compact, user-facing risk overview for a scope query."""
+    count = len(companies)
+    period_label = "本月" if period_months == 1 else f"近{period_months}个月"
+    scored = [
+        item for item in companies
+        if isinstance(item.get("latest_score"), (int, float))
+    ]
+    level_counts: dict[str, int] = {}
+    trend_counts: dict[str, int] = {}
+    for item in companies:
+        level = _watchlist_level_label(item.get("latest_level"))
+        level_counts[level] = level_counts.get(level, 0) + 1
+        trend = str(item.get("trend") or "暂无快照")
+        trend_label = "基本稳定" if trend == "稳定" else trend
+        trend_counts[trend_label] = trend_counts.get(trend_label, 0) + 1
+
+    parts = [f"已完成{scope}内 {count} 家供应商的{period_label}风险概览"]
+    if scored:
+        average_score = sum(float(item["latest_score"]) for item in scored) / len(scored)
+        parts.append(f"{len(scored)} 家已有安全评分，平均 {average_score:.1f}/100（分数越高风险越低）")
+    else:
+        parts.append("当前没有可汇总的安全评分")
+
+    level_order = ("严重风险", "高风险", "中风险", "低风险", "暂无法判断")
+    level_text = "、".join(
+        f"{label} {level_counts[label]} 家"
+        for label in level_order
+        if level_counts.get(label)
+    )
+    if level_text:
+        parts.append(f"风险等级：{level_text}")
+
+    trend_order = ("恶化", "改善", "基本稳定", "仅有1次评分", "评分缺失", "暂无快照")
+    trend_text = "、".join(
+        f"{label} {trend_counts[label]} 家"
+        for label in trend_order
+        if trend_counts.get(label)
+    )
+    if trend_text:
+        parts.append(f"{period_label}变化：{trend_text}")
+
+    priority_count = sum(
+        1 for item in companies
+        if item.get("trend") == "恶化"
+        or _watchlist_level_label(item.get("latest_level")) in {"高风险", "严重风险"}
+    )
+    insufficient_count = sum(
+        1 for item in companies
+        if item.get("trend") in {"仅有1次评分", "评分缺失", "暂无快照"}
+    )
+    if priority_count:
+        parts.append(f"需要优先复核 {priority_count} 家")
+    elif insufficient_count:
+        parts.append(f"暂无已识别的优先恶化对象，但有 {insufficient_count} 家评分样本不足，暂不能判断变化方向")
+    else:
+        parts.append("当前未发现需要优先复核的供应商")
+    return "；".join(parts) + "。"
+
+
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     current_task = state.get("current_task") or {}
     target_names = [
@@ -885,10 +967,9 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         period = int(latest_data.get("period_months") or 1)
         if not companies:
             return f"当前责任范围内暂无可分析的监控供应商，暂时无法判断最近 {period} 个月的风险变化。"
-        available = [item for item in companies if isinstance(item, dict) and item.get("trend") not in {None, "暂无数据", "数据不足"}]
-        if not available:
-            return f"已检查当前责任范围内 {len(companies)} 家供应商，但最近 {period} 个月的风险快照不足，暂时无法判断上升或下降。"
-        return f"已完成当前责任范围内 {len(companies)} 家供应商最近 {period} 个月的风险变化检查，下面直接列出每家的变化状态和下一步建议。"
+        rows = [item for item in companies if isinstance(item, dict)]
+        scope = str(latest_data.get("scope") or "当前责任范围")
+        return _watchlist_risk_overview(rows, period, scope)
     subject = _summary_subject(target_names)
     if primary_capability == "risk":
         risk_claims = [claim for claim in answer.claims if claim.dimension == "risk"]

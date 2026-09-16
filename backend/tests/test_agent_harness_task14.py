@@ -685,6 +685,7 @@ def test_contagion_analysis_binds_network_fields_to_claims(monkeypatch) -> None:
         ("查看监控清单", "get_watchlist"),
         ("分析我负责的供应商本月风险变化", "analyze_watchlist_trend"),
         ("查询本人负责供应商本月风险变化", "analyze_watchlist_trend"),
+        ("我所监控的供应商本月的风险情况", "analyze_watchlist_trend"),
         ("查看我科室所有供应商的待复核事项", "get_monitor_review_queue"),
     ],
 )
@@ -702,6 +703,38 @@ def test_harness_plans_scope_level_procurement_queries(message: str, tool_name: 
 
     assert len(planned) == 1
     assert planned[0].tool_name == tool_name
+
+
+def test_watchlist_risk_overview_aggregates_scores_levels_and_insufficient_samples() -> None:
+    answer = AgentAnswer(status="completed", summary="待生成", claims=[])
+    summary = _summary(answer, {
+        "current_task": {
+            "user_message": "我所监控的供应商本月的风险情况",
+            "target_supplier_names": [],
+            "analysis_dimensions": [],
+        },
+        "task_specs": [{"tool_name": "analyze_watchlist_trend"}],
+        "tool_outcomes": [{
+            "tool_name": "analyze_watchlist_trend",
+            "data": {
+                "count": 3,
+                "period_months": 1,
+                "scope": "当前用户责任范围",
+                "companies": [
+                    {"company_name": "甲", "latest_score": 82, "latest_level": "低风险", "trend": "稳定"},
+                    {"company_name": "乙", "latest_score": 58, "latest_level": "中风险", "trend": "恶化"},
+                    {"company_name": "丙", "latest_score": 90, "latest_level": "低风险", "trend": "仅有1次评分"},
+                ],
+            },
+        }],
+    })
+
+    assert "当前用户责任范围内 3 家供应商的本月风险概览" in summary
+    assert "3 家已有安全评分，平均 76.7/100" in summary
+    assert "风险等级：中风险 1 家、低风险 2 家" in summary
+    assert "本月变化：恶化 1 家、基本稳定 1 家、仅有1次评分 1 家" in summary
+    assert "需要优先复核 1 家" in summary
+    assert "可直接查看" not in summary
 
 
 def test_harness_builds_discovery_plan_for_risk_filtered_sourcing() -> None:
