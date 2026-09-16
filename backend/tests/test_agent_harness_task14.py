@@ -323,6 +323,47 @@ def test_explicit_watchlist_write_has_deterministic_fallback_without_llm() -> No
     assert resolved["llm_intent"]["requested_action"] == "add_watchlist"
 
 
+def test_watchlist_write_after_identity_review_does_not_inherit_identity_task() -> None:
+    """A follow-up write must preserve its action capability across turns."""
+    from app.graphs.agent_core.adapter import validate_execution_context
+
+    context = {
+        "session_id": "identity-then-watchlist",
+        "references": [{"name": "赛克瑞浦动力电池系统有限公司"}],
+        "conversation_state": {
+            "current_task": {
+                "task_id": "current-task",
+                "task_type": "analysis",
+                "target_supplier_names": ["赛克瑞浦动力电池系统有限公司"],
+                "analysis_dimensions": ["identity_review"],
+                "subtasks": [{"dimension": "identity_review"}],
+            }
+        },
+        "current_task": {
+            "task_id": "current-task",
+            "task_type": "analysis",
+            "target_supplier_names": ["赛克瑞浦动力电池系统有限公司"],
+            "analysis_dimensions": ["identity_review"],
+            "subtasks": [{"dimension": "identity_review"}],
+        },
+    }
+    extraction = ConversationIntentExtraction(
+        target_supplier_names=["赛克瑞浦动力电池系统有限公司"],
+        capability="watchlist_scope",
+        scope="single_supplier",
+        requested_action="add_watchlist",
+        confidence=0.95,
+    )
+
+    resolved = apply_extracted_conversation_intent(context, extraction)
+    validate_execution_context(resolved, source="test_watchlist_follow_up")
+
+    assert resolved["current_task"]["capability"] == "watchlist_scope"
+    assert resolved["current_task"]["task_type"] == "action_draft"
+    assert resolved["current_task"]["analysis_dimensions"] == []
+    assert resolved["current_task"]["subtasks"] == []
+
+
 def test_supplier_review_summary_answers_the_business_question_first() -> None:
     answer = AgentAnswer(
         status="completed",

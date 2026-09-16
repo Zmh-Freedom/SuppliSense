@@ -474,6 +474,7 @@ def apply_extracted_conversation_intent(
     sourcing_requirement = getattr(extracted, "sourcing_requirement", None)
     task_type = getattr(extracted, "task_type", "none")
     requested_action = getattr(extracted, "requested_action", "none")
+    is_watchlist_write = requested_action == "add_watchlist"
     if (
         not target_names
         and not dimensions
@@ -506,10 +507,20 @@ def apply_extracted_conversation_intent(
         conversation_state["selected_suppliers"] = target_names
     if dimensions:
         current_task["analysis_dimensions"] = dimensions
-    elif target_names:
+    elif target_names and not is_watchlist_write:
         # A company-only follow-up means "run the last explicit analysis for
         # this company". Do not inherit sourcing or an old execution plan.
         dimensions = _text_list(current_task.get("analysis_dimensions"))
+    elif is_watchlist_write:
+        # A write-only follow-up must not inherit the previous read task. In
+        # particular, identity verification from the preceding turn is a
+        # completed lookup, not an instruction to re-plan identity analysis.
+        # Keeping it here would make the analysis planner replace the action
+        # task and drop the LLM's watchlist capability from current_task.
+        dimensions = []
+        current_task["analysis_dimensions"] = []
+        current_task["subtasks"] = []
+        current_task["task_type"] = "action_draft"
     if provider_capabilities:
         current_task["provider_capabilities"] = provider_capabilities
     if capability != "none":
@@ -521,7 +532,7 @@ def apply_extracted_conversation_intent(
         )
     if capability == "sourcing" or task_type == "sourcing":
         current_task["task_type"] = "sourcing"
-    elif target_names or dimensions:
+    elif (target_names or dimensions) and not is_watchlist_write:
         current_task["task_type"] = "analysis"
     conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
     conversation_state["focus_set"] = resolved.focus_set.model_dump(mode="json") if resolved.focus_set else None
