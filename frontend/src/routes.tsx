@@ -25,7 +25,6 @@ export const TAB_ROUTES = [
   { path: '/sourcing', label: '寻源建议', icon: 'sourcing' },
   { path: '/assess', label: '风险监控', icon: 'assess' },
   { path: '/suppliers', label: '供应商库', icon: 'sourcing' },
-  { path: '/chat', label: '采购助手', icon: 'agent' },
   { path: '/settings', label: '设置', icon: 'settings' },
 ];
 

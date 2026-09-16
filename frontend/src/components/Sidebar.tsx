@@ -218,7 +218,7 @@ export default function Sidebar({ onClose }: Props) {
       <div className="px-4 pt-5 pb-3 flex items-center justify-between">
         <div className="min-w-0">
           <h1 className="max-w-[148px] text-[13px] font-bold leading-5 tracking-tight text-[var(--color-text)]">供应商智能寻源与风险监控工作台</h1>
-          <p className="mt-0.5 text-[11px] text-gray-400">采购助手</p>
+          <p className="mt-0.5 text-[11px] text-gray-400">采购分析平台</p>
         </div>
         <div className="flex items-center gap-1">
           <AlertBell />
@@ -237,6 +237,31 @@ export default function Sidebar({ onClose }: Props) {
 
       {/* divider */}
       <div className="border-t border-[var(--color-border)] mx-4" />
+
+      {/* primary AI entry */}
+      <div className="px-3 pt-3 pb-2">
+        <button
+          type="button"
+          onClick={() => { navigate('/chat'); onClose?.(); }}
+          aria-current={activePath === '/chat' ? 'page' : undefined}
+          className={`group flex min-h-[62px] w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-[background-color,border-color,box-shadow] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] focus-visible:ring-offset-2 ${
+            activePath === '/chat'
+              ? 'border-[var(--color-primary-bg)] bg-[var(--color-primary-bg)] text-white shadow-sm'
+              : 'border-[var(--color-primary-bg)]/25 bg-[var(--color-primary-bg)]/5 text-[var(--color-text)] hover:border-[var(--color-primary-bg)]/50 hover:bg-[var(--color-primary-bg)]/10'
+          }`}
+        >
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${activePath === '/chat' ? 'bg-white/15' : 'bg-[var(--color-primary-bg)]/10 text-[var(--color-primary-bg)]'}`}>
+            <NavIcon name="agent" className="h-5 w-5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">AI 采购助手</span>
+            <span className={`mt-0.5 block truncate text-[11px] ${activePath === '/chat' ? 'text-white/75' : 'text-[var(--color-text-secondary)]'}`}>寻源建议与风险分析</span>
+          </span>
+          <svg aria-hidden="true" className={`h-4 w-4 shrink-0 transition-transform duration-200 group-hover:translate-x-0.5 ${activePath === '/chat' ? 'text-white/80' : 'text-[var(--color-primary-bg)]'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
 
       {/* nav items */}
       <nav className="flex-1 px-3 py-3 space-y-0.5">
