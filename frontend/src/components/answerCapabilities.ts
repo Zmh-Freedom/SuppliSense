@@ -1,7 +1,7 @@
 import type { AgentAnswer } from '../types';
 
 export type AnswerCapability =
-  | 'watchlist' | 'trend' | 'prediction' | 'network' | 'financial' | 'sentiment'
+  | 'watchlist' | 'trend' | 'prediction' | 'network' | 'risk' | 'financial' | 'sentiment'
   | 'compliance' | 'esg' | 'legal' | 'business' | 'sourcing' | 'identity'
   | 'profile' | 'comparison' | 'quality' | 'delivery' | 'report' | 'generic';
 
@@ -17,6 +17,7 @@ const CAPABILITY_META: Record<AnswerCapability, AnswerCapabilityMeta> = {
   trend: { label: '风险变化', nextAction: '查看每家供应商的变化', suggestionTitle: '趋势分析建议', suggestion: '优先查看风险恶化的供应商，并结合最近一期证据确认变化是否需要升级采购跟进。' },
   prediction: { label: '风险趋势预测', nextAction: '查看预测信号与数据边界', suggestionTitle: '预测使用建议', suggestion: '预测结果用于安排重点关注，不替代当前风险核验；请结合预测信号和最新证据制定跟进动作。' },
   network: { label: '供应链关系与传染风险', nextAction: '查看关联实体和关系图', suggestionTitle: '关系分析建议', suggestion: '建议结合关联实体、分支机构、供应链依赖和同行业关联查看关系图谱；如发现高风险关联主体，再安排定向供应商复核。' },
+  risk: { label: '综合风险分析', nextAction: '查看风险明细与证据', suggestionTitle: '风险分析建议', suggestion: '结合综合安全评分、风险信号和证据覆盖范围判断供应商状态；评分不替代对重大诉讼、财务变化等具体信号的复核。' },
   financial: { label: '财务分析', nextAction: '查看财务指标与报告期', suggestionTitle: '财务分析建议', suggestion: '结合报告期、盈利变化、现金流和偿债指标判断供应商的履约承受能力；关键订单应补充核对最新财报或财务说明。' },
   sentiment: { label: '舆情分析', nextAction: '查看舆情新闻与来源', suggestionTitle: '舆情分析建议', suggestion: '查看每条新闻的摘要、来源和发布时间，优先核实负面或异常信息是否与供应商主体及当前合作有关。' },
   compliance: { label: '合规筛查', nextAction: '查看命中记录与适用范围', suggestionTitle: '合规筛查建议', suggestion: '结合命中记录、主体范围和数据更新时间进行判断；未命中不代表无需持续筛查，重大采购应保留核验记录。' },
@@ -38,6 +39,7 @@ const SUMMARY_ROUTES: Array<{ capability: AnswerCapability; phrases: string[] }>
   { capability: 'prediction', phrases: ['风险趋势预测', '风险预测', '未来 6-12 个月', '未来6-12个月', '预测风险'] },
   { capability: 'trend', phrases: ['风险变化', '风险趋势', '趋势分析'] },
   { capability: 'network', phrases: ['供应链关系', '关联关系', '传染风险', '风险传染'] },
+  { capability: 'risk', phrases: ['综合风险分析', '综合风险评估'] },
   { capability: 'financial', phrases: ['财务分析', '财务数据', '财务指标'] },
   { capability: 'sentiment', phrases: ['舆情分析', '舆情新闻', '舆情'] },
   { capability: 'compliance', phrases: ['合规筛查', '合规分析', '制裁筛查', '黑名单'] },

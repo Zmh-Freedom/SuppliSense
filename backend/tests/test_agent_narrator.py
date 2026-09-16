@@ -70,6 +70,17 @@ def test_narrative_validation_rejects_answer_that_drops_requested_topic() -> Non
     assert _validate_draft(draft, answer, "分析青岛三祥科技股份有限公司的舆情") is False
 
 
+def test_narrative_validation_rejects_generic_review_for_comprehensive_risk_question() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司当前综合安全评分为 7/100。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer, "查看青岛三祥科技股份有限公司的风险情况") is False
+
+
 def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
     answer = _answer()
 

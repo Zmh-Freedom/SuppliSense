@@ -71,6 +71,7 @@ def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
 def _requested_topic_terms(user_message: str) -> tuple[str, ...]:
     """Return a small topic guard so narration cannot erase the question."""
     topic_rules = (
+        (("综合风险", "风险情况", "风险评估", "风险分析"), ("综合风险分析", "风险评估", "风险分析")),
         (("供应链关系", "关联关系", "传染风险", "风险传染"), ("供应链", "关联", "传染")),
         (("财务", "营收", "净利润"), ("财务", "营收", "净利润")),
         (("舆情", "新闻", "负面信息"), ("舆情", "新闻", "负面")),

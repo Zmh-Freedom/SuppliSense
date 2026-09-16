@@ -207,6 +207,26 @@ function approvalHeadingLabel(status?: ApprovalData['status']): string {
   return approvalStatusLabel(status);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function externalIdentityFromApprovalArgs(args: Record<string, unknown>): Record<string, unknown> | null {
+  const direct = args.external_identity;
+  if (isRecord(direct)) return direct;
+
+  const target = args.target;
+  if (isRecord(target) && isRecord(target.external_identity)) return target.external_identity;
+
+  const pendingApprovals = args.pending_approvals;
+  if (!Array.isArray(pendingApprovals)) return null;
+  for (const approval of pendingApprovals) {
+    if (!isRecord(approval) || !isRecord(approval.target)) continue;
+    if (isRecord(approval.target.external_identity)) return approval.target.external_identity;
+  }
+  return null;
+}
+
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
   const [expanded, setExpanded] = useState(() => {
     const lifecycle = state.workflowStatus?.status;
@@ -214,10 +234,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   });
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);
-  const externalIdentity = state.approval?.args.external_identity;
-  const externalProfile = externalIdentity && typeof externalIdentity === 'object' && !Array.isArray(externalIdentity)
-    ? externalIdentity as Record<string, unknown>
-    : null;
+  const externalProfile = state.approval ? externalIdentityFromApprovalArgs(state.approval.args) : null;
   const isExternalIdentityConfirmation = Boolean(externalProfile);
 
   const handleApproval = (approved: boolean) => {

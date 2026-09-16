@@ -341,12 +341,19 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 or conversation_state.get("selected_supplier_names")
                 or []
             )
+            from app.graphs.agent_core.intent_extractor import has_explicit_watchlist_request
+
+            is_watchlist_write = has_explicit_watchlist_request(req.message)
             from app.services.clarification import (
                 external_assessment_clarification,
                 formal_supplier_identity_clarification,
                 review_scope_clarification,
             )
-            identity_clarification = await asyncio.to_thread(
+            # An explicit add-to-monitor request must reach the durable
+            # approval path.  The read-only identity/scope preflight cannot
+            # know about cached external identity evidence and used to stop
+            # the request before the confirmation card could be rendered.
+            identity_clarification = None if is_watchlist_write else await asyncio.to_thread(
                 formal_supplier_identity_clarification,
                 resolved_target_names,
                 req.message,
@@ -367,13 +374,13 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     user_role,
                     req.message,
                 )
-                if _is_uuid(user_id)
+                if _is_uuid(user_id) and not is_watchlist_write
                 else None
             )
             if scope_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
-            external_clarification = await asyncio.to_thread(
+            external_clarification = None if is_watchlist_write else await asyncio.to_thread(
                 external_assessment_clarification,
                 resolved_target_names,
                 supplier_references,
@@ -385,7 +392,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             has_structured_context = bool(
                 supplier_references or conversation_state.get("active_suppliers")
             )
-            clar = detect_clarification_needed(
+            clar = None if is_watchlist_write else detect_clarification_needed(
                 req.message,
                 supplier_references=supplier_references,
                 resolved_target_names=resolved_target_names,

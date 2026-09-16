@@ -131,6 +131,58 @@ def test_chat_resolves_context_before_clarification_for_explicit_mode(monkeypatc
     assert not any(event.startswith("event: clarification") for event in events)
 
 
+def test_explicit_watchlist_write_bypasses_read_only_clarification(monkeypatch) -> None:
+    """Write requests must reach the approval stream even for an external target."""
+    calls: list[str] = []
+    context = {
+        "history": [],
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "target_supplier_names": ["赛克瑞浦动力电池系统有限公司"],
+            "task_type": "action_draft",
+        },
+        "llm_intent": {
+            "target_supplier_names": ["赛克瑞浦动力电池系统有限公司"],
+            "requested_action": "add_watchlist",
+        },
+    }
+    monkeypatch.setattr("app.graphs.agent_core.adapter.load_execution_context", lambda *_args: context)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("写操作不应被只读澄清拦截")
+
+    monkeypatch.setattr("app.services.clarification.formal_supplier_identity_clarification", fail_if_called)
+    monkeypatch.setattr("app.services.clarification.review_scope_clarification", fail_if_called)
+    monkeypatch.setattr("app.services.clarification.external_assessment_clarification", fail_if_called)
+    monkeypatch.setattr("app.services.clarification.detect_clarification_needed", fail_if_called)
+
+    async def stream(*_args, execution_context=None):
+        assert execution_context is context
+        calls.append("stream")
+        yield 'event: approval_required\ndata: {"approval_id":"approval-1"}\n\n'
+
+    monkeypatch.setattr(chat_api, "_langgraph_agent_supervisor_stream", stream)
+    monkeypatch.setattr("app.services.agent_session_guard.acquire_agent_session_run", lambda _sid: "token")
+    monkeypatch.setattr("app.services.agent_session_guard.release_agent_session_run", lambda *_args: None)
+    monkeypatch.setattr("app.services.agent_session_guard.renew_agent_session_run", lambda *_args: None)
+
+    response = asyncio.run(
+        chat_api.chat_stream_endpoint(
+            chat_api.ChatRequest(
+                message="把赛克瑞浦动力电池系统有限公司加入监控清单",
+                session_id="watchlist-write-route",
+                mode="auto",
+            ),
+            SimpleNamespace(state=SimpleNamespace(user_id="")),
+        )
+    )
+    events = _collect_events(response)
+
+    assert calls == ["stream"]
+    assert any(event.startswith("event: approval_required") for event in events)
+
+
 def test_chat_passes_one_execution_context_snapshot_to_selected_graph(monkeypatch) -> None:
     context = {
         "history": [{"role": "assistant", "content": "已找到甲公司"}],

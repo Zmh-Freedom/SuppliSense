@@ -119,6 +119,36 @@ def test_harness_uses_llm_requirement_slots_before_legacy_wording_fallback() -> 
     assert planned[0].tool_name == "discover_supplier_candidates"
 
 
+def test_llm_capability_survives_supplier_plan_replacement() -> None:
+    """The active Harness contract must retain the routing capability after planning."""
+    from app.graphs.agent_core.adapter import validate_execution_context
+
+    context = {
+        "session_id": "risk-capability-preservation",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "risk-task",
+            "task_type": "analysis",
+            "user_message": "查看青岛三祥科技股份有限公司的风险情况",
+        },
+    }
+    extraction = ConversationIntentExtraction(
+        target_supplier_names=["青岛三祥科技股份有限公司"],
+        analysis_dimensions=["risk", "financial", "business_risk"],
+        capability="risk",
+        scope="single_supplier",
+        task_type="analysis",
+        confidence=0.95,
+    )
+
+    resolved = apply_extracted_conversation_intent(context, extraction)
+    validate_execution_context(resolved, source="test_capability_preservation")
+
+    assert resolved["current_task"]["capability"] == "risk"
+    assert resolved["current_task"]["scope"] == "single_supplier"
+
+
 def test_harness_new_sourcing_turn_replaces_previous_category(monkeypatch) -> None:
     monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
     context = {
@@ -461,6 +491,49 @@ def test_prediction_summary_surfaces_prediction_before_generic_review() -> None:
     assert "未来 6-12 个月风险趋势预测" in summary
     assert "风险恶化判断：可能恶化" in summary
     assert "营收轻微下滑" in summary
+    assert "供应商复核" not in summary
+
+
+def test_comprehensive_risk_summary_preserves_risk_as_primary_capability() -> None:
+    answer = AgentAnswer(
+        status="needs_review",
+        summary="待生成",
+        limitations=["部分维度尚未覆盖"],
+        claims=[
+            ValidatedClaim(
+                claim_id="risk-score", entity_id="entity:supplier", dimension="risk",
+                statement="测试供应商 综合安全评分：93/100", value=93,
+                fact_path="risk_score", evidence_refs=["risk"], confidence=0.9,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="risk-level", entity_id="entity:supplier", dimension="risk",
+                statement="测试供应商 风险等级：低风险", value="低风险",
+                fact_path="risk_level", evidence_refs=["risk"], confidence=0.9,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profit", entity_id="entity:supplier", dimension="financial",
+                statement="测试供应商 净利润同比增长率：-18.1%", value=-0.181,
+                fact_path="net_profit_growth", evidence_refs=["financial"], confidence=0.9,
+                validation_status="supported",
+            ),
+        ],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "capability": "risk",
+            "target_supplier_names": ["测试供应商有限公司"],
+            "analysis_dimensions": ["risk", "financial"],
+        },
+        "task_specs": [{"tool_name": "assess_risk"}, {"tool_name": "query_financials"}],
+        "tool_outcomes": [],
+    })
+
+    assert "综合风险分析" in summary
+    assert "综合安全评分 93/100" in summary
+    assert "风险信号：净利润同比下降 18.1%" in summary
     assert "供应商复核" not in summary
 
 

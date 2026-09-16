@@ -12,6 +12,27 @@ const approval: ApprovalData = {
   session_id: 'session-1',
 }
 
+const externalIdentityApproval: ApprovalData = {
+  message: '确认执行待审批的供应商操作？',
+  tool: 'agent_supervisor',
+  args: {
+    pending_approvals: [{
+      action_type: 'add_watchlist',
+      target: {
+        company_name: '赛克瑞浦动力电池系统有限公司',
+        external_identity: {
+          company_name: '赛克瑞浦动力电池系统有限公司',
+          unified_social_credit_code: '91450200MAA7L76A5R',
+          registration_status: '存续',
+          legal_person: '廖鸿胡',
+          source: '天眼查工商主体查询',
+        },
+      },
+    }],
+  },
+  session_id: 'session-1',
+}
+
 function createState(overrides: Partial<AgentWorkflowState> = {}): AgentWorkflowState {
   return {
     thinking: '正在汇总证据',
@@ -95,5 +116,16 @@ describe('AgentWorkflowPanel', () => {
 
     expect(screen.getByRole('button', { name: '批准提交中…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '拒绝提交中…' })).toBeDisabled()
+  })
+
+  it('renders nested external identity approval details from supervisor payloads', () => {
+    render(<AgentWorkflowPanel state={createState({ approval: externalIdentityApproval })} onApproval={vi.fn()} />)
+
+    expect(screen.getByText('请确认外部企业主体')).toBeInTheDocument()
+    expect(screen.getByText('统一社会信用代码：91450200MAA7L76A5R')).toBeInTheDocument()
+    expect(screen.getByText('登记状态：存续')).toBeInTheDocument()
+    expect(screen.getByText('法定代表人：廖鸿胡')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认主体并加入监控' })).toBeInTheDocument()
+    expect(screen.queryByText(/目标\/参数：/)).not.toBeInTheDocument()
   })
 })

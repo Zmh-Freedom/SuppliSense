@@ -755,7 +755,7 @@ def _primary_summary_capability(
     # current task.  Message tokens remain only as a compatibility fallback
     # for historical callers that construct HarnessState directly.
     if capability in {
-        "risk_network", "risk_prediction", "sentiment", "financial", "compliance",
+        "risk", "risk_network", "risk_prediction", "sentiment", "financial", "compliance",
         "esg", "risk_trend", "legal_risk", "business_risk", "report", "sourcing",
         "company_profile", "identity_review", "risk_comparison", "quality", "delivery",
     }:
@@ -890,6 +890,32 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
             return f"已检查当前责任范围内 {len(companies)} 家供应商，但最近 {period} 个月的风险快照不足，暂时无法判断上升或下降。"
         return f"已完成当前责任范围内 {len(companies)} 家供应商最近 {period} 个月的风险变化检查，下面直接列出每家的变化状态和下一步建议。"
     subject = _summary_subject(target_names)
+    if primary_capability == "risk":
+        risk_claims = [claim for claim in answer.claims if claim.dimension == "risk"]
+        values = _claim_values(answer.claims)
+        risk_score = values.get("risk_score")
+        risk_level = values.get("risk_level")
+        if not risk_claims and risk_score is None and risk_level is None:
+            return f"已完成 {subject} 的综合风险分析，但当前没有可验证的综合风险结果。"
+        parts = [f"已完成 {subject} 的综合风险分析"]
+        if risk_score is not None:
+            parts.append(f"综合安全评分 {risk_score}/100（分数越高风险越低）")
+        if risk_level is not None:
+            parts.append(f"风险等级：{risk_level}")
+        supporting_signals: list[str] = []
+        profit_growth = values.get("net_profit_growth")
+        if isinstance(profit_growth, (int, float)):
+            direction = "下降" if profit_growth < 0 else "增长"
+            supporting_signals.append(f"净利润同比{direction} {abs(profit_growth) * 100:.1f}%")
+        lawsuit_count = values.get("risk_detail.lawsuit_count")
+        if isinstance(lawsuit_count, (int, float)) and lawsuit_count > 0:
+            supporting_signals.append(f"诉讼记录 {int(lawsuit_count)} 起")
+        if values.get("risk_detail.major_lawsuit") is True:
+            supporting_signals.append("存在重大诉讼标记")
+        if supporting_signals:
+            parts.append("风险信号：" + "、".join(supporting_signals))
+        result = "；".join(parts) + "。"
+        return _summary_with_boundary(answer, result, "可结合下方风险明细和数据依据安排后续采购动作。")
     if primary_capability == "financial":
         financial_claims = [claim for claim in answer.claims if claim.dimension == "financial"]
         values = _claim_values(financial_claims)

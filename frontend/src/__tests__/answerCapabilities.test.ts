@@ -21,6 +21,7 @@ describe('answer capability routing', () => {
     ['已完成合规筛查', 'compliance', undefined, 'compliance'],
     ['已完成 ESG 评估', 'esg', undefined, 'esg'],
     ['已完成风险趋势预测', 'risk', 'risk_prediction.probability', 'prediction'],
+    ['已完成综合风险分析', 'risk', 'risk_score', 'risk'],
     ['已完成司法风险分析', 'risk', 'risk_detail.lawsuit_count', 'legal'],
     ['已完成经营风险分析', 'business_risk', undefined, 'business'],
     ['已完成主体核验', 'identity_review', undefined, 'identity'],

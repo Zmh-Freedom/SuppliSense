@@ -548,6 +548,14 @@ def apply_extracted_conversation_intent(
         planned["user_message"] = str(current_task.get("user_message") or "")
         if provider_capabilities:
             planned["provider_capabilities"] = provider_capabilities
+        # The planner returns the executable task matrix, but capability and
+        # scope are routing facts from the same LLM extraction.  Preserve
+        # them when replacing the pre-plan task so the contract validator can
+        # prove that the active graph will execute the requested capability.
+        if capability != "none":
+            planned["capability"] = capability
+        if scope != "none":
+            planned["scope"] = scope
         current_task = planned
     conversation_state["current_task"] = current_task
     return {
