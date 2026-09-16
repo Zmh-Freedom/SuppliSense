@@ -138,6 +138,34 @@ def test_provided_values_override_extracted_values(monkeypatch):
     }
 
 
+def test_explicit_new_sourcing_request_does_not_reuse_previous_requirement(monkeypatch):
+    monkeypatch.setattr(requirement_service.settings, "LLM_API_KEY", "")
+
+    previous = {
+        "category": "蓄电池",
+        "product": "蓄电池",
+        "specification": "蓄电池",
+    }
+
+    result = requirement_service.resolve_harness_requirement(
+        "找一下做安全带的供应商",
+        previous,
+    )
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "安全带"
+    assert result["requirement"]["specification"] == "安全带"
+
+
+def test_sourcing_fallback_removes_conversational_filler(monkeypatch):
+    monkeypatch.setattr(requirement_service.settings, "LLM_API_KEY", "")
+
+    result = requirement_service.resolve_harness_requirement("找一下蓄电池的供应商")
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "蓄电池"
+
+
 def test_parse_requirement_repairs_unparseable_initial_adapter_response(monkeypatch):
     """Letting malformed initial JSON escape would skip the permitted repair."""
     calls = 0

@@ -84,6 +84,80 @@ def test_harness_binds_requirement_to_current_task_before_planning(monkeypatch) 
     assert planned[0].arguments["requirement"]["category"] == "钢材"
 
 
+def test_harness_new_sourcing_turn_replaces_previous_category(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    context = {
+        "references": [],
+        "conversation_state": {
+            "current_requirement": {
+                "category": "蓄电池",
+                "product": "蓄电池",
+                "specification": "蓄电池",
+            },
+        },
+        "current_task": {
+            "task_id": "source-2",
+            "task_type": "sourcing",
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        "找一下做安全带的供应商",
+    )
+
+    assert resolved["current_task"]["requirement"]["category"] == "安全带"
+    assert resolved["conversation_state"]["current_requirement"]["category"] == "安全带"
+
+
+def test_sourcing_summary_explains_no_match_category() -> None:
+    summary = _summary(
+        AgentAnswer(status="completed", summary="已完成寻源"),
+        {
+            "current_task": {"analysis_dimensions": ["sourcing"]},
+            "task_specs": [{"tool_name": "discover_supplier_candidates"}],
+            "tool_outcomes": [{
+                "tool_name": "discover_supplier_candidates",
+                "data": {
+                    "status": "not_found",
+                    "requirement": {"category": "安全带"},
+                    "local_candidates": [],
+                    "external_candidates": [],
+                    "external_status": "not_found",
+                },
+            }],
+        },
+    )
+
+    assert "按“安全带”完成历史合作和外部候选检索" in summary
+    assert "当前没有匹配候选" in summary
+    assert "没有返回可用候选" not in summary
+
+
+def test_sourcing_summary_explains_external_failure() -> None:
+    summary = _summary(
+        AgentAnswer(status="partial", summary="已完成寻源"),
+        {
+            "current_task": {"analysis_dimensions": ["sourcing"]},
+            "task_specs": [{"tool_name": "discover_supplier_candidates"}],
+            "tool_outcomes": [{
+                "tool_name": "discover_supplier_candidates",
+                "data": {
+                    "status": "partial",
+                    "requirement": {"category": "安全带"},
+                    "local_candidates": [],
+                    "external_candidates": [],
+                    "external_status": "failed",
+                    "external_failure_reasons": [{"stage": "web_search"}],
+                },
+            }],
+        },
+    )
+
+    assert "外部候选来源暂时不可用" in summary
+    assert "稍后重试" in summary
+
+
 def test_harness_does_not_recommend_unfiltered_suppliers_without_category() -> None:
     planned = _build_default_plan({
         "current_task": {

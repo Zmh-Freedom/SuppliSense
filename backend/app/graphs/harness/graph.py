@@ -727,7 +727,8 @@ def _primary_summary_capability(message: str, tool_names: set[str], dimensions: 
     # intentionally includes those dimensions as supporting evidence.
     explicit_only_tools = {
         "contagion_analysis", "predict_risk", "analyze_trend", "compare_companies",
-        "find_alternatives", "generate_report", "lookup_company_profile",
+        "find_alternatives", "discover_supplier_candidates", "search_suppliers",
+        "list_formal_suppliers", "generate_report", "lookup_company_profile",
         "lookup_company_identity", "lookup_legal_risk", "lookup_company_news",
     }
     for capability, _tokens, tools in _SUMMARY_ROUTE_DEFINITIONS:
@@ -943,6 +944,15 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         sourcing_claims = [claim for claim in answer.claims if claim.dimension == "sourcing"]
         values = _claim_values(sourcing_claims)
         data = _latest_tool_data(outcomes, {"discover_supplier_candidates", "search_suppliers", "find_alternatives", "list_formal_suppliers"})
+        requirement_status = str(current_task.get("requirement_status") or "")
+        if requirement_status == "clarification_required":
+            missing = [
+                str(item).strip()
+                for item in current_task.get("requirement_missing", [])
+                if str(item).strip()
+            ]
+            missing_text = "、".join(missing) or "采购品类"
+            return f"我还缺少{missing_text}，暂未执行寻源检索；请补充后再试。"
         local_candidates = data.get("local_candidates") if isinstance(data.get("local_candidates"), list) else []
         external_candidates = data.get("external_candidates") if isinstance(data.get("external_candidates"), list) else []
         all_candidates = data.get("candidates") if isinstance(data.get("candidates"), list) else []
@@ -973,7 +983,13 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 "下面按来源展示主营品类、主营产品和当前状态。",
             )
         if not isinstance(count, (int, float)):
-            return f"已完成 {subject} 的替代供应商检索，但当前没有返回可用候选。"
+            requirement = data.get("requirement") if isinstance(data.get("requirement"), dict) else {}
+            category = str(requirement.get("category") or requirement.get("product") or "当前品类").strip()
+            if data.get("local_failure_reason"):
+                return f"已按“{category}”发起寻源，但本地供应商库暂时不可用，当前没有可用候选；请稍后重试。"
+            if data.get("external_failure_reasons") or str(data.get("external_status") or "") in {"failed", "unavailable"}:
+                return f"已按“{category}”完成本地检索，但外部候选来源暂时不可用，当前没有可用候选；可稍后重试或补充内部供应商资料。"
+            return f"已按“{category}”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
         return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "下面展示候选来源、主营产品和当前核验状态。")
     if primary_capability == "company_profile":
         profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]

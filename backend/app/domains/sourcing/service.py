@@ -660,11 +660,16 @@ def discover_read_only_sourcing_candidates(requirement: dict[str, Any]) -> dict[
         {"category": gaishi_category, "region_required": requirement.get("region") or ""}, ""
     )
     return {
+        "status": "success" if history_candidates or external_candidates else "not_found",
         "local_candidates": history_candidates,
         "external_candidates": external_candidates,
         "source": "internal_history_and_gasgoo" if history_candidates or external_candidates else "not_found",
         "source_order": ["internal_history", "gasgoo_manual_export"],
+        "local_status": "ok" if history_candidates else "not_found",
+        "local_failure_reason": None,
         "external_status": "gasgoo_manual_export" if external_candidates else "not_found",
+        "external_stop_reason": "candidates_found" if external_candidates else "category_not_found",
+        "external_failure_reasons": [],
         "gaishi_category": gaishi_category if external_candidates else None,
     }
 

@@ -162,7 +162,8 @@ def resolve_harness_requirement(
 ) -> dict[str, Any]:
     """Resolve a sourcing requirement for the read-only Harness path."""
     provided_values = dict(provided or {})
-    if provided_values.get("category") and not _SOURCING_REQUEST_PATTERN.search(raw_text or ""):
+    has_explicit_request = bool(_SOURCING_REQUEST_PATTERN.search(raw_text or ""))
+    if provided_values.get("category") and not has_explicit_request:
         return _harness_ready(_normalise_harness_requirement(provided_values))
 
     # Preserve the material/category that appears before “寻找历史供应商”.
@@ -172,18 +173,26 @@ def resolve_harness_requirement(
     if deterministic and re.search(r"为.+?(?:寻找|查找|搜索)(?:历史)?(?:合作)?供应商", raw_text or ""):
         return _harness_ready(deterministic, extraction_source="deterministic_fallback")
 
+    # A short, explicit request already contains the complete sourcing scope.
+    # Do not send it through the model with the previous turn's requirement:
+    # that state is only a fallback for clarification-style follow-ups.
+    natural = _natural_language_requirement_from_text(raw_text)
+    if deterministic and natural is None:
+        return _harness_ready(deterministic, extraction_source="deterministic_fallback")
+
     if settings.LLM_API_KEY:
         try:
-            parsed = parse_requirement(raw_text, provided_values)
+            parsed = parse_requirement(
+                raw_text,
+                {} if has_explicit_request else provided_values,
+            )
         except Exception:
             parsed = {"status": "clarification_required", "missing": ["category"]}
         if parsed.get("status") == "ready":
             return _harness_ready(_normalise_harness_requirement(parsed["requirement"]))
 
-    fallback = _fallback_requirement_from_text(raw_text)
-    if fallback:
-        return _harness_ready(fallback, extraction_source="deterministic_fallback")
-    natural = _natural_language_requirement_from_text(raw_text)
+    if deterministic:
+        return _harness_ready(deterministic, extraction_source="deterministic_fallback")
     if natural:
         return _harness_ready(natural, extraction_source="deterministic_fallback")
     return {"status": "clarification_required", "missing": ["category"], "extraction_source": "unresolved"}
@@ -259,7 +268,7 @@ def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
     match = _SOURCING_REQUEST_PATTERN.search(message or "")
     if not match:
         return None
-    target = match.group("target").strip(" ，,、").rstrip("的").strip()
+    target = _clean_sourcing_target(match.group("target"))
     if not target:
         return None
     risk_limit = None
@@ -292,7 +301,7 @@ def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | No
     if not match:
         return None
 
-    target = match.group("target").strip(" ：:的")
+    target = _clean_sourcing_target(match.group("target"))
     target = re.split(r"(?:要求|规格|技术要求|需要满足|优先|交付|到货|数量|预算|认证)", target, maxsplit=1)[0]
     category = target.strip(" ：:的")
     if not category or _contains_multiple_categories(category):
@@ -319,6 +328,15 @@ def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | No
         "must_have": [item.strip() for item in re.split(r"[，,、]", specification) if item.strip()],
         "optional_conditions": [],
     }
+
+
+def _clean_sourcing_target(value: str) -> str:
+    """Remove conversational filler without changing the requested product."""
+    target = str(value or "").strip(" ：:，,、的").strip()
+    target = re.sub(r"^(?:帮我|给我|请|想找|想要)\s*", "", target)
+    target = re.sub(r"^(?:一下|下)\s*", "", target)
+    target = re.sub(r"^(?:做|生产|制造|提供)\s*", "", target)
+    return target.strip(" ：:，,、的").strip()
 
 
 def _repair_or_clarify(
