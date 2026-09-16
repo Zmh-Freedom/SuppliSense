@@ -77,7 +77,7 @@ def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeyp
         def create(self, **_kwargs):
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
-                    "target_supplier_names": ["一下青岛三祥科技股份有限公司"],
+                    "target_supplier_names": ["查找一下青岛三祥科技股份有限公司"],
                     "analysis_dimensions": ["risk"],
                     "task_type": "analysis",
                 })))]
@@ -91,7 +91,7 @@ def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeyp
     monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
 
     result = intent_extractor.extract_conversation_intent(
-        "查看一下青岛三祥科技股份有限公司的风险情况",
+        "查找一下青岛三祥科技股份有限公司的风险情况",
         [],
     )
 
@@ -410,6 +410,7 @@ def test_deterministic_company_name_resolution_removes_operation_prefixes():
         "帮我分析青岛三祥科技股份有限公司的综合风险",
         "看一下青岛三祥科技股份有限公司的财务数据",
         "核查青岛三祥科技股份有限公司是否有合规风险",
+        "查找一下青岛三祥科技股份有限公司的风险",
         "预测青岛三祥科技股份有限公司未来风险趋势",
         "生成青岛三祥科技股份有限公司的风险评估报告",
         "确认青岛三祥科技股份有限公司这个主体",

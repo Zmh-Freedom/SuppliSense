@@ -107,6 +107,30 @@ describe('ChatView session lifecycle', () => {
     expect(mocks.chatStream.mock.calls[1][0]).toBe('分析杭州网易云音乐科技有限公司的风险')
   })
 
+  it('continues a full-name risk query after confirming a 查找一下 candidate', async () => {
+    let calls = 0
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      calls += 1
+      if (calls === 1) {
+        handlers.onClarification?.({
+          message: '请确认正式供应商',
+          missing: ['supplier_identity'],
+          candidates: [{ supplier_id: 'supplier:sanxiang', supplier_name: '青岛三祥科技股份有限公司', short_name: '青岛三祥' }],
+        })
+      }
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向采购助手提问'), '查找一下青岛三祥科技股份有限公司的风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await user.click(await screen.findByRole('button', { name: /青岛三祥科技股份有限公司.*青岛三祥/ }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledTimes(2))
+    expect(mocks.chatStream.mock.calls[1][0]).toBe('查找青岛三祥科技股份有限公司的风险')
+  })
+
   it('keeps a newly opened chat selected when an earlier stream completes', async () => {
     const completeStream = createPendingStream()
     const user = userEvent.setup()

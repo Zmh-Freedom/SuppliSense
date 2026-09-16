@@ -141,7 +141,7 @@ function restoreConfirmedSupplierQuestion(
 
   // Keep the original analysis wording, but remove a spoken filler that a
   // model may have accidentally treated as part of the company name.
-  restored = restored.replace(/(查看|查询|分析|评估|复核|监控|看看)(一下|下)(?=[\u4e00-\u9fffA-Za-z0-9])/g, '$1');
+  restored = restored.replace(/(查看|查询|查找|分析|评估|复核|监控|看看)(一下|下)(?=[\u4e00-\u9fffA-Za-z0-9])/g, '$1');
   if (restored.includes(canonicalName)) return restored;
 
   // Legacy clarification records may not contain the original question. In
