@@ -701,7 +701,7 @@ _SUMMARY_ROUTE_DEFINITIONS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], 
     ("legal_risk", ("司法", "诉讼", "被执行", "失信", "限制消费"), ("lookup_legal_risk",)),
     ("business_risk", ("经营风险", "行政处罚", "经营异常", "严重违法", "股权质押", "欠税"), ("lookup_business_risk", "assess_business_risk")),
     ("report", ("报告", "导出报告"), ("generate_report",)),
-    ("sourcing", ("替代供应商", "备选供应商", "供应商替代"), ("find_alternatives",)),
+    ("sourcing", ("找", "寻找", "寻源", "供应商候选", "替代供应商", "备选供应商", "供应商替代"), ("find_alternatives", "discover_supplier_candidates", "search_suppliers", "list_formal_suppliers")),
     ("company_profile", ("工商资料", "注册资本", "注册地址", "历史变更", "股东", "分支机构"), ("lookup_company_profile",)),
     ("identity_review", ("主体身份", "主体核验", "统一社会信用代码", "登记状态"), ("lookup_company_identity",)),
     ("risk_comparison", ("对比", "比较", "横向"), ("compare_companies",)),
@@ -942,11 +942,39 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if primary_capability == "sourcing":
         sourcing_claims = [claim for claim in answer.claims if claim.dimension == "sourcing"]
         values = _claim_values(sourcing_claims)
-        data = _latest_tool_data(outcomes, {"find_alternatives"})
+        data = _latest_tool_data(outcomes, {"discover_supplier_candidates", "search_suppliers", "find_alternatives", "list_formal_suppliers"})
+        local_candidates = data.get("local_candidates") if isinstance(data.get("local_candidates"), list) else []
+        external_candidates = data.get("external_candidates") if isinstance(data.get("external_candidates"), list) else []
+        all_candidates = data.get("candidates") if isinstance(data.get("candidates"), list) else []
+        result_candidates = data.get("results") if isinstance(data.get("results"), list) else []
+        formal_items = data.get("items") if isinstance(data.get("items"), list) else []
         count = values.get("alternatives_count", data.get("alternatives_count"))
+        if all_candidates and not local_candidates:
+            external_names = {
+                str(item.get("supplier_name") or item.get("company_name") or "").strip()
+                for item in external_candidates
+                if isinstance(item, dict)
+            }
+            local_candidates = [
+                item for item in all_candidates
+                if isinstance(item, dict)
+                and str(item.get("supplier_name") or item.get("company_name") or "").strip() not in external_names
+            ]
+        if local_candidates or external_candidates:
+            return _summary_with_boundary(
+                answer,
+                f"已找到 {len(local_candidates) + len(external_candidates)} 家寻源候选，其中历史合作 {len(local_candidates)} 家、外部待核验 {len(external_candidates)} 家。",
+                "下面按来源分组展示匹配品类、主营产品和下一步核验事项。",
+            )
+        if result_candidates or formal_items:
+            return _summary_with_boundary(
+                answer,
+                f"已找到 {len(result_candidates) or len(formal_items)} 家供应商候选。",
+                "下面按来源展示主营品类、主营产品和当前状态。",
+            )
         if not isinstance(count, (int, float)):
             return f"已完成 {subject} 的替代供应商检索，但当前没有返回可用候选。"
-        return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "可结合候选风险评分和供货能力继续比较。")
+        return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "下面展示候选来源、主营产品和当前核验状态。")
     if primary_capability == "company_profile":
         profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]
         if not profile_claims:

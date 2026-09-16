@@ -439,6 +439,166 @@ function shouldShowClaim(claim: AgentAnswer['claims'][number]): boolean {
   return true;
 }
 
+type SourcingCandidateGroup = 'historical' | 'formal' | 'external';
+
+interface SourcingCandidateRow {
+  name: string;
+  group: SourcingCandidateGroup;
+  source: string;
+  categories: string[];
+  mainProducts: string[];
+  regions: string[];
+  statement: string;
+  confidence: number;
+  sourceReference?: string;
+  matchReasons: string[];
+}
+
+function textList(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).map(item => item.trim())
+    : [];
+}
+
+function capabilityList(value: unknown, field: 'category' | 'product_name'): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object') return [];
+    return textList((item as Record<string, unknown>)[field]);
+  });
+}
+
+function uniqueText(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function sourcingSourceLabel(source: string, sourceType: string, provider: string): string {
+  const value = source || sourceType || provider;
+  return ({
+    gasgoo_manual_export: '盖世供应链',
+    feishu_bitable: '飞书供应商库',
+    feishu_formal_supplier_snapshot: '飞书供应商库',
+    internal_supplier_material_list: '历史合作记录',
+    local_history: '历史合作记录',
+    web_search: '公开网页',
+    public_web_search: '公开网页',
+    tianyancha: '天眼查候选',
+  } as Record<string, string>)[value] || value || '来源未标明';
+}
+
+function sourcingGroup(
+  candidateType: string,
+  sourceStage: string,
+  source: string,
+  statement: string,
+): SourcingCandidateGroup {
+  const value = `${candidateType} ${sourceStage} ${source} ${statement}`.toLowerCase();
+  if (candidateType === 'historical' || sourceStage === 'local_history' || value.includes('历史')) return 'historical';
+  if (candidateType === 'formal' || sourceStage === 'feishu_formal' || value.includes('正式供应商')) return 'formal';
+  return 'external';
+}
+
+function sourcingCandidateRows(answer: AgentAnswer, evidence: AgentEvidenceRecord[]): SourcingCandidateRow[] {
+  const evidenceById = new Map(evidence.map(record => [record.evidence_id, record]));
+  const rows: SourcingCandidateRow[] = [];
+  const seen = new Set<string>();
+  answer.claims
+    .filter(claim => claim.dimension === 'sourcing' && claim.fact_path === 'supplier_name' && typeof claim.value === 'string')
+    .forEach(claim => {
+      const name = String(claim.value).trim();
+      if (!name) return;
+      const record = claim.evidence_refs.map(reference => evidenceById.get(reference)).find(Boolean);
+      const facts = record?.facts || {};
+      const candidateType = String(facts.candidate_type || '');
+      const sourceStage = String(facts.source_stage || '');
+      const source = String(facts.source || '');
+      const group = sourcingGroup(candidateType, sourceStage, source, claim.statement);
+      const key = `${group}:${name}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({
+        name,
+        group,
+        source: sourcingSourceLabel(source, String(facts.source_type || ''), record?.provider || ''),
+        categories: uniqueText([
+          ...textList(facts.categories),
+          ...textList(facts.category),
+          ...capabilityList(facts.capabilities, 'category'),
+        ]),
+        mainProducts: uniqueText([
+          ...textList(facts.main_products),
+          ...textList(facts.products),
+          ...capabilityList(facts.capabilities, 'product_name'),
+        ]),
+        regions: uniqueText([...textList(facts.regions), ...textList(facts.region)]),
+        statement: readableClaimStatement(claim),
+        confidence: claim.confidence,
+        sourceReference: typeof facts.source_reference === 'string' ? facts.source_reference : undefined,
+        matchReasons: textList(facts.match_reasons),
+      });
+    });
+  return rows;
+}
+
+function sourcingStatus(group: SourcingCandidateGroup): { label: string; className: string } {
+  if (group === 'historical') return { label: '历史合作候选', className: 'border-blue-200 bg-blue-50 text-blue-700' };
+  if (group === 'formal') return { label: '正式供应商', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+  return { label: '外部待核验', className: 'border-amber-200 bg-amber-50 text-amber-800' };
+}
+
+function SourcingCandidateList({ answer, evidence }: { answer: AgentAnswer; evidence: AgentEvidenceRecord[] }) {
+  const rows = sourcingCandidateRows(answer, evidence);
+  if (rows.length === 0) return <div className="mt-4 rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-5 text-sm text-[var(--color-text-secondary)]">暂未返回可展开的候选供应商明细。</div>;
+  const groups: Array<{ key: SourcingCandidateGroup; title: string; empty: string }> = [
+    { key: 'historical', title: '历史合作供应商', empty: '暂无历史合作供应商' },
+    { key: 'formal', title: '正式供应商', empty: '暂无已确认的正式供应商' },
+    { key: 'external', title: '外部待核验候选', empty: '暂无外部待核验候选' },
+  ];
+  const columns = 'md:grid-cols-[minmax(180px,1.25fr)_120px_minmax(120px,0.9fr)_minmax(180px,1.35fr)_110px_70px]';
+  return <section className="mt-4 space-y-4" aria-label="寻源候选列表">
+    <p className="text-xs leading-5 text-[var(--color-text-secondary)]">以下按候选来源分组。匹配品类用于说明数据归属，主营产品用于帮助判断实际产品范围；外部候选仍需人工核验。</p>
+    {groups.map(group => {
+      const groupRows = rows.filter(row => row.group === group.key);
+      return <section key={group.key} aria-labelledby={`sourcing-group-${group.key}`}>
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h4 id={`sourcing-group-${group.key}`} className="text-sm font-semibold text-[var(--color-text)]">{group.title}（{groupRows.length}）</h4>
+          {group.key === 'external' && groupRows.length > 0 && <span className="text-xs text-amber-700">需主体与产品能力核验</span>}
+        </div>
+        {groupRows.length === 0 ? <div className="rounded-xl border border-dashed border-[var(--color-border)] px-3 py-3 text-xs text-[var(--color-text-secondary)]">{group.empty}</div> : <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <div className={`hidden ${columns} gap-3 border-b border-[var(--color-border)] bg-[var(--color-code-bg)]/70 px-3 py-2 text-[11px] font-medium text-[var(--color-text-secondary)] md:grid`}>
+            <span>供应商</span><span>来源</span><span>匹配品类</span><span>主营产品</span><span>当前状态</span><span>详情</span>
+          </div>
+          <div className="divide-y divide-[var(--color-border)]">
+            {groupRows.map(row => {
+              const status = sourcingStatus(row.group);
+              const isLink = Boolean(row.sourceReference && /^https?:\/\//.test(row.sourceReference));
+              return <details key={`${row.group}-${row.name}`} className="group">
+                <summary className={`grid cursor-pointer list-none gap-2 px-3 py-3 text-xs hover:bg-[var(--color-surface-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-focus-ring)] ${columns}`}>
+                  <span className="min-w-0 break-words font-medium text-[var(--color-text)]"><span className="mr-1 text-[var(--color-text-secondary)] md:hidden">供应商：</span>{row.name}</span>
+                  <span className="text-[var(--color-text-secondary)]"><span className="mr-1 md:hidden">来源：</span>{row.source}</span>
+                  <span className="break-words text-[var(--color-text-secondary)]"><span className="mr-1 md:hidden">匹配品类：</span>{row.categories.length > 0 ? row.categories.join('、') : '未标明'}</span>
+                  <span className="break-words text-[var(--color-text-secondary)]"><span className="mr-1 md:hidden">主营产品：</span>{row.mainProducts.length > 0 ? row.mainProducts.join('、') : '资料未提供'}</span>
+                  <span><span className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-medium ${status.className}`}>{status.label}</span></span>
+                  <span className="text-[var(--color-primary-bg)] md:text-right"><span className="md:hidden">查看详情 </span><span aria-hidden="true" className="inline-block transition-transform group-open:rotate-180">⌄</span></span>
+                </summary>
+                <div className="border-t border-[var(--color-border)] bg-[var(--color-code-bg)]/35 px-3 py-3 text-xs leading-5 text-[var(--color-text-secondary)]">
+                  <p><span className="font-medium text-[var(--color-text)]">匹配说明：</span>{row.statement}</p>
+                  {row.matchReasons.length > 0 && <p className="mt-1"><span className="font-medium text-[var(--color-text)]">匹配依据：</span>{row.matchReasons.join('；')}</p>}
+                  {row.regions.length > 0 && <p className="mt-1"><span className="font-medium text-[var(--color-text)]">所在地区：</span>{row.regions.join('、')}</p>}
+                  <p className="mt-1"><span className="font-medium text-[var(--color-text)]">数据边界：</span>{row.group === 'external' ? '外部候选尚未完成主体、技术能力和供货资格核验，不代表已确认可以供货。' : row.group === 'historical' ? '历史合作记录仅作为寻源参考，仍需确认当前产品和供货能力。' : '正式供应商身份已在供应商库中确认，具体产品能力仍以当前资料为准。'}</p>
+                  {row.sourceReference && <p className="mt-1"><span className="font-medium text-[var(--color-text)]">来源详情：</span>{isLink ? <a href={row.sourceReference} target="_blank" rel="noreferrer" className="text-[var(--color-primary-bg)] hover:underline">查看来源</a> : row.sourceReference}</p>}
+                </div>
+              </details>;
+            })}
+          </div>
+        </div>}
+      </section>;
+    })}
+    <div className="rounded-xl border border-violet-200 bg-violet-50/60 px-3 py-3 text-xs leading-5 text-violet-950">风险信息将在选定候选后单独核验，本寻源列表不展示风险维度或风险检查项。</div>
+  </section>;
+}
+
 function buildRiskItems(answer?: AgentAnswer, evidence: AgentEvidenceRecord[] = []): string[] {
   const items = new Set<string>();
   answer?.claims.forEach(claim => {
@@ -572,7 +732,8 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <tbody className="divide-y divide-[var(--color-border)]">{trendClaims.map(claim => { const assessment = claimAssessment(claim, answer?.status !== 'completed' || limitations.length > 0); const name = claim.statement.split(' 最近 ')[0]; const next = claim.value === '恶化' ? '安排采购复核' : claim.value === '改善' || claim.value === '稳定' ? '继续观察' : '等待后续快照'; return <tr key={claim.claim_id}><td className="px-3 py-3 font-medium text-[var(--color-text)]">{name}</td><td className="px-3 py-3"><span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{readableClaimDetail(claim)}</span></td><td className="px-3 py-3 text-[var(--color-text-secondary)]">{next}</td></tr>; })}</tbody>
         </table>
       </div>}
-      {answer.claims.length > 0 && !scopeQuery && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      {answer.claims.length > 0 && !scopeQuery && capability === 'sourcing' && <SourcingCandidateList answer={answer} evidence={evidence || []} />}
+      {answer.claims.length > 0 && !scopeQuery && capability !== 'sourcing' && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full table-fixed border-collapse text-left text-sm">
           <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th scope="col" className="w-[15%] px-2 py-2.5 font-medium sm:px-3">风险维度</th><th scope="col" className="w-[20%] px-2 py-2.5 font-medium sm:px-3">指标/检查项</th><th scope="col" className="w-[32%] px-2 py-2.5 font-medium sm:px-3">当前数据</th><th scope="col" className="w-[18%] px-2 py-2.5 font-medium sm:px-3">判断</th><th scope="col" className="hidden w-[8%] px-3 py-2.5 font-medium md:table-cell">依据状态</th><th scope="col" className="hidden w-[7%] px-3 py-2.5 font-medium md:table-cell">可信度</th></tr></thead>
           <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {

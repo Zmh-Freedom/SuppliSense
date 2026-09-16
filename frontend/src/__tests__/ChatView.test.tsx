@@ -532,6 +532,53 @@ describe('ChatView session lifecycle', () => {
     expect(screen.queryByText('Supplier Name')).not.toBeInTheDocument()
   })
 
+  it('renders sourcing candidates as grouped procurement rows instead of a risk table', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。',
+        claims: [
+          {
+            claim_id: 'sourcing-history', entity_id: 'sourcing', dimension: 'sourcing',
+            statement: '华东电池有限公司 是历史合作候选', value: '华东电池有限公司', fact_path: 'supplier_name',
+            evidence_refs: ['sourcing-history-evidence'], confidence: 0.95, validation_status: 'supported', validation_reasons: [],
+          },
+          {
+            claim_id: 'sourcing-external', entity_id: 'sourcing', dimension: 'sourcing',
+            statement: 'LG 化学（重庆）工程塑料有限公司 为外部待核验候选', value: 'LG 化学（重庆）工程塑料有限公司', fact_path: 'supplier_name',
+            evidence_refs: ['sourcing-external-evidence'], confidence: 0.8, validation_status: 'supported', validation_reasons: [],
+          },
+        ],
+        limitations: [], action_proposals: [], action_receipts: [], evidence_refs: ['sourcing-history-evidence', 'sourcing-external-evidence'],
+      })
+      handlers.onEvidence?.({ records: [
+        {
+          evidence_id: 'sourcing-history-evidence', entity_id: 'sourcing', dimension: 'sourcing', provider: 'internal_supplier_material_list', source_type: 'internal', status: 'available', data_mode: 'formal', collected_at: '2026-09-16T09:00:00Z',
+          facts: { candidate_type: 'historical', source: 'internal_supplier_material_list', categories: ['蓄电池'], capabilities: [{ product_name: '汽车起动蓄电池' }], regions: ['华东'] },
+        },
+        {
+          evidence_id: 'sourcing-external-evidence', entity_id: 'sourcing', dimension: 'sourcing', provider: 'gasgoo_manual_export', source_type: 'third_party', status: 'available', data_mode: 'formal', collected_at: '2026-09-16T09:00:00Z',
+          facts: { candidate_type: 'external', source: 'gasgoo_manual_export', categories: ['动力电池'], capabilities: [{ product_name: '改性材料、电解液、电芯' }], regions: ['重庆市'], source_reference: 'gasgoo:example' },
+        },
+      ] })
+      handlers.onDone?.({ answer: '已找到 2 家寻源候选。' })
+      return '已找到 2 家寻源候选。'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向采购助手提问'), '找一下蓄电池供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText('历史合作供应商（1）')).toBeInTheDocument()
+    expect(screen.getByText('外部待核验候选（1）')).toBeInTheDocument()
+    expect(screen.getByText('汽车起动蓄电池')).toBeInTheDocument()
+    expect(screen.getByText('改性材料、电解液、电芯')).toBeInTheDocument()
+    expect(screen.getByText('动力电池')).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '风险维度' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '指标/检查项' })).not.toBeInTheDocument()
+  })
+
   it('keeps a financial question in the financial analysis route', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({
