@@ -11,9 +11,11 @@ from app.domains.sourcing_risk import discovery_service
 from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
 from app.graphs.agent_core.adapter import _apply_harness_sourcing_requirement
 from app.graphs.agent_core.adapter import _enforce_scope_query_intent
+from app.graphs.agent_core.adapter import apply_extracted_conversation_intent
 from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
 from app.graphs.harness.graph import _build_default_plan, _summary
+from app.graphs.agent_core.intent_extractor import ConversationIntentExtraction
 from app.domains.risk import tools_risk
 from app.tools import TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor
@@ -83,6 +85,38 @@ def test_harness_binds_requirement_to_current_task_before_planning(monkeypatch) 
     planned = _build_default_plan({"current_task": task, "execution_context": resolved})
     assert planned[0].tool_name == "discover_supplier_candidates"
     assert planned[0].arguments["requirement"]["category"] == "钢材"
+
+
+def test_harness_uses_llm_requirement_slots_before_legacy_wording_fallback() -> None:
+    context = {
+        "session_id": "session-llm-sourcing",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "source-llm",
+            "task_type": "sourcing",
+            "user_message": "请帮我处理这个采购需求",
+        },
+    }
+    extraction = ConversationIntentExtraction(
+        capability="sourcing",
+        scope="product_category",
+        sourcing_requirement={"category": "蓄电池", "product": "蓄电池"},
+    )
+
+    overlaid = apply_extracted_conversation_intent(context, extraction)
+    resolved = _apply_harness_sourcing_requirement(
+        overlaid,
+        "请帮我处理这个采购需求",
+    )
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["capability"] == "sourcing"
+    assert resolved["current_task"]["requirement"]["category"] == "蓄电池"
+    assert planned[0].tool_name == "discover_supplier_candidates"
 
 
 def test_harness_new_sourcing_turn_replaces_previous_category(monkeypatch) -> None:
@@ -572,6 +606,24 @@ def test_harness_builds_discovery_plan_for_risk_filtered_sourcing() -> None:
 
     assert len(planned) == 1
     assert planned[0].tool_name == "discover_supplier_candidates"
+
+
+def test_harness_uses_structured_capability_for_non_keyword_analysis() -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "structured-capability",
+            "task_type": "analysis",
+            "capability": "risk_network",
+            "scope": "single_supplier",
+            "user_message": "请处理这家企业",
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": [],
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert len(planned) == 1
+    assert planned[0].tool_name == "contagion_analysis"
 
 
 @pytest.mark.parametrize(

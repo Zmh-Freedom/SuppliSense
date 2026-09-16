@@ -187,6 +187,17 @@ def test_sourcing_fallback_accepts_common_query_verbs(monkeypatch, message):
     assert result["requirement"]["specification"] == "蓄电池"
 
 
+def test_llm_requirement_is_validated_without_reparsing_user_wording():
+    result = requirement_service.resolve_harness_requirement_from_llm({
+        "category": "蓄电池",
+        "product": "蓄电池",
+    })
+
+    assert result["status"] == "ready"
+    assert result["extraction_source"] == "llm_validated"
+    assert result["requirement"]["specification"] == "蓄电池"
+
+
 def test_parse_requirement_repairs_unparseable_initial_adapter_response(monkeypatch):
     """Letting malformed initial JSON escape would skip the permitted repair."""
     calls = 0

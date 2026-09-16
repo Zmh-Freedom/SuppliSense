@@ -306,13 +306,17 @@ def _scope_query_task(
             required=True,
             evidence_requirements=["risk_monitoring"],
         )
-    trend_requested = any(token in message for token in ("风险变化", "风险趋势", "趋势", "变化情况"))
+    capability = str(current_task.get("capability") or "")
+    scope = str(current_task.get("scope") or "")
+    trend_requested = capability in {"risk_trend", "risk_prediction"} or any(
+        token in message for token in ("风险变化", "风险趋势", "趋势", "变化情况")
+    )
     monitoring_scope = any(token in message for token in (
         "监控清单", "监控列表", "我负责的供应商", "我管理的供应商",
         "本人负责供应商", "本人负责的供应商", "本人管理供应商", "本人管理的供应商",
         "我科室", "本部门",
     ))
-    if not monitoring_scope:
+    if scope != "responsible_suppliers" and not monitoring_scope:
         return None
     return HarnessTask(
         task_id=f"{task_id}:watchlist:{'trend' if trend_requested else 'list'}",
@@ -348,8 +352,10 @@ def _append_derived_tasks(
     message = str(current_task.get("user_message") or "")
     wants_trend = bool(current_task.get("include_trend")) or any(
         token in message for token in ("趋势", "历史变化", "变化情况")
-    )
-    wants_comparison = bool(current_task.get("comparison")) or any(
+    ) or str(current_task.get("capability") or "") == "risk_trend"
+    wants_comparison = bool(current_task.get("comparison")) or str(
+        current_task.get("capability") or ""
+    ) == "risk_comparison" or any(
         token in message for token in ("对比", "比较", "横向")
     )
     existing_tool_names = {task.tool_name for task in tasks}
@@ -406,6 +412,25 @@ def _append_capability_tasks(
     if not names:
         return
     message = str(current_task.get("user_message") or "")
+    capability_requests = {
+        "risk": ("assess_risk", "risk"),
+        "financial": ("query_financials", "financial"),
+        "business_risk": ("assess_business_risk", "business_risk"),
+        "quality": ("assess_operational_risk", "quality"),
+        "delivery": ("assess_operational_risk", "delivery"),
+        "compliance": ("check_sanctions", "compliance"),
+        "esg": ("esg_assessment", "esg"),
+        "sentiment": ("sentiment_analysis", "sentiment"),
+        "risk_trend": ("analyze_trend", "risk_trend"),
+        "risk_prediction": ("predict_risk", "risk_prediction"),
+        "risk_network": ("contagion_analysis", "risk_network"),
+        "legal_risk": ("lookup_legal_risk", "legal_risk"),
+        "company_profile": ("lookup_company_profile", "company_profile"),
+        "identity_review": ("lookup_company_identity", "identity_review"),
+        "report": ("generate_report", "report"),
+    }
+    llm_capability = str(current_task.get("capability") or "")
+    llm_request = capability_requests.get(llm_capability)
     requests = [
         (("舆情", "新闻", "负面信息"), "sentiment_analysis", "sentiment"),
         (("供应链关系", "关联关系", "传染风险", "风险传染"), "contagion_analysis", "risk_network"),
@@ -413,13 +438,18 @@ def _append_capability_tasks(
         (("替代供应商", "备选供应商", "供应商替代"), "find_alternatives", "sourcing"),
         (("生成报告", "风险评估报告", "导出报告"), "generate_report", "report"),
     ]
+    if llm_request is not None:
+        requests.append(((), llm_request[0], llm_request[1]))
     existing = {task.tool_name for task in tasks}
     prefix = str(current_task.get("task_id") or "task")
     for tokens, tool_name, dimension in requests:
-        if tool_name in existing or not any(token in message for token in tokens):
+        if tool_name in existing or (tokens and not any(token in message for token in tokens)):
             continue
         for name in dict.fromkeys(names):
-            arguments: dict[str, Any] = {"company_name": name}
+            argument_name = _DIMENSION_TO_TOOL.get(dimension, ("", "company_name"))[1]
+            arguments: dict[str, Any] = {argument_name: name}
+            if tool_name == "assess_operational_risk":
+                arguments["dimension"] = dimension
             if tool_name == "generate_report":
                 arguments["report_type"] = "html"
             entity_id = _entity_id(name, context)
@@ -714,8 +744,22 @@ _SUMMARY_ROUTE_DEFINITIONS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], 
 )
 
 
-def _primary_summary_capability(message: str, tool_names: set[str], dimensions: set[str]) -> str | None:
+def _primary_summary_capability(
+    message: str,
+    tool_names: set[str],
+    dimensions: set[str],
+    capability: str = "",
+) -> str | None:
     """Choose the user's explicitly requested capability for the lead summary."""
+    # The LLM capability is authoritative once it has been validated into the
+    # current task.  Message tokens remain only as a compatibility fallback
+    # for historical callers that construct HarnessState directly.
+    if capability in {
+        "risk_network", "risk_prediction", "sentiment", "financial", "compliance",
+        "esg", "risk_trend", "legal_risk", "business_risk", "report", "sourcing",
+        "company_profile", "identity_review", "risk_comparison", "quality", "delivery",
+    }:
+        return capability
     matched: list[tuple[int, int, str]] = []
     for priority, (capability, tokens, tools) in enumerate(_SUMMARY_ROUTE_DEFINITIONS):
         if not tool_names.intersection(tools):
@@ -796,6 +840,7 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         str(current_task.get("user_message") or ""),
         tool_names,
         dimensions,
+        str(current_task.get("capability") or ""),
     )
     latest_data: dict[str, Any] = {}
     for outcome in outcomes:

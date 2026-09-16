@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.domains.sourcing_risk.requirement_service import SourcingRequirement
 
 logger = get_logger()
 
@@ -59,6 +60,17 @@ class ConversationIntentExtraction(BaseModel):
     provider_capabilities: list[Literal[
         "identity", "legal_risk", "business_risk", "news", "profile"
     ]] = Field(default_factory=list, max_length=5)
+    capability: Literal[
+        "sourcing", "risk", "financial", "sentiment", "compliance", "esg",
+        "risk_trend", "risk_prediction", "risk_network", "legal_risk",
+        "business_risk", "report", "company_profile", "identity_review",
+        "watchlist_scope", "risk_comparison", "quality", "delivery", "none"
+    ] = "none"
+    scope: Literal[
+        "single_supplier", "supplier_group", "product_category",
+        "responsible_suppliers", "supplier_directory", "pending_confirmation", "none"
+    ] = "none"
+    sourcing_requirement: SourcingRequirement | None = None
     task_type: Literal["sourcing", "analysis", "none"] = "none"
     requested_action: Literal["add_watchlist", "none"] = "none"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -116,6 +128,10 @@ def extract_conversation_intent(
         "response_schema": ConversationIntentExtraction.model_json_schema(),
         "rules": [
             "Return one JSON object only.",
+            "First identify the primary capability from the allowed capability values; do not classify by matching a single keyword.",
+            "Capability mapping: sourcing=寻源, risk=综合风险, financial=财务, sentiment=舆情, compliance=合规, esg=ESG, risk_trend=历史风险变化, risk_prediction=未来风险趋势, risk_network=供应链关系或传染风险, report=报告, watchlist_scope=监控清单或本人负责供应商范围, identity_review=主体核验, company_profile=工商资料, legal_risk=司法风险, business_risk=经营风险, risk_comparison=企业对比, quality=质量, delivery=交付。",
+            "Set scope to describe whether this is one supplier, a supplier group, a product category, the user's responsible suppliers, a formal directory, or a pending confirmation.",
+            "For capability='sourcing', always return sourcing_requirement with the explicitly requested product/category and constraints; use null only when the product/category is genuinely absent.",
             "Extract explicitly named companies from the current message even when they are absent from known_supplier_references.",
             "Use known_supplier_references only to resolve pronouns or aliases such as '这家' and '上述两家'.",
             "Do not invent companies, supplier codes, risk findings, or actions.",
@@ -159,6 +175,16 @@ def extract_conversation_intent(
         return None
 
     inferred_task_type = infer_task_type(message)
+    capability = extracted.capability
+    if capability == "sourcing":
+        task_type: Literal["sourcing", "analysis", "none"] = "sourcing"
+    elif capability != "none":
+        task_type = "analysis"
+    else:
+        # Compatibility fallback for older model responses that do not yet
+        # return capability. New responses are authoritative and do not pass
+        # through keyword-based task classification.
+        task_type = inferred_task_type if inferred_task_type != "none" else extracted.task_type
     extracted_dimensions = _expand_generic_risk_dimensions(
         message,
         list(extracted.analysis_dimensions),
@@ -178,7 +204,7 @@ def extract_conversation_intent(
     validated = extracted.model_copy(update={
         "target_supplier_names": validated_targets,
         "analysis_dimensions": extracted_dimensions,
-        "task_type": inferred_task_type if inferred_task_type != "none" else extracted.task_type,
+        "task_type": task_type,
         # The model may over-read the word “监控” in a read-only identity
         # request. A write action is allowed only when the current message
         # contains an explicit add/monitor instruction.
@@ -192,6 +218,9 @@ def extract_conversation_intent(
         "conversation_intent_extracted",
         target_supplier_names=validated.target_supplier_names,
         analysis_dimensions=validated.analysis_dimensions,
+        capability=validated.capability,
+        scope=validated.scope,
+        has_sourcing_requirement=validated.sourcing_requirement is not None,
         task_type=validated.task_type,
         requested_action=validated.requested_action,
         confidence=validated.confidence,

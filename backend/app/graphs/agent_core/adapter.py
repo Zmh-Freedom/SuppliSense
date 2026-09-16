@@ -45,6 +45,7 @@ def validate_execution_context(
     llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
     expected_targets = _text_list(llm_intent.get("target_supplier_names"))
     expected_dimensions = _text_list(llm_intent.get("analysis_dimensions"))
+    expected_capability = str(llm_intent.get("capability") or "none")
     actual_targets = _text_list(current_task.get("target_supplier_names"))
     actual_dimensions = _text_list(current_task.get("analysis_dimensions"))
     if expected_targets and actual_targets != expected_targets:
@@ -62,6 +63,14 @@ def validate_execution_context(
             "LLM 解析维度未完整进入 current_task",
             expected_dimensions=expected_dimensions,
             actual_dimensions=actual_dimensions,
+        )
+    if expected_capability != "none" and current_task.get("capability") != expected_capability:
+        _raise_context_contract_violation(
+            source,
+            "llm_capability_not_preserved",
+            "LLM 解析能力未完整进入 current_task",
+            expected_capability=expected_capability,
+            actual_capability=current_task.get("capability"),
         )
     logger.info(
         "execution_context_contract_bound",
@@ -233,6 +242,8 @@ def _apply_identity_verification_intent(
         "target_supplier_names": target_names,
         "analysis_dimensions": ["identity_review"],
         "task_type": "analysis",
+        "capability": "identity_review",
+        "scope": "single_supplier",
         "identity_verification": True,
         "monitor_target_id": target_id,
         "subtasks": [],
@@ -248,6 +259,8 @@ def _apply_identity_verification_intent(
         "target_supplier_names": target_names,
         "analysis_dimensions": ["identity_review"],
         "task_type": "analysis",
+        "capability": "identity_review",
+        "scope": "single_supplier",
         "requested_action": "none",
         "monitor_target_id": target_id,
     })
@@ -362,11 +375,21 @@ def _enforce_scope_query_intent(
             "llm_intent": normalized_intent,
         }
     current_task = dict(execution_context.get("current_task") or {})
+    existing_capability = str(
+        (execution_context.get("llm_intent") or {}).get("capability") or ""
+    )
+    scope_capability = (
+        existing_capability
+        if existing_capability in {"risk_trend", "watchlist_scope"}
+        else "watchlist_scope"
+    )
     current_task.update({
         "target_supplier_names": [],
         "analysis_dimensions": [],
         "subtasks": [],
         "task_type": "analysis",
+        "capability": scope_capability,
+        "scope": "responsible_suppliers",
         "user_message": user_message,
     })
     conversation_state = dict(execution_context.get("conversation_state") or {})
@@ -382,6 +405,8 @@ def _enforce_scope_query_intent(
             "target_supplier_names": [],
             "analysis_dimensions": [],
             "task_type": "analysis",
+            "capability": scope_capability,
+            "scope": "responsible_suppliers",
             "requested_action": "none",
         }
     return {
@@ -403,12 +428,19 @@ def _apply_harness_sourcing_requirement(
     existing = current_task.get("requirement")
     if not isinstance(existing, dict):
         existing = (execution_context.get("conversation_state") or {}).get("current_requirement")
-    from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
-
-    resolved = resolve_harness_requirement(
-        user_message,
-        existing if isinstance(existing, dict) else None,
+    from app.domains.sourcing_risk.requirement_service import (
+        resolve_harness_requirement,
+        resolve_harness_requirement_from_llm,
     )
+
+    llm_requirement = current_task.pop("llm_sourcing_requirement", None)
+    if isinstance(llm_requirement, dict):
+        resolved = resolve_harness_requirement_from_llm(llm_requirement)
+    else:
+        resolved = resolve_harness_requirement(
+            user_message,
+            existing if isinstance(existing, dict) else None,
+        )
     conversation_state = dict(execution_context.get("conversation_state") or {})
     current_task["requirement_status"] = resolved.get("status")
     current_task["requirement_extraction_source"] = resolved.get("extraction_source")
@@ -437,9 +469,21 @@ def apply_extracted_conversation_intent(
     target_names = list(getattr(extracted, "target_supplier_names", []) or [])
     dimensions = list(getattr(extracted, "analysis_dimensions", []) or [])
     provider_capabilities = list(getattr(extracted, "provider_capabilities", []) or [])
+    capability = getattr(extracted, "capability", "none")
+    scope = getattr(extracted, "scope", "none")
+    sourcing_requirement = getattr(extracted, "sourcing_requirement", None)
     task_type = getattr(extracted, "task_type", "none")
     requested_action = getattr(extracted, "requested_action", "none")
-    if not target_names and not dimensions and not provider_capabilities and task_type == "none" and requested_action == "none":
+    if (
+        not target_names
+        and not dimensions
+        and not provider_capabilities
+        and capability == "none"
+        and scope == "none"
+        and sourcing_requirement is None
+        and task_type == "none"
+        and requested_action == "none"
+    ):
         return execution_context
 
     conversation_state = dict(execution_context.get("conversation_state") or {})
@@ -468,7 +512,14 @@ def apply_extracted_conversation_intent(
         dimensions = _text_list(current_task.get("analysis_dimensions"))
     if provider_capabilities:
         current_task["provider_capabilities"] = provider_capabilities
-    if task_type == "sourcing" and not target_names:
+    if capability != "none":
+        current_task["capability"] = capability
+        current_task["scope"] = scope
+    if capability == "sourcing" and sourcing_requirement is not None:
+        current_task["llm_sourcing_requirement"] = sourcing_requirement.model_dump(
+            mode="json", exclude_none=True
+        )
+    if capability == "sourcing" or task_type == "sourcing":
         current_task["task_type"] = "sourcing"
     elif target_names or dimensions:
         current_task["task_type"] = "analysis"

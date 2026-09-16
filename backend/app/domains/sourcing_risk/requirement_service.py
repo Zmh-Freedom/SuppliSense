@@ -230,6 +230,26 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def resolve_harness_requirement_from_llm(requirement: dict[str, Any]) -> dict[str, Any]:
+    """Validate the LLM's sourcing slots without re-parsing user wording."""
+    try:
+        normalized = _normalise_harness_requirement(requirement)
+    except (TypeError, ValueError, ValidationError):
+        return {
+            "status": "clarification_required",
+            "missing": ["category"],
+            "extraction_source": "llm_invalid",
+        }
+    missing = missing_requirement_fields(normalized)
+    if missing:
+        return {
+            "status": "clarification_required",
+            "missing": missing,
+            "extraction_source": "llm_validated",
+        }
+    return _harness_ready(normalized)
+
+
 def _fallback_requirement_from_text(message: str) -> dict[str, Any] | None:
     material_number = _MATERIAL_NUMBER_PATTERN.search(message or "")
     if material_number:

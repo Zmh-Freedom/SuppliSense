@@ -294,6 +294,42 @@ def test_llm_intent_keeps_risk_filter_as_sourcing_task(monkeypatch):
     assert result.analysis_dimensions == ["risk"]
 
 
+def test_llm_intent_returns_canonical_capability_and_sourcing_slots(monkeypatch):
+    payload = {
+        "capability": "sourcing",
+        "scope": "product_category",
+        "sourcing_requirement": {
+            "category": "蓄电池",
+            "product": "蓄电池",
+        },
+        "target_supplier_names": [],
+        "analysis_dimensions": [],
+        "task_type": "none",
+        "confidence": 0.97,
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent("帮我找蓄电池供应商", [])
+
+    assert result is not None
+    assert result.capability == "sourcing"
+    assert result.scope == "product_category"
+    assert result.sourcing_requirement is not None
+    assert result.sourcing_requirement.category == "蓄电池"
+
+
 def test_deterministic_intent_marks_sourcing_without_llm():
     assert intent_extractor.infer_task_type("帮我找钢材供应商") == "sourcing"
     assert intent_extractor.infer_task_type("做一下蓄电池的寻源") == "sourcing"
