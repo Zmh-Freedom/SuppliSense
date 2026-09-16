@@ -458,6 +458,8 @@ export interface SourcingResultItem {
   risk_summary: string;
   industry?: string | null;
   categories?: string[];
+  main_products?: string | string[] | null;
+  products?: string | string[] | null;
   capabilities?: Array<Record<string, unknown>>;
   contacts?: Array<Record<string, unknown>>;
   website_url?: string | null;
@@ -556,6 +558,8 @@ export interface SourcingRiskCandidate {
   status?: string;
   industry?: string | null;
   categories?: string[];
+  main_products?: string | string[] | null;
+  products?: string | string[] | null;
   capabilities?: Array<Record<string, unknown>>;
   contacts?: Array<Record<string, unknown>>;
   source_updated_at?: string | null;

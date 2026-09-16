@@ -342,6 +342,10 @@ function SourcingResultCard({ result, watched, onWatch }: {
   const matchPct = (result.match_score * 100).toFixed(0);
   const rankPct = (result.final_rank * 100).toFixed(0);
   const isHistoricalCandidate = result.source === 'internal_supplier_material_list';
+  const mainProducts = Array.from(new Set([
+    ...(typeof result.main_products === 'string' ? [result.main_products] : result.main_products ?? []),
+    ...(result.capabilities ?? []).flatMap(item => [item.product_name, item.category].filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))),
+  ]));
 
   return (
     <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
@@ -368,10 +372,10 @@ function SourcingResultCard({ result, watched, onWatch }: {
               推荐 {rankPct}%
             </span>
           </div>
-          {(result.categories?.length || result.capabilities?.length) && (
+          {(result.categories?.length || mainProducts.length) && (
             <div className="mt-2 text-xs text-[var(--color-text-muted)] space-y-1">
-              {result.categories?.length ? <p>主营品类：{result.categories.join('、')}</p> : null}
-              {result.capabilities?.length ? <p>供货能力：{result.capabilities.map(item => String(item.product_name || item.category || '')).filter(Boolean).join('、')}</p> : null}
+              {result.categories?.length ? <p>{result.source === 'gasgoo_manual_export' ? '盖世匹配品类' : '匹配品类'}：{result.categories.join('、')}</p> : null}
+              {mainProducts.length ? <p>主营产品 / 供货能力：{mainProducts.join('、')}</p> : <p>主营产品：资料未提供，需人工核验</p>}
             </div>
           )}
           {isHistoricalCandidate && result.match_reason && <p className="mt-2 text-xs text-blue-700">历史供货依据：{result.match_reason}</p>}

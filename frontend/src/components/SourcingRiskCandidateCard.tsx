@@ -124,11 +124,16 @@ function EvidenceDetails({ evidence }: { evidence: SourcingRiskEvidence[] }) {
 }
 
 function CandidateDetails({ candidate, evidence, decision }: { candidate: SourcingRiskCandidate; evidence: SourcingRiskEvidence[]; decision?: SourcingRiskDecision }) {
-  const relatedProducts = unique([
-    ...(candidate.categories ?? []),
+  const matchedCategories = unique(candidate.categories ?? []);
+  const mainProducts = unique([
+    ...stringList(candidate.main_products),
     ...stringList(candidate.products),
+    ...(candidate.capabilities ?? []).flatMap(item => stringList(item.product_name)),
+  ]);
+  const relatedProducts = unique([
+    ...matchedCategories,
+    ...mainProducts,
     ...stringList(candidate.specifications),
-    ...(candidate.capabilities ?? []).flatMap(item => stringList(item.product_name ?? item.category)),
   ]).slice(0, 6);
   const reasons = unique([
     ...stringList(candidate.match_reasons).map(readableReason),
@@ -149,10 +154,17 @@ function CandidateDetails({ candidate, evidence, decision }: { candidate: Sourci
   const updatedAt = formatDate(candidate.source_updated_at ?? candidate.discovered_at);
 
   return <div className="space-y-3">
-    <section className="rounded-xl border border-[var(--color-border)] p-3">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">相关产品 / 能力</p>
-      <p className="mt-1 text-sm leading-6 text-[var(--color-text)]">{relatedProducts.length > 0 ? relatedProducts.join('、') : '候选资料未提供可读的产品或能力明细'}</p>
-    </section>
+    <div className="grid gap-3 sm:grid-cols-2">
+      <section className="rounded-xl border border-[var(--color-border)] p-3">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-secondary)]">{candidate.source === 'gasgoo_manual_export' ? '盖世匹配品类' : '匹配品类'}</p>
+        <p className="mt-1 text-sm leading-6 text-[var(--color-text)]">{matchedCategories.length > 0 ? matchedCategories.join('、') : '未标明匹配品类'}</p>
+      </section>
+      <section className="rounded-xl border border-blue-100 bg-blue-50/50 p-3">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-blue-800">主营产品（来源资料）</p>
+        <p className="mt-1 text-sm leading-6 text-blue-950">{mainProducts.length > 0 ? mainProducts.join('、') : '资料未提供，需人工核验'}</p>
+        {candidate.source === 'gasgoo_manual_export' && <p className="mt-1 text-[11px] leading-5 text-blue-800">仅用于判断产品范围，不等同于成品供货证明。</p>}
+      </section>
+    </div>
     <section className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
       <p className="text-[11px] font-medium uppercase tracking-wide text-blue-800">推荐理由</p>
       {reasons.length > 0 ? <ul className="mt-1 space-y-1 text-xs leading-5 text-blue-950">{reasons.map(reason => <li key={reason}>· {reason}</li>)}</ul> : <p className="mt-1 text-xs leading-5 text-blue-950">暂无结构化理由，建议展开证据明细后再确认。</p>}

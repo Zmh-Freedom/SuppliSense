@@ -149,7 +149,7 @@ describe('SourcingRiskWorkbench', () => {
 
     expect(await screen.findByRole('article', { name: '候选供应商：推荐供应商' })).toBeInTheDocument();
     expect(screen.getAllByRole('article', { name: '候选供应商：推荐供应商' })).toHaveLength(1);
-    expect(screen.getByText('相关产品 / 能力')).toBeInTheDocument();
+    expect(screen.getByText('主营产品（来源资料）')).toBeInTheDocument();
     expect(screen.getByText(/采购品类匹配/)).toBeInTheDocument();
     expect(screen.getByText('查看证据明细（1）')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '查看供应商画像' })).toHaveAttribute('href', '/suppliers/supplier-1');
@@ -207,6 +207,21 @@ describe('SourcingRiskWorkbench', () => {
     expect(screen.getByRole('link', { name: '官网（待核验）' })).toHaveAttribute('href', 'https://supplier.example.com');
     expect(screen.getByText('电话（待核验）：021-12345678')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '邮箱（待核验）：sales@supplier.example.com' })).toHaveAttribute('href', 'mailto:sales@supplier.example.com');
+  });
+
+  it('shows source products separately from the matched category', () => {
+    render(<SourcingRiskCandidateCard candidate={{
+      supplier_name: 'LG化学（重庆）工程塑料有限公司',
+      source: 'gasgoo_manual_export',
+      categories: ['动力电池'],
+      capabilities: [{ category: '动力电池', product_name: '改性材料、电解液、电芯' }],
+    }} />);
+
+    expect(screen.getByText('盖世匹配品类')).toBeInTheDocument();
+    expect(screen.getByText('动力电池')).toBeInTheDocument();
+    expect(screen.getByText('主营产品（来源资料）')).toBeInTheDocument();
+    expect(screen.getByText('改性材料、电解液、电芯')).toBeInTheDocument();
+    expect(screen.getByText('仅用于判断产品范围，不等同于成品供货证明。')).toBeInTheDocument();
   });
 
   it('uses procurement wording for internal run and identity statuses', () => {
