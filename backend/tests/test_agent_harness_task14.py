@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 
@@ -133,6 +134,38 @@ def test_sourcing_summary_explains_no_match_category() -> None:
     assert "当前没有匹配候选" in summary
     assert "没有返回可用候选" not in summary
 
+
+def test_watchlist_trend_exposes_current_score_and_comparison(monkeypatch) -> None:
+    from app.domains.alert import tools as alert_tools
+
+    class SnapshotCursor:
+        def sort(self, *_args):
+            return self
+
+        def __iter__(self):
+            return iter([
+                {"checked_at": datetime(2026, 9, 1, tzinfo=timezone.utc), "risk_score": 93, "risk_level": "低风险"},
+                {"checked_at": datetime(2026, 9, 16, tzinfo=timezone.utc), "risk_score": 93, "risk_level": "低风险"},
+            ])
+
+    class SnapshotCollection:
+        def find(self, *_args):
+            return SnapshotCursor()
+
+    monkeypatch.setattr(alert_tools, "_active_scope", lambda: (None, None, False))
+    monkeypatch.setattr(
+        "app.domains.alert.service.get_watchlist_targets",
+        lambda: [{"company_name": "可继续观察供应商", "monitor_target_id": "target-1"}],
+    )
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: {"alert_snapshots": SnapshotCollection()})
+
+    result = alert_tools.analyze_watchlist_trend.invoke({"period_months": 1})
+
+    company = result["companies"][0]
+    assert company["latest_score"] == 93
+    assert company["latest_level"] == "低风险"
+    assert company["delta"] == 0
+    assert "当前风险评分：93/100" in result["claims"][1]["statement"]
 
 def test_sourcing_summary_explains_external_failure() -> None:
     summary = _summary(

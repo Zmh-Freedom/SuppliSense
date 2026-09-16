@@ -325,8 +325,9 @@ function claimAssessment(claim: AgentAnswer['claims'][number], coverageLimited =
   if (leafPath === 'risk_level' && typeof value === 'string') {
     if (value.includes('低')) return { label: coverageLimited ? '资料范围内风险较低' : '风险较低', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
     if (value.includes('高')) return { label: '高风险信号', className: 'border-red-200 bg-red-50 text-red-700' };
-    return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
-  }
+  return { label: '需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+}
+
   if (leafPath === 'clean' && typeof value === 'boolean') {
     return value
       ? { label: '未见风险信号', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' }
@@ -367,6 +368,80 @@ function claimAssessment(claim: AgentAnswer['claims'][number], coverageLimited =
     if (value === 'low') return { label: '低敞口', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
   }
   return { label: '已获取，需结合复核', className: 'border-stone-200 bg-stone-50 text-stone-700' };
+}
+
+interface WatchlistTrendRow {
+  companyName: string;
+  trend: string;
+  latestScore: number | null;
+  latestLevel: string | null;
+  previousScore: number | null;
+  delta: number | null;
+  dataPoints: number;
+  scorePoints: number;
+  comparisonText: string;
+  checkedAt: string | null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function buildWatchlistTrendRows(
+  evidence: AgentEvidenceRecord[],
+  claims: AgentAnswer['claims'],
+): WatchlistTrendRow[] {
+  const evidenceRows = evidence.flatMap(record => {
+    const companies = record.facts?.companies;
+    return Array.isArray(companies) ? companies : [];
+  }).filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'));
+  if (evidenceRows.length > 0) {
+    return evidenceRows.map(item => ({
+      companyName: String(item.company_name || '未命名供应商'),
+      trend: String(item.trend || '暂无快照'),
+      latestScore: numberOrNull(item.latest_score),
+      latestLevel: item.latest_level ? String(item.latest_level) : null,
+      previousScore: numberOrNull(item.previous_score),
+      delta: numberOrNull(item.delta),
+      dataPoints: Number(item.trend_data_points || 0),
+      scorePoints: Number(item.trend_score_points || 0),
+      comparisonText: String(item.comparison_text || '暂无可比较数据'),
+      checkedAt: item.latest_checked_at ? String(item.latest_checked_at) : null,
+    }));
+  }
+  return claims.map(claim => {
+    const [companyName, detail = ''] = claim.statement.split(' 最近 ', 2);
+    const scoreMatch = detail.match(/当前风险评分：([^；]+)/);
+    const levelMatch = detail.match(/风险等级：([^；]+)/);
+    const trendMatch = detail.match(/风险变化：([^；]+)/);
+    return {
+      companyName,
+      trend: trendMatch?.[1] || String(claim.value || '暂无快照'),
+      latestScore: numberOrNull(scoreMatch?.[1] && Number.parseFloat(scoreMatch[1])),
+      latestLevel: levelMatch?.[1] && levelMatch[1] !== '暂无' ? levelMatch[1] : null,
+      previousScore: null,
+      delta: null,
+      dataPoints: 0,
+      scorePoints: 0,
+      comparisonText: detail || '暂无可比较数据',
+      checkedAt: null,
+    };
+  });
+}
+
+function trendStatusMeta(trend: string): { label: string; className: string } {
+  const styles = {
+    bad: 'border-red-200 bg-red-50 text-red-700',
+    good: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    neutral: 'border-blue-200 bg-blue-50 text-blue-700',
+    missing: 'border-amber-200 bg-amber-50 text-amber-700',
+  };
+  if (trend === '恶化') return { label: '风险上升', className: styles.bad };
+  if (trend === '改善') return { label: '风险下降', className: styles.good };
+  if (trend === '稳定') return { label: '基本稳定', className: styles.neutral };
+  if (trend === '仅有1次评分') return { label: '暂无变化判断', className: styles.missing };
+  if (trend === '评分缺失') return { label: '评分缺失', className: styles.missing };
+  return { label: '暂无风险快照', className: styles.missing };
 }
 
 function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
@@ -699,6 +774,9 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
     claim.statement.startsWith('监控对象：') || (typeof claim.value === 'string' && /(?:有限公司|股份有限公司|集团)/.test(claim.value))
   )) || [];
   const trendClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && claim.statement.includes('风险变化：')) || [];
+  const trendRows = buildWatchlistTrendRows(evidence || [], trendClaims);
+  const trendPeriodMonths = evidence?.find(record => numberOrNull(record.facts?.period_months) != null)?.facts?.period_months;
+  const trendPeriodLabel = numberOrNull(trendPeriodMonths) === 1 ? '本月' : `近${numberOrNull(trendPeriodMonths) || 1}个月`;
   const isTrend = trendClaims.length > 0;
   const isWatchlist = Boolean(watchlistClaims.length > 0 || (answer?.summary.includes('监控清单') && !isTrend));
   const scopeQuery = isWatchlist || isTrend;
@@ -728,8 +806,19 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
       </div>}
       {trendClaims.length > 0 && <div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full border-collapse text-left text-sm">
-          <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th className="px-3 py-2.5 font-medium">供应商</th><th className="px-3 py-2.5 font-medium">本月变化</th><th className="px-3 py-2.5 font-medium">下一步</th></tr></thead>
-          <tbody className="divide-y divide-[var(--color-border)]">{trendClaims.map(claim => { const assessment = claimAssessment(claim, answer?.status !== 'completed' || limitations.length > 0); const name = claim.statement.split(' 最近 ')[0]; const next = claim.value === '恶化' ? '安排采购复核' : claim.value === '改善' || claim.value === '稳定' ? '继续观察' : '等待后续快照'; return <tr key={claim.claim_id}><td className="px-3 py-3 font-medium text-[var(--color-text)]">{name}</td><td className="px-3 py-3"><span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{readableClaimDetail(claim)}</span></td><td className="px-3 py-3 text-[var(--color-text-secondary)]">{next}</td></tr>; })}</tbody>
+          <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th className="px-3 py-2.5 font-medium">供应商</th><th className="px-3 py-2.5 font-medium">当前风险评分</th><th className="px-3 py-2.5 font-medium">{trendPeriodLabel}变化</th><th className="px-3 py-2.5 font-medium">数据说明</th><th className="px-3 py-2.5 font-medium">下一步</th></tr></thead>
+          <tbody className="divide-y divide-[var(--color-border)]">{trendRows.map(row => {
+            const status = trendStatusMeta(row.trend);
+            const next = row.trend === '恶化' ? '安排采购复核' : row.trend === '改善' || row.trend === '稳定' ? '继续观察' : '补充风险快照';
+            const score = row.latestScore == null ? '暂无评分' : `${row.latestScore}/100`;
+            return <tr key={`${row.companyName}-${row.checkedAt || row.trend}`} className="align-top">
+              <td className="px-3 py-3 font-medium text-[var(--color-text)]">{row.companyName}</td>
+              <td className="px-3 py-3"><span className="text-base font-semibold tabular-nums text-[var(--color-text)]">{score}</span>{row.latestLevel && <span className="ml-2 text-xs text-[var(--color-text-secondary)]">{row.latestLevel}</span>}</td>
+              <td className="px-3 py-3"><span className={`inline-flex rounded-md border px-2 py-0.5 text-xs font-medium ${status.className}`}>{status.label}</span>{row.delta != null && <span className="ml-2 text-xs tabular-nums text-[var(--color-text-secondary)]">评分{row.delta > 0 ? '+' : ''}{row.delta}分</span>}</td>
+              <td className="max-w-xs px-3 py-3 text-xs leading-5 text-[var(--color-text-secondary)]">{row.comparisonText}</td>
+              <td className="px-3 py-3 text-xs text-[var(--color-text-secondary)]">{next}</td>
+            </tr>;
+          })}</tbody>
         </table>
       </div>}
       {answer.claims.length > 0 && !scopeQuery && capability === 'sourcing' && <SourcingCandidateList answer={answer} evidence={evidence || []} />}

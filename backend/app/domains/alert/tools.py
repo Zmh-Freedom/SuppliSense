@@ -222,16 +222,49 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             .sort("checked_at", 1)
         )
         data = [
-            {"date": s["checked_at"].strftime("%Y-%m-%d"), "risk_score": s.get("risk_score", 0), "risk_level": s.get("risk_level", "")}
+            {
+                "date": s["checked_at"].strftime("%Y-%m-%d"),
+                "risk_score": s.get("risk_score"),
+                "risk_level": s.get("risk_level") or "",
+            }
             for s in snapshots
         ]
-        trend = "暂无数据"
-        if len(data) == 1:
-            trend = "数据不足"
-        elif len(data) >= 2:
-            delta = data[-1]["risk_score"] - data[0]["risk_score"]
+        score_points = [
+            item for item in data
+            if isinstance(item.get("risk_score"), (int, float))
+        ]
+        latest = data[-1] if data else {}
+        latest_score = latest.get("risk_score")
+        latest_level = latest.get("risk_level") or None
+        previous_score = score_points[0].get("risk_score") if score_points else None
+        delta = (
+            latest_score - previous_score
+            if isinstance(latest_score, (int, float))
+            and isinstance(previous_score, (int, float))
+            and len(score_points) >= 2
+            else None
+        )
+        if not data:
+            trend = "暂无快照"
+        elif len(score_points) < 2:
+            trend = "仅有1次评分" if len(score_points) == 1 else "评分缺失"
+        else:
             # Safety score decreases when risk deteriorates.
-            trend = "恶化" if delta < -10 else "改善" if delta > 10 else "稳定"
+            trend = "恶化" if delta is not None and delta < -10 else "改善" if delta is not None and delta > 10 else "稳定"
+
+        if isinstance(latest_score, (int, float)):
+            score_text = f"当前风险评分：{latest_score:g}/100"
+        else:
+            score_text = "当前风险评分：暂无"
+        level_text = f"风险等级：{latest_level}" if latest_level else "风险等级：暂无"
+        if delta is not None:
+            comparison_text = f"较周期初{'+' if delta >= 0 else ''}{delta:g}分"
+        elif not data:
+            comparison_text = "本周期没有风险快照"
+        elif len(score_points) == 1:
+            comparison_text = "仅有1次评分，暂无法判断变化方向"
+        else:
+            comparison_text = "有快照但评分缺失，暂无法比较"
 
         results.append({
             "company_name": name,
@@ -242,8 +275,13 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
             "company_id": target.get("company_id"),
             "trend": trend,
             "trend_data_points": len(data),
-            "latest_score": data[-1]["risk_score"] if data else None,
-            "latest_level": data[-1]["risk_level"] if data else None,
+            "trend_score_points": len(score_points),
+            "latest_score": latest_score,
+            "latest_level": latest_level,
+            "previous_score": previous_score,
+            "delta": delta,
+            "latest_checked_at": latest.get("date") if latest else None,
+            "comparison_text": comparison_text,
             "data": data,
         })
 
@@ -265,11 +303,18 @@ def analyze_watchlist_trend(period_months: int = 1) -> dict:
     for item in results:
         if not item.get("company_name") or not item.get("trend"):
             continue
+        score_value = item.get("latest_score")
+        score_text = f"当前风险评分：{score_value:g}/100" if isinstance(score_value, (int, float)) else "当前风险评分：暂无"
+        level_text = f"风险等级：{item['latest_level']}" if item.get("latest_level") else "风险等级：暂无"
         payload["claims"].append({
             "claim_id": f"{evidence_id}:claim:{item['monitor_target_id'] or item['company_name']}",
             "entity_id": "watchlist",
             "dimension": "risk_monitoring",
-            "statement": f"{item['company_name']} 最近 {period_months} 个月风险变化：{item['trend']}（{item['trend_data_points']} 个数据点）",
+            "statement": (
+                f"{item['company_name']} 最近 {period_months} 个月风险变化：{item['trend']}；"
+                f"{score_text}；{level_text}；{item['comparison_text']}"
+                f"（{item['trend_data_points']} 个快照，{item['trend_score_points']} 个评分）"
+            ),
             "value": item["trend"],
             "operator": "eq",
             "evidence_refs": [evidence_id],
