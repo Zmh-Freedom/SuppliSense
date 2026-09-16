@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.graphs.agent_core.adapter import _apply_identity_verification_intent
 from app.graphs.agent_core.intent_extractor import (
     extract_monitor_target_id,
@@ -61,6 +63,94 @@ def test_identity_tool_output_contract_is_registered() -> None:
         "claims": [],
     })
     assert output.query == "示例公司"
+
+
+def test_identity_tool_executor_keeps_external_candidate_evidence(monkeypatch) -> None:
+    from app.tools import TOOL_REGISTRY
+    from app.tools.executor import ToolExecutor
+
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {"resolution": "pending_verification", "exact": None, "candidates": []},
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_external_profile",
+        lambda query: ({
+            "company_name": query,
+            "unified_social_credit_code": "91450200MAA7L76A5R",
+            "registration_number": "450205000188432",
+            "registration_status": "存续",
+            "legal_person": "廖鸿胡",
+            "source_reference": f"tyc:{query}",
+        }, {"status": "available"}),
+    )
+
+    outcome = asyncio.run(ToolExecutor(TOOL_REGISTRY).execute(
+        "resolve_monitor_identity",
+        {"company_name": "赛克瑞浦动力电池系统有限公司"},
+    ))
+
+    assert outcome.status == "success"
+    assert outcome.data["resolution"] == "candidates"
+    assert outcome.data["candidates"][0]["candidate_type"] == "external_identity"
+    assert outcome.data["evidence_records"]
+    assert outcome.data["claims"]
+
+
+def test_identity_harness_keeps_claim_supported_by_tool_evidence(monkeypatch) -> None:
+    from app.graphs.harness import run_harness
+    from app.tools import TOOL_REGISTRY
+    from app.tools.executor import ToolExecutor
+
+    monkeypatch.setattr(
+        "app.domains.company.service.search_identity",
+        lambda query, limit: {"resolution": "pending_verification", "exact": None, "candidates": []},
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.intake_service._load_external_profile",
+        lambda query: ({
+            "company_name": query,
+            "unified_social_credit_code": "91450200MAA7L76A5R",
+            "registration_number": "450205000188432",
+            "registration_status": "存续",
+            "legal_person": "廖鸿胡",
+            "source_reference": f"tyc:{query}",
+        }, {"status": "available"}),
+    )
+
+    message = "对赛克瑞浦动力电池系统有限公司进行主体核验"
+    result = asyncio.run(run_harness({
+        "session_id": "identity-session",
+        "turn_id": "identity-turn",
+        "run_id": "identity-run",
+        "user_message": message,
+        "execution_context": {"references": []},
+        "current_task": {
+            "task_id": "identity-task",
+            "target_supplier_names": ["赛克瑞浦动力电池系统有限公司"],
+            "analysis_dimensions": ["identity_review"],
+            "capability": "identity_review",
+            "scope": "single_supplier",
+            "task_type": "analysis",
+            "identity_verification": True,
+            "user_message": message,
+        },
+        "task_specs": [{
+            "task_id": "identity-task:identity_review",
+            "tool_name": "resolve_monitor_identity",
+            "arguments": {"company_name": "赛克瑞浦动力电池系统有限公司"},
+            "entity_id": "entity:赛克瑞浦动力电池系统有限公司",
+            "dimension": "identity_review",
+            "resource_key": "entity:赛克瑞浦动力电池系统有限公司",
+            "required": True,
+            "evidence_requirements": ["identity_review"],
+        }],
+        "budget": {},
+    }, executor=ToolExecutor(TOOL_REGISTRY)))
+
+    assert result["answer"]["claims"]
+    assert result["answer"]["claims"][0]["validation_status"] == "supported"
+    assert result["answer"]["evidence_refs"]
 
 
 def test_approved_monitor_write_confirmation_includes_risk_baseline() -> None:

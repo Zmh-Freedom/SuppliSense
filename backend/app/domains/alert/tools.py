@@ -102,14 +102,23 @@ def resolve_monitor_identity(
     resolution = str(result.get("resolution") or "pending_verification")
     exact = result.get("exact")
     candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
+    from app.tools.executor import get_active_tool_context
+
+    active_context = get_active_tool_context()
+    evidence_entity_id = str(
+        active_context.entity_id
+        if active_context and active_context.entity_id
+        else target_id or f"entity:{query}"
+    )
+    evidence_reference = f"resolve_monitor_identity:{evidence_entity_id}:identity_review"
     result["limitations"] = [
         "主体核验只返回候选或精确匹配，不会自动绑定监控对象。"
     ]
     if not exact and not candidates:
         result["limitations"].append("当前统一主体库没有可确认的候选，未形成主体身份结论。")
     result["claims"] = [{
-        "claim_id": f"resolve_monitor_identity:{target_id or query}:resolution",
-        "entity_id": target_id or f"entity:{query}",
+        "claim_id": f"{evidence_reference}:claim",
+        "entity_id": evidence_entity_id,
         "dimension": "identity_review",
         "statement": (
             f"主体检索结果：已找到 1 个精确主体候选"
@@ -118,7 +127,7 @@ def resolve_monitor_identity(
         "value": resolution,
         "fact_path": "resolution",
         "operator": "eq",
-        "evidence_refs": [f"resolve_monitor_identity:{target_id or query}:identity_review"],
+        "evidence_refs": [evidence_reference],
         "confidence": 0.95 if exact else 0.85,
     }]
     return attach_tool_evidence(

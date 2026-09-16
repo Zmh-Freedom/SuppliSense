@@ -378,6 +378,9 @@ class MonitorIdentityOutput(StrictToolOutput):
     resolution: str | None = None
     exact: dict[str, Any] | None = None
     candidates: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None
+    source_mode: str | None = None
+    external_profile: dict[str, Any] | None = None
     limitations: list[str] = Field(default_factory=list)
 
 
