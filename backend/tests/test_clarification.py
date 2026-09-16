@@ -27,6 +27,10 @@ class TestClarification:
         result = detect_clarification_needed("有哪些监控企业")
         assert result is None
 
+    def test_responsible_supplier_trend_query_does_not_require_company_name(self):
+        result = detect_clarification_needed("查询本人负责供应商本月风险变化")
+        assert result is None
+
     def test_assess_keyword_with_company(self):
         result = detect_clarification_needed("评估大华股份")
         assert result is None

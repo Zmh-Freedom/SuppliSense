@@ -503,6 +503,7 @@ def test_contagion_analysis_binds_network_fields_to_claims(monkeypatch) -> None:
     [
         ("查看监控清单", "get_watchlist"),
         ("分析我负责的供应商本月风险变化", "analyze_watchlist_trend"),
+        ("查询本人负责供应商本月风险变化", "analyze_watchlist_trend"),
         ("查看我科室所有供应商的待复核事项", "get_monitor_review_queue"),
     ],
 )

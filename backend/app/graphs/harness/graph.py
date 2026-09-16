@@ -307,7 +307,11 @@ def _scope_query_task(
             evidence_requirements=["risk_monitoring"],
         )
     trend_requested = any(token in message for token in ("风险变化", "风险趋势", "趋势", "变化情况"))
-    monitoring_scope = any(token in message for token in ("监控清单", "监控列表", "我负责的供应商", "我管理的供应商", "我科室", "本部门"))
+    monitoring_scope = any(token in message for token in (
+        "监控清单", "监控列表", "我负责的供应商", "我管理的供应商",
+        "本人负责供应商", "本人负责的供应商", "本人管理供应商", "本人管理的供应商",
+        "我科室", "本部门",
+    ))
     if not monitoring_scope:
         return None
     return HarnessTask(
