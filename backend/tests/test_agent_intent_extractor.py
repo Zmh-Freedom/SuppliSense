@@ -3,8 +3,14 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.graphs.agent_core import adapter
 from app.graphs.agent_core import intent_extractor
+from app.graphs.agent_core.capability_routing import (
+    normalize_analysis_dimensions,
+    normalize_primary_capability,
+)
 
 
 def test_llm_extractor_parses_current_explicit_company_before_history(monkeypatch):
@@ -508,3 +514,161 @@ def test_supplier_review_builds_default_real_evidence_task_matrix():
     assert [item["dimension"] for item in result["current_task"]["subtasks"]] == [
         "risk", "financial", "business_risk",
     ]
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("查询这家企业的新闻动态", "sentiment"),
+        ("有没有负面舆情", "sentiment"),
+        ("媒体报道里有什么风险", "sentiment"),
+        ("分析上下游关系", "risk_network"),
+        ("关联企业是否会产生风险传导", "risk_network"),
+        ("查看传染风险", "risk_network"),
+        ("查看财务数据", "financial"),
+        ("现金流健康吗", "financial"),
+        ("净利润下滑了吗", "financial"),
+        ("未来 6 个月风险如何", "risk_prediction"),
+        ("请做风险预测", "risk_prediction"),
+        ("假如营收下降，风险会怎样", "risk_prediction"),
+        ("最近三个月风险怎么变了", "risk_trend"),
+        ("同比变化如何", "risk_trend"),
+        ("和上月相比风险走势如何", "risk_trend"),
+        ("核验主体身份", "identity_review"),
+        ("用统一社会信用代码查询", "identity_review"),
+        ("这些名称是否同一主体", "identity_review"),
+        ("查看工商资料", "company_profile"),
+        ("给我联系人和官网", "company_profile"),
+        ("查询注册资本", "company_profile"),
+        ("对比两家供应商", "risk_comparison"),
+        ("哪家更适合继续采购", "risk_comparison"),
+        ("做一次横向比较", "risk_comparison"),
+        ("产品质量稳定吗", "quality"),
+        ("不良率高不高", "quality"),
+        ("查询质量风险", "quality"),
+        ("会不会延期交货", "delivery"),
+        ("交期是否稳定", "delivery"),
+        ("查看准时交付情况", "delivery"),
+        ("寻找供应商", "sourcing"),
+        ("找替代厂家", "sourcing"),
+        ("推荐供应商", "sourcing"),
+        ("生成风险报告", "report"),
+        ("导出报告", "report"),
+        ("下载风险报告", "report"),
+    ],
+)
+def test_explicit_read_only_expression_normalizes_generic_risk(
+    message: str, expected: str
+) -> None:
+    assert normalize_primary_capability(message, "risk") == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("同时分析财务和舆情", "risk"),
+        ("同时分析供应链关系和新闻动态", "risk"),
+        ("诉讼和行政处罚有哪些", "risk"),
+        # Financial wording is the scenario input; the explicit output asks
+        # for a future assessment, so prediction safely owns the lead route.
+        ("如果营收下降，未来风险趋势如何", "risk_prediction"),
+    ],
+)
+def test_composite_or_overlapping_expression_keeps_safe_route(
+    message: str, expected: str
+) -> None:
+    assert normalize_primary_capability(message, "risk") == expected
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "给测试供应商设置每周风险报告",
+        "把测试供应商加入监控并生成风险报告",
+        "停止刚才正在进行的新闻分析",
+        "继续刚才未完成的主体核验",
+    ],
+)
+def test_write_or_durable_control_expression_cannot_be_overridden(message: str) -> None:
+    action = intent_extractor.explicit_write_action(message)
+    assert normalize_primary_capability(message, "risk", action) == "risk"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected", "task_type", "expected_dimensions"),
+    [
+        ("分析青岛三祥科技股份有限公司的最新舆情和新闻动态", "sentiment", "analysis", ["sentiment"]),
+        ("分析青岛三祥科技股份有限公司的供应链关系和传染风险", "risk_network", "analysis", []),
+        ("分析青岛三祥科技股份有限公司的现金流", "financial", "analysis", ["financial"]),
+        ("预测青岛三祥科技股份有限公司未来 6 个月的风险", "risk_prediction", "analysis", []),
+        ("核验青岛三祥科技股份有限公司的主体身份", "identity_review", "analysis", []),
+        ("给我青岛三祥科技股份有限公司的电话和官网", "company_profile", "analysis", []),
+        ("比较青岛三祥科技股份有限公司和上海海拉电子有限公司", "risk_comparison", "analysis", []),
+        ("分析青岛三祥科技股份有限公司的交付周期", "delivery", "analysis", ["delivery"]),
+        ("帮我寻找工业相机的替代供应商", "sourcing", "sourcing", ["risk"]),
+        ("生成青岛三祥科技股份有限公司的风险报告", "report", "analysis", []),
+    ],
+)
+def test_llm_generic_risk_is_normalized_for_explicit_read_only_request(
+    monkeypatch, message: str, expected: str, task_type: str, expected_dimensions: list[str]
+) -> None:
+    payload = {
+        "capability": "risk",
+        "target_supplier_names": ["青岛三祥科技股份有限公司"],
+        "analysis_dimensions": ["risk"],
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(message, [])
+
+    assert result is not None
+    assert result.capability == expected
+    assert result.task_type == task_type
+    assert result.analysis_dimensions == expected_dimensions
+
+
+def test_deterministic_fallback_normalizes_explicit_financial_request() -> None:
+    result = intent_extractor._deterministic_extraction_fallback(
+        "查询“测试-风险供应商”的现金流"
+    )
+
+    assert result.capability == "financial"
+
+
+@pytest.mark.parametrize(
+    ("message", "capability", "expected_dimensions"),
+    [
+        ("分析测试供应商的新闻动态", "sentiment", ["sentiment"]),
+        ("分析测试供应商的供应链关系和传染风险", "risk_network", []),
+        ("查看测试供应商的现金流", "financial", ["financial"]),
+        ("分析测试供应商的交付周期", "delivery", ["delivery"]),
+    ],
+)
+def test_explicit_primary_capability_removes_redundant_risk_dimension(
+    message: str, capability: str, expected_dimensions: list[str]
+) -> None:
+    assert normalize_analysis_dimensions(
+        message, ["risk"], capability, capability
+    ) == expected_dimensions
+
+
+def test_explicit_overall_risk_keeps_requested_generic_dimension() -> None:
+    assert normalize_analysis_dimensions(
+        "分析测试供应商的综合风险和现金流",
+        ["risk", "financial"],
+        "financial",
+        "financial",
+    ) == ["risk", "financial"]

@@ -899,6 +899,19 @@ def apply_extracted_conversation_intent(
         current_task["task_type"] = "action_draft"
     elif dimensions:
         current_task["analysis_dimensions"] = dimensions
+    elif (
+        not is_write_action
+        and capability not in {"none", "risk", "sourcing"}
+        and target_names
+    ):
+        # A specialized capability such as supply-chain contagion, identity
+        # review or report generation may intentionally have no dimension in
+        # the supplier risk matrix. Do not retain a generic risk subtask that
+        # was assembled before LLM intent overlay; Harness will append the
+        # capability-specific task from the normalized capability instead.
+        dimensions = []
+        current_task["analysis_dimensions"] = []
+        current_task["subtasks"] = []
     elif is_write_action:
         dimensions = []
         current_task["analysis_dimensions"] = []

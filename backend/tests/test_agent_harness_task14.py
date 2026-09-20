@@ -18,7 +18,7 @@ from app.graphs.agent_core.adapter import _enforce_scope_query_intent
 from app.graphs.agent_core.adapter import apply_extracted_conversation_intent
 from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
-from app.graphs.harness.graph import _build_default_plan, _summary
+from app.graphs.harness.graph import _build_default_plan, _primary_summary_capability, _summary
 from app.graphs.agent_core.intent_extractor import ConversationIntentExtraction
 from app.domains.risk import tools_risk
 from app.tools import TOOL_REGISTRY
@@ -1149,3 +1149,127 @@ def test_harness_sourcing_exposes_external_candidate_as_pending_verification(mon
     assert candidate["identity_status"] == "unavailable"
     assert candidate["verification_status"] == "pending_verification"
     assert outcome.data["source_order"][-2:] == ["tianyancha", "web_search"]
+
+
+@pytest.mark.parametrize(
+    ("message", "tool_name", "expected"),
+    [
+        ("分析青岛三祥科技股份有限公司的最新舆情和新闻动态", "sentiment_analysis", "舆情分析"),
+        ("分析青岛三祥科技股份有限公司的供应链关系和传染风险", "contagion_analysis", "供应链关系与传染风险分析"),
+    ],
+)
+def test_summary_repairs_legacy_generic_capability_for_explicit_request(
+    message: str, tool_name: str, expected: str
+) -> None:
+    dimension = "sentiment" if tool_name == "sentiment_analysis" else "risk_network"
+    fact_path = "overall_sentiment" if dimension == "sentiment" else "related_count"
+    value: object = "neutral" if dimension == "sentiment" else 3
+    answer = AgentAnswer(
+        status="completed",
+        summary="待生成",
+        claims=[ValidatedClaim(
+            claim_id=f"{dimension}-claim",
+            entity_id="entity:qingdao",
+            dimension=dimension,
+            statement=f"青岛三祥科技股份有限公司 {fact_path}：{value}",
+            value=value,
+            fact_path=fact_path,
+            evidence_refs=[tool_name],
+            confidence=0.9,
+            validation_status="supported",
+        )],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "capability": "risk",
+            "user_message": message,
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+        },
+        "task_specs": [{"tool_name": tool_name}],
+        "tool_outcomes": [],
+    })
+
+    assert expected in summary
+    assert "综合风险分析" not in summary
+
+
+@pytest.mark.parametrize(
+    ("message", "tool_name", "expected"),
+    [
+        ("查看测试供应商的现金流", "query_financials", "financial"),
+        ("预测测试供应商未来 6 个月的风险", "predict_risk", "risk_prediction"),
+        ("核验测试供应商的主体身份", "lookup_company_identity", "identity_review"),
+        ("给我测试供应商的电话和官网", "lookup_company_profile", "company_profile"),
+        ("分析测试供应商的交付周期", "assess_operational_risk", "delivery"),
+    ],
+)
+def test_summary_router_normalizes_other_explicit_generic_capabilities(
+    message: str, tool_name: str, expected: str
+) -> None:
+    assert _primary_summary_capability(message, {tool_name}, set(), "risk") == expected
+
+
+@pytest.mark.parametrize(
+    ("capability", "message", "expected_tool"),
+    [
+        ("sentiment", "分析青岛三祥科技股份有限公司的新闻动态", "sentiment_analysis"),
+        ("risk_network", "分析青岛三祥科技股份有限公司的上下游关系", "contagion_analysis"),
+    ],
+)
+def test_harness_plan_binds_normalized_primary_capability(
+    capability: str, message: str, expected_tool: str
+) -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "normalized-capability",
+            "task_type": "analysis",
+            "capability": capability,
+            "user_message": message,
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": [],
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert expected_tool in [task.tool_name for task in planned]
+    assert "assess_risk" not in [task.tool_name for task in planned]
+
+
+def test_specialized_capability_replaces_prebuilt_generic_risk_matrix() -> None:
+    context = {
+        "session_id": "replace-generic-risk-matrix",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "prebuilt-risk",
+            "task_type": "analysis",
+            "user_message": "分析青岛三祥科技股份有限公司的供应链关系和传染风险",
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+            "subtasks": [{
+                "subtask_id": "prebuilt-risk-1-1",
+                "supplier_name": "青岛三祥科技股份有限公司",
+                "dimension": "risk",
+                "evidence_requirements": ["risk"],
+            }],
+        },
+    }
+    extraction = ConversationIntentExtraction(
+        target_supplier_names=["青岛三祥科技股份有限公司"],
+        analysis_dimensions=[],
+        capability="risk_network",
+        scope="single_supplier",
+        task_type="analysis",
+    )
+
+    resolved = apply_extracted_conversation_intent(context, extraction)
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["analysis_dimensions"] == []
+    assert resolved["current_task"]["subtasks"] == []
+    assert [task.tool_name for task in planned] == ["contagion_analysis"]

@@ -20,6 +20,7 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.graphs.agent_core.answer_contract import AgentAnswer, build_agent_answer
+from app.graphs.agent_core.capability_routing import normalize_primary_capability
 from app.graphs.agent_core.evidence_ledger import (
     Claim,
     EvidenceLedger,
@@ -757,17 +758,21 @@ def _primary_summary_capability(
     tool_names: set[str],
     dimensions: set[str],
     capability: str = "",
+    requested_action: str = "none",
 ) -> str | None:
     """Choose the user's explicitly requested capability for the lead summary."""
-    # The LLM capability is authoritative once it has been validated into the
-    # current task.  Message tokens remain only as a compatibility fallback
-    # for historical callers that construct HarnessState directly.
-    if capability in {
+    # Generic LLM output is corrected by the same pure rule used before the
+    # execution context is built. This also protects historical/directly
+    # constructed Harness state that predates the normalized capability.
+    normalized_capability = normalize_primary_capability(
+        message, capability, requested_action
+    )
+    if normalized_capability in {
         "risk", "risk_network", "risk_prediction", "sentiment", "financial", "compliance",
         "esg", "risk_trend", "legal_risk", "business_risk", "report", "sourcing",
         "company_profile", "identity_review", "risk_comparison", "quality", "delivery",
     }:
-        return capability
+        return normalized_capability
     matched: list[tuple[int, int, str]] = []
     for priority, (capability, tokens, tools) in enumerate(_SUMMARY_ROUTE_DEFINITIONS):
         if not tool_names.intersection(tools):
@@ -927,6 +932,7 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         tool_names,
         dimensions,
         str(current_task.get("capability") or ""),
+        str(current_task.get("requested_action") or "none"),
     )
     sourcing_follow_up = str(current_task.get("sourcing_follow_up") or "")
     if sourcing_follow_up == "no_match":

@@ -13,6 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.domains.sourcing_risk.requirement_service import SourcingRequirement
+from app.graphs.agent_core.capability_routing import (
+    normalize_analysis_dimensions,
+    normalize_primary_capability,
+)
 from app.graphs.agent_core.entity_normalization import normalize_company_mention
 
 logger = get_logger()
@@ -125,14 +129,20 @@ def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtrac
             dimensions.append(dimension)
     if not dimensions and quoted:
         dimensions = ["risk", "financial", "business_risk"]
-    capability = "business_risk" if any(token in message for token in ("经营", "运营")) else "risk" if dimensions else "none"
+    requested_action = explicit_write_action(message)
+    raw_capability = "business_risk" if any(token in message for token in ("经营", "运营")) else "risk" if dimensions else "none"
+    capability = normalize_primary_capability(message, raw_capability, requested_action)
+    dimensions = normalize_analysis_dimensions(
+        message, dimensions, raw_capability, capability, requested_action
+    )
+    task_type = "sourcing" if capability == "sourcing" else "analysis" if (capability != "none" or quoted) else "none"
     return ConversationIntentExtraction(
         target_supplier_names=quoted,
         analysis_dimensions=dimensions,
         capability=capability,
         scope="single_supplier" if quoted else "none",
-        task_type="analysis" if quoted else "none",
-        requested_action=explicit_write_action(message),
+        task_type=task_type,
+        requested_action=requested_action,
         confidence=0.35 if quoted else 0.0,
     )
 
@@ -222,8 +232,10 @@ def extract_conversation_intent(
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
         return _deterministic_extraction_fallback(message)
 
+    detected_action = explicit_write_action(message)
+    raw_capability = extracted.capability
+    capability = normalize_primary_capability(message, raw_capability, detected_action)
     inferred_task_type = infer_task_type(message)
-    capability = extracted.capability
     if capability == "sourcing":
         task_type: Literal["sourcing", "analysis", "none"] = "sourcing"
     elif capability != "none":
@@ -236,6 +248,9 @@ def extract_conversation_intent(
     extracted_dimensions = _expand_generic_risk_dimensions(
         message,
         list(extracted.analysis_dimensions),
+    )
+    extracted_dimensions = normalize_analysis_dimensions(
+        message, extracted_dimensions, raw_capability, capability, detected_action
     )
     # When the current message contains a legal entity name, the deterministic
     # parser is authoritative.  This prevents an LLM from returning a copied
@@ -256,10 +271,10 @@ def extract_conversation_intent(
     if not validated_targets and any(token in message for token in _ANALYSIS_TOKENS):
         quoted = re.findall(r"[“\"「『]([^”\"」』]+)[”\"」』]", message)
         validated_targets = list(dict.fromkeys(item.strip() for item in quoted if item.strip()))
-    detected_action = explicit_write_action(message)
     validated = extracted.model_copy(update={
         "target_supplier_names": validated_targets,
         "analysis_dimensions": extracted_dimensions,
+        "capability": capability,
         "task_type": task_type,
         # The model may over-read the word “监控” in a read-only identity
         # request. A write action is allowed only when the current message
@@ -270,7 +285,8 @@ def extract_conversation_intent(
         "conversation_intent_extracted",
         target_supplier_names=validated.target_supplier_names,
         analysis_dimensions=validated.analysis_dimensions,
-        capability=validated.capability,
+        raw_capability=raw_capability,
+        normalized_capability=validated.capability,
         scope=validated.scope,
         has_sourcing_requirement=validated.sourcing_requirement is not None,
         task_type=validated.task_type,
