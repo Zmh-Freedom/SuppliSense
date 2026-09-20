@@ -743,7 +743,7 @@ export default function ChatView() {
                     <path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/>
                   </svg>
                 </div>
-                <h2 className="text-xl font-bold text-[var(--color-text)]">采购助手</h2>
+                <h2 className="text-xl font-bold text-[var(--color-text)]">AI 采购助手</h2>
                 <p className="text-sm text-gray-500 leading-relaxed">
                   用自然语言获取寻源建议，持续核验负责供应商的风险变化
                 </p>
@@ -799,7 +799,7 @@ export default function ChatView() {
 
       {/* input */}
       <div className="px-4 pb-6 pt-2">
-        <label htmlFor="chat-input" className="sr-only">向采购助手提问</label>
+        <label htmlFor="chat-input" className="sr-only">向 AI 采购助手提问</label>
         <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-1 shadow-sm transition-shadow focus-within:border-[var(--color-border-focus)] glass-surface">
           <input
             id="chat-input"

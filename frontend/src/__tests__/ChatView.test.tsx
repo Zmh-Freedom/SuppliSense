@@ -77,7 +77,7 @@ describe('ChatView session lifecycle', () => {
   it('uses the outer composer focus state without an inner input ring', () => {
     renderChat()
 
-    const input = screen.getByLabelText('向采购助手提问')
+    const input = screen.getByLabelText('向 AI 采购助手提问')
     expect(input).toHaveClass('focus-visible:ring-0')
     expect(input).not.toHaveClass('focus-visible:ring-2')
   })
@@ -86,7 +86,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    const input = screen.getByLabelText('向采购助手提问')
+    const input = screen.getByLabelText('向 AI 采购助手提问')
     const send = screen.getByRole('button', { name: '发送' })
     expect(send).toBeDisabled()
     await user.type(input, ' \u3000\n\t ')
@@ -110,7 +110,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析网易云音乐的风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析网易云音乐的风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
     const candidate = await screen.findByRole('button', { name: /杭州网易云音乐科技有限公司.*网易云/ })
     await user.click(candidate)
@@ -135,7 +135,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '查找一下青岛三祥科技股份有限公司的风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '查找一下青岛三祥科技股份有限公司的风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await user.click(await screen.findByRole('button', { name: /青岛三祥科技股份有限公司.*青岛三祥/ }))
 
@@ -148,24 +148,24 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析旧会话')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析旧会话')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
 
     await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
     await completeStream()
 
-    expect(screen.getByText('采购助手')).toBeInTheDocument()
+    expect(screen.getByText('AI 采购助手')).toBeInTheDocument()
   })
 
   it('labels the assistant consistently and uses the network-risk quick capability prompt', async () => {
     renderChat()
 
-    expect(screen.getByText('采购助手')).toBeInTheDocument()
+    expect(screen.getByText('AI 采购助手')).toBeInTheDocument()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /关系图谱.*供应链关系与传染风险/ }))
 
-    expect(screen.getByLabelText('向采购助手提问')).toHaveValue('分析青岛三祥科技股份有限公司的供应链关系和传染风险')
+    expect(screen.getByLabelText('向 AI 采购助手提问')).toHaveValue('分析青岛三祥科技股份有限公司的供应链关系和传染风险')
   })
 
   it('does not load another account\'s legacy or scoped chat history', () => {
@@ -183,7 +183,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析旧会话')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析旧会话')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
 
@@ -202,7 +202,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '查找钢材供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '查找钢材供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     const supplierDetails = await screen.findByText('本轮识别供应商（1 家）')
@@ -227,7 +227,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '复核供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '复核供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('已从持久化事件恢复结果。')).toBeInTheDocument()
@@ -241,7 +241,7 @@ describe('ChatView session lifecycle', () => {
     })
     const user = userEvent.setup()
     renderChat()
-    const input = screen.getByLabelText('向采购助手提问') as HTMLInputElement
+    const input = screen.getByLabelText('向 AI 采购助手提问') as HTMLInputElement
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
     setter?.call(input, '复核青岛三祥科技股份有限公司')
     fireEvent.compositionStart(input)
@@ -284,7 +284,7 @@ describe('ChatView session lifecycle', () => {
     renderChat()
     await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '复核青岛三祥科技股份有限公司')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '复核青岛三祥科技股份有限公司')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
@@ -332,7 +332,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     await user.click(await screen.findByRole('button', { name: '执行详情' }))
@@ -357,7 +357,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(screen.getAllByText('业务结论').length).toBeGreaterThan(0)
@@ -382,7 +382,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '请复核并加入监控')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请复核并加入监控')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
@@ -403,7 +403,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '请加入监控')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请加入监控')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
@@ -432,7 +432,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '请复核并加入监控')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请复核并加入监控')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await user.click(await screen.findByRole('button', { name: '批准动作' }))
 
@@ -517,7 +517,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(screen.getByText('86/100')).toBeInTheDocument()
@@ -561,7 +561,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '寻找制动系统供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '寻找制动系统供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findAllByText('供应商名称')).length).toBeGreaterThan(0)
@@ -603,7 +603,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '找一下蓄电池供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '找一下蓄电池供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('历史合作供应商（1）')).toBeInTheDocument()
@@ -633,7 +633,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析华东钢材供应有限公司的财务情况')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析华东钢材供应有限公司的财务情况')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findAllByRole('heading', { name: '财务分析' })).length).toBe(2)
@@ -667,7 +667,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析青岛三祥科技股份有限公司的供应链关系和传染风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析青岛三祥科技股份有限公司的供应链关系和传染风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findAllByRole('heading', { name: '供应链关系与传染风险' })).length).toBe(2)
@@ -715,7 +715,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '复核上海汽车制动系统有限公司')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '复核上海汽车制动系统有限公司')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('采购复核结论')).toBeInTheDocument()
@@ -756,7 +756,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     await user.click(await screen.findByRole('button', { name: '执行详情' }))
