@@ -1,5 +1,6 @@
 const SESSION_KEY = 'session';
 const API_BASE = '/api/v1';
+const CHAT_STREAM_TIMEOUT_MS = 130_000;
 
 export function getStoredUser(): { username: string; role: string } | null {
   try {
@@ -267,7 +268,7 @@ export async function chatStream(
   mode: string = 'auto',
 ): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), CHAT_STREAM_TIMEOUT_MS);
 
   try {
     const res = await fetchWithAuthRetry(`${API_BASE}/chat/stream`, {

@@ -94,5 +94,39 @@ def test_harness_stream_publishes_progress_before_runner_finishes(monkeypatch):
     assert '"status": "completed"' in events
 
 
+def test_harness_stream_publishes_sourcing_references_before_terminal_event(monkeypatch):
+    async def fake_run_harness(*_args, **kwargs):
+        progress = kwargs["progress"]
+        await progress("tool_result", {
+            "run_id": "run-1",
+            "task_id": "sourcing-1",
+            "tool": "discover_supplier_candidates",
+            "result": {
+                "tool_name": "discover_supplier_candidates",
+                "status": "success",
+                "data": {
+                    "external_candidates": [{
+                        "supplier_name": "外部候选有限公司",
+                        "candidate_id": "external-1",
+                        "candidate_type": "external",
+                        "source": "web_search",
+                    }],
+                },
+            },
+        }, False)
+        return {
+            "answer": {"status": "needs_review", "summary": "等待人工复核", "claims": [], "limitations": [], "evidence_refs": []},
+            "tool_outcomes": [],
+        }
+
+    monkeypatch.setattr("app.graphs.harness.run_harness", fake_run_harness)
+
+    events = asyncio.run(_collect(stream_harness_graph("寻找工业相机供应商", "session-1", {})))
+
+    assert "event: references" in events
+    assert "外部候选有限公司" in events
+    assert events.index("event: references") < events.index("event: done")
+
+
 async def _collect(stream):
     return "".join([event async for event in stream])

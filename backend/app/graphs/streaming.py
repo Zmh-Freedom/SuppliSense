@@ -21,6 +21,14 @@ _SUPERVISOR_STAGE_MESSAGES = {
     "finalize": "正在整理最终回答...",
 }
 
+_LIVE_SOURCING_MAX_DURATION_SECONDS = 105
+_SOURCING_CANDIDATE_TOOLS = {
+    "discover_supplier_candidates",
+    "search_suppliers",
+    "find_alternatives",
+    "list_formal_suppliers",
+}
+
 
 def _sse_event(event_type: str, data: dict, event_id: int | None = None) -> str:
     """Format data as SSE event string."""
@@ -85,6 +93,14 @@ async def stream_harness_graph(
     active_turn_id = turn_id or str(uuid.uuid4())
     control_context = dict(execution_context)
     control_context.pop("_control_plane", None)
+    current_task = control_context.get("current_task") or {}
+    requirement = current_task.get("requirement") if isinstance(current_task, dict) else None
+    request_id = requirement.get("request_id") if isinstance(requirement, dict) else None
+    is_live_sourcing = (
+        isinstance(current_task, dict)
+        and current_task.get("task_type") == "sourcing"
+        and not str(request_id or "").strip()
+    )
     state = {
         "session_id": session_id,
         "turn_id": active_turn_id,
@@ -92,8 +108,12 @@ async def stream_harness_graph(
         "user_id": user_id or None,
         "user_message": user_message,
         "execution_context": control_context,
-        "current_task": control_context.get("current_task") or {},
+        "current_task": current_task,
     }
+    if is_live_sourcing:
+        # Leave a margin before the browser's stream timeout so a bounded
+        # external lookup can emit and persist a needs_review terminal state.
+        state["budget"] = {"max_duration_seconds": _LIVE_SOURCING_MAX_DURATION_SECONDS}
 
     queue: asyncio.Queue[tuple[str, dict[str, Any], int | None]] = asyncio.Queue()
     progress_seen = False
@@ -132,6 +152,16 @@ async def stream_harness_graph(
             return
         if event_type == "tool_result":
             await publish("tool_result", snapshot)
+            result = snapshot.get("result")
+            tool_name = str(snapshot.get("tool") or "")
+            if isinstance(result, dict) and tool_name in _SOURCING_CANDIDATE_TOOLS:
+                from app.graphs.agent_core.adapter import collect_supplier_references
+
+                references = collect_supplier_references(
+                    [], result.get("data") or {}, "Harness 寻源候选"
+                )
+                if references:
+                    await publish("references", {"items": references})
             return
 
         status = str(snapshot.get("status") or "running")

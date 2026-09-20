@@ -234,6 +234,22 @@ describe('ChatView session lifecycle', () => {
     expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object))
   })
 
+  it('persists a needs_review terminal result when external sourcing times out', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onReferences?.({ items: [{ name: '外部候选有限公司', kind: 'supplier', source: 'web_search' }] })
+      throw new DOMException('aborted', 'AbortError')
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '我想采购工业相机，请给我候选供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText(/外部寻源在受限时间内未完成/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '执行详情' }))
+    expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
+  })
+
   it('sends the current input value when Chinese IME composition has not updated React state', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onDone?.({ answer: '已收到。', status: 'completed' })

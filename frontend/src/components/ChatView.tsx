@@ -472,11 +472,40 @@ export default function ChatView() {
         }
       }
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-      const failureMessage = isTimeout ? '请求超时（2分钟），请简化问题后重试' : '请求失败，请重试';
-      const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: isTimeout ? '工作流超时，尚未完成' : '工作流执行失败' };
-      workflowAccRef.current = failedWorkflow;
-      const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: failureMessage, workflow: failedWorkflow }];
-      persist(sid, failedMsgs);
+      if (isTimeout) {
+        const hasCandidateReferences = referencesAccRef.current.length > 0;
+        const timeoutMessage = hasCandidateReferences
+          ? '外部寻源在受限时间内未完成，已保留当前候选线索和检索进度；结果需要人工复核后再用于采购决策。'
+          : '本轮分析在受限时间内未完成，尚未形成可用于采购决策的结论；结果需要人工复核。';
+        const timeoutWorkflow = {
+          ...workflowAccRef.current,
+          status: 'needs_review' as const,
+          stage: 'decision',
+          message: '外部寻源超时，已保留当前可用结果，等待人工复核',
+        };
+        const timeoutAnswer: AgentAnswer = agentAnswerAccRef.current || {
+          status: 'needs_review',
+          summary: timeoutMessage,
+          claims: [],
+          limitations: ['外部寻源未在受限时间内完成，未完成的提供方结果未纳入推荐结论'],
+          action_proposals: [],
+          action_receipts: [],
+          evidence_refs: [],
+        };
+        workflowAccRef.current = timeoutWorkflow;
+        persist(sid, [...newMsgs, {
+          role: 'assistant',
+          content: timeoutMessage,
+          references: referencesAccRef.current,
+          evidence: evidenceAccRef.current,
+          agentAnswer: timeoutAnswer,
+          workflow: timeoutWorkflow,
+        }]);
+      } else {
+        const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: '工作流执行失败' };
+        workflowAccRef.current = failedWorkflow;
+        persist(sid, [...newMsgs, { role: 'assistant', content: '请求失败，请重试', workflow: failedWorkflow }]);
+      }
       setStreamState(null);
       setLoading(false);
     }

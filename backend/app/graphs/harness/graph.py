@@ -57,6 +57,40 @@ _DIMENSION_TO_TOOL = {
 logger = get_logger()
 
 
+def _mark_live_sourcing_deadline_for_review(
+    answer: AgentAnswer,
+    state: HarnessState,
+) -> AgentAnswer:
+    """Keep partial read-only sourcing evidence visible after its time budget.
+
+    A live candidate lookup can return a useful local or external subset before
+    a slower provider reaches the Harness deadline. It must not be rendered as
+    a completed recommendation merely because that subset has valid claims.
+    """
+    current_task = state.get("current_task") or {}
+    requirement = current_task.get("requirement")
+    request_id = requirement.get("request_id") if isinstance(requirement, dict) else None
+    is_live_sourcing = (
+        current_task.get("task_type") == "sourcing"
+        and not str(request_id or "").strip()
+    )
+    if state.get("loop_exit_reason") != "deadline_exceeded" or not is_live_sourcing:
+        return answer
+
+    boundary = "外部寻源未在受限时间内完成，当前结果仅保留已取得的候选线索，需人工复核后再用于采购决策。"
+    summary = answer.summary.strip()
+    if boundary not in summary:
+        summary = f"{summary}\n\n{boundary}" if summary else boundary
+    return answer.model_copy(update={
+        "status": "needs_review",
+        "summary": summary,
+        "limitations": list(dict.fromkeys([
+            *answer.limitations,
+            "外部寻源达到执行时限，未完成的提供方结果未纳入推荐结论",
+        ])),
+    })
+
+
 def _entity_id(name: str, context: Mapping[str, Any]) -> str:
     for reference in context.get("references", []):
         if not isinstance(reference, dict) or reference.get("name") != name:
@@ -1768,6 +1802,7 @@ def build_harness_graph(
                 # Narration is an optional presentation layer.  The validated
                 # deterministic summary remains the source of truth.
                 logger.warning("answer_narration_callback_failed", error=str(exc))
+        answer = _mark_live_sourcing_deadline_for_review(answer, state)
         coverage = state.get("evidence_coverage") or {}
         loop_exit_reason = state.get("loop_exit_reason")
         if coverage.get("missing_dimensions") and loop_exit_reason not in {
