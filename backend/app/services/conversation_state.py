@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.graphs.agent_core.contracts import AgentTask, ConversationState, migrate_conversation_state
+from app.graphs.agent_core.entity_normalization import normalize_company_mention
 
 
 _ANALYSIS_DIMENSIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -44,6 +45,7 @@ _COMPANY_NAME_PREFIXES = (
     "请评估一下", "评估一下", "请查询一下", "查询一下", "请查看一下", "查看一下",
     "请核查一下", "核查一下", "请查找一下", "查找一下", "请预测一下", "预测一下", "请确认一下", "确认一下",
     "请生成一下", "生成一下", "请生成", "生成",
+    "那先看一下", "先看一下", "那先看", "先看", "看看",
     "请看一下", "看一下",
     "请对比一下", "对比一下", "比较一下", "监控一下", "看看一下",
     "请复核", "复核", "请分析", "分析", "请评估", "评估", "请查询", "查询",
@@ -229,7 +231,8 @@ def build_conversation_state(
     session_id: str = "",
 ) -> dict[str, Any]:
     """Build the durable, serializable state for the current conversation turn."""
-    previous = migrate_conversation_state(previous_state, session_id=session_id)
+    raw_previous_state = previous_state if isinstance(previous_state, dict) else {}
+    previous = migrate_conversation_state(raw_previous_state, session_id=session_id)
     active_suppliers = [
         reference
         for reference in supplier_references
@@ -258,6 +261,13 @@ def build_conversation_state(
     )
     payload = state.model_dump(mode="json")
     payload["selected_suppliers"] = target_names
+    # Harness stores the latest discovery snapshot beside the typed
+    # ConversationState. Preserve it across turns without making the public
+    # contract depend on a database-specific candidate model.
+    if isinstance(raw_previous_state.get("sourcing_candidates"), dict):
+        payload["sourcing_candidates"] = raw_previous_state["sourcing_candidates"]
+    if raw_previous_state.get("selected_candidate_id"):
+        payload["selected_candidate_id"] = raw_previous_state["selected_candidate_id"]
     return payload
 
 
@@ -299,16 +309,9 @@ def _explicit_company_names(message: str) -> list[str]:
     # is still taken from the matched text, not from an LLM guess.
     compact_message = re.sub(r"[\s　]+", "", str(message or ""))
     for match in _COMPANY_NAME_PATTERN.finditer(compact_message):
-        name = match.group(1).strip()
+        name = normalize_company_mention(match.group(1))
         if match.start(1) > 0 and name.startswith("和"):
             name = name[1:].strip()
-        previous = None
-        while name and name != previous:
-            previous = name
-            for prefix in _COMPANY_NAME_PREFIXES:
-                if name.startswith(prefix):
-                    name = name[len(prefix):].strip()
-                    break
         if name and name not in names:
             names.append(name)
     return names

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1774" height="887" viewBox="0 0 1774 887" role="img" aria-labelledby="title desc">
+  <title id="title">供应商智能寻源与风险监控工作台流程图</title>
+  <desc id="desc">基于原始流程图，仅替换左上角项目名称，并将透明背景显示为白底。</desc>
+  <rect width="1774" height="887" fill="#ffffff"/>
+  <image href="original-overall-solution-flow.png" x="0" y="0" width="1774" height="887" preserveAspectRatio="none"/>
+  <!-- 原图左上角标题区域：保留左侧图标，只覆盖英文项目名及其副标题。 -->
+  <rect x="96" y="0" width="820" height="132" fill="#ffffff"/>
+  <text x="106" y="70" fill="#102b63" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, Arial, sans-serif" font-size="43" font-weight="700" letter-spacing="1">供应商智能寻源与风险监控工作台</text>
+</svg>

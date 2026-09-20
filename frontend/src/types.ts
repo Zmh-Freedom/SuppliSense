@@ -337,6 +337,7 @@ export type AgentWorkflowLifecycle =
   | 'completed'
   | 'partial'
   | 'failed'
+  | 'cancelled'
   | 'clarifying'
   | 'stopped';
 

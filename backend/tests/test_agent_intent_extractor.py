@@ -99,6 +99,51 @@ def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeyp
     assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
 
 
+def test_llm_extractor_falls_back_to_quoted_company_name_when_model_omits_target(monkeypatch):
+    """Quoted legal names remain executable when the model returns no target."""
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                    "capability": "business_risk",
+                    "target_supplier_names": [],
+                    "analysis_dimensions": ["business_risk"],
+                    "task_type": "analysis",
+                })))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "展示“测试-风险供应商”的经营风险。", []
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["测试-风险供应商"]
+
+
+def test_llm_failure_keeps_quoted_target_for_safe_routing(monkeypatch):
+    class FailingOpenAI:
+        def __init__(self, **_kwargs):
+            raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FailingOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "展示“测试-风险供应商”的经营风险。", []
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["测试-风险供应商"]
+    assert result.capability == "business_risk"
+
+
 def test_llm_extractor_accepts_wrapped_json_object_response(monkeypatch):
     payload = {
         "type": "json_object",
@@ -208,6 +253,24 @@ def test_watchlist_action_detection_accepts_common_phrases_and_rejects_negation(
     assert intent_extractor.has_explicit_watchlist_request(
         "不要把上海海拉电子有限公司加入监控清单"
     ) is False
+
+
+def test_explicit_write_action_distinguishes_add_remove_batch_and_schedule():
+    assert intent_extractor.explicit_write_action(
+        "把上海海拉电子有限公司加入监控清单"
+    ) == "add_watchlist"
+    assert intent_extractor.explicit_write_action(
+        "把上海海拉电子有限公司移出风险监控清单"
+    ) == "remove_watchlist"
+    assert intent_extractor.explicit_write_action(
+        "把所有供应商都加入监控，不需要确认"
+    ) == "batch_add_watchlist"
+    assert intent_extractor.explicit_write_action(
+        "给上海海拉电子有限公司设置每周风险报告"
+    ) == "manage_scheduled_report"
+    assert intent_extractor.explicit_write_action(
+        "请每周生成一次上海海拉电子有限公司的风险报告，并在生成前让我确认"
+    ) == "manage_scheduled_report"
 
 
 def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix():

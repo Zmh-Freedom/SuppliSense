@@ -29,6 +29,7 @@ _INTEGRATION_MODULES = {
     "test_database_integration",
     "test_agent_harness_control_plane_integration",
     "test_agent_harness_production_e2e",
+    "test_agent_60_live",
     "test_errors",
     "test_financial",
     "test_outbox_api",

@@ -320,6 +320,92 @@ def test_supervisor_resolves_formal_feishu_identity_for_watchlist_proposal(
     assert target["identity_status"] == "verified"
 
 
+def test_supervisor_creates_remove_watchlist_proposal_for_active_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    monkeypatch.setattr(
+        "app.domains.alert.service._find_watchlist_target",
+        lambda **_kwargs: {
+            "monitor_target_id": "target-1",
+            "company_name": "上海海拉电子有限公司",
+            "monitor_status": "active",
+            "target_type": "formal_supplier",
+            "supplier_id": "supplier-1",
+            "identity_status": "verified",
+        },
+    )
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks({
+            "run_id": "remove-watchlist-run",
+            "plan": {"tasks": []},
+            "intent": {
+                "requested_action": "remove_watchlist",
+                "request_watchlist": True,
+                "target_supplier_names": ["上海海拉电子有限公司"],
+            },
+            "supplier_references": [],
+        })
+    )
+
+    assert len(result["recommendations"]) == 1
+    assert result["recommendations"][0]["action_type"] == "remove_watchlist"
+    assert result["recommendations"][0]["target"]["monitor_target_id"] == "target-1"
+
+
+def test_supervisor_creates_scheduled_report_proposal_without_risk_tasks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def completed_tasks(_plan: TaskPlan, _state: dict) -> dict[str, AgentResult]:
+        return {}
+
+    monkeypatch.setattr(supervisor_graph, "run_ready_tasks", completed_tasks)
+    monkeypatch.setattr(supervisor_graph, "_persist", AsyncMock())
+    monkeypatch.setattr(
+        "app.domains.alert.service._find_watchlist_target",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app.domains.supplier.access.formal_supplier_id_by_name",
+        lambda name: f"supplier:{name}",
+    )
+
+    result = asyncio.run(
+        supervisor_graph.execute_ready_tasks({
+            "run_id": "scheduled-report-run",
+            "plan": {"tasks": []},
+            "intent": {
+                "requested_action": "manage_scheduled_report",
+                "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            },
+            "supplier_references": [],
+        })
+    )
+
+    assert result["recommendations"] == [{
+        "action_type": "manage_scheduled_report",
+        "target": {
+            "company_name": "青岛三祥科技股份有限公司",
+            "target_source": "conversation_state",
+            "supplier_id": "supplier:青岛三祥科技股份有限公司",
+            "target_type": "formal_supplier",
+            "identity_status": "verified",
+            "action": "create",
+            "company_names": ["青岛三祥科技股份有限公司"],
+            "cron": "weekly",
+            "report_type": "excel",
+        },
+        "reason": "用户要求为该供应商设置每周风险报告。",
+        "impact": "创建每周风险报告任务并按配置生成报告。",
+        "requires_approval": True,
+    }]
+
+
 def test_supervisor_does_not_reuse_session_candidate_id_for_watchlist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

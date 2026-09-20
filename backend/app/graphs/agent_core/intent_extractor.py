@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.domains.sourcing_risk.requirement_service import SourcingRequirement
+from app.graphs.agent_core.entity_normalization import normalize_company_mention
 
 logger = get_logger()
 
@@ -29,20 +30,9 @@ _GENERIC_RISK_QUERY_TOKENS = (
 _MONITOR_TARGET_ID_PATTERN = re.compile(
     r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"
 )
-_TARGET_LEADING_FILLER_PATTERN = re.compile(
-    r"^(?:(?:请|帮我|麻烦)\s*)?(?:查看|查询|查找|分析|评估|复核|监控|看看|核查|预测|确认|生成|对比|比较|处理)\s*(?:一下|下)?\s*"
-    r"|^(?:一下|下)\s*"
-)
-
-
 def _normalize_extracted_target(target: str) -> str:
     """Remove conversational prefixes accidentally copied into an entity name."""
-    value = str(target or "").strip()
-    previous = None
-    while value and value != previous:
-        previous = value
-        value = _TARGET_LEADING_FILLER_PATTERN.sub("", value, count=1).strip()
-    return value.strip(" ：:，,。？！!?")
+    return normalize_company_mention(target)
 
 
 class ConversationIntentExtraction(BaseModel):
@@ -72,7 +62,10 @@ class ConversationIntentExtraction(BaseModel):
     ] = "none"
     sourcing_requirement: SourcingRequirement | None = None
     task_type: Literal["sourcing", "analysis", "none"] = "none"
-    requested_action: Literal["add_watchlist", "none"] = "none"
+    requested_action: Literal[
+        "add_watchlist", "remove_watchlist", "batch_add_watchlist",
+        "manage_scheduled_report", "none",
+    ] = "none"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @field_validator("target_supplier_names")
@@ -113,6 +106,37 @@ def should_extract_conversation_intent(message: str) -> bool:
     return True
 
 
+def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtraction:
+    """Keep explicit quoted targets executable when the LLM is unavailable."""
+    quoted = [item.strip() for item in re.findall(r"[“\"「『]([^”\"」』]+)[”\"」』]", message) if item.strip()]
+    dimensions: list[str] = []
+    dimension_tokens = (
+        ("financial", ("财务",)),
+        ("business_risk", ("经营", "运营", "商务")),
+        ("delivery", ("交付",)),
+        ("quality", ("质量",)),
+        ("sentiment", ("舆情", "负面")),
+        ("compliance", ("合规", "制裁", "诉讼", "处罚")),
+        ("esg", ("ESG", "esg")),
+        ("risk", ("风险", "复核", "评分")),
+    )
+    for dimension, tokens in dimension_tokens:
+        if any(token in message for token in tokens):
+            dimensions.append(dimension)
+    if not dimensions and quoted:
+        dimensions = ["risk", "financial", "business_risk"]
+    capability = "business_risk" if any(token in message for token in ("经营", "运营")) else "risk" if dimensions else "none"
+    return ConversationIntentExtraction(
+        target_supplier_names=quoted,
+        analysis_dimensions=dimensions,
+        capability=capability,
+        scope="single_supplier" if quoted else "none",
+        task_type="analysis" if quoted else "none",
+        requested_action=explicit_write_action(message),
+        confidence=0.35 if quoted else 0.0,
+    )
+
+
 def extract_conversation_intent(
     message: str,
     supplier_references: list[dict[str, Any]],
@@ -139,11 +163,15 @@ def extract_conversation_intent(
             "Set task_type='analysis' for assessing explicitly named suppliers; set task_type='none' only when no agent task is requested.",
             "For a generic supplier review ('复核' or '风险情况') without explicit dimensions, use risk, financial, and business_risk; explicit dimensions take precedence.",
             "Use provider_capabilities only when the user explicitly asks for工商主体、司法/诉讼、经营处罚、新闻舆情、工商资料或天眼查查询; choose one or more of identity, legal_risk, business_risk, news, profile.",
-            "Use requested_action='add_watchlist' only when the user explicitly asks to monitor or add to monitoring.",
+            "Use requested_action='add_watchlist' only when the user explicitly asks to monitor or add to monitoring; use remove_watchlist for removal, batch_add_watchlist for an all/batch add request, and manage_scheduled_report for scheduled-report setup.",
             "This is read-only intent extraction and must not execute an action.",
         ],
     }
-    client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
+    try:
+        client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
+    except Exception as exc:
+        logger.warning("conversation_intent_client_init_failed", error=str(exc))
+        return _deterministic_extraction_fallback(message)
     base_messages = [
         {
             "role": "system",
@@ -186,13 +214,13 @@ def extract_conversation_intent(
             ])
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as retry_exc:
             logger.warning("conversation_intent_extraction_retry_invalid", error=str(retry_exc))
-            return None
+            return _deterministic_extraction_fallback(message)
         except Exception as retry_exc:
             logger.warning("conversation_intent_extraction_retry_failed", error=str(retry_exc))
-            return None
+            return _deterministic_extraction_fallback(message)
     except Exception as exc:
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
-        return None
+        return _deterministic_extraction_fallback(message)
 
     inferred_task_type = infer_task_type(message)
     capability = extracted.capability
@@ -221,6 +249,14 @@ def extract_conversation_intent(
     )
     if deterministic_target.reason in {"explicit_full_name", "explicit_name_or_alias"}:
         validated_targets = deterministic_target.target_supplier_names
+    # Fixed acceptance questions and normal procurement chat commonly quote a
+    # legal name without first establishing a conversation reference.  Keep a
+    # quoted name as an explicit target when the message is an analysis
+    # request; this is deterministic and does not broaden scope permissions.
+    if not validated_targets and any(token in message for token in _ANALYSIS_TOKENS):
+        quoted = re.findall(r"[“\"「『]([^”\"」』]+)[”\"」』]", message)
+        validated_targets = list(dict.fromkeys(item.strip() for item in quoted if item.strip()))
+    detected_action = explicit_write_action(message)
     validated = extracted.model_copy(update={
         "target_supplier_names": validated_targets,
         "analysis_dimensions": extracted_dimensions,
@@ -228,11 +264,7 @@ def extract_conversation_intent(
         # The model may over-read the word “监控” in a read-only identity
         # request. A write action is allowed only when the current message
         # contains an explicit add/monitor instruction.
-        "requested_action": (
-            extracted.requested_action
-            if has_explicit_watchlist_request(message)
-            else "none"
-        ),
+        "requested_action": detected_action or "none",
     })
     logger.info(
         "conversation_intent_extracted",
@@ -249,8 +281,26 @@ def extract_conversation_intent(
 
 
 def has_explicit_watchlist_request(message: str) -> bool:
-    """Return whether the user explicitly asked to add a target to monitoring."""
+    """Return whether the user explicitly asked to change monitoring state."""
+    return explicit_write_action(message) in {
+        "add_watchlist", "remove_watchlist", "batch_add_watchlist",
+    }
+
+
+def explicit_write_action(message: str) -> Literal[
+    "add_watchlist", "remove_watchlist", "batch_add_watchlist",
+    "manage_scheduled_report", "none",
+]:
+    """Detect only explicit side-effect requests; unknown text stays read-only."""
     normalized = "".join(str(message or "").strip().lower().split())
+    if any(token in normalized for token in (
+        "设置每周风险报告", "设置每月风险报告", "设置定时风险报告", "定时报告",
+        "每周报告", "每月报告", "每日报告",
+    )) or (
+        any(token in normalized for token in ("每周生成", "每月生成", "每日生成", "定期生成"))
+        and "风险报告" in normalized
+    ):
+        return "manage_scheduled_report"
     # Do not turn a negated instruction into a durable write request.  This
     # guard is intentionally evaluated before the positive phrases below so
     # that "不要加入监控清单" cannot enter the approval workflow.
@@ -261,12 +311,23 @@ def has_explicit_watchlist_request(message: str) -> bool:
         any(token in normalized for token in ("不要把", "不把", "别把", "无需把"))
         and any(token in normalized for token in ("加入监控", "纳入监控", "添加监控"))
     ):
-        return False
-    return any(token in normalized for token in (
+        return "none"
+    if any(token in normalized for token in (
+        "移出监控", "移出风险监控", "从监控清单移除", "移除监控", "停止监控",
+    )):
+        return "remove_watchlist"
+    add_requested = any(token in normalized for token in (
         "加入监控", "加入风险监控", "纳入监控", "纳入风险监控",
         "加入到监控", "加入到风险监控", "添加监控", "添加到监控",
         "纳入到监控", "纳入到风险监控", "持续监控", "开始监控", "建立监控",
     ))
+    if add_requested and any(token in normalized for token in (
+        "所有供应商", "全部供应商", "批量加入", "批量纳入", "所有企业", "全部企业",
+    )):
+        return "batch_add_watchlist"
+    if add_requested:
+        return "add_watchlist"
+    return "none"
 
 
 def is_identity_verification_request(message: str) -> bool:

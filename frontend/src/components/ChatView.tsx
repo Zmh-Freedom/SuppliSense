@@ -364,12 +364,12 @@ export default function ChatView() {
           const finalAnswer = normalizeApprovalAnswer(rawAnswer);
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
-          const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed', 'rejected'].includes(serverStatus);
+          const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
             status: pendingApproval ? 'waiting_approval' : (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
             stage: pendingApproval ? 'approval' : hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
-            message: pendingApproval ? '分析已完成，等待人工确认写操作' : !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
+            message: pendingApproval ? '分析已完成，等待人工确认写操作' : !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'cancelled' ? '本轮 Agent 工作流已取消' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
           const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow, approval: pendingApproval ? { ...pendingApproval, status: 'pending' } : undefined }];
@@ -597,12 +597,12 @@ export default function ChatView() {
           const finalAnswer = normalizeApprovalAnswer(rawAnswer, approved);
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
-          const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed', 'rejected'].includes(serverStatus);
+          const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
             status: (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
             stage: hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
-            message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
+            message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'cancelled' ? '本轮 Agent 工作流已取消' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
           const resolvedApproval: ApprovalData = { ...approval, status: approved ? 'approved' : 'rejected' };
@@ -808,6 +808,7 @@ export default function ChatView() {
             ref={inputRef}
             value={input}
             onChange={e => { setInput(e.target.value); }}
+            onCompositionStart={e => { setInput(e.currentTarget.value); }}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
                 e.preventDefault();
@@ -819,7 +820,7 @@ export default function ChatView() {
           />
           <button
             onClick={() => send()}
-            disabled={loading}
+            disabled={loading || !input.trim()}
             title={loading ? '当前请求仍在处理中' : '发送问题'}
             className="bg-[var(--color-primary-bg)] text-white rounded-xl px-4 py-2 text-sm hover:bg-[var(--color-primary-hover)] disabled:opacity-40 shrink-0 transition-colors min-h-[44px] inline-flex items-center"
           >

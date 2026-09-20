@@ -123,3 +123,45 @@ def test_explicit_company_name_ignores_copied_spaces_inside_branch_name() -> Non
 
     assert result.target_supplier_names == ["纬湃汽车电子（长春）有限公司"]
     assert result.reason == "explicit_name_or_code"
+
+
+def test_common_confirmation_and_display_prefixes_are_not_persisted_as_company_name() -> None:
+    messages = [
+        "看看青岛三祥科技股份有限公司的综合风险",
+        "是上海海拉电子有限公司，继续查风险",
+        "展示上海海拉电子有限公司的经营风险",
+        "给青岛三祥科技股份有限公司设置每周风险报告",
+    ]
+
+    for message in messages:
+        result = resolve_turn(message, session_id="prefix-cleanup")
+        assert result.target_supplier_names == [
+            "上海海拉电子有限公司" if "上海海拉" in message else "青岛三祥科技股份有限公司"
+        ]
+
+
+def test_scheduled_report_prefix_is_not_persisted_as_company_name() -> None:
+    result = resolve_turn(
+        "请每周生成一次上海海拉电子有限公司的风险报告，并在生成前让我确认",
+        session_id="scheduled-report-prefix",
+    )
+
+    assert result.target_supplier_names == ["上海海拉电子有限公司"]
+
+
+def test_contextual_follow_up_reuses_canonical_name_after_spoken_prefix() -> None:
+    first = resolve_turn(
+        "看看青岛三祥科技股份有限公司的综合风险",
+        session_id="context-prefix",
+        turn_id="turn-1",
+    )
+    second = resolve_turn(
+        "它需要采取采购动作吗？",
+        session_id="context-prefix",
+        previous_memory=first.memory,
+        turn_id="turn-2",
+    )
+
+    assert first.target_supplier_names == ["青岛三祥科技股份有限公司"]
+    assert second.target_supplier_names == ["青岛三祥科技股份有限公司"]
+    assert second.reason == "singular_reference"

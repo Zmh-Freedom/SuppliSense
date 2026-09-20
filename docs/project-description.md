@@ -205,6 +205,7 @@ npm run dev -- --host 0.0.0.0
 - [使用说明书](user-manual.md)
 - [需求说明书](requirements-specification.md)
 - [问题与修复记录](issue-log.md)
+- [项目技术与验收资料](release/competition-technical-acceptance-pack.md)
 - [Agent 验收与评估](release/agent-acceptance-and-evaluation.md)
 - [发布说明](release/README.md)
 - [回滚运行手册](release/rollback-runbook.md)

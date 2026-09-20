@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -46,6 +48,7 @@ def validate_execution_context(
     expected_targets = _text_list(llm_intent.get("target_supplier_names"))
     expected_dimensions = _text_list(llm_intent.get("analysis_dimensions"))
     expected_capability = str(llm_intent.get("capability") or "none")
+    expected_action = str(llm_intent.get("requested_action") or "none")
     actual_targets = _text_list(current_task.get("target_supplier_names"))
     actual_dimensions = _text_list(current_task.get("analysis_dimensions"))
     if expected_targets and actual_targets != expected_targets:
@@ -56,7 +59,11 @@ def validate_execution_context(
             expected_targets=expected_targets,
             actual_targets=actual_targets,
         )
-    if expected_dimensions and actual_dimensions != expected_dimensions:
+    if (
+        expected_dimensions
+        and actual_dimensions != expected_dimensions
+        and expected_action not in {"remove_watchlist", "batch_add_watchlist", "manage_scheduled_report"}
+    ):
         _raise_context_contract_violation(
             source,
             "llm_dimensions_not_preserved",
@@ -139,6 +146,147 @@ def collect_supplier_references(
     ])
 
 
+def collect_sourcing_candidate_context(
+    outcomes: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Freeze the latest sourcing candidate order for the next conversation turn.
+
+    Candidate ordinals are meaningful only within one discovery result.  This
+    snapshot keeps the displayed order and stable candidate IDs together so a
+    follow-up such as ``选第 2 家外部候选`` cannot accidentally select an older
+    session reference or rerun discovery without consuming the user's choice.
+    """
+    sourcing_tools = {
+        "discover_supplier_candidates", "search_suppliers", "find_alternatives",
+        "list_formal_suppliers",
+    }
+    latest: list[dict[str, Any]] = []
+    for outcome in outcomes:
+        if not isinstance(outcome, dict) or str(outcome.get("tool_name") or "") not in sourcing_tools:
+            continue
+        data = outcome.get("data")
+        if not isinstance(data, dict):
+            continue
+        rows: list[Any] = []
+        for key in ("candidates", "local_candidates", "external_candidates", "results", "items"):
+            value = data.get(key)
+            if isinstance(value, list):
+                rows.extend(value)
+        latest = [row for row in rows if isinstance(row, dict)]
+    if not latest:
+        return None
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(latest, start=1):
+        name = str(row.get("supplier_name") or row.get("company_name") or row.get("name") or "").strip()
+        if not name:
+            continue
+        key = str(row.get("candidate_id") or row.get("supplier_id") or row.get("company_id") or name)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidate = {
+            "rank": len(candidates) + 1,
+            "name": name,
+            "candidate_id": row.get("candidate_id") or row.get("supplier_id") or row.get("company_id"),
+            "candidate_type": row.get("candidate_type") or (
+                "external" if row.get("status") == "staged_candidate" else "formal"
+            ),
+            "identity_status": row.get("identity_status") or row.get("status"),
+            "source": row.get("source") or row.get("discovery_source"),
+        }
+        candidates.append({key: value for key, value in candidate.items() if value not in (None, "")})
+    if not candidates:
+        return None
+    version = hashlib.sha256(
+        json.dumps(candidates, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return {"version": version, "candidates": candidates}
+
+
+_ORDINAL_FOLLOW_UP = re.compile(r"第\s*(?P<number>[0-9一二三四五六七八九十百]+)\s*[家个名]")
+_CHINESE_NUMBERS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+
+
+def _parse_candidate_ordinal(message: str) -> int | None:
+    match = _ORDINAL_FOLLOW_UP.search(str(message or ""))
+    if not match:
+        return None
+    value = match.group("number")
+    if value.isdigit():
+        ordinal = int(value)
+    elif value == "十":
+        ordinal = 10
+    elif len(value) == 2 and value[0] == "十" and value[1] in _CHINESE_NUMBERS:
+        ordinal = 10 + _CHINESE_NUMBERS[value[1]]
+    elif len(value) == 2 and value[1] == "十" and value[0] in _CHINESE_NUMBERS:
+        ordinal = _CHINESE_NUMBERS[value[0]] * 10
+    else:
+        ordinal = _CHINESE_NUMBERS.get(value)
+    return ordinal if ordinal and ordinal > 0 else None
+
+
+def _apply_sourcing_follow_up(
+    execution_context: dict[str, Any],
+    user_message: str,
+) -> dict[str, Any]:
+    """Consume ordinal/no-match sourcing follow-ups before Harness planning."""
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    snapshot = conversation_state.get("sourcing_candidates")
+    candidates = snapshot.get("candidates") if isinstance(snapshot, dict) else None
+    current_task = dict(execution_context.get("current_task") or {})
+    message = str(user_message or "")
+    no_match_tokens = ("没有合适", "没有满意", "无合适", "没找到合适", "候选怎么办", "都不合适")
+    explicit_stop = "不要重复调用" in message and isinstance(candidates, list)
+    if any(token in message for token in no_match_tokens) or explicit_stop:
+        current_task.update({
+            "task_type": "sourcing",
+            "capability": "sourcing",
+            "analysis_dimensions": ["sourcing"],
+            "sourcing_follow_up": "no_match",
+            "selected_candidate_id": None,
+        })
+        conversation_state["current_task"] = current_task
+        return {**execution_context, "conversation_state": conversation_state, "current_task": current_task}
+
+    ordinal = _parse_candidate_ordinal(message)
+    if ordinal is None or not isinstance(candidates, list):
+        return execution_context
+    filtered = candidates
+    if "外部" in message:
+        filtered = [
+            item for item in candidates
+            if isinstance(item, dict) and str(item.get("candidate_type") or "").lower() in {"external", "external_candidate", "staged"}
+        ]
+    selected = filtered[ordinal - 1] if 0 < ordinal <= len(filtered) else None
+    if not isinstance(selected, dict):
+        current_task["sourcing_follow_up"] = "ordinal_out_of_range"
+        current_task["candidate_ordinal"] = ordinal
+        current_task["candidate_list_version"] = snapshot.get("version") if isinstance(snapshot, dict) else None
+        conversation_state["current_task"] = current_task
+        return {**execution_context, "conversation_state": conversation_state, "current_task": current_task}
+    name = str(selected.get("name") or "").strip()
+    selected_id = str(selected.get("candidate_id") or "").strip() or None
+    current_task.update({
+        "target_supplier_names": [name],
+        "selected_candidate_id": selected_id,
+        "selected_candidate_name": name,
+        "candidate_ordinal": ordinal,
+        "candidate_list_version": snapshot.get("version") if isinstance(snapshot, dict) else None,
+        "sourcing_follow_up": "candidate_verification" if any(token in message for token in ("验证", "核验", "确认")) else "candidate_selected",
+        "task_type": "sourcing",
+        "capability": "sourcing",
+        "analysis_dimensions": ["sourcing"],
+    })
+    if any(token in message for token in ("验证", "核验", "确认")):
+        current_task["identity_verification"] = True
+    conversation_state["selected_supplier_names"] = [name]
+    conversation_state["selected_suppliers"] = [name]
+    conversation_state["selected_candidate_id"] = selected_id
+    conversation_state["current_task"] = current_task
+    return {**execution_context, "conversation_state": conversation_state, "current_task": current_task}
+
+
 def _collect_normalized_references(value: Any, source: str) -> list[dict[str, Any]]:
     """Preserve already-normalized ``{name: ...}`` references.
 
@@ -201,10 +349,9 @@ def load_execution_context(
     resolved = _enforce_scope_query_intent(resolved, user_message)
     resolved = _apply_identity_verification_intent(resolved, user_message)
     resolved = _apply_monitor_target_id_intent(resolved, user_message)
-    return validate_execution_context(
-        _apply_harness_sourcing_requirement(resolved, user_message),
-        source="load_execution_context",
-    )
+    resolved = _apply_harness_sourcing_requirement(resolved, user_message)
+    resolved = _apply_sourcing_follow_up(resolved, user_message)
+    return validate_execution_context(resolved, source="load_execution_context")
 
 
 def _apply_identity_verification_intent(
@@ -356,9 +503,10 @@ def _enforce_scope_query_intent(
     # A message can mention “监控清单” while explicitly requesting a write,
     # for example “把上海海拉电子有限公司加入到监控清单中”. Preserve that
     # action and its target so Chat API can route it to the approval workflow.
-    from app.graphs.agent_core.intent_extractor import has_explicit_watchlist_request
+    from app.graphs.agent_core.intent_extractor import explicit_write_action
 
-    if has_explicit_watchlist_request(user_message):
+    write_action = explicit_write_action(user_message)
+    if write_action != "none":
         # The explicit write verb is authoritative even when the LLM is
         # unavailable or conservatively returns requested_action="none".
         # Populate the same structured field consumed by Chat API routing so
@@ -366,7 +514,7 @@ def _enforce_scope_query_intent(
         current_task = dict(execution_context.get("current_task") or {})
         llm_intent = execution_context.get("llm_intent")
         normalized_intent = dict(llm_intent) if isinstance(llm_intent, dict) else {}
-        normalized_intent["requested_action"] = "add_watchlist"
+        normalized_intent["requested_action"] = write_action
         if not normalized_intent.get("target_supplier_names"):
             normalized_intent["target_supplier_names"] = list(
                 current_task.get("target_supplier_names") or []
@@ -424,11 +572,28 @@ def _apply_harness_sourcing_requirement(
 ) -> dict[str, Any]:
     """Bind one validated sourcing requirement before the Harness graph starts."""
     current_task = dict(execution_context.get("current_task") or {})
-    if current_task.get("task_type") != "sourcing":
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    if current_task.get("task_type") != "sourcing" and not _is_sourcing_constraint_follow_up(
+        current_task,
+        conversation_state,
+        user_message,
+    ):
         return execution_context
+    # LLM intent extraction is intentionally best-effort.  If a follow-up
+    # contains only budget/cost/delivery wording, a transient empty model
+    # response must not demote the existing sourcing session to an analysis
+    # task with no executable subtasks.
+    if current_task.get("task_type") != "sourcing":
+        current_task.update({
+            "task_type": "sourcing",
+            "capability": "sourcing",
+            "scope": "product_category",
+            "analysis_dimensions": ["sourcing"],
+            "subtasks": [],
+        })
     existing = current_task.get("requirement")
     if not isinstance(existing, dict):
-        existing = (execution_context.get("conversation_state") or {}).get("current_requirement")
+        existing = conversation_state.get("current_requirement")
     from app.domains.sourcing_risk.requirement_service import (
         resolve_harness_requirement,
         resolve_harness_requirement_from_llm,
@@ -437,12 +602,114 @@ def _apply_harness_sourcing_requirement(
     llm_requirement = current_task.pop("llm_sourcing_requirement", None)
     if isinstance(llm_requirement, dict):
         resolved = resolve_harness_requirement_from_llm(llm_requirement)
+        # A sourcing follow-up may contain only a new constraint (for example,
+        # “预算有限/成本更优”).  Keep the validated category/specification from
+        # the previous turn and merge only explicitly supplied slots; otherwise
+        # the second turn regresses into a category clarification loop.
+        resolved_requirement = resolved.get("requirement") if isinstance(resolved, dict) else None
+        same_category = (
+            isinstance(existing, dict)
+            and isinstance(resolved_requirement, dict)
+            and str(resolved_requirement.get("category") or resolved_requirement.get("product") or "").strip()
+            == str(existing.get("category") or existing.get("product") or "").strip()
+        )
+        if (
+            isinstance(existing, dict)
+            and existing.get("category")
+            and existing.get("specification")
+            and (
+                resolved.get("status") != "ready"
+                or _is_generic_sourcing_constraint(
+                    user_message,
+                    resolved.get("requirement") if isinstance(resolved, dict) else None,
+                )
+                or (same_category and bool(_sourcing_constraint_slots(user_message)))
+            )
+        ):
+            merged_requirement = dict(existing)
+            merge_source = (
+                resolved.get("requirement")
+                if resolved.get("status") == "ready"
+                and isinstance(resolved.get("requirement"), dict)
+                else llm_requirement
+            )
+            for key, value in merge_source.items():
+                if value is None or value == "" or value == []:
+                    continue
+                if key in {"category", "product", "material", "specification"} and _is_generic_sourcing_constraint(
+                    user_message,
+                    merge_source,
+                ):
+                    continue
+                if key == "optional_conditions":
+                    prior = list(merged_requirement.get(key) or [])
+                    merged_requirement[key] = list(dict.fromkeys(prior + list(value)))
+                else:
+                    merged_requirement[key] = value
+            for key, value in _sourcing_constraint_slots(user_message).items():
+                if key == "optional_conditions":
+                    prior = list(merged_requirement.get(key) or [])
+                    merged_requirement[key] = list(dict.fromkeys(prior + list(value)))
+                else:
+                    merged_requirement[key] = value
+            merged = resolve_harness_requirement_from_llm(merged_requirement)
+            if merged.get("status") == "ready":
+                merged["extraction_source"] = "context_merge"
+                resolved = merged
     else:
         resolved = resolve_harness_requirement(
             user_message,
             existing if isinstance(existing, dict) else None,
         )
-    conversation_state = dict(execution_context.get("conversation_state") or {})
+        resolved_requirement = resolved.get("requirement") if isinstance(resolved, dict) else None
+        same_category = (
+            isinstance(existing, dict)
+            and isinstance(resolved_requirement, dict)
+            and str(resolved_requirement.get("category") or resolved_requirement.get("product") or "").strip()
+            == str(existing.get("category") or existing.get("product") or "").strip()
+        )
+        if (
+            isinstance(existing, dict)
+            and existing.get("category")
+            and existing.get("specification")
+            and resolved.get("status") == "ready"
+            and _is_generic_sourcing_constraint(
+                user_message,
+                resolved.get("requirement") if isinstance(resolved, dict) else None,
+            )
+            or (
+                isinstance(existing, dict)
+                and existing.get("category")
+                and existing.get("specification")
+                and resolved.get("status") == "ready"
+                and same_category
+                and bool(_sourcing_constraint_slots(user_message))
+            )
+        ):
+            generic_requirement = resolved.get("requirement")
+            merged_requirement = dict(existing)
+            if isinstance(generic_requirement, dict):
+                for key, value in generic_requirement.items():
+                    if value is None or value == "" or value == []:
+                        continue
+                    if key in {"category", "product", "material", "specification"}:
+                        continue
+                    if key == "optional_conditions":
+                        prior = list(merged_requirement.get(key) or [])
+                        merged_requirement[key] = list(dict.fromkeys(prior + list(value)))
+                    else:
+                        merged_requirement[key] = value
+            for key, value in _sourcing_constraint_slots(user_message).items():
+                if key == "optional_conditions":
+                    prior = list(merged_requirement.get(key) or [])
+                    merged_requirement[key] = list(dict.fromkeys(prior + list(value)))
+                else:
+                    merged_requirement[key] = value
+            resolved = {
+                "status": "ready",
+                "requirement": merged_requirement,
+                "extraction_source": "context_merge",
+            }
     current_task["requirement_status"] = resolved.get("status")
     current_task["requirement_extraction_source"] = resolved.get("extraction_source")
     if resolved.get("status") == "ready":
@@ -459,12 +726,126 @@ def _apply_harness_sourcing_requirement(
     }
 
 
+def _is_sourcing_constraint_follow_up(
+    current_task: dict[str, Any],
+    conversation_state: dict[str, Any],
+    user_message: str,
+) -> bool:
+    """Recognize a constraint-only follow-up when intent extraction is empty.
+
+    A completed sourcing turn leaves a validated requirement or candidate
+    snapshot in the durable context.  In that context, a message with no
+    explicit company target and procurement constraints is still a sourcing
+    turn, even if the optional LLM extraction times out or returns an empty
+    object.
+    """
+    if current_task.get("target_supplier_names"):
+        return False
+    has_context = bool(
+        isinstance(current_task.get("requirement"), dict)
+        or isinstance(conversation_state.get("current_requirement"), dict)
+        or isinstance(conversation_state.get("sourcing_candidates"), dict)
+    )
+    if not has_context:
+        return False
+    message = str(user_message or "")
+    return any(token in message for token in (
+        "预算", "成本", "交付周期", "交付", "候选", "筛选", "替代供应商", "认证", "供货",
+    ))
+
+
+def _is_generic_sourcing_constraint(
+    user_message: str,
+    requirement: dict[str, Any] | None,
+) -> bool:
+    """Recognize vague cost/constraint wording that must not replace a category.
+
+    LLM extraction can turn a follow-up such as “预算有限，找成本更优的替代
+    供应商” into a synthetic category (for example ``成本更优的替代``).  That
+    wording is a constraint on the previous product, not a new procurement
+    category.  Keep the rule narrow so an explicit category such as ``安全带``
+    still replaces the previous sourcing requirement.
+    """
+    payload = requirement if isinstance(requirement, dict) else {}
+    category = str(payload.get("category") or payload.get("product") or "").strip()
+    message = str(user_message or "")
+    generic_category_tokens = (
+        "成本更优",
+        "成本更低",
+        "更便宜",
+        "低成本",
+        "低价",
+        "替代供应商",
+        "替代方案",
+        "预算有限",
+    )
+    if category and any(token in category for token in generic_category_tokens):
+        return True
+    if any(token in message for token in generic_category_tokens) and not category:
+        return True
+    return False
+
+
+def _sourcing_constraint_slots(user_message: str) -> dict[str, Any]:
+    """Extract a small deterministic set of safe follow-up constraints."""
+    message = str(user_message or "")
+    slots: dict[str, Any] = {}
+    if "预算有限" in message:
+        slots["budget"] = "预算有限"
+    budget_match = re.search(
+        r"预算\s*(?:不超过|最多|上限|控制在)?\s*(\d+(?:\.\d+)?)\s*(万元?|万|千元?|元)",
+        message,
+    )
+    if budget_match:
+        amount, unit = budget_match.groups()
+        normalized_unit = {"万": "万元", "千": "千元"}.get(unit, unit)
+        slots["budget"] = f"{amount} {normalized_unit}"
+    optional: list[str] = []
+    for token in ("成本更优", "成本更低", "更便宜", "低成本", "低价"):
+        if token in message:
+            optional.append(token)
+    if "总成本" in message:
+        optional.append("总成本优先")
+    if "交付周期" in message:
+        slots["delivery"] = "交付周期优先"
+        optional.append("交付周期优先")
+    if optional:
+        slots["optional_conditions"] = list(dict.fromkeys(optional))
+    return slots
+
+
 def apply_extracted_conversation_intent(
     execution_context: dict[str, Any],
     extracted: Any,
 ) -> dict[str, Any]:
     """Overlay validated LLM intent onto the one shared execution context."""
     if extracted is None:
+        from app.graphs.agent_core.intent_extractor import explicit_write_action
+
+        current_task = dict(execution_context.get("current_task") or {})
+        action = explicit_write_action(str(current_task.get("user_message") or ""))
+        if action != "none":
+            current_task.update({
+                "task_type": "action_draft",
+                "analysis_dimensions": [],
+                "subtasks": [],
+                "user_message": str(current_task.get("user_message") or ""),
+            })
+            conversation_state = dict(execution_context.get("conversation_state") or {})
+            conversation_state["current_task"] = current_task
+            return {
+                **execution_context,
+                "conversation_state": conversation_state,
+                "current_task": current_task,
+                "llm_intent": {
+                    "target_supplier_names": list(current_task.get("target_supplier_names") or []),
+                    "analysis_dimensions": [],
+                    "capability": "none",
+                    "scope": "single_supplier",
+                    "task_type": "analysis",
+                    "requested_action": action,
+                },
+            }
         return execution_context
 
     target_names = list(getattr(extracted, "target_supplier_names", []) or [])
@@ -475,7 +856,10 @@ def apply_extracted_conversation_intent(
     sourcing_requirement = getattr(extracted, "sourcing_requirement", None)
     task_type = getattr(extracted, "task_type", "none")
     requested_action = getattr(extracted, "requested_action", "none")
-    is_watchlist_write = requested_action == "add_watchlist"
+    is_watchlist_write = requested_action in {
+        "add_watchlist", "remove_watchlist", "batch_add_watchlist",
+    }
+    is_write_action = requested_action != "none"
     if (
         not target_names
         and not dimensions
@@ -506,22 +890,24 @@ def apply_extracted_conversation_intent(
         current_task["target_supplier_names"] = target_names
         conversation_state["selected_supplier_names"] = target_names
         conversation_state["selected_suppliers"] = target_names
-    if dimensions:
-        current_task["analysis_dimensions"] = dimensions
-    elif target_names and not is_watchlist_write:
-        # A company-only follow-up means "run the last explicit analysis for
-        # this company". Do not inherit sourcing or an old execution plan.
-        dimensions = _text_list(current_task.get("analysis_dimensions"))
-    elif is_watchlist_write:
-        # A write-only follow-up must not inherit the previous read task. In
-        # particular, identity verification from the preceding turn is a
-        # completed lookup, not an instruction to re-plan identity analysis.
-        # Keeping it here would make the analysis planner replace the action
-        # task and drop the LLM's watchlist capability from current_task.
+    if requested_action in {"remove_watchlist", "batch_add_watchlist", "manage_scheduled_report"}:
+        # Structured side-effect requests own the turn even when the model
+        # also emits a generic analysis dimension such as ``risk``.
         dimensions = []
         current_task["analysis_dimensions"] = []
         current_task["subtasks"] = []
         current_task["task_type"] = "action_draft"
+    elif dimensions:
+        current_task["analysis_dimensions"] = dimensions
+    elif is_write_action:
+        dimensions = []
+        current_task["analysis_dimensions"] = []
+        current_task["subtasks"] = []
+        current_task["task_type"] = "action_draft"
+    elif target_names:
+        # A company-only follow-up means "run the last explicit analysis for
+        # this company". Do not inherit sourcing or an old execution plan.
+        dimensions = _text_list(current_task.get("analysis_dimensions"))
     if provider_capabilities:
         current_task["provider_capabilities"] = provider_capabilities
     if capability != "none":
@@ -533,7 +919,7 @@ def apply_extracted_conversation_intent(
         )
     if capability == "sourcing" or task_type == "sourcing":
         current_task["task_type"] = "sourcing"
-    elif (target_names or dimensions) and not is_watchlist_write:
+    elif (target_names or dimensions) and not is_write_action:
         current_task["task_type"] = "analysis"
     conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
     conversation_state["focus_set"] = resolved.focus_set.model_dump(mode="json") if resolved.focus_set else None
@@ -669,8 +1055,20 @@ def save_execution_turn(
     user_message: str,
     answer: str,
     references: list[dict[str, Any]] | None = None,
+    sourcing_candidates: dict[str, Any] | None = None,
+    current_requirement: dict[str, Any] | None = None,
 ) -> None:
     """Persist every graph completion through the shared state-aware save path."""
     from app.services.agent import _save_turn
 
-    _save_turn(session_id, user_message, answer, references or [])
+    if sourcing_candidates or current_requirement:
+        _save_turn(
+            session_id,
+            user_message,
+            answer,
+            references or [],
+            sourcing_candidates,
+            current_requirement,
+        )
+    else:
+        _save_turn(session_id, user_message, answer, references or [])

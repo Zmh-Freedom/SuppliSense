@@ -82,6 +82,18 @@ describe('ChatView session lifecycle', () => {
     expect(input).not.toHaveClass('focus-visible:ring-2')
   })
 
+  it('disables send for whitespace-only input', async () => {
+    const user = userEvent.setup()
+    renderChat()
+
+    const input = screen.getByLabelText('向采购助手提问')
+    const send = screen.getByRole('button', { name: '发送' })
+    expect(send).toBeDisabled()
+    await user.type(input, ' \u3000\n\t ')
+    expect(send).toBeDisabled()
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+  })
+
   it('offers a canonical supplier choice after a short-name clarification', async () => {
     let calls = 0
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {

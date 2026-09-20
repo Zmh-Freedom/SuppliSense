@@ -30,6 +30,7 @@ class TurnStatus(str, Enum):
     COMPLETED = "completed"
     PARTIAL = "partial"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class EntityStatus(str, Enum):

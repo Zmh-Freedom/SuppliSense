@@ -131,6 +131,36 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def get_latest_harness_run_for_session(
+    session_id: str,
+    user_id: str,
+) -> dict[str, Any] | None:
+    """Return the newest Harness run owned by one user."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT *
+            FROM agent_runs
+            WHERE session_id = %s
+              AND user_id = %s
+              AND run_type = 'agent_harness'
+            ORDER BY CASE
+                WHEN status = 'RUNNING' THEN 0
+                WHEN status = 'CANCELLED' THEN 1
+                WHEN status IN (
+                    'COMPLETED', 'PARTIAL', 'NEEDS_REVIEW',
+                    'ACTION_FAILED', 'FAILED', 'ROLLBACK_FROZEN'
+                ) THEN 2
+                ELSE 3
+            END,
+            created_at DESC
+            LIMIT 1
+            """,
+            (session_id, user_id),
+        )
+        return _row_to_dict(cur, cur.fetchone())
+
+
 def get_harness_artifact_counts(run_id: str) -> dict[str, int]:
     """Count the relational Harness projections for one persisted Run."""
     with get_cursor() as (_, cur):

@@ -57,25 +57,30 @@ async function refreshAccessToken(): Promise<boolean> {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    credentials: 'same-origin',
-  });
+/** Fetch an API response and recover once when the short-lived access token expires. */
+async function fetchWithAuthRetry(url: string, options: RequestInit): Promise<Response> {
+  const requestOptions: RequestInit = { ...options, credentials: 'same-origin' };
+  const res = await fetch(url, requestOptions);
+  if (res.status !== 401) return res;
 
-  if (res.status === 401) {
-    const refreshed = await refreshAccessToken();
-    if (refreshed) {
-      const retryRes = await fetch(`${API_BASE}${path}`, {
-        ...options,
-        credentials: 'same-origin',
-      });
-      if (retryRes.ok) return retryRes.json();
-    }
+  const refreshed = await refreshAccessToken();
+  if (!refreshed) {
     clearStoredUser();
     window.location.reload();
     throw new Error('登录已过期，请重新登录');
   }
+
+  const retryRes = await fetch(url, requestOptions);
+  if (retryRes.status === 401) {
+    clearStoredUser();
+    window.location.reload();
+    throw new Error('登录已过期，请重新登录');
+  }
+  return retryRes;
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetchWithAuthRetry(`${API_BASE}${path}`, options || {});
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -175,6 +180,31 @@ async function _parseSSEStream(
   let currentEvent = '';
   let currentEventId: number | null = null;
 
+  const processLine = (rawLine: string) => {
+    // Fetch implementations may expose CRLF chunks, and a proxy may close
+    // the stream immediately after the final data line without a blank line.
+    // Normalize both cases so the terminal event is not silently dropped.
+    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+    if (line.startsWith('id: ')) {
+      currentEventId = Number(line.slice(4));
+    } else if (line.startsWith('event: ')) {
+      currentEvent = line.slice(7);
+    } else if (line.startsWith('data: ')) {
+      const dataStr = line.slice(6);
+      try {
+        const data = JSON.parse(dataStr);
+        dispatchStreamEvent(currentEvent, data, callbacks, (text) => {
+          fullAnswer += text;
+        });
+        if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
+        currentEvent = '';
+        currentEventId = null;
+      } catch {
+        // Ignore parse errors
+      }
+    }
+  };
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -184,27 +214,13 @@ async function _parseSSEStream(
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    for (const line of lines) {
-      if (line.startsWith('id: ')) {
-        currentEventId = Number(line.slice(4));
-      } else if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7);
-      } else if (line.startsWith('data: ')) {
-        const dataStr = line.slice(6);
-        try {
-          const data = JSON.parse(dataStr);
-          dispatchStreamEvent(currentEvent, data, callbacks, (text) => {
-            fullAnswer += text;
-          });
-          if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
-          currentEvent = '';
-          currentEventId = null;
-        } catch {
-          // Ignore parse errors
-        }
-      }
-    }
+    for (const line of lines) processLine(line);
   }
+
+  // Do not require the server/proxy to append a final newline after the
+  // terminal SSE data line.  This is common when an approval stream closes
+  // immediately after emitting `done`.
+  if (buffer) processLine(buffer);
 
   return fullAnswer;
 }
@@ -254,19 +270,13 @@ export async function chatStream(
   const timeout = setTimeout(() => controller.abort(), 120_000);
 
   try {
-    const res = await fetch(`${API_BASE}/chat/stream`, {
+    const res = await fetchWithAuthRetry(`${API_BASE}/chat/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, session_id: sessionId, mode }),
       credentials: 'same-origin',
       signal: controller.signal,
     });
-
-    if (res.status === 401) {
-      clearStoredUser();
-      window.location.reload();
-      throw new Error('登录已过期，请重新登录');
-    }
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
@@ -313,19 +323,13 @@ export async function resumeChat(
   const timeout = setTimeout(() => controller.abort(), 120_000);
 
   try {
-    const res = await fetch(`${API_BASE}/chat/resume`, {
+    const res = await fetchWithAuthRetry(`${API_BASE}/chat/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, approved }),
       credentials: 'same-origin',
       signal: controller.signal,
     });
-
-    if (res.status === 401) {
-      clearStoredUser();
-      window.location.reload();
-      throw new Error('登录已过期，请重新登录');
-    }
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);

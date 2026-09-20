@@ -1,0 +1,39 @@
+{
+  "fixture_version": "agent-60-v1",
+  "namespace": "E2E_TEST",
+  "cleanup_prefix": "agent60_",
+  "required_entities": [
+    "complete_supplier", "risk_supplier", "no_transaction_supplier", "no_data_company",
+    "ambiguous_hela_candidates", "external_candidate", "identity_code_fixture",
+    "brake_system_catalog", "industrial_camera_catalog", "active_watchlist_target",
+    "responsible_watchlist", "department_review_queue", "buyer_b_private_supplier",
+    "monitor_target_id_fixture", "paused_review_run", "paused_identity_run", "batch_scope",
+    "external_provider_failed", "conflicting_evidence", "stale_evidence", "five_supplier_matrix",
+    "comparison_suppliers", "refreshable_run"
+  ],
+  "entities": {
+    "complete_supplier": {"name": "测试-完整数据供应商", "kind": "supplier", "status": "verified"},
+    "risk_supplier": {"name": "测试-风险供应商", "kind": "supplier", "status": "verified"},
+    "no_transaction_supplier": {"name": "测试-无交易供应商", "kind": "supplier", "status": "verified"},
+    "no_data_company": {"name": "测试-无数据主体", "kind": "company", "status": "verified"},
+    "ambiguous_hela_candidates": {"name": "海拉", "kind": "identity_candidates", "status": "ambiguous"},
+    "external_candidate": {"name": "测试-外部候选", "kind": "supplier", "status": "staged_candidate"},
+    "identity_code_fixture": {"name": "测试-统一社会信用代码主体", "kind": "company", "status": "verified"},
+    "industrial_camera_catalog": {"category": "工业相机", "candidate_count": 5},
+    "brake_system_catalog": {"category": "制动系统", "candidate_count": 5},
+    "active_watchlist_target": {"name": "测试-完整数据供应商", "kind": "monitor_target", "status": "active"},
+    "responsible_watchlist": {"owner_role": "buyer", "candidate_count": 3},
+    "department_review_queue": {"owner_role": "manager", "pending_count": 3},
+    "buyer_b_private_supplier": {"name": "测试-B专属供应商", "owner": "buyer_b", "status": "private"},
+    "monitor_target_id_fixture": {"monitor_target_id": "agent60-monitor-target", "status": "active"},
+    "paused_review_run": {"run_status": "paused", "cleanup": true},
+    "paused_identity_run": {"run_status": "waiting_approval", "cleanup": true},
+    "batch_scope": {"scope": "all_suppliers", "requires_approval": true},
+    "external_provider_failed": {"provider_status": "failed", "contact_status": "unknown"},
+    "conflicting_evidence": {"evidence_status": "conflict", "requires_review": true},
+    "stale_evidence": {"freshness": "stale", "requires_review": true},
+    "five_supplier_matrix": {"supplier_count": 5, "dimensions": ["financial", "legal", "sentiment", "compliance"]},
+    "comparison_suppliers": {"supplier_names": ["测试-供应商 A", "测试-供应商 B"]},
+    "refreshable_run": {"run_status": "running", "last_event_id": "agent60-event-1", "cleanup": true}
+  }
+}

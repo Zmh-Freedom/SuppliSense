@@ -26,6 +26,8 @@ def test_all_read_only_chat_modes_use_harness() -> None:
 
 def test_write_action_keeps_durable_approval_entry() -> None:
     assert chat_api._select_chat_stream("auto", requested_action="add_watchlist") is chat_api._langgraph_agent_supervisor_stream
+    assert chat_api._select_chat_stream("auto", requested_action="remove_watchlist") is chat_api._langgraph_agent_supervisor_stream
+    assert chat_api._select_chat_stream("auto", requested_action="batch_add_watchlist") is chat_api._langgraph_agent_supervisor_stream
 
 
 def test_supervisor_session_parent_is_created_for_new_uuid_session(monkeypatch) -> None:

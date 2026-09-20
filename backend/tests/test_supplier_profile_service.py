@@ -60,10 +60,10 @@ def test_financial_snapshot_normalizes_history(monkeypatch):
 
     snapshot = service._build_financial_snapshot("示例供应商", {})
 
-    assert snapshot["revenue_growth"] == 12.5
+    assert snapshot["revenue_growth"] == 0.125
     assert snapshot["history"] == [
         {"period": "2024", "revenue": 100, "net_profit": 8, "debt_ratio": None, "cash_flow": None},
-        {"period": "2025", "revenue": 120, "net_profit": 10, "debt_ratio": 40, "cash_flow": None},
+        {"period": "2025", "revenue": 120, "net_profit": 10, "debt_ratio": 0.4, "cash_flow": None},
     ]
 
 

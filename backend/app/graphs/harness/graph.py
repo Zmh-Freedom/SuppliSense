@@ -151,6 +151,10 @@ def _task_from_subtask(
 def _build_default_plan(state: HarnessState) -> list[HarnessTask]:
     current_task = state.get("current_task") or {}
     context = state.get("execution_context") or {}
+    if current_task.get("sourcing_follow_up") in {"no_match", "candidate_selected", "ordinal_out_of_range"}:
+        # These are state-consuming follow-ups. Do not rerun the discovery
+        # provider and return the same candidate list again.
+        return []
     explicit = state.get("task_specs") or []
     if explicit:
         return [HarnessTask.model_validate(item) for item in explicit]
@@ -924,6 +928,18 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         dimensions,
         str(current_task.get("capability") or ""),
     )
+    sourcing_follow_up = str(current_task.get("sourcing_follow_up") or "")
+    if sourcing_follow_up == "no_match":
+        return (
+            "当前候选中没有满足条件的供应商。可以补充规格、预算、交付地区或认证要求，"
+            "也可以扩大历史合作、外部待核验和人工推荐范围后重新寻源；外部候选不会自动进入正式供应商库。"
+        )
+    if sourcing_follow_up == "ordinal_out_of_range":
+        ordinal = current_task.get("candidate_ordinal")
+        return f"当前寻源结果中没有第 {ordinal} 家可选候选，请从已展示的候选序号中选择。"
+    if sourcing_follow_up == "candidate_selected" and current_task.get("selected_candidate_name"):
+        name = str(current_task["selected_candidate_name"])
+        return f"已选中候选“{name}”。下一步可先核验统一社会信用代码、登记状态、官网和联系方式，再决定是否发起准入或监控审批。"
     latest_data: dict[str, Any] = {}
     for outcome in outcomes:
         if not isinstance(outcome, dict):
@@ -1704,15 +1720,25 @@ def build_harness_graph(
             answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
         if not claims:
             no_plan = not tasks
-            summary = _no_plan_summary(state) if no_plan else _summary(answer, state)
+            current_task = state.get("current_task") or {}
+            follow_up = str(current_task.get("sourcing_follow_up") or "")
+            summary = (
+                _summary(answer, state)
+                if follow_up in {"no_match", "ordinal_out_of_range", "candidate_selected"}
+                else _no_plan_summary(state) if no_plan else _summary(answer, state)
+            )
+            limitations = list(answer.limitations)
+            if no_plan and follow_up not in {"no_match", "ordinal_out_of_range", "candidate_selected"}:
+                limitations.append("当前请求未形成可执行任务")
             answer = answer.model_copy(
                 update={
                     "status": "needs_review",
                     "summary": summary,
-                    "limitations": list(dict.fromkeys([
-                        *answer.limitations,
-                        "当前请求未形成可执行任务" if no_plan else "工具结果未提供可验证 Claim",
-                    ])),
+                    "limitations": list(dict.fromkeys(
+                        [*limitations, "工具结果未提供可验证 Claim"]
+                        if not no_plan
+                        else limitations
+                    )),
                 }
             )
         else:

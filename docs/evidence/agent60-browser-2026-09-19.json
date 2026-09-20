@@ -1,0 +1,56 @@
+{
+  "date": "2026-09-19",
+  "browser": "existing Chrome tab 2064620264",
+  "url": "http://127.0.0.1:5174/chat",
+  "backend": "http://127.0.0.1:8000",
+  "console": {"errors": 0, "warnings": 0},
+  "post_fix_validation": {
+    "browser_tab_reused": "2064620264",
+    "frontend_port": 5174,
+    "backend_ready": true,
+    "q22_q23_q26_same_session": true,
+    "q35_same_session": true,
+    "q35_refresh_history_replay": true
+  },
+  "flows": {
+    "A_cancel_resume_refresh": {
+      "status": "backend_verified_browser_fixture_not_bound",
+      "cancel": "no active browser-fixture run; UI returned structured no-resumable-task state",
+      "resume": "no active browser-fixture run; UI returned structured no-resumable-task state",
+      "refresh": "history and completed messages replayed; selected session resets to an older persisted session",
+      "note": "The real PostgreSQL cancel/resume/Last-Event-ID control-plane evidence is in agent60-recovery-2026-09-19.json."
+    },
+    "B_approval_sse": {
+      "status": "passed",
+      "q30": {
+        "approval_card": true,
+        "pending_text": true,
+        "reject_terminal": true,
+        "business_write": "not executed"
+      },
+      "q35": {
+        "entity_candidate": false,
+        "approval_card": true,
+        "approval_target": "上海海拉电子有限公司",
+        "cron": "weekly",
+        "report_type": "excel",
+        "reject_terminal": true,
+        "refresh_history_replay": true,
+        "business_write": "not executed"
+      }
+    },
+    "C_sourcing_multiturn": {
+      "status": "passed",
+      "q22": {"passed": true, "external_candidates": 3, "category": "工业相机"},
+      "q23": {"passed": true, "observed": "same-session sourcing result retained 工业相机 and merged budget/cost/delivery constraints"},
+      "q25": {"passed": true, "identity_candidate": "深圳市康斯得电子有限公司"},
+      "q26": {"passed": true, "observed": "needs_review action advice; no new discovery card/tool call"},
+      "refresh_replay": {"q22_snapshot_preserved": true}
+    }
+  },
+  "evidence": {
+    "dom_accessibility": "captured in browser session",
+    "screenshots": ["Q22 candidate table (post-fix)", "Q23 constraint-filtered candidates (post-fix)", "Q26 action advice (post-fix)", "Q35 approval and rejected terminal (post-fix)"],
+    "issue_log": "docs/issue-log.md"
+  }
+}

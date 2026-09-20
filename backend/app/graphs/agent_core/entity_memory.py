@@ -14,6 +14,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.graphs.agent_core.entity_normalization import normalize_company_mention
+
 
 class EntityIdentityStatus(str, Enum):
     VERIFIED = "verified"
@@ -388,16 +390,9 @@ def _explicit_company_names(message: str) -> list[str]:
     # legal name, such as before a parenthesized branch name.
     compact_message = re.sub(r"[\s　]+", "", str(message or ""))
     for match in _COMPANY_NAME_PATTERN.finditer(compact_message):
-        name = match.group(1).strip()
+        name = normalize_company_mention(match.group(1))
         if match.start(1) > 0 and name.startswith("和"):
             name = name[1:].strip()
-        previous = None
-        while name and name != previous:
-            previous = name
-            for prefix in _COMPANY_NAME_PREFIXES:
-                if name.startswith(prefix):
-                    name = name[len(prefix):].strip()
-                    break
         if name and name not in names:
             names.append(name)
     return names

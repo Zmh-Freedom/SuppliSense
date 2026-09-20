@@ -1,0 +1,796 @@
+{
+  "manifest": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "results": [
+      {
+        "id": "Q27",
+        "session": "watchlist-add",
+        "http_status": 200,
+        "observed_terminal": "waiting_approval",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "approval_required",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "a4b9169f-58a2-533e-b4d1-5b116899aeae"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "planning",
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "executing",
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "evidence",
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "waiting_approval",
+              "stage": "approval",
+              "message": "等待人工确认后继续执行"
+            }
+          },
+          {
+            "id": null,
+            "event": "approval_required",
+            "data": {
+              "message": "确认执行待审批的供应商操作？",
+              "tool": "agent_supervisor",
+              "args": {
+                "pending_approvals": [
+                  {
+                    "approval_id": "bab1d7e1-5042-40e0-af57-87cb02518782",
+                    "action_type": "add_watchlist",
+                    "target": {
+                      "company_name": "测试-完整数据供应商",
+                      "target_source": "conversation_state",
+                      "supplier_id": "e80c858d-85f0-53f3-a3b8-3c28312f1cc9",
+                      "target_type": "formal_supplier",
+                      "identity_status": "verified"
+                    },
+                    "reason": "用户要求对该供应商持续进行风险监控。",
+                    "impact": "加入本地风险监控清单，后续定时检查风险与舆情变化。",
+                    "status": "pending",
+                    "expires_at": "2026-09-20T13:02:32.330255+00:00",
+                    "requires_approval": true
+                  }
+                ]
+              },
+              "session_id": "a4b9169f-58a2-533e-b4d1-5b116899aeae",
+              "requires_human_approval": true,
+              "pending_approvals": [
+                {
+                  "approval_id": "bab1d7e1-5042-40e0-af57-87cb02518782",
+                  "action_type": "add_watchlist",
+                  "target": {
+                    "company_name": "测试-完整数据供应商",
+                    "target_source": "conversation_state",
+                    "supplier_id": "e80c858d-85f0-53f3-a3b8-3c28312f1cc9",
+                    "target_type": "formal_supplier",
+                    "identity_status": "verified"
+                  },
+                  "reason": "用户要求对该供应商持续进行风险监控。",
+                  "impact": "加入本地风险监控清单，后续定时检查风险与舆情变化。",
+                  "status": "pending",
+                  "expires_at": "2026-09-20T13:02:32.330255+00:00",
+                  "requires_approval": true
+                }
+              ]
+            }
+          },
+          {
+            "id": null,
+            "event": "done",
+            "data": {
+              "answer": "确认执行待审批的供应商操作？",
+              "status": "waiting_approval"
+            }
+          }
+        ],
+        "passed": true
+      },
+      {
+        "id": "Q28",
+        "session": "watchlist-add",
+        "http_status": 200,
+        "observed_terminal": "completed",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "answer_chunk",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "a4b9169f-58a2-533e-b4d1-5b116899aeae"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "approval",
+              "message": "正在检查待审批操作..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在检查待审批操作..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "answer_chunk",
+            "data": {
+              "text": "已识别加入风险监控请求，等待人工确认后写入监控清单。\n\n已生成 1 项监控操作，等待人工确认后才会更新监控清单。\n\n已将测试-完整数据供应商加入风险监控清单。风险基线：99/100，低风险。"
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "completed",
+              "stage": "completed",
+              "message": "本轮 Agent 工作流已完成"
+            }
+          },
+          {
+            "id": null,
+            "event": "done",
+            "data": {
+              "answer": "已识别加入风险监控请求，等待人工确认后写入监控清单。\n\n已生成 1 项监控操作，等待人工确认后才会更新监控清单。\n\n已将测试-完整数据供应商加入风险监控清单。风险基线：99/100，低风险。"
+            }
+          }
+        ],
+        "passed": true
+      },
+      {
+        "id": "Q29",
+        "session": "watchlist-add",
+        "http_status": 200,
+        "observed_terminal": "needs_review",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "run",
+          "workflow_status",
+          "workflow_status",
+          "plan",
+          "workflow_status",
+          "workflow_status",
+          "evidence",
+          "workflow_status",
+          "agent_answer",
+          "evidence",
+          "answer_chunk",
+          "workflow_status",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "a4b9169f-58a2-533e-b4d1-5b116899aeae"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 1,
+            "event": "run",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "turn_id": "51f0acfe-5db8-489f-bfa9-b96fd5bd8c4d"
+            }
+          },
+          {
+            "id": 3,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "loaded",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 5,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "turn_resolved",
+              "stage": "understand",
+              "message": "已完成会话与当前任务解析"
+            }
+          },
+          {
+            "id": 7,
+            "event": "plan",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "steps": []
+            }
+          },
+          {
+            "id": 8,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "planned",
+              "stage": "planning",
+              "message": "已生成受预算约束的任务计划"
+            }
+          },
+          {
+            "id": 10,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "blocked",
+              "stage": "executing",
+              "message": "正在通过统一 ToolExecutor 执行任务",
+              "tool_call_count": 0,
+              "completed_tool_count": 0
+            }
+          },
+          {
+            "id": 12,
+            "event": "evidence",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "records": [],
+              "coverage": {
+                "required_dimensions": [],
+                "covered_dimensions": [],
+                "missing_dimensions": [],
+                "required_items": [],
+                "covered_items": [],
+                "missing_items": [],
+                "coverage_ratio": 1.0
+              }
+            }
+          },
+          {
+            "id": 13,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "evidence_validated",
+              "stage": "evidence",
+              "message": "正在校验证据覆盖度与 Claim 引用",
+              "evidence_status": "0/0 已覆盖",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 15,
+            "event": "agent_answer",
+            "data": {
+              "status": "needs_review",
+              "summary": "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。",
+              "claims": [],
+              "limitations": [
+                "当前请求未形成可执行任务"
+              ],
+              "action_proposals": [],
+              "action_receipts": [],
+              "evidence_refs": []
+            }
+          },
+          {
+            "id": 16,
+            "event": "evidence",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "records": [],
+              "coverage": {
+                "required_dimensions": [],
+                "covered_dimensions": [],
+                "missing_dimensions": [],
+                "required_items": [],
+                "covered_items": [],
+                "missing_items": [],
+                "coverage_ratio": 1.0
+              }
+            }
+          },
+          {
+            "id": 17,
+            "event": "answer_chunk",
+            "data": {
+              "text": "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。"
+            }
+          },
+          {
+            "id": 19,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "正在整理最终回答",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 20,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "本轮 Harness 工作流已完成",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 21,
+            "event": "done",
+            "data": {
+              "run_id": "b810918a-268a-4002-88dd-4e6ed66463db",
+              "status": "needs_review",
+              "answer": "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。"
+            }
+          }
+        ],
+        "passed": true
+      },
+      {
+        "id": "Q30",
+        "session": "watchlist-remove",
+        "http_status": 200,
+        "observed_terminal": "waiting_approval",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "approval_required",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "15541d2d-26b4-5811-a19c-881503d5a960"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "planning",
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "executing",
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "evidence",
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "waiting_approval",
+              "stage": "approval",
+              "message": "等待人工确认后继续执行"
+            }
+          },
+          {
+            "id": null,
+            "event": "approval_required",
+            "data": {
+              "message": "确认执行待审批的供应商操作？",
+              "tool": "agent_supervisor",
+              "args": {
+                "pending_approvals": [
+                  {
+                    "approval_id": "5c60dd2e-7ad3-46d7-8bdd-ef6ac8dd8e9b",
+                    "action_type": "remove_watchlist",
+                    "target": {
+                      "company_name": "测试-完整数据供应商",
+                      "target_source": "conversation_state",
+                      "monitor_status": "active",
+                      "already_monitored": true,
+                      "monitor_target_id": "7f065bdf-7a3e-443c-841b-3d3dcb551a23",
+                      "target_type": "formal_supplier",
+                      "supplier_id": "e80c858d-85f0-53f3-a3b8-3c28312f1cc9",
+                      "supplier_code": "agent60_8427-complete",
+                      "identity_status": "verified"
+                    },
+                    "reason": "用户要求停止对该供应商进行风险监控。",
+                    "impact": "从本地风险监控清单移除该对象，后续不再产生监控任务。",
+                    "status": "pending",
+                    "expires_at": "2026-09-20T13:02:38.405761+00:00",
+                    "requires_approval": true
+                  }
+                ]
+              },
+              "session_id": "15541d2d-26b4-5811-a19c-881503d5a960",
+              "requires_human_approval": true,
+              "pending_approvals": [
+                {
+                  "approval_id": "5c60dd2e-7ad3-46d7-8bdd-ef6ac8dd8e9b",
+                  "action_type": "remove_watchlist",
+                  "target": {
+                    "company_name": "测试-完整数据供应商",
+                    "target_source": "conversation_state",
+                    "monitor_status": "active",
+                    "already_monitored": true,
+                    "monitor_target_id": "7f065bdf-7a3e-443c-841b-3d3dcb551a23",
+                    "target_type": "formal_supplier",
+                    "supplier_id": "e80c858d-85f0-53f3-a3b8-3c28312f1cc9",
+                    "supplier_code": "agent60_8427-complete",
+                    "identity_status": "verified"
+                  },
+                  "reason": "用户要求停止对该供应商进行风险监控。",
+                  "impact": "从本地风险监控清单移除该对象，后续不再产生监控任务。",
+                  "status": "pending",
+                  "expires_at": "2026-09-20T13:02:38.405761+00:00",
+                  "requires_approval": true
+                }
+              ]
+            }
+          },
+          {
+            "id": null,
+            "event": "done",
+            "data": {
+              "answer": "确认执行待审批的供应商操作？",
+              "status": "waiting_approval"
+            }
+          }
+        ],
+        "passed": true
+      },
+      {
+        "id": "Q31",
+        "session": "watchlist-remove",
+        "http_status": 200,
+        "observed_terminal": "denied",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "answer_chunk",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "15541d2d-26b4-5811-a19c-881503d5a960"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "approval",
+              "message": "正在检查待审批操作..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在检查待审批操作..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "answer_chunk",
+            "data": {
+              "text": "已识别加入风险监控请求，等待人工确认后写入监控清单。\n\n已生成 1 项移出监控操作，等待人工确认后才会更新监控清单。\n\n测试-完整数据供应商 已在风险监控清单中，无需重复加入。 待执行操作已被拒绝或过期，未写入业务数据。"
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "rejected",
+              "stage": "approval",
+              "message": "操作已拒绝，未写入业务数据"
+            }
+          },
+          {
+            "id": null,
+            "event": "done",
+            "data": {
+              "answer": "已识别加入风险监控请求，等待人工确认后写入监控清单。\n\n已生成 1 项移出监控操作，等待人工确认后才会更新监控清单。\n\n测试-完整数据供应商 已在风险监控清单中，无需重复加入。 待执行操作已被拒绝或过期，未写入业务数据。",
+              "status": "rejected"
+            }
+          }
+        ],
+        "passed": true
+      }
+    ]
+  }
+}

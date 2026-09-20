@@ -1,0 +1,22 @@
+{
+  "browser": "Codex In-app Browser",
+  "tab": "http://127.0.0.1:5174/chat",
+  "created_new_chrome_window": false,
+  "fixture": "E2E_TEST / agent60_ prefix",
+  "console": {"errors": 0, "warnings": 0},
+  "checks": [
+    {
+      "case": "fixture-risk-smoke",
+      "message": "查询“测试-完整数据供应商”的风险情况",
+      "observed": "执行详情显示 evidence_validated，任务计划 3 项，证据 3/3 已覆盖；等待外部叙事完成时页面未保留最终助手卡片",
+      "status": "environment_or_external_latency"
+    },
+    {
+      "case": "fixture-approval-smoke",
+      "message": "把“测试-完整数据供应商”加入监控。",
+      "observed": "请求已发送，页面无控制台错误；本次内部标签页会话未形成可核验审批卡",
+      "status": "environment_or_external_latency"
+    }
+  ],
+  "note": "后端隔离 HTTP/SSE 关键链路已通过；本证据不把无确定终态的浏览器会话计为通过。既有三条页面回归证据仍保留在 agent60-browser-2026-09-19.json。"
+}

@@ -112,6 +112,27 @@ def test_unapproved_import_only_persists_proposal_without_outbox_or_master_write
     importer.assert_not_called()
 
 
+def test_scheduled_report_action_creates_only_after_durable_execution_boundary(monkeypatch):
+    creator = Mock(return_value={"task_id": "weekly-1"})
+    monkeypatch.setattr(
+        "app.domains.risk.scheduled_report.create_scheduled_report",
+        creator,
+    )
+
+    result = action_service.manage_scheduled_report_action({
+        "action": "create",
+        "company_name": "青岛三祥科技股份有限公司",
+        "company_names": ["青岛三祥科技股份有限公司"],
+        "cron": "weekly",
+        "report_type": "excel",
+    })
+
+    assert result == {"task_id": "weekly-1"}
+    creator.assert_called_once_with(
+        ["青岛三祥科技股份有限公司"], cron="weekly", report_type="excel"
+    )
+
+
 def test_shadow_action_boundary_rejects_proposal_before_database_write(monkeypatch):
     """Shadow must be read-only even when the action service is called directly."""
     from app.core.config import settings

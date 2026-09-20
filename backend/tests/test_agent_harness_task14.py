@@ -9,7 +9,11 @@ import pytest
 
 from app.domains.sourcing_risk import discovery_service
 from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
-from app.graphs.agent_core.adapter import _apply_harness_sourcing_requirement
+from app.graphs.agent_core.adapter import (
+    _apply_harness_sourcing_requirement,
+    _apply_sourcing_follow_up,
+    collect_sourcing_candidate_context,
+)
 from app.graphs.agent_core.adapter import _enforce_scope_query_intent
 from app.graphs.agent_core.adapter import apply_extracted_conversation_intent
 from app.graphs.agent_core.answer_contract import AgentAnswer
@@ -173,6 +177,269 @@ def test_harness_new_sourcing_turn_replaces_previous_category(monkeypatch) -> No
 
     assert resolved["current_task"]["requirement"]["category"] == "安全带"
     assert resolved["conversation_state"]["current_requirement"]["category"] == "安全带"
+
+
+def test_harness_sourcing_follow_up_merges_constraint_into_previous_requirement() -> None:
+    context = {
+        "references": [],
+        "conversation_state": {
+            "current_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "工业相机",
+                "optional_conditions": [],
+            },
+        },
+        "current_task": {
+            "task_id": "source-follow-up",
+            "task_type": "sourcing",
+            "requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "工业相机",
+                "optional_conditions": [],
+            },
+            "llm_sourcing_requirement": {
+                "category": None,
+                "specification": None,
+                "optional_conditions": ["成本更优"],
+            },
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(context, "预算有限，优先成本更优")
+
+    assert resolved["current_task"]["requirement_status"] == "ready"
+    assert resolved["current_task"]["requirement"]["category"] == "工业相机"
+    assert resolved["current_task"]["requirement"]["optional_conditions"] == ["成本更优"]
+
+
+def test_harness_sourcing_follow_up_survives_empty_intent_extraction(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    context = {
+        "conversation_state": {
+            "current_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "工业相机",
+                "optional_conditions": [],
+            },
+            "sourcing_candidates": {
+                "version": "v1",
+                "candidates": [{"name": "候选 A", "candidate_id": "candidate-a"}],
+            },
+        },
+        "current_task": {
+            "task_type": "analysis",
+            "analysis_dimensions": ["delivery"],
+            "target_supplier_names": [],
+            "user_message": "预算 50 万元，优先考虑交付周期",
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        "预算 50 万元，优先考虑交付周期，请结合刚才的候选继续筛选",
+    )
+
+    assert resolved["current_task"]["task_type"] == "sourcing"
+    assert resolved["current_task"]["requirement"]["category"] == "工业相机"
+    assert resolved["current_task"]["requirement"]["budget"] == "50 万元"
+    assert resolved["current_task"]["requirement_extraction_source"] == "context_merge"
+
+
+def test_harness_sourcing_follow_up_does_not_promote_generic_cost_wording_to_category() -> None:
+    context = {
+        "references": [],
+        "conversation_state": {
+            "current_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "工业相机",
+                "optional_conditions": [],
+            },
+        },
+        "current_task": {
+            "task_id": "source-cost-follow-up",
+            "task_type": "sourcing",
+            "requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "工业相机",
+                "optional_conditions": [],
+            },
+            "llm_sourcing_requirement": {
+                "category": "成本更优的替代",
+                "product": "成本更优的替代",
+                "specification": "成本更优的替代",
+                "budget": "预算有限",
+                "optional_conditions": ["成本更优"],
+            },
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        "预算有限，找成本更优的替代供应商。",
+    )
+
+    requirement = resolved["current_task"]["requirement"]
+    assert requirement["category"] == "工业相机"
+    assert requirement["specification"] == "工业相机"
+    assert requirement["budget"] == "预算有限"
+    assert requirement["optional_conditions"] == ["成本更优"]
+    assert resolved["current_task"]["requirement_extraction_source"] == "context_merge"
+
+
+def test_harness_sourcing_generic_cost_wording_merges_when_llm_slots_are_absent(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    context = {
+        "references": [],
+        "conversation_state": {
+            "current_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "工业相机",
+                "optional_conditions": [],
+            },
+        },
+        "current_task": {
+            "task_id": "source-cost-follow-up-no-llm",
+            "task_type": "sourcing",
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        "预算有限，找成本更优的替代供应商。",
+    )
+
+    requirement = resolved["current_task"]["requirement"]
+    assert requirement["category"] == "工业相机"
+    assert requirement["specification"] == "工业相机"
+    assert requirement["budget"] == "预算有限"
+    assert requirement["optional_conditions"] == ["成本更优"]
+    assert resolved["current_task"]["requirement_extraction_source"] == "context_merge"
+
+
+def test_sourcing_candidate_snapshot_preserves_order_and_external_identity() -> None:
+    snapshot = collect_sourcing_candidate_context([
+        {
+            "tool_name": "discover_supplier_candidates",
+            "data": {
+                "local_candidates": [
+                    {"supplier_name": "正式候选 A", "supplier_id": "formal-a"},
+                ],
+                "external_candidates": [
+                    {"supplier_name": "外部候选 B", "candidate_id": "external-b", "status": "staged_candidate"},
+                    {"supplier_name": "外部候选 C", "candidate_id": "external-c", "status": "staged_candidate"},
+                ],
+            },
+        },
+    ])
+
+    assert snapshot is not None
+    assert snapshot["version"]
+    assert [item["name"] for item in snapshot["candidates"]] == ["正式候选 A", "外部候选 B", "外部候选 C"]
+    assert snapshot["candidates"][1]["candidate_type"] == "external"
+
+
+def test_sourcing_follow_up_consumes_external_candidate_ordinal() -> None:
+    context = {
+        "conversation_state": {
+            "sourcing_candidates": {
+                "version": "v1",
+                "candidates": [
+                    {"rank": 1, "name": "正式候选 A", "candidate_id": "formal-a", "candidate_type": "formal"},
+                    {"rank": 2, "name": "外部候选 B", "candidate_id": "external-b", "candidate_type": "external"},
+                    {"rank": 3, "name": "外部候选 C", "candidate_id": "external-c", "candidate_type": "external"},
+                ],
+            },
+        },
+        "current_task": {"task_id": "sourcing-follow-up", "task_type": "sourcing"},
+    }
+
+    resolved = _apply_sourcing_follow_up(context, "选第 2 家外部候选，下一步怎么验证？")
+
+    assert resolved["current_task"]["selected_candidate_id"] == "external-c"
+    assert resolved["current_task"]["selected_candidate_name"] == "外部候选 C"
+    assert resolved["current_task"]["sourcing_follow_up"] == "candidate_verification"
+    assert resolved["current_task"]["identity_verification"] is True
+    assert resolved["conversation_state"]["selected_candidate_id"] == "external-c"
+
+
+def test_sourcing_follow_up_no_match_does_not_rerun_discovery() -> None:
+    context = {
+        "conversation_state": {
+            "sourcing_candidates": {"version": "v1", "candidates": [{"name": "候选 A"}]},
+        },
+        "current_task": {"task_id": "sourcing-no-match", "task_type": "sourcing"},
+    }
+
+    resolved = _apply_sourcing_follow_up(context, "没有合适的候选怎么办？")
+    plan = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["sourcing_follow_up"] == "no_match"
+    assert plan == []
+
+
+def test_sourcing_follow_up_all_candidates_unsuitable_does_not_rerun_discovery() -> None:
+    context = {
+        "conversation_state": {
+            "sourcing_candidates": {
+                "version": "v2",
+                "candidates": [
+                    {"name": "候选 A", "candidate_id": "candidate-a"},
+                    {"name": "候选 B", "candidate_id": "candidate-b"},
+                ],
+            },
+        },
+        "current_task": {"task_id": "sourcing-stop-discovery", "task_type": "sourcing"},
+    }
+
+    resolved = _apply_sourcing_follow_up(
+        context,
+        "这些候选都不合适，请不要重复调用发现工具，告诉我下一步行动建议",
+    )
+    plan = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["sourcing_follow_up"] == "no_match"
+    assert resolved["conversation_state"]["sourcing_candidates"]["version"] == "v2"
+    assert plan == []
+
+
+def test_manage_scheduled_report_is_action_draft_not_risk_analysis() -> None:
+    extraction = ConversationIntentExtraction(
+        target_supplier_names=["青岛三祥科技股份有限公司"],
+        analysis_dimensions=["risk"],
+        capability="report",
+        scope="single_supplier",
+        task_type="analysis",
+        requested_action="manage_scheduled_report",
+        confidence=1.0,
+    )
+    context = {
+        "session_id": "session-report-action",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "report-action",
+            "task_type": "analysis",
+            "user_message": "给青岛三祥科技股份有限公司设置每周风险报告",
+        },
+    }
+
+    resolved = apply_extracted_conversation_intent(context, extraction)
+
+    assert resolved["current_task"]["task_type"] == "action_draft"
+    assert resolved["current_task"]["analysis_dimensions"] == []
+    assert resolved["current_task"]["subtasks"] == []
 
 
 def test_sourcing_summary_explains_no_match_category() -> None:

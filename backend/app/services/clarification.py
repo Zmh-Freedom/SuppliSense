@@ -66,7 +66,10 @@ def formal_supplier_identity_clarification(
     name (or clicks its confirmation button in the UI).
     """
     del message  # Reserved for future LLM disambiguation context.
-    from app.domains.sourcing.supplier_repo import find_formal_supplier_candidates
+    from app.domains.sourcing.supplier_repo import (
+        find_formal_supplier_candidates,
+        normalize_supplier_identity,
+    )
     from app.domains.supplier.access import formal_supplier_exists_by_name
 
     for raw_name in target_names:
@@ -77,6 +80,19 @@ def formal_supplier_identity_clarification(
             candidates = find_formal_supplier_candidates(name)
         except Exception:
             candidates = []
+        # A full legal name may be present in the supplier read model with a
+        # punctuation/whitespace variant that the exact membership check did
+        # not find.  An exact candidate match is already sufficiently
+        # specific; asking for confirmation again would create a clarification
+        # loop after the UI has just returned the same canonical name.
+        if any(
+            normalize_supplier_identity(str(candidate.get("supplier_name") or ""))
+            == normalize_supplier_identity(name)
+            or candidate.get("match_type") == "exact_name"
+            for candidate in candidates
+            if isinstance(candidate, dict)
+        ):
+            continue
         if len(candidates) == 1:
             candidate = candidates[0]
             canonical_name = str(candidate.get("supplier_name") or "").strip()

@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1120" viewBox="0 0 1800 1120">
+  <title>供应商智能寻源与风险监控工作台 LangChain 与 LangGraph 技术架构</title>
+  <defs>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0f3d70"/>
+      <stop offset="1" stop-color="#167d8d"/>
+    </linearGradient>
+    <linearGradient id="harness" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f1f7ff"/>
+      <stop offset="1" stop-color="#e9f8f5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#16324f" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4a7493"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#d9822b"/>
+    </marker>
+    <style>
+      .title { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 38px; font-weight: 700; fill: #ffffff; }
+      .subtitle { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 18px; fill: #d8eff2; }
+      .section { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 21px; font-weight: 700; fill: #16324f; }
+      .box-title { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 22px; font-weight: 700; fill: #16324f; }
+    .box-text { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 17px; fill: #426078; }
+      .box-text-compact { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 15px; fill: #426078; }
+      .small { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 15px; fill: #638096; }
+      .chip { font-family: 'PingFang SC','Hiragino Sans GB','Microsoft YaHei',Arial,sans-serif; font-size: 15px; font-weight: 700; fill: #23627d; }
+      .flow { fill: none; stroke: #4a7493; stroke-width: 3; marker-end: url(#arrow); }
+      .flow-orange { fill: none; stroke: #d9822b; stroke-width: 3; marker-end: url(#arrowOrange); }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1120" fill="#ffffff"/>
+  <rect x="0" y="0" width="1800" height="125" fill="url(#header)"/>
+  <text x="76" y="58" class="title">供应商智能寻源与风险监控工作台</text>
+  <text x="76" y="94" class="subtitle">LangChain + LangGraph + Harness Runtime｜面向采购任务的可解释、可恢复、可审计架构</text>
+
+  <text x="76" y="168" class="section">一、用户入口与请求接入</text>
+  <g filter="url(#shadow)">
+    <rect x="76" y="194" width="290" height="106" rx="18" fill="#edf5ff" stroke="#a8c7e8" stroke-width="2"/>
+    <text x="221" y="232" text-anchor="middle" class="box-title">采购人员</text>
+    <text x="221" y="263" text-anchor="middle" class="box-text">自然语言问题 / 复核动作</text>
+    <rect x="430" y="194" width="350" height="106" rx="18" fill="#edf9f7" stroke="#9dd8cf" stroke-width="2"/>
+    <text x="605" y="232" text-anchor="middle" class="box-title">React 采购工作台</text>
+    <text x="605" y="263" text-anchor="middle" class="box-text">AI 工作台｜风险监控｜智能寻源</text>
+    <rect x="844" y="194" width="350" height="106" rx="18" fill="#f3f0ff" stroke="#bcb1e9" stroke-width="2"/>
+    <text x="1019" y="232" text-anchor="middle" class="box-title">FastAPI Chat API</text>
+    <text x="1019" y="263" text-anchor="middle" class="box-text">会话快照｜SSE 流式输出｜权限依赖</text>
+  </g>
+  <path d="M366 247 H430" class="flow"/>
+  <path d="M780 247 H844" class="flow"/>
+  <path d="M1019 300 V381" class="flow"/>
+
+  <text x="76" y="355" class="section">二、统一智能体执行层：LangChain 负责能力连接，LangGraph 负责状态编排</text>
+  <rect x="76" y="381" width="1118" height="405" rx="24" fill="url(#harness)" stroke="#5c9db2" stroke-width="3" filter="url(#shadow)"/>
+  <rect x="100" y="401" width="1070" height="46" rx="14" fill="#d8edf3"/>
+  <text x="635" y="431" text-anchor="middle" class="box-title">LangGraph Harness Runtime｜唯一活动只读执行内核</text>
+
+  <g filter="url(#shadow)">
+    <rect x="106" y="477" width="228" height="118" rx="16" fill="#ffffff" stroke="#a8c7e8" stroke-width="2"/>
+    <text x="220" y="515" text-anchor="middle" class="box-title">1. 上下文快照</text>
+    <text x="220" y="546" text-anchor="middle" class="box-text">Session / Turn / Run</text>
+    <text x="220" y="573" text-anchor="middle" class="small">同一请求只加载一次</text>
+
+    <rect x="368" y="477" width="228" height="118" rx="16" fill="#ffffff" stroke="#a8c7e8" stroke-width="2"/>
+    <text x="482" y="515" text-anchor="middle" class="box-title">2. 意图与计划</text>
+    <text x="482" y="546" text-anchor="middle" class="box-text">LangChain 消息上下文</text>
+    <text x="482" y="573" text-anchor="middle" class="small">结构化任务矩阵</text>
+
+    <rect x="630" y="477" width="228" height="118" rx="16" fill="#ffffff" stroke="#a8c7e8" stroke-width="2"/>
+    <text x="744" y="515" text-anchor="middle" class="box-title">3. StateGraph 编排</text>
+    <text x="744" y="546" text-anchor="middle" class="box-text">计划 → 执行 → 校验</text>
+    <text x="744" y="573" text-anchor="middle" class="small">预算、依赖和循环边界</text>
+
+    <rect x="892" y="477" width="228" height="118" rx="16" fill="#ffffff" stroke="#a8c7e8" stroke-width="2"/>
+    <text x="1006" y="515" text-anchor="middle" class="box-title">4. 结果生成</text>
+    <text x="1006" y="546" text-anchor="middle" class="box-text-compact">Claim / Evidence / AgentAnswer</text>
+    <text x="1006" y="573" text-anchor="middle" class="small">采购语言结论与建议动作</text>
+  </g>
+  <path d="M334 536 H368" class="flow"/>
+  <path d="M596 536 H630" class="flow"/>
+  <path d="M858 536 H880" class="flow"/>
+
+  <rect x="106" y="640" width="1014" height="110" rx="16" fill="#ffffff" stroke="#7db8b0" stroke-width="2"/>
+  <text x="613" y="676" text-anchor="middle" class="box-title">LangChain ToolRegistry / ToolExecutor</text>
+  <text x="613" y="708" text-anchor="middle" class="box-text">BaseTool / StructuredTool 输入输出契约｜统一超时、重试、权限、证据要求和幂等策略</text>
+  <text x="613" y="733" text-anchor="middle" class="small">所有活动工具调用均经过统一执行器，不在图或 Service 内绕过治理规则</text>
+
+  <path d="M1194 247 C1280 247 1280 260 1332 260" class="flow"/>
+  <path d="M1194 536 H1328" class="flow"/>
+
+  <text x="1330" y="168" class="section">三、多来源工具与证据</text>
+  <g filter="url(#shadow)">
+    <rect x="1328" y="194" width="390" height="106" rx="18" fill="#f1f8f6" stroke="#a5d5ca" stroke-width="2"/>
+    <text x="1523" y="230" text-anchor="middle" class="box-title">只读数据工具</text>
+    <text x="1523" y="260" text-anchor="middle" class="box-text">企业｜财务｜司法｜舆情｜交易</text>
+    <text x="1523" y="283" text-anchor="middle" class="small">供应商主数据｜历史关系｜外部候选</text>
+
+    <rect x="1328" y="381" width="390" height="118" rx="18" fill="#fff8ed" stroke="#e4bb83" stroke-width="2"/>
+    <text x="1523" y="420" text-anchor="middle" class="box-title">证据账本与覆盖校验</text>
+    <text x="1523" y="451" text-anchor="middle" class="box-text">来源｜时间｜Claim｜覆盖状态</text>
+    <text x="1523" y="478" text-anchor="middle" class="small">不把数据缺失包装成低风险</text>
+  </g>
+  <path d="M1523 300 V381" class="flow"/>
+  <path d="M1194 700 C1260 700 1260 440 1328 440" class="flow"/>
+
+  <text x="76" y="846" class="section">四、写操作人工控制与持久化</text>
+  <g filter="url(#shadow)">
+    <rect x="76" y="872" width="248" height="108" rx="18" fill="#fff7eb" stroke="#e4bb83" stroke-width="2"/>
+    <text x="200" y="910" text-anchor="middle" class="box-title">ActionProposal</text>
+    <text x="200" y="941" text-anchor="middle" class="box-text">加入/移出监控等写操作</text>
+    <text x="200" y="965" text-anchor="middle" class="small">动作哈希｜参数绑定</text>
+
+    <rect x="386" y="872" width="248" height="108" rx="18" fill="#fff7eb" stroke="#e4bb83" stroke-width="2"/>
+    <text x="510" y="910" text-anchor="middle" class="box-title">LangGraph interrupt()</text>
+    <text x="510" y="941" text-anchor="middle" class="box-text">暂停图执行，等待人工决策</text>
+    <text x="510" y="965" text-anchor="middle" class="small">approval_required 事件</text>
+
+    <rect x="696" y="872" width="248" height="108" rx="18" fill="#fff7eb" stroke="#e4bb83" stroke-width="2"/>
+    <text x="820" y="910" text-anchor="middle" class="box-title">人工审批</text>
+    <text x="820" y="941" text-anchor="middle" class="box-text">批准 / 拒绝</text>
+    <text x="820" y="965" text-anchor="middle" class="small">审批意见与操作人留痕</text>
+
+    <rect x="1006" y="872" width="248" height="108" rx="18" fill="#fff7eb" stroke="#e4bb83" stroke-width="2"/>
+    <text x="1130" y="910" text-anchor="middle" class="box-title">Command(resume)</text>
+    <text x="1130" y="941" text-anchor="middle" class="box-text">批准后恢复并执行写入</text>
+    <text x="1130" y="965" text-anchor="middle" class="small">执行回执｜审计记录</text>
+  </g>
+  <path d="M324 926 H386" class="flow-orange"/>
+  <path d="M634 926 H696" class="flow-orange"/>
+  <path d="M944 926 H1006" class="flow-orange"/>
+  <path d="M1130 872 V786" class="flow-orange"/>
+  <text x="1160" y="833" class="small" fill="#b7651e">状态回写</text>
+
+  <text x="1330" y="846" class="section">五、基础设施与运行保障</text>
+  <g filter="url(#shadow)">
+    <rect x="1328" y="872" width="390" height="108" rx="18" fill="#f4f5fb" stroke="#b9bfdc" stroke-width="2"/>
+    <text x="1523" y="910" text-anchor="middle" class="box-title">PostgreSQL｜MongoDB｜Redis</text>
+    <text x="1523" y="941" text-anchor="middle" class="box-text">控制面事实｜业务与证据｜缓存与限流</text>
+    <text x="1523" y="965" text-anchor="middle" class="small">Checkpoint｜SSE 回放｜WebSocket 通知</text>
+  </g>
+  <path d="M1254 926 H1328" class="flow-orange"/>
+
+  <rect x="76" y="1020" width="1642" height="56" rx="14" fill="#eef5f7" stroke="#c6dce2"/>
+  <text x="897" y="1055" text-anchor="middle" class="chip">核心原则：只读分析统一进入 Harness；写操作必须经过 Proposal + 人工审批；重要结论必须关联证据和数据覆盖状态</text>
+</svg>

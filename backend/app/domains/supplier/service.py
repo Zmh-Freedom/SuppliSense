@@ -345,12 +345,12 @@ def _build_financial_snapshot(company_name: str, master: dict) -> dict | None:
 
     if cache:
         metrics = cache.get("metrics", {})
-        result["revenue_growth"] = metrics.get("revenue_growth")
-        result["net_profit_growth"] = metrics.get("net_profit_growth")
-        result["debt_ratio"] = metrics.get("debt_ratio")
+        result["revenue_growth"] = _normalise_ratio(metrics.get("revenue_growth"))
+        result["net_profit_growth"] = _normalise_ratio(metrics.get("net_profit_growth"))
+        result["debt_ratio"] = _normalise_ratio(metrics.get("debt_ratio"))
         result["cash_flow"] = metrics.get("cash_flow")
-        result["roe"] = metrics.get("roe")
-        result["net_profit_margin"] = metrics.get("net_profit_margin")
+        result["roe"] = _normalise_ratio(metrics.get("roe"))
+        result["net_profit_margin"] = _normalise_ratio(metrics.get("net_profit_margin"))
         result["current_ratio"] = metrics.get("current_ratio")
         result["quick_ratio"] = metrics.get("quick_ratio")
         cached_at = cache.get("cached_at")
@@ -382,12 +382,28 @@ def _normalise_financial_history(cache: dict) -> list[dict]:
             "period": str(period) if period is not None else "",
             "revenue": metrics.get("revenue") or metrics.get("annual_revenue"),
             "net_profit": metrics.get("net_profit"),
-            "debt_ratio": metrics.get("debt_ratio"),
+            "debt_ratio": _normalise_ratio(metrics.get("debt_ratio")),
             "cash_flow": metrics.get("cash_flow"),
         }
         if row["period"] and any(value is not None for key, value in row.items() if key != "period"):
             history.append(row)
     return history
+
+
+def _normalise_ratio(value: object) -> float | None:
+    """Return percentage-like financial ratios in the canonical 0–1 form.
+
+    Older cache rows stored percentages (for example ``43.0``), while the
+    Agent financial contract stores fractions (``0.43``).  Keep ordinary
+    ratios unchanged and convert only values outside the fraction range.
+    """
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric / 100 if abs(numeric) > 1 else numeric
 
 
 # ---- Sentiment ----

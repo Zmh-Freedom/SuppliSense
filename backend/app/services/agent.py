@@ -138,6 +138,8 @@ def _save_turn(
     user_msg: str,
     assistant_msg: str,
     references: list[dict[str, Any]] | None = None,
+    sourcing_candidates: dict[str, Any] | None = None,
+    current_requirement: dict[str, Any] | None = None,
 ) -> None:
     """保存一轮对话。"""
     if not assistant_msg:
@@ -160,6 +162,10 @@ def _save_turn(
         conversation_state = build_conversation_state(
             user_msg, normalized_references, previous_state, session_id=session_id
         )
+        if isinstance(sourcing_candidates, dict):
+            conversation_state["sourcing_candidates"] = sourcing_candidates
+        if isinstance(current_requirement, dict) and current_requirement.get("category"):
+            conversation_state["current_requirement"] = current_requirement
         from app.graphs.agent_core.entity_memory import memory_from_state, resolve_turn
 
         entity_resolution = resolve_turn(

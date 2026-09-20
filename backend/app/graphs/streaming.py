@@ -272,12 +272,32 @@ async def stream_harness_graph(
         outcomes = result.get("tool_outcomes", [])
         answer_text = _render_harness_answer(answer)
 
-        from app.graphs.agent_core.adapter import collect_supplier_references, save_execution_turn
+        from app.graphs.agent_core.adapter import (
+            collect_sourcing_candidate_context,
+            collect_supplier_references,
+            save_execution_turn,
+        )
 
         references: list[dict[str, Any]] = []
         for outcome in outcomes if isinstance(outcomes, list) else []:
             if isinstance(outcome, dict):
                 references = collect_supplier_references(references, outcome.get("data", {}), "Harness 工具结果")
+        sourcing_candidates = collect_sourcing_candidate_context(
+            outcomes if isinstance(outcomes, list) else []
+        )
+        current_task = result.get("current_task") if isinstance(result, dict) else None
+        current_requirement = (
+            current_task.get("requirement")
+            if isinstance(current_task, dict) and isinstance(current_task.get("requirement"), dict)
+            else None
+        )
+        if current_requirement is None:
+            initial_task = control_context.get("current_task") if isinstance(control_context, dict) else None
+            current_requirement = (
+                initial_task.get("requirement")
+                if isinstance(initial_task, dict) and isinstance(initial_task.get("requirement"), dict)
+                else None
+            )
         if run_id and user_id:
             from app.domains.agent_run.state_store import session_state_store
 
@@ -292,13 +312,33 @@ async def stream_harness_graph(
                 references,
                 "Harness 已验证结果",
             )
+            if sourcing_candidates:
+                next_state = dict(next_context.get("conversation_state") or {})
+                next_state["sourcing_candidates"] = sourcing_candidates
+                if current_requirement:
+                    next_state["current_requirement"] = current_requirement
+                next_context["conversation_state"] = next_state
+            elif current_requirement:
+                next_state = dict(next_context.get("conversation_state") or {})
+                next_state["current_requirement"] = current_requirement
+                next_context["conversation_state"] = next_state
             await asyncio.to_thread(
                 session_state_store.update_execution_context,
                 session_id,
                 user_id,
                 next_context,
             )
-        save_execution_turn(session_id, user_message, answer_text, references)
+        if sourcing_candidates or current_requirement:
+            save_execution_turn(
+                session_id,
+                user_message,
+                answer_text,
+                references,
+                sourcing_candidates,
+                current_requirement,
+            )
+        else:
+            save_execution_turn(session_id, user_message, answer_text, references)
         if references:
             await publish("references", {"items": references})
         final_status = str(answer.get("status") or "failed")

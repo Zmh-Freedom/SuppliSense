@@ -1,6 +1,7 @@
 from app.services.clarification import (
     detect_clarification_needed,
     external_assessment_clarification,
+    formal_supplier_identity_clarification,
     review_scope_clarification,
 )
 
@@ -40,6 +41,15 @@ class TestClarification:
             "那先看一下深圳市立创电子和八方电气的风险情况"
         )
         assert result is None
+
+    def test_full_company_name_with_看看_prefix_is_canonicalized(self):
+        from app.services.conversation_state import resolve_supplier_target_selection
+
+        result = resolve_supplier_target_selection(
+            "看看青岛三祥科技股份有限公司的综合风险", []
+        )
+
+        assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
 
     def test_known_session_company_satisfies_clarification_guard(self):
         result = detect_clarification_needed(
@@ -128,6 +138,26 @@ class TestClarification:
         assert result.missing == ["supplier_identity"]
         assert "杭州网易云音乐科技有限公司" in result.message
         assert result.candidates[0]["supplier_id"] == "supplier:网易云"
+
+    def test_exact_formal_supplier_candidate_does_not_loop(self, monkeypatch):
+        """A canonical-name candidate must proceed instead of repeating clarification."""
+        monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _: False)
+        monkeypatch.setattr(
+            "app.domains.sourcing.supplier_repo.find_formal_supplier_candidates",
+            lambda _: [{
+                "supplier_id": "supplier:sanxiang",
+                "supplier_name": "青岛三祥科技股份有限公司",
+                "short_name": "青岛三祥",
+                "match_type": "exact_name",
+            }],
+        )
+
+        result = formal_supplier_identity_clarification(
+            ["青岛三祥科技股份有限公司"],
+            "看看青岛三祥科技股份有限公司的综合风险",
+        )
+
+        assert result is None
 
     def test_historical_reference_does_not_authorize_unknown_subject(self, monkeypatch):
         monkeypatch.setattr("app.domains.alert.service.get_watchlist_targets", lambda **_: [])

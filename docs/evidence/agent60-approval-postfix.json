@@ -1,0 +1,989 @@
+{
+  "manifest": {
+    "total": 4,
+    "passed": 0,
+    "failed": 4,
+    "results": [
+      {
+        "id": "Q27",
+        "session": "watchlist-add",
+        "http_status": 200,
+        "observed_terminal": "completed",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "answer_chunk",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "47d25eae-690a-5a5d-bba8-9ab43e1377d1"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "planning",
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "executing",
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "evidence",
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "answer_chunk",
+            "data": {
+              "text": "基于 0 条证据形成风险结论，综合可信度 0.00。"
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "completed",
+              "stage": "completed",
+              "message": "本轮 Agent 工作流已完成"
+            }
+          },
+          {
+            "id": null,
+            "event": "done",
+            "data": {
+              "answer": "基于 0 条证据形成风险结论，综合可信度 0.00。"
+            }
+          }
+        ],
+        "passed": false
+      },
+      {
+        "id": "Q30",
+        "session": "watchlist-remove",
+        "http_status": 200,
+        "observed_terminal": "completed",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "workflow_status",
+          "thinking",
+          "answer_chunk",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "1edd158f-7326-5039-adbc-024201ed7948"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在分析组合寻源与风险任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在初始化组合任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "planning",
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在规划寻源与风险分析任务..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "executing",
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在执行供应商专业分析..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "evidence",
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在合并供应商证据..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在生成综合决策..."
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "decision",
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "thinking",
+            "data": {
+              "message": "正在整理最终回答..."
+            }
+          },
+          {
+            "id": null,
+            "event": "answer_chunk",
+            "data": {
+              "text": "基于 0 条证据形成风险结论，综合可信度 0.00。"
+            }
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "completed",
+              "stage": "completed",
+              "message": "本轮 Agent 工作流已完成"
+            }
+          },
+          {
+            "id": null,
+            "event": "done",
+            "data": {
+              "answer": "基于 0 条证据形成风险结论，综合可信度 0.00。"
+            }
+          }
+        ],
+        "passed": false
+      },
+      {
+        "id": "Q43",
+        "session": "permission",
+        "http_status": 200,
+        "observed_terminal": "needs_review",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "run",
+          "workflow_status",
+          "workflow_status",
+          "plan",
+          "workflow_status",
+          "tool_call",
+          "tool_result",
+          "workflow_status",
+          "evidence",
+          "workflow_status",
+          "agent_answer",
+          "evidence",
+          "answer_chunk",
+          "workflow_status",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "21ba442e-79c0-5d53-9ff5-b216a685743b"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 1,
+            "event": "run",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "turn_id": "351c13b1-3176-4d42-9305-4bdc1dc4a3f6"
+            }
+          },
+          {
+            "id": 3,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "loaded",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 5,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "turn_resolved",
+              "stage": "understand",
+              "message": "已完成会话与当前任务解析"
+            }
+          },
+          {
+            "id": 7,
+            "event": "plan",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "steps": [
+                {
+                  "tool": "discover_supplier_candidates",
+                  "args": {
+                    "requirement": {
+                      "category": "员 A：查看采购员 B 负责的“测试-B专属",
+                      "product": "员 A：查看采购员 B 负责的“测试-B专属",
+                      "specification": "员 A：查看采购员 B 负责的“测试-B专属",
+                      "must_have": [],
+                      "optional_conditions": []
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": 8,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "planned",
+              "stage": "planning",
+              "message": "已生成受预算约束的任务计划"
+            }
+          },
+          {
+            "id": 9,
+            "event": "tool_call",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "task_id": "current-task:sourcing",
+              "tool": "discover_supplier_candidates",
+              "args": {
+                "requirement": {
+                  "category": "员 A：查看采购员 B 负责的“测试-B专属",
+                  "product": "员 A：查看采购员 B 负责的“测试-B专属",
+                  "specification": "员 A：查看采购员 B 负责的“测试-B专属",
+                  "must_have": [],
+                  "optional_conditions": []
+                }
+              },
+              "trace": {
+                "task_id": "current-task:sourcing",
+                "input_hash": "64f295995dfec3f4424b269c18cc10e6fe234ca4e4a3e3d07f5f2743bccaf579",
+                "started_at": "2026-09-19T12:54:07.812255+00:00"
+              }
+            }
+          },
+          {
+            "id": 10,
+            "event": "tool_result",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "task_id": "current-task:sourcing",
+              "tool": "discover_supplier_candidates",
+              "result": {
+                "schema_version": 1,
+                "call_id": "c9d625f1-d130-4281-8cbb-27176be69d77",
+                "tool_name": "discover_supplier_candidates",
+                "tool_version": "1.0",
+                "status": "not_found",
+                "data": {
+                  "status": "not_found",
+                  "success": null,
+                  "error": null,
+                  "message": "已返回正式供应商候选。",
+                  "evidence_refs": [],
+                  "evidence_records": [],
+                  "claims": [],
+                  "source": "local",
+                  "source_order": [
+                    "local_history",
+                    "feishu_formal",
+                    "tianyancha",
+                    "web_search"
+                  ],
+                  "requirement": {
+                    "category": "员 A：查看采购员 B 负责的“测试-B专属",
+                    "product": "员 A：查看采购员 B 负责的“测试-B专属",
+                    "specification": "员 A：查看采购员 B 负责的“测试-B专属",
+                    "must_have": [],
+                    "optional_conditions": []
+                  },
+                  "candidates": [],
+                  "local_candidates": [],
+                  "external_candidates": [],
+                  "local_status": "ok",
+                  "local_failure_reason": null,
+                  "external_status": "not_found",
+                  "external_stop_reason": "external_sources_exhausted",
+                  "external_failure_reasons": [],
+                  "external_loop": {
+                    "loop_type": "sourcing",
+                    "iterations": 2,
+                    "max_iterations": 3,
+                    "max_tool_calls": 3,
+                    "failed_stages": [],
+                    "failure_reasons": []
+                  }
+                },
+                "evidence_refs": [],
+                "error": null,
+                "side_effect_receipt": null,
+                "metrics": {
+                  "attempts": 1,
+                  "duration_ms": 1817
+                }
+              },
+              "trace": {
+                "task_id": "current-task:sourcing",
+                "call_id": "c9d625f1-d130-4281-8cbb-27176be69d77",
+                "tool_version": "1.0",
+                "duration_ms": 1818
+              }
+            }
+          },
+          {
+            "id": 12,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "blocked",
+              "stage": "executing",
+              "message": "正在通过统一 ToolExecutor 执行任务",
+              "tool_call_count": 1,
+              "completed_tool_count": 1
+            }
+          },
+          {
+            "id": 14,
+            "event": "evidence",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "records": [],
+              "coverage": {
+                "required_dimensions": [
+                  "sourcing"
+                ],
+                "covered_dimensions": [],
+                "missing_dimensions": [
+                  "sourcing"
+                ],
+                "required_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "covered_items": [],
+                "missing_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "coverage_ratio": 0.0
+              }
+            }
+          },
+          {
+            "id": 15,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "evidence_incomplete",
+              "stage": "evidence",
+              "message": "正在校验证据覆盖度与 Claim 引用",
+              "evidence_status": "0/1 已覆盖",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 17,
+            "event": "agent_answer",
+            "data": {
+              "status": "needs_review",
+              "summary": "已按“员 A：查看采购员 B 负责的“测试-B专属”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。",
+              "claims": [],
+              "limitations": [
+                "缺少 sourcing 维度的正式证据",
+                "工具结果未提供可验证 Claim"
+              ],
+              "action_proposals": [],
+              "action_receipts": [],
+              "evidence_refs": []
+            }
+          },
+          {
+            "id": 18,
+            "event": "evidence",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "records": [],
+              "coverage": {
+                "required_dimensions": [
+                  "sourcing"
+                ],
+                "covered_dimensions": [],
+                "missing_dimensions": [
+                  "sourcing"
+                ],
+                "required_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "covered_items": [],
+                "missing_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "coverage_ratio": 0.0
+              }
+            }
+          },
+          {
+            "id": 19,
+            "event": "answer_chunk",
+            "data": {
+              "text": "已按“员 A：查看采购员 B 负责的“测试-B专属”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            }
+          },
+          {
+            "id": 21,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "正在整理最终回答",
+              "loop_exit_reason": "no_remediation_spec"
+            }
+          },
+          {
+            "id": 22,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "本轮 Harness 工作流已完成",
+              "loop_exit_reason": "no_remediation_spec"
+            }
+          },
+          {
+            "id": 23,
+            "event": "done",
+            "data": {
+              "run_id": "ae90a0c9-2a55-4512-80b8-ebbb45b65cb8",
+              "status": "needs_review",
+              "answer": "已按“员 A：查看采购员 B 负责的“测试-B专属”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            }
+          }
+        ],
+        "passed": false
+      },
+      {
+        "id": "Q44",
+        "session": "permission",
+        "http_status": 200,
+        "observed_terminal": "needs_review",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "run",
+          "workflow_status",
+          "workflow_status",
+          "plan",
+          "workflow_status",
+          "tool_call",
+          "tool_result",
+          "workflow_status",
+          "evidence",
+          "workflow_status",
+          "agent_answer",
+          "evidence",
+          "answer_chunk",
+          "workflow_status",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "21ba442e-79c0-5d53-9ff5-b216a685743b"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 1,
+            "event": "run",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "turn_id": "80f60593-4b4d-4e53-8998-808923c20824"
+            }
+          },
+          {
+            "id": 3,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "loaded",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 5,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "turn_resolved",
+              "stage": "understand",
+              "message": "已完成会话与当前任务解析"
+            }
+          },
+          {
+            "id": 7,
+            "event": "plan",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "steps": [
+                {
+                  "tool": "discover_supplier_candidates",
+                  "args": {
+                    "requirement": {
+                      "category": "员 A：换个说法，分析“测试-B专属",
+                      "product": "员 A：换个说法，分析“测试-B专属",
+                      "specification": "员 A：换个说法，分析“测试-B专属",
+                      "must_have": [],
+                      "optional_conditions": []
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": 8,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "planned",
+              "stage": "planning",
+              "message": "已生成受预算约束的任务计划"
+            }
+          },
+          {
+            "id": 9,
+            "event": "tool_call",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "task_id": "current-task:sourcing",
+              "tool": "discover_supplier_candidates",
+              "args": {
+                "requirement": {
+                  "category": "员 A：换个说法，分析“测试-B专属",
+                  "product": "员 A：换个说法，分析“测试-B专属",
+                  "specification": "员 A：换个说法，分析“测试-B专属",
+                  "must_have": [],
+                  "optional_conditions": []
+                }
+              },
+              "trace": {
+                "task_id": "current-task:sourcing",
+                "input_hash": "a82d2718a9d1fe8ce9c679daed7715c2446b2a9c61f56c09b15f1df0e9d1595e",
+                "started_at": "2026-09-19T12:54:14.739694+00:00"
+              }
+            }
+          },
+          {
+            "id": 10,
+            "event": "tool_result",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "task_id": "current-task:sourcing",
+              "tool": "discover_supplier_candidates",
+              "result": {
+                "schema_version": 1,
+                "call_id": "a70a074a-6fc4-4646-8816-67f8ea60ffe5",
+                "tool_name": "discover_supplier_candidates",
+                "tool_version": "1.0",
+                "status": "not_found",
+                "data": {
+                  "status": "not_found",
+                  "success": null,
+                  "error": null,
+                  "message": "已返回正式供应商候选。",
+                  "evidence_refs": [],
+                  "evidence_records": [],
+                  "claims": [],
+                  "source": "local",
+                  "source_order": [
+                    "local_history",
+                    "feishu_formal",
+                    "tianyancha",
+                    "web_search"
+                  ],
+                  "requirement": {
+                    "category": "员 A：换个说法，分析“测试-B专属",
+                    "product": "员 A：换个说法，分析“测试-B专属",
+                    "specification": "员 A：换个说法，分析“测试-B专属",
+                    "must_have": [],
+                    "optional_conditions": []
+                  },
+                  "candidates": [],
+                  "local_candidates": [],
+                  "external_candidates": [],
+                  "local_status": "ok",
+                  "local_failure_reason": null,
+                  "external_status": "not_found",
+                  "external_stop_reason": "external_sources_exhausted",
+                  "external_failure_reasons": [],
+                  "external_loop": {
+                    "loop_type": "sourcing",
+                    "iterations": 2,
+                    "max_iterations": 3,
+                    "max_tool_calls": 3,
+                    "failed_stages": [],
+                    "failure_reasons": []
+                  }
+                },
+                "evidence_refs": [],
+                "error": null,
+                "side_effect_receipt": null,
+                "metrics": {
+                  "attempts": 1,
+                  "duration_ms": 1808
+                }
+              },
+              "trace": {
+                "task_id": "current-task:sourcing",
+                "call_id": "a70a074a-6fc4-4646-8816-67f8ea60ffe5",
+                "tool_version": "1.0",
+                "duration_ms": 1809
+              }
+            }
+          },
+          {
+            "id": 12,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "blocked",
+              "stage": "executing",
+              "message": "正在通过统一 ToolExecutor 执行任务",
+              "tool_call_count": 1,
+              "completed_tool_count": 1
+            }
+          },
+          {
+            "id": 14,
+            "event": "evidence",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "records": [],
+              "coverage": {
+                "required_dimensions": [
+                  "sourcing"
+                ],
+                "covered_dimensions": [],
+                "missing_dimensions": [
+                  "sourcing"
+                ],
+                "required_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "covered_items": [],
+                "missing_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "coverage_ratio": 0.0
+              }
+            }
+          },
+          {
+            "id": 15,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "evidence_incomplete",
+              "stage": "evidence",
+              "message": "正在校验证据覆盖度与 Claim 引用",
+              "evidence_status": "0/1 已覆盖",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 17,
+            "event": "agent_answer",
+            "data": {
+              "status": "needs_review",
+              "summary": "已按“员 A：换个说法，分析“测试-B专属”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。",
+              "claims": [],
+              "limitations": [
+                "缺少 sourcing 维度的正式证据",
+                "工具结果未提供可验证 Claim"
+              ],
+              "action_proposals": [],
+              "action_receipts": [],
+              "evidence_refs": []
+            }
+          },
+          {
+            "id": 18,
+            "event": "evidence",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "records": [],
+              "coverage": {
+                "required_dimensions": [
+                  "sourcing"
+                ],
+                "covered_dimensions": [],
+                "missing_dimensions": [
+                  "sourcing"
+                ],
+                "required_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "covered_items": [],
+                "missing_items": [
+                  "sourcing:sourcing:*"
+                ],
+                "coverage_ratio": 0.0
+              }
+            }
+          },
+          {
+            "id": 19,
+            "event": "answer_chunk",
+            "data": {
+              "text": "已按“员 A：换个说法，分析“测试-B专属”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            }
+          },
+          {
+            "id": 21,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "正在整理最终回答",
+              "loop_exit_reason": "no_remediation_spec"
+            }
+          },
+          {
+            "id": 22,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "本轮 Harness 工作流已完成",
+              "loop_exit_reason": "no_remediation_spec"
+            }
+          },
+          {
+            "id": 23,
+            "event": "done",
+            "data": {
+              "run_id": "35f4cd78-98e2-4bbf-84b1-f5a500b8ce9b",
+              "status": "needs_review",
+              "answer": "已按“员 A：换个说法，分析“测试-B专属”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            }
+          }
+        ],
+        "passed": false
+      }
+    ]
+  }
+}

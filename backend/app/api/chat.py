@@ -221,6 +221,123 @@ async def _rebuild_paused_graph(paused: dict[str, Any]):
     raise ValueError(f"无法重建审批恢复图: {mode or 'unknown'}")
 
 
+async def _resume_chat_event_generator(
+    req: ResumeRequest,
+    current_user: Any,
+    *,
+    claimed: tuple[dict[str, Any] | None, str | None] | None = None,
+    graph: Any | None = None,
+):
+    """Resume from PostgreSQL metadata and acknowledge only after completion."""
+    from app.domains.agent_run.chat_interrupt_repo import (
+        ack_chat_interrupt,
+        claim_chat_interrupt,
+        release_chat_interrupt,
+        take_chat_interrupt,
+    )
+
+    if claimed is None:
+        authenticated_user_id = getattr(current_user, "id", None)
+        claim_token: str | None = None
+        if isinstance(authenticated_user_id, str) and authenticated_user_id:
+            paused = claim_chat_interrupt(req.session_id, authenticated_user_id)
+            claim_token = str(paused.get("claim_token")) if paused and paused.get("claim_token") else None
+        else:
+            paused = take_chat_interrupt(req.session_id)
+    else:
+        paused, claim_token = claimed
+    if not paused:
+        from app.graphs.streaming import _workflow_status
+
+        message = "当前没有可恢复的未完成任务。请重新发起分析，或先完成待确认的主体/审批操作。"
+        yield _workflow_status("needs_review", "recovery", "没有可恢复的未完成任务")
+        yield f"event: done\ndata: {json.dumps({'answer': message, 'status': 'needs_review'}, ensure_ascii=False)}\n\n"
+        return
+
+    config = dict(paused.get("config") or {"configurable": {"thread_id": req.session_id}})
+    resume_value = config.pop("__resume_value", None)
+    if not isinstance(resume_value, dict):
+        resume_value = {"approved": req.approved}
+    paused_for_graph = {**paused, "config": config}
+    if graph is None:
+        try:
+            graph = await _rebuild_paused_graph(paused_for_graph)
+        except Exception as exc:
+            if claim_token:
+                release_chat_interrupt(req.session_id, claim_token)
+            from app.graphs.streaming import _workflow_status
+
+            yield _workflow_status("failed", "recovery", "审批恢复图不可用，任务仍可重试")
+            yield f"event: error\ndata: {json.dumps({'message': '审批恢复图不可用，请稍后重试。'}, ensure_ascii=False)}\n\n"
+            return
+
+    mode = str(paused.get("mode") or "")
+    user_message = str(paused.get("user_message") or "")
+
+    try:
+        from langgraph.types import Command
+
+        configurable = config.get("configurable") if isinstance(config.get("configurable"), dict) else {}
+        resume_update = {
+            "run_id": configurable.get("run_id"),
+            "user_query": user_message,
+        }
+        command = (
+            Command(resume=resume_value, update=resume_update)
+            if resume_update.get("run_id")
+            else Command(resume=resume_value)
+        )
+        if mode == "agent-supervisor":
+            from app.graphs.streaming import stream_agent_supervisor_graph
+
+            async for event in stream_agent_supervisor_graph(
+                graph,
+                user_message,
+                req.session_id,
+                config,
+                graph_input=command,
+            ):
+                yield event
+            if claim_token:
+                ack_chat_interrupt(req.session_id, claim_token)
+            return
+
+        from app.graphs.streaming import _workflow_status
+
+        yield _workflow_status("running", "executing", "正在恢复并执行未完成的 Agent 工作流")
+        async for event in graph.astream_events(command, config=config, version="v2"):
+            kind = event.get("event", "")
+            if kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and chunk.content:
+                    yield f"event: answer_chunk\ndata: {json.dumps({'text': chunk.content}, ensure_ascii=False)}\n\n"
+            elif kind == "on_tool_start":
+                yield f"event: tool_call\ndata: {json.dumps({'tool': event.get('name', ''), 'args': event.get('data', {}).get('input', {})}, ensure_ascii=False)}\n\n"
+            elif kind == "on_tool_end":
+                output = event.get("data", {}).get("output", "")
+                if not isinstance(output, str):
+                    output = json.dumps(output, ensure_ascii=False, default=str)
+                if len(output) > 2000:
+                    output = output[:2000] + "...(截断)"
+                yield f"event: tool_result\ndata: {json.dumps({'tool': event.get('name', ''), 'result': output}, ensure_ascii=False)}\n\n"
+            elif kind == "on_chat_model_end":
+                output = event.get("data", {}).get("output")
+                content = output.content if output and hasattr(output, "content") else ""
+                if content:
+                    yield f"event: answer_chunk\ndata: {json.dumps({'text': content}, ensure_ascii=False)}\n\n"
+        yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
+        yield f"event: done\ndata: {json.dumps({'answer': '', 'status': 'completed'}, ensure_ascii=False)}\n\n"
+        if claim_token:
+            ack_chat_interrupt(req.session_id, claim_token)
+    except Exception as exc:
+        if claim_token:
+            release_chat_interrupt(req.session_id, claim_token)
+        from app.graphs import format_llm_error
+
+        yield _workflow_status("failed", "decision", "恢复执行失败")
+        yield f"event: error\ndata: {json.dumps({'message': format_llm_error(exc)}, ensure_ascii=False)}\n\n"
+
+
 _CHAT_MODE_ALIASES = {
     "harness": "langgraph-harness",
     "agent-supervisor": "langgraph-agent-supervisor",
@@ -283,6 +400,57 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
         # Send session_id first (before any blocking routing/classification)
         yield f"event: session\ndata: {sid}\n\n"
 
+        from app.domains.agent_run.chat_recovery import (
+            is_chat_cancel_request,
+            is_chat_reject_request,
+            is_chat_resume_request,
+            recovery_message,
+        )
+
+        # These commands address the run which owns the current session lease,
+        # so they must bypass the normal single-active-run guard.
+        if is_chat_cancel_request(req.message):
+            if not user_id:
+                yield f"event: error\ndata: {json.dumps({'message': '登录态不可用，无法取消当前任务。'}, ensure_ascii=False)}\n\n"
+                return
+            from app.domains.agent_run.service import cancel_active_harness_run
+            from app.graphs.streaming import _workflow_status
+
+            try:
+                cancelled = await asyncio.to_thread(
+                    cancel_active_harness_run,
+                    sid,
+                    user_id,
+                    user_role,
+                )
+            except Exception as exc:
+                logger.warning("chat_cancel_failed", session_id=sid, error=str(exc))
+                yield _workflow_status("failed", "cancelled", "取消当前任务失败")
+                message = getattr(exc, "message", None) or "取消当前任务失败，请稍后重试。"
+                yield f"event: error\ndata: {json.dumps({'message': message}, ensure_ascii=False)}\n\n"
+                return
+            if cancelled is None:
+                yield _workflow_status("needs_review", "recovery", recovery_message())
+                yield f"event: done\ndata: {json.dumps({'answer': recovery_message(), 'status': 'needs_review'}, ensure_ascii=False)}\n\n"
+                return
+            run_id = str(cancelled.get("id") or "")
+            yield _workflow_status("cancelled", "cancelled", "本轮 Agent 工作流已取消")
+            yield f"event: done\ndata: {json.dumps({'answer': '本轮 Agent 工作流已取消。', 'status': 'cancelled', 'run_id': run_id}, ensure_ascii=False)}\n\n"
+            return
+
+        if is_chat_resume_request(req.message) or is_chat_reject_request(req.message):
+            if not user_id:
+                yield f"event: error\ndata: {json.dumps({'message': '登录态不可用，无法恢复当前任务。'}, ensure_ascii=False)}\n\n"
+                return
+            from types import SimpleNamespace
+
+            async for event in _resume_chat_event_generator(
+                ResumeRequest(session_id=sid, approved=not is_chat_reject_request(req.message)),
+                SimpleNamespace(id=user_id),
+            ):
+                yield event
+            return
+
         from app.services.agent_session_guard import (
             acquire_agent_session_run,
             release_agent_session_run,
@@ -341,9 +509,10 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 or conversation_state.get("selected_supplier_names")
                 or []
             )
-            from app.graphs.agent_core.intent_extractor import has_explicit_watchlist_request
+            from app.graphs.agent_core.intent_extractor import explicit_write_action
 
-            is_watchlist_write = has_explicit_watchlist_request(req.message)
+            requested_write_action = explicit_write_action(req.message)
+            is_write_action = requested_write_action != "none"
             from app.services.clarification import (
                 external_assessment_clarification,
                 formal_supplier_identity_clarification,
@@ -353,7 +522,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # approval path.  The read-only identity/scope preflight cannot
             # know about cached external identity evidence and used to stop
             # the request before the confirmation card could be rendered.
-            identity_clarification = None if is_watchlist_write else await asyncio.to_thread(
+            identity_clarification = None if is_write_action else await asyncio.to_thread(
                 formal_supplier_identity_clarification,
                 resolved_target_names,
                 req.message,
@@ -374,13 +543,13 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     user_role,
                     req.message,
                 )
-                if _is_uuid(user_id) and not is_watchlist_write
+                if _is_uuid(user_id) and not is_write_action
                 else None
             )
             if scope_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
-            external_clarification = None if is_watchlist_write else await asyncio.to_thread(
+            external_clarification = None if is_write_action else await asyncio.to_thread(
                 external_assessment_clarification,
                 resolved_target_names,
                 supplier_references,
@@ -392,7 +561,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             has_structured_context = bool(
                 supplier_references or conversation_state.get("active_suppliers")
             )
-            clar = None if is_watchlist_write else detect_clarification_needed(
+            clar = None if is_write_action else detect_clarification_needed(
                 req.message,
                 supplier_references=supplier_references,
                 resolved_target_names=resolved_target_names,
@@ -404,9 +573,16 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
             # Resolve mode only after target resolution and fallback clarification.
             mode = req.mode
-            requested_action = str(
+            # The deterministic write-intent parser is authoritative for the
+            # current turn.  An LLM may return an empty/conservative intent
+            # object (especially during a timeout), but an explicit Chinese
+            # write verb must still enter the durable approval boundary.
+            # Otherwise requests such as “移出监控” fall through to the
+            # read-only Harness and incorrectly finish with zero evidence.
+            llm_requested_action = str(
                 (execution_context.get("llm_intent") or {}).get("requested_action") or "none"
             )
+            requested_action = requested_write_action if requested_write_action != "none" else llm_requested_action
             stream_fn = _select_chat_stream(mode, requested_action=requested_action)
 
             if (
@@ -467,9 +643,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 async def resume_endpoint(req: ResumeRequest, current_user: Any = Depends(get_current_user)):
     """Resume a paused graph after user approval/denial."""
     from app.domains.agent_run.chat_interrupt_repo import (
-        ack_chat_interrupt,
         claim_chat_interrupt,
-        release_chat_interrupt,
         take_chat_interrupt,
     )
 
@@ -479,94 +653,23 @@ async def resume_endpoint(req: ResumeRequest, current_user: Any = Depends(get_cu
         paused = claim_chat_interrupt(req.session_id, authenticated_user_id)
         claim_token = str(paused.get("claim_token")) if paused and paused.get("claim_token") else None
     else:
-        # Direct unit callers from the legacy compatibility surface do not
-        # receive FastAPI's dependency injection object. Production HTTP
-        # requests always take the user-bound claim path above.
         paused = take_chat_interrupt(req.session_id)
     if not paused:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")
+    try:
+        graph = await _rebuild_paused_graph(paused)
+    except Exception as exc:
+        if claim_token:
+            from app.domains.agent_run.chat_interrupt_repo import release_chat_interrupt
 
-    graph = paused.get("graph")
-    if graph is None:
-        try:
-            graph = await _rebuild_paused_graph(paused)
-        except Exception as exc:
-            if claim_token:
-                release_chat_interrupt(req.session_id, claim_token)
-            from fastapi import HTTPException
+            release_chat_interrupt(req.session_id, claim_token)
+        from fastapi import HTTPException
 
-            raise HTTPException(status_code=503, detail="审批恢复图不可用，请重新发起任务") from exc
-    config = paused.get("config") or {"configurable": {"thread_id": req.session_id}}
-    mode = str(paused.get("mode") or "")
-    user_message = str(paused.get("user_message") or "")
-
-    async def resume_generator():
-        from langgraph.types import Command
-        resume_value = {"approved": req.approved}
-        cmd = Command(resume=resume_value)
-
-        try:
-            if mode == "agent-supervisor":
-                from app.graphs.streaming import stream_agent_supervisor_graph
-
-                async for event in stream_agent_supervisor_graph(
-                    graph,
-                    user_message,
-                    req.session_id,
-                    config,
-                    graph_input=cmd,
-                ):
-                    yield event
-                if claim_token:
-                    ack_chat_interrupt(req.session_id, claim_token)
-                return
-
-            from app.graphs.streaming import _workflow_status
-            yield _workflow_status("running", "executing", "正在恢复并执行已确认的操作")
-            async for event in graph.astream_events(cmd, config=config, version="v2"):
-                kind = event.get("event", "")
-
-                if kind == "on_chat_model_stream":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and chunk.content:
-                        yield f"event: answer_chunk\ndata: {json.dumps({'text': chunk.content}, ensure_ascii=False)}\n\n"
-
-                elif kind == "on_tool_start":
-                    tool_name = event.get("name", "")
-                    tool_input = event.get("data", {}).get("input", {})
-                    yield f"event: tool_call\ndata: {json.dumps({'tool': tool_name, 'args': tool_input}, ensure_ascii=False)}\n\n"
-
-                elif kind == "on_tool_end":
-                    tool_name = event.get("name", "")
-                    output = event.get("data", {}).get("output", "")
-                    if not isinstance(output, str):
-                        output = json.dumps(output, ensure_ascii=False, default=str)
-                    if len(output) > 2000:
-                        output = output[:2000] + "...(截断)"
-                    yield f"event: tool_result\ndata: {json.dumps({'tool': tool_name, 'result': output}, ensure_ascii=False)}\n\n"
-
-                elif kind == "on_chat_model_end":
-                    output = event.get("data", {}).get("output")
-                    content = output.content if output and hasattr(output, "content") else ""
-                    if content:
-                        yield f"event: answer_chunk\ndata: {json.dumps({'text': content}, ensure_ascii=False)}\n\n"
-
-            yield _workflow_status("completed", "completed", "本轮 Agent 工作流已完成")
-            yield f"event: done\ndata: {json.dumps({'answer': ''}, ensure_ascii=False)}\n\n"
-            if claim_token:
-                ack_chat_interrupt(req.session_id, claim_token)
-
-        except Exception as e:
-            if claim_token:
-                release_chat_interrupt(req.session_id, claim_token)
-            from app.graphs import format_llm_error
-            msg = format_llm_error(e)
-            yield _workflow_status("failed", "decision", "恢复执行失败")
-            yield f"event: error\ndata: {json.dumps({'message': msg}, ensure_ascii=False)}\n\n"
-
+        raise HTTPException(status_code=503, detail="审批恢复图不可用，请重新发起任务") from exc
     return StreamingResponse(
-        resume_generator(),
+        _resume_chat_event_generator(req, current_user, claimed=(paused, claim_token), graph=graph),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

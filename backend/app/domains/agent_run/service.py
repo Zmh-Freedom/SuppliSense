@@ -17,12 +17,14 @@ from app.domains.sourcing_risk.evidence_service import (
     stage_raw_payloads,
 )
 from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunStatus
+from app.domains.agent_run.harness_contracts import TurnStatus
 from app.domains.agent_run.repo import (
     append_event,
     get_run,
     get_run_for_update,
     get_run_detail_collections,
     get_run_for_user,
+    get_latest_harness_run_for_session,
     insert_approval_decision,
     insert_run,
     list_events_after,
@@ -401,6 +403,85 @@ def cancel_run(
         if updated is None:
             _raise_version_conflict()
         append_event(run_id, updated["version"], "done", {"status": updated["status"]}, cur=cur)
+    return updated
+
+
+def cancel_active_harness_run(
+    session_id: str,
+    user_id: str,
+    user_role: str,
+) -> dict[str, Any] | None:
+    """Cancel the current durable Harness run for a chat session.
+
+    Harness runs use their own ``RUNNING`` control-plane status and therefore
+    cannot go through the sourcing-risk V2 transition table.  The update is
+    still optimistic and appends the same replayable ``done`` event used by
+    the event-stream endpoint.
+    """
+    del user_role
+    run = get_latest_harness_run_for_session(session_id, user_id)
+    if run is None:
+        return None
+    if run.get("status") == AgentRunStatus.CANCELLED.value:
+        return run
+    if run.get("status") in {
+        AgentRunStatus.COMPLETED.value,
+        AgentRunStatus.PARTIAL.value,
+        AgentRunStatus.NEEDS_REVIEW.value,
+        AgentRunStatus.ACTION_FAILED.value,
+        AgentRunStatus.FAILED.value,
+        AgentRunStatus.ROLLBACK_FROZEN.value,
+    }:
+        raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许取消", 409)
+    run_id = str(run["id"])
+    expected_version = int(run["version"])
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            UPDATE agent_runs
+            SET status = 'CANCELLED',
+                version = version + 1,
+                error_code = 'AGENT_RUN_CANCELLED_BY_USER',
+                updated_at = NOW(),
+                completed_at = NOW()
+            WHERE id = %s
+              AND user_id = %s
+              AND version = %s
+              AND status NOT IN ('COMPLETED', 'PARTIAL', 'NEEDS_REVIEW',
+                                 'ACTION_FAILED', 'FAILED', 'CANCELLED',
+                                 'ROLLBACK_FROZEN')
+            RETURNING *
+            """,
+            (run_id, user_id, expected_version),
+        )
+        row = cur.fetchone()
+        updated = (
+            dict(zip((column[0] for column in cur.description), row))
+            if row is not None
+            else None
+        )
+        if updated is None:
+            _raise_version_conflict()
+        append_event(
+            run_id,
+            int(updated["version"]),
+            "done",
+            {
+                "status": "cancelled",
+                "run_id": run_id,
+                "message": "用户已取消本轮 Agent 工作流",
+            },
+            cur=cur,
+        )
+        cur.execute(
+            """
+            UPDATE agent_turns
+            SET status = %s, completed_at = NOW(),
+                assistant_message = COALESCE(assistant_message, '用户已取消本轮 Agent 工作流')
+            WHERE run_id = %s AND status IN ('received', 'running', 'waiting_approval')
+            """,
+            (TurnStatus.CANCELLED.value, run_id),
+        )
     return updated
 
 

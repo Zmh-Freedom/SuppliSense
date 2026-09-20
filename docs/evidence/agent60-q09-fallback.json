@@ -1,0 +1,75 @@
+{
+  "manifest": {
+    "total": 2,
+    "passed": 0,
+    "failed": 2,
+    "results": [
+      {
+        "id": "Q09",
+        "session": "risk-supplier",
+        "http_status": 200,
+        "observed_terminal": "clarification",
+        "event_types": [
+          "session",
+          "clarification"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "ee48cf57-a535-51c5-bf4c-1cd7b3cac952"
+          },
+          {
+            "id": null,
+            "event": "clarification",
+            "data": {
+              "message": "请问您想分析哪家公司？请提供公司全称或简称。",
+              "missing": [
+                "target_supplier_name"
+              ],
+              "missing_fields": [
+                "target_supplier_name"
+              ],
+              "status": "stopped",
+              "stage": "understand"
+            }
+          }
+        ],
+        "passed": false
+      },
+      {
+        "id": "Q10",
+        "session": "risk-supplier",
+        "http_status": 200,
+        "observed_terminal": "clarification",
+        "event_types": [
+          "session",
+          "clarification"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "ee48cf57-a535-51c5-bf4c-1cd7b3cac952"
+          },
+          {
+            "id": null,
+            "event": "clarification",
+            "data": {
+              "message": "“它的运营风险和交付”不在当前责任范围的监控清单或正式供应商库中，因此不能直接生成供应商风险评分。若要调查外部企业，请改为“评估该企业风险”，系统会先搜索并确认主体。",
+              "missing": [
+                "formal_supplier_or_monitor_target"
+              ],
+              "missing_fields": [
+                "formal_supplier_or_monitor_target"
+              ],
+              "status": "stopped",
+              "stage": "understand"
+            }
+          }
+        ],
+        "passed": false
+      }
+    ]
+  }
+}

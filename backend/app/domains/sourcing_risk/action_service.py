@@ -35,6 +35,7 @@ SUPPORTED_ACTION_TYPES = frozenset(
         "remove_watchlist",
         "submit_access_application",
         "export_report",
+        "manage_scheduled_report",
     }
 )
 
@@ -354,6 +355,38 @@ def export_report(payload: dict[str, Any]) -> str:
     return key
 
 
+def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
+    """Create/list/delete a scheduled report after durable approval."""
+    from app.domains.risk.scheduled_report import (
+        create_scheduled_report,
+        delete_scheduled_report,
+        list_scheduled_reports,
+    )
+
+    action = str(payload.get("action") or "create")
+    company_names = list(payload.get("company_names") or [])
+    if action == "create":
+        if not company_names:
+            company_name = payload.get("company_name")
+            if isinstance(company_name, str) and company_name.strip():
+                company_names = [company_name.strip()]
+        if not company_names:
+            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定企业", 422)
+        return create_scheduled_report(
+            company_names,
+            cron=str(payload.get("cron") or "weekly"),
+            report_type=str(payload.get("report_type") or "excel"),
+        )
+    if action == "list":
+        return {"reports": list_scheduled_reports()}
+    if action == "delete":
+        task_id = str(payload.get("task_id") or (company_names[0] if company_names else ""))
+        if not task_id:
+            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "删除定时报告必须指定任务", 422)
+        return delete_scheduled_report(task_id)
+    raise DomainError("AGENT_ACTION_PAYLOAD_INVALID", "定时报告操作类型无效", 422)
+
+
 def record_action_delivery_outcome(event: dict, outcome: str) -> None:
     """Persist retry/dead-letter status after the outbox transaction has won its lease."""
     payload = dict(event.get("payload") or {})
@@ -439,6 +472,14 @@ def _bind_action_target(
 
     if action_type == "submit_access_application" and candidate_id is None and payload.get("company_id") is None:
         raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "操作必须绑定当前任务企业或候选企业", 422)
+
+    if action_type == "manage_scheduled_report":
+        action = str(payload.get("action") or "create")
+        if action == "create" and not (
+            isinstance(payload.get("company_name"), str)
+            or payload.get("company_names")
+        ):
+            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定当前任务企业", 422)
 
     if candidate_id is not None:
         candidate = get_action_candidate_for_update(cur, candidate_id)
@@ -576,6 +617,7 @@ def _execute_action(action_type: str, payload: dict[str, Any]) -> None:
         "remove_watchlist": remove_watchlist,
         "submit_access_application": submit_access_application,
         "export_report": export_report,
+        "manage_scheduled_report": manage_scheduled_report_action,
     }
     handlers[action_type](payload)
 

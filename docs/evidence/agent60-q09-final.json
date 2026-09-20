@@ -1,0 +1,1570 @@
+{
+  "manifest": {
+    "total": 2,
+    "passed": 2,
+    "failed": 0,
+    "results": [
+      {
+        "id": "Q09",
+        "session": "risk-supplier",
+        "http_status": 200,
+        "observed_terminal": "needs_review",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "run",
+          "workflow_status",
+          "workflow_status",
+          "plan",
+          "workflow_status",
+          "tool_call",
+          "tool_call",
+          "tool_result",
+          "tool_result",
+          "workflow_status",
+          "evidence",
+          "workflow_status",
+          "agent_answer",
+          "evidence",
+          "answer_chunk",
+          "workflow_status",
+          "references",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "88f2f05c-f6ce-587a-b10c-588c3cf12f3c"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 1,
+            "event": "run",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "turn_id": "a64293eb-afaf-41e1-848a-3e5ddefbc90d"
+            }
+          },
+          {
+            "id": 3,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "loaded",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 5,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "turn_resolved",
+              "stage": "understand",
+              "message": "已完成会话与当前任务解析"
+            }
+          },
+          {
+            "id": 7,
+            "event": "plan",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "steps": [
+                {
+                  "tool": "assess_business_risk",
+                  "args": {
+                    "supplier_reference": "测试-风险供应商"
+                  }
+                },
+                {
+                  "tool": "lookup_business_risk",
+                  "args": {
+                    "company_name": "测试-风险供应商"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": 8,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "planned",
+              "stage": "planning",
+              "message": "已生成受预算约束的任务计划"
+            }
+          },
+          {
+            "id": 9,
+            "event": "tool_call",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "task_id": "current-task-1-1",
+              "tool": "assess_business_risk",
+              "args": {
+                "supplier_reference": "测试-风险供应商"
+              },
+              "trace": {
+                "task_id": "current-task-1-1",
+                "input_hash": "c2f52595db5213fbdbfb9db58dec3b6607c1583472f023bc1818220b70301cef",
+                "started_at": "2026-09-19T12:58:14.008021+00:00"
+              }
+            }
+          },
+          {
+            "id": 10,
+            "event": "tool_call",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "task_id": "current-task:测试-风险供应商:business_risk:external",
+              "tool": "lookup_business_risk",
+              "args": {
+                "company_name": "测试-风险供应商"
+              },
+              "trace": {
+                "task_id": "current-task:测试-风险供应商:business_risk:external",
+                "input_hash": "0bea37c3e0fd2642452b4ae59920ac3df89f2e56f3a5bf7553e6624fe314787f",
+                "started_at": "2026-09-19T12:58:14.008065+00:00"
+              }
+            }
+          },
+          {
+            "id": 11,
+            "event": "tool_result",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "task_id": "current-task-1-1",
+              "tool": "assess_business_risk",
+              "result": {
+                "schema_version": 1,
+                "call_id": "b90d5853-fe5f-4ba6-ac26-381bf874dcf2",
+                "tool_name": "assess_business_risk",
+                "tool_version": "1.0",
+                "status": "success",
+                "data": {
+                  "status": null,
+                  "success": null,
+                  "error": null,
+                  "message": null,
+                  "evidence_refs": [],
+                  "evidence_records": [
+                    {
+                      "evidence_id": "assess_business_risk:entity:测试-风险供应商:business_risk:0",
+                      "entity_id": "entity:测试-风险供应商",
+                      "monitor_target_id": null,
+                      "dimension": "business_risk",
+                      "provider": "feishu_transaction_snapshot",
+                      "source_type": "feishu_transaction_snapshot",
+                      "endpoint": null,
+                      "query": {},
+                      "status": "available",
+                      "collected_at": "2026-09-19T12:58:14.016282Z",
+                      "valid_until": null,
+                      "data_mode": "formal",
+                      "content_hash": "0e08d67ccf57eb9ad12047917e0cceeaea26ccc7f72b2bd9248b60cd17bee34e",
+                      "raw_payload_ref": null,
+                      "facts": {
+                        "risk_level": "high",
+                        "supplier_spend_share": 0.8571,
+                        "active_supplier_count": 2
+                      }
+                    }
+                  ],
+                  "claims": [],
+                  "assessment_status": "partial",
+                  "assessment_scope": "business_p0_transaction_snapshot",
+                  "assessment_data_mode": "formal",
+                  "decision_usable": true,
+                  "supplier_reference": null,
+                  "supplier": {
+                    "supplier_id": "46ff3c85-2994-5dba-8499-467adaad8386",
+                    "supplier_code": "agent60_262b-risk",
+                    "name": "测试-风险供应商"
+                  },
+                  "period": "2026-08",
+                  "scope": {
+                    "category_code": "CAM",
+                    "purchasing_org_code": "E2E_TEST",
+                    "base": null,
+                    "currency": null,
+                    "amount_basis": null
+                  },
+                  "coverage": 0.3,
+                  "formal_business_score": null,
+                  "enabled_dimension": {
+                    "name": "供应依赖与可替代性",
+                    "model_weight": 0.3,
+                    "risk_level": "high",
+                    "supplier_spend_share": 0.8571,
+                    "supplier_received_amount": 600000.0,
+                    "category_total_received_amount": 700000.0,
+                    "active_supplier_count": 2,
+                    "single_source": false
+                  },
+                  "observed_signals": {
+                    "contract": {
+                      "status": "observed",
+                      "active_rows": 1,
+                      "expiring_rows": 0,
+                      "expired_rows": 0,
+                      "unsigned_rows": 0,
+                      "unknown_rows": 0,
+                      "note": "P0 仅展示合同状态，不计入正式商务风险分数。"
+                    },
+                    "settlement": {
+                      "status": "observed",
+                      "unsettled_amount": 10000.0,
+                      "unsettled_ratio": 0.1,
+                      "note": "P0 仅展示结算暴露，不计入正式商务风险分数。"
+                    },
+                    "price": {
+                      "status": "missing",
+                      "current_weighted_price": 1000.0,
+                      "change_ratio": null
+                    }
+                  },
+                  "not_formally_enabled_dimensions": [
+                    "价格与成本",
+                    "合同与条款",
+                    "交易与结算",
+                    "商务合作稳定性"
+                  ],
+                  "limitations": [
+                    "商务风险完整模型尚未启用，P0 不输出完整商务风险分数。",
+                    "可替代性当前以同范围交易供应商数量近似，不等同于已完成资质核验的替代供应商池。"
+                  ],
+                  "reason": null,
+                  "required_data_mode": null,
+                  "available_category_codes": [],
+                  "evidence": [
+                    {
+                      "source": "feishu_transaction_snapshot",
+                      "period": "2026-08",
+                      "claim": "采购集中度与可替代性基于当前评估数据模式的月度收货金额计算。",
+                      "data_mode": "real",
+                      "rows": 2,
+                      "facts": {
+                        "risk_level": "high",
+                        "supplier_spend_share": 0.8571,
+                        "active_supplier_count": 2
+                      }
+                    }
+                  ]
+                },
+                "evidence_refs": [],
+                "error": null,
+                "side_effect_receipt": null,
+                "metrics": {
+                  "attempts": 1,
+                  "duration_ms": 5
+                }
+              },
+              "trace": {
+                "task_id": "current-task-1-1",
+                "call_id": "b90d5853-fe5f-4ba6-ac26-381bf874dcf2",
+                "tool_version": "1.0",
+                "duration_ms": 5
+              }
+            }
+          },
+          {
+            "id": 12,
+            "event": "tool_result",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "task_id": "current-task:测试-风险供应商:business_risk:external",
+              "tool": "lookup_business_risk",
+              "result": {
+                "schema_version": 1,
+                "call_id": "a9866071-b658-4e3e-8fea-eaa8eab6ed38",
+                "tool_name": "lookup_business_risk",
+                "tool_version": "1.0",
+                "status": "success",
+                "data": {
+                  "status": "available",
+                  "success": null,
+                  "error": null,
+                  "message": null,
+                  "evidence_refs": [],
+                  "evidence_records": [
+                    {
+                      "evidence_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "monitor_target_id": null,
+                      "dimension": "business_risk",
+                      "provider": "tianyancha",
+                      "source_type": "tianyancha_api",
+                      "endpoint": null,
+                      "query": {},
+                      "status": "available",
+                      "collected_at": "2026-09-19T12:58:14.019509Z",
+                      "valid_until": null,
+                      "data_mode": "formal",
+                      "content_hash": "7666d0bb9b03b437ceafb13bf5a6935617a7340cf5a9bd5a250834ba9c14ed17",
+                      "raw_payload_ref": null,
+                      "facts": {
+                        "company_name": "测试-风险供应商",
+                        "source_mode": "cached",
+                        "source_message": "已使用本地天眼查快照",
+                        "records": [
+                          {
+                            "data_type": "riskInfo",
+                            "label": "综合风险信息",
+                            "count": 1,
+                            "status": "has_records",
+                            "status_label": "有记录",
+                            "items": [
+                              {
+                                "result": null,
+                                "reason": "经查无结果",
+                                "error_code": 300000
+                              }
+                            ]
+                          },
+                          {
+                            "data_type": "abnormal",
+                            "label": "经营异常",
+                            "count": 1,
+                            "status": "has_records",
+                            "status_label": "有记录",
+                            "items": [
+                              {
+                                "result": null,
+                                "reason": "经查无结果",
+                                "error_code": 300000
+                              }
+                            ]
+                          },
+                          {
+                            "data_type": "punishmentInfo",
+                            "label": "行政处罚",
+                            "count": 1,
+                            "status": "has_records",
+                            "status_label": "有记录",
+                            "items": [
+                              {
+                                "result": null,
+                                "reason": "经查无结果",
+                                "error_code": 300000
+                              }
+                            ]
+                          },
+                          {
+                            "data_type": "illegalinfo",
+                            "label": "严重违法",
+                            "count": 1,
+                            "status": "has_records",
+                            "status_label": "有记录",
+                            "items": [
+                              {
+                                "result": null,
+                                "reason": "经查无结果",
+                                "error_code": 300000
+                              }
+                            ]
+                          },
+                          {
+                            "data_type": "equityPledge",
+                            "label": "股权质押",
+                            "count": 1,
+                            "status": "has_records",
+                            "status_label": "有记录",
+                            "items": [
+                              {
+                                "total": 0
+                              }
+                            ]
+                          },
+                          {
+                            "data_type": "taxArrears",
+                            "label": "欠税公告",
+                            "count": 1,
+                            "status": "has_records",
+                            "status_label": "有记录",
+                            "items": [
+                              {
+                                "total": 0
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "claims": [
+                    {
+                      "claim_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "dimension": "business_risk",
+                      "statement": "天眼查综合风险信息：有记录（1 条）",
+                      "value": 1,
+                      "operator": "observed",
+                      "evidence_refs": [
+                        "lookup_business_risk:tianyancha:测试-风险供应商:business_risk"
+                      ],
+                      "confidence": 0.95
+                    },
+                    {
+                      "claim_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "dimension": "business_risk",
+                      "statement": "天眼查经营异常：有记录（1 条）",
+                      "value": 1,
+                      "operator": "observed",
+                      "evidence_refs": [
+                        "lookup_business_risk:tianyancha:测试-风险供应商:business_risk"
+                      ],
+                      "confidence": 0.95
+                    },
+                    {
+                      "claim_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "dimension": "business_risk",
+                      "statement": "天眼查行政处罚：有记录（1 条）",
+                      "value": 1,
+                      "operator": "observed",
+                      "evidence_refs": [
+                        "lookup_business_risk:tianyancha:测试-风险供应商:business_risk"
+                      ],
+                      "confidence": 0.95
+                    },
+                    {
+                      "claim_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "dimension": "business_risk",
+                      "statement": "天眼查严重违法：有记录（1 条）",
+                      "value": 1,
+                      "operator": "observed",
+                      "evidence_refs": [
+                        "lookup_business_risk:tianyancha:测试-风险供应商:business_risk"
+                      ],
+                      "confidence": 0.95
+                    },
+                    {
+                      "claim_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "dimension": "business_risk",
+                      "statement": "天眼查股权质押：有记录（1 条）",
+                      "value": 1,
+                      "operator": "observed",
+                      "evidence_refs": [
+                        "lookup_business_risk:tianyancha:测试-风险供应商:business_risk"
+                      ],
+                      "confidence": 0.95
+                    },
+                    {
+                      "claim_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                      "entity_id": "entity:测试-风险供应商",
+                      "dimension": "business_risk",
+                      "statement": "天眼查欠税公告：有记录（1 条）",
+                      "value": 1,
+                      "operator": "observed",
+                      "evidence_refs": [
+                        "lookup_business_risk:tianyancha:测试-风险供应商:business_risk"
+                      ],
+                      "confidence": 0.95
+                    }
+                  ],
+                  "company_name": "测试-风险供应商",
+                  "domain": "business_risk",
+                  "source": "天眼查经营风险",
+                  "source_mode": "cached",
+                  "source_message": "已使用本地天眼查快照",
+                  "queried_at": "2026-09-19T12:58:14.019503+00:00",
+                  "counts": {
+                    "riskInfo": 1,
+                    "abnormal": 1,
+                    "punishmentInfo": 1,
+                    "illegalinfo": 1,
+                    "equityPledge": 1,
+                    "taxArrears": 1
+                  },
+                  "collection_statuses": {
+                    "riskInfo": {
+                      "label": "综合风险信息",
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "count": 1,
+                      "source_mode": "cached"
+                    },
+                    "abnormal": {
+                      "label": "经营异常",
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "count": 1,
+                      "source_mode": "cached"
+                    },
+                    "punishmentInfo": {
+                      "label": "行政处罚",
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "count": 1,
+                      "source_mode": "cached"
+                    },
+                    "illegalinfo": {
+                      "label": "严重违法",
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "count": 1,
+                      "source_mode": "cached"
+                    },
+                    "equityPledge": {
+                      "label": "股权质押",
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "count": 1,
+                      "source_mode": "cached"
+                    },
+                    "taxArrears": {
+                      "label": "欠税公告",
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "count": 1,
+                      "source_mode": "cached"
+                    }
+                  },
+                  "records": [
+                    {
+                      "data_type": "riskInfo",
+                      "label": "综合风险信息",
+                      "count": 1,
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "items": [
+                        {
+                          "result": null,
+                          "reason": "经查无结果",
+                          "error_code": 300000
+                        }
+                      ]
+                    },
+                    {
+                      "data_type": "abnormal",
+                      "label": "经营异常",
+                      "count": 1,
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "items": [
+                        {
+                          "result": null,
+                          "reason": "经查无结果",
+                          "error_code": 300000
+                        }
+                      ]
+                    },
+                    {
+                      "data_type": "punishmentInfo",
+                      "label": "行政处罚",
+                      "count": 1,
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "items": [
+                        {
+                          "result": null,
+                          "reason": "经查无结果",
+                          "error_code": 300000
+                        }
+                      ]
+                    },
+                    {
+                      "data_type": "illegalinfo",
+                      "label": "严重违法",
+                      "count": 1,
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "items": [
+                        {
+                          "result": null,
+                          "reason": "经查无结果",
+                          "error_code": 300000
+                        }
+                      ]
+                    },
+                    {
+                      "data_type": "equityPledge",
+                      "label": "股权质押",
+                      "count": 1,
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "items": [
+                        {
+                          "total": 0
+                        }
+                      ]
+                    },
+                    {
+                      "data_type": "taxArrears",
+                      "label": "欠税公告",
+                      "count": 1,
+                      "status": "has_records",
+                      "status_label": "有记录",
+                      "items": [
+                        {
+                          "total": 0
+                        }
+                      ]
+                    }
+                  ],
+                  "limitations": []
+                },
+                "evidence_refs": [],
+                "error": null,
+                "side_effect_receipt": null,
+                "metrics": {
+                  "attempts": 1,
+                  "duration_ms": 4
+                }
+              },
+              "trace": {
+                "task_id": "current-task:测试-风险供应商:business_risk:external",
+                "call_id": "a9866071-b658-4e3e-8fea-eaa8eab6ed38",
+                "tool_version": "1.0",
+                "duration_ms": 6
+              }
+            }
+          },
+          {
+            "id": 14,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "blocked",
+              "stage": "executing",
+              "message": "正在通过统一 ToolExecutor 执行任务",
+              "tool_call_count": 2,
+              "completed_tool_count": 2
+            }
+          },
+          {
+            "id": 16,
+            "event": "evidence",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "records": [
+                {
+                  "evidence_id": "assess_business_risk:entity:测试-风险供应商:business_risk:0",
+                  "entity_id": "entity:测试-风险供应商",
+                  "monitor_target_id": null,
+                  "dimension": "business_risk",
+                  "provider": "feishu_transaction_snapshot",
+                  "source_type": "feishu_transaction_snapshot",
+                  "endpoint": null,
+                  "query": {},
+                  "status": "available",
+                  "collected_at": "2026-09-19T12:58:14.016282Z",
+                  "valid_until": null,
+                  "data_mode": "formal",
+                  "content_hash": "0e08d67ccf57eb9ad12047917e0cceeaea26ccc7f72b2bd9248b60cd17bee34e",
+                  "raw_payload_ref": null,
+                  "facts": {
+                    "risk_level": "high",
+                    "supplier_spend_share": 0.8571,
+                    "active_supplier_count": 2
+                  }
+                },
+                {
+                  "evidence_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                  "entity_id": "entity:测试-风险供应商",
+                  "monitor_target_id": null,
+                  "dimension": "business_risk",
+                  "provider": "tianyancha",
+                  "source_type": "tianyancha_api",
+                  "endpoint": null,
+                  "query": {},
+                  "status": "available",
+                  "collected_at": "2026-09-19T12:58:14.019509Z",
+                  "valid_until": null,
+                  "data_mode": "formal",
+                  "content_hash": "7666d0bb9b03b437ceafb13bf5a6935617a7340cf5a9bd5a250834ba9c14ed17",
+                  "raw_payload_ref": null,
+                  "facts": {
+                    "company_name": "测试-风险供应商",
+                    "source_mode": "cached",
+                    "source_message": "已使用本地天眼查快照",
+                    "records": [
+                      {
+                        "data_type": "riskInfo",
+                        "label": "综合风险信息",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "abnormal",
+                        "label": "经营异常",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "punishmentInfo",
+                        "label": "行政处罚",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "illegalinfo",
+                        "label": "严重违法",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "equityPledge",
+                        "label": "股权质押",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "total": 0
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "taxArrears",
+                        "label": "欠税公告",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "total": 0
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ],
+              "coverage": {
+                "required_dimensions": [
+                  "business_risk"
+                ],
+                "covered_dimensions": [
+                  "business_risk"
+                ],
+                "missing_dimensions": [],
+                "required_items": [
+                  "entity:测试-风险供应商:business_risk:*",
+                  "entity:测试-风险供应商:business_risk:*"
+                ],
+                "covered_items": [
+                  "entity:测试-风险供应商:business_risk:*",
+                  "entity:测试-风险供应商:business_risk:*"
+                ],
+                "missing_items": [],
+                "coverage_ratio": 1.0
+              }
+            }
+          },
+          {
+            "id": 17,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "evidence_validated",
+              "stage": "evidence",
+              "message": "正在校验证据覆盖度与 Claim 引用",
+              "evidence_status": "1/1 已覆盖",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 19,
+            "event": "agent_answer",
+            "data": {
+              "status": "needs_review",
+              "summary": "已完成 测试-风险供应商 的经营风险检索，但当前没有可验证的明细结果。",
+              "claims": [],
+              "limitations": [
+                "工具结果未提供可验证 Claim"
+              ],
+              "action_proposals": [],
+              "action_receipts": [],
+              "evidence_refs": []
+            }
+          },
+          {
+            "id": 20,
+            "event": "evidence",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "records": [
+                {
+                  "evidence_id": "assess_business_risk:entity:测试-风险供应商:business_risk:0",
+                  "entity_id": "entity:测试-风险供应商",
+                  "monitor_target_id": null,
+                  "dimension": "business_risk",
+                  "provider": "feishu_transaction_snapshot",
+                  "source_type": "feishu_transaction_snapshot",
+                  "endpoint": null,
+                  "query": {},
+                  "status": "available",
+                  "collected_at": "2026-09-19T12:58:14.016282Z",
+                  "valid_until": null,
+                  "data_mode": "formal",
+                  "content_hash": "0e08d67ccf57eb9ad12047917e0cceeaea26ccc7f72b2bd9248b60cd17bee34e",
+                  "raw_payload_ref": null,
+                  "facts": {
+                    "risk_level": "high",
+                    "supplier_spend_share": 0.8571,
+                    "active_supplier_count": 2
+                  }
+                },
+                {
+                  "evidence_id": "lookup_business_risk:tianyancha:测试-风险供应商:business_risk",
+                  "entity_id": "entity:测试-风险供应商",
+                  "monitor_target_id": null,
+                  "dimension": "business_risk",
+                  "provider": "tianyancha",
+                  "source_type": "tianyancha_api",
+                  "endpoint": null,
+                  "query": {},
+                  "status": "available",
+                  "collected_at": "2026-09-19T12:58:14.019509Z",
+                  "valid_until": null,
+                  "data_mode": "formal",
+                  "content_hash": "7666d0bb9b03b437ceafb13bf5a6935617a7340cf5a9bd5a250834ba9c14ed17",
+                  "raw_payload_ref": null,
+                  "facts": {
+                    "company_name": "测试-风险供应商",
+                    "source_mode": "cached",
+                    "source_message": "已使用本地天眼查快照",
+                    "records": [
+                      {
+                        "data_type": "riskInfo",
+                        "label": "综合风险信息",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "abnormal",
+                        "label": "经营异常",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "punishmentInfo",
+                        "label": "行政处罚",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "illegalinfo",
+                        "label": "严重违法",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "result": null,
+                            "reason": "经查无结果",
+                            "error_code": 300000
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "equityPledge",
+                        "label": "股权质押",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "total": 0
+                          }
+                        ]
+                      },
+                      {
+                        "data_type": "taxArrears",
+                        "label": "欠税公告",
+                        "count": 1,
+                        "status": "has_records",
+                        "status_label": "有记录",
+                        "items": [
+                          {
+                            "total": 0
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ],
+              "coverage": {
+                "required_dimensions": [
+                  "business_risk"
+                ],
+                "covered_dimensions": [
+                  "business_risk"
+                ],
+                "missing_dimensions": [],
+                "required_items": [
+                  "entity:测试-风险供应商:business_risk:*",
+                  "entity:测试-风险供应商:business_risk:*"
+                ],
+                "covered_items": [
+                  "entity:测试-风险供应商:business_risk:*",
+                  "entity:测试-风险供应商:business_risk:*"
+                ],
+                "missing_items": [],
+                "coverage_ratio": 1.0
+              }
+            }
+          },
+          {
+            "id": 21,
+            "event": "answer_chunk",
+            "data": {
+              "text": "已完成 测试-风险供应商 的经营风险检索，但当前没有可验证的明细结果。"
+            }
+          },
+          {
+            "id": 23,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "正在整理最终回答",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 24,
+            "event": "references",
+            "data": {
+              "items": [
+                {
+                  "name": "测试-风险供应商",
+                  "kind": "supplier",
+                  "source": "Harness 工具结果",
+                  "discovery_source": "天眼查经营风险"
+                }
+              ]
+            }
+          },
+          {
+            "id": 25,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "本轮 Harness 工作流已完成",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 26,
+            "event": "done",
+            "data": {
+              "run_id": "8f1e5230-c53c-45bb-8b7d-edfdfcc03213",
+              "status": "needs_review",
+              "answer": "已完成 测试-风险供应商 的经营风险检索，但当前没有可验证的明细结果。"
+            }
+          }
+        ],
+        "passed": true
+      },
+      {
+        "id": "Q10",
+        "session": "risk-supplier",
+        "http_status": 200,
+        "observed_terminal": "needs_review",
+        "event_types": [
+          "session",
+          "workflow_status",
+          "run",
+          "workflow_status",
+          "workflow_status",
+          "plan",
+          "workflow_status",
+          "tool_call",
+          "tool_result",
+          "tool_call",
+          "tool_result",
+          "workflow_status",
+          "evidence",
+          "workflow_status",
+          "agent_answer",
+          "evidence",
+          "answer_chunk",
+          "workflow_status",
+          "references",
+          "workflow_status",
+          "done"
+        ],
+        "events": [
+          {
+            "id": null,
+            "event": "session",
+            "data": "88f2f05c-f6ce-587a-b10c-588c3cf12f3c"
+          },
+          {
+            "id": null,
+            "event": "workflow_status",
+            "data": {
+              "status": "running",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 1,
+            "event": "run",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "turn_id": "7fd56091-cbb0-4dd4-a416-30644eb272f1"
+            }
+          },
+          {
+            "id": 3,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "loaded",
+              "stage": "understand",
+              "message": "正在解析结构化任务上下文"
+            }
+          },
+          {
+            "id": 5,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "turn_resolved",
+              "stage": "understand",
+              "message": "已完成会话与当前任务解析"
+            }
+          },
+          {
+            "id": 7,
+            "event": "plan",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "steps": [
+                {
+                  "tool": "assess_business_risk",
+                  "args": {
+                    "supplier_reference": "测试-风险供应商"
+                  }
+                },
+                {
+                  "tool": "assess_operational_risk",
+                  "args": {
+                    "company_name": "测试-风险供应商",
+                    "dimension": "delivery"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": 8,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "planned",
+              "stage": "planning",
+              "message": "已生成受预算约束的任务计划"
+            }
+          },
+          {
+            "id": 9,
+            "event": "tool_call",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "task_id": "current-task-1-1",
+              "tool": "assess_business_risk",
+              "args": {
+                "supplier_reference": "测试-风险供应商"
+              },
+              "trace": {
+                "task_id": "current-task-1-1",
+                "input_hash": "c2f52595db5213fbdbfb9db58dec3b6607c1583472f023bc1818220b70301cef",
+                "started_at": "2026-09-19T12:58:20.058521+00:00"
+              }
+            }
+          },
+          {
+            "id": 10,
+            "event": "tool_result",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "task_id": "current-task-1-1",
+              "tool": "assess_business_risk",
+              "result": {
+                "schema_version": 1,
+                "call_id": "1c6d1038-7c0c-432e-b768-242903d82c9a",
+                "tool_name": "assess_business_risk",
+                "tool_version": "1.0",
+                "status": "success",
+                "data": {
+                  "status": null,
+                  "success": null,
+                  "error": null,
+                  "message": null,
+                  "evidence_refs": [],
+                  "evidence_records": [
+                    {
+                      "evidence_id": "assess_business_risk:entity:测试-风险供应商:business_risk:0",
+                      "entity_id": "entity:测试-风险供应商",
+                      "monitor_target_id": null,
+                      "dimension": "business_risk",
+                      "provider": "feishu_transaction_snapshot",
+                      "source_type": "feishu_transaction_snapshot",
+                      "endpoint": null,
+                      "query": {},
+                      "status": "available",
+                      "collected_at": "2026-09-19T12:58:20.071613Z",
+                      "valid_until": null,
+                      "data_mode": "formal",
+                      "content_hash": "0e08d67ccf57eb9ad12047917e0cceeaea26ccc7f72b2bd9248b60cd17bee34e",
+                      "raw_payload_ref": null,
+                      "facts": {
+                        "risk_level": "high",
+                        "supplier_spend_share": 0.8571,
+                        "active_supplier_count": 2
+                      }
+                    }
+                  ],
+                  "claims": [],
+                  "assessment_status": "partial",
+                  "assessment_scope": "business_p0_transaction_snapshot",
+                  "assessment_data_mode": "formal",
+                  "decision_usable": true,
+                  "supplier_reference": null,
+                  "supplier": {
+                    "supplier_id": "46ff3c85-2994-5dba-8499-467adaad8386",
+                    "supplier_code": "agent60_262b-risk",
+                    "name": "测试-风险供应商"
+                  },
+                  "period": "2026-08",
+                  "scope": {
+                    "category_code": "CAM",
+                    "purchasing_org_code": "E2E_TEST",
+                    "base": null,
+                    "currency": null,
+                    "amount_basis": null
+                  },
+                  "coverage": 0.3,
+                  "formal_business_score": null,
+                  "enabled_dimension": {
+                    "name": "供应依赖与可替代性",
+                    "model_weight": 0.3,
+                    "risk_level": "high",
+                    "supplier_spend_share": 0.8571,
+                    "supplier_received_amount": 600000.0,
+                    "category_total_received_amount": 700000.0,
+                    "active_supplier_count": 2,
+                    "single_source": false
+                  },
+                  "observed_signals": {
+                    "contract": {
+                      "status": "observed",
+                      "active_rows": 1,
+                      "expiring_rows": 0,
+                      "expired_rows": 0,
+                      "unsigned_rows": 0,
+                      "unknown_rows": 0,
+                      "note": "P0 仅展示合同状态，不计入正式商务风险分数。"
+                    },
+                    "settlement": {
+                      "status": "observed",
+                      "unsettled_amount": 10000.0,
+                      "unsettled_ratio": 0.1,
+                      "note": "P0 仅展示结算暴露，不计入正式商务风险分数。"
+                    },
+                    "price": {
+                      "status": "missing",
+                      "current_weighted_price": 1000.0,
+                      "change_ratio": null
+                    }
+                  },
+                  "not_formally_enabled_dimensions": [
+                    "价格与成本",
+                    "合同与条款",
+                    "交易与结算",
+                    "商务合作稳定性"
+                  ],
+                  "limitations": [
+                    "商务风险完整模型尚未启用，P0 不输出完整商务风险分数。",
+                    "可替代性当前以同范围交易供应商数量近似，不等同于已完成资质核验的替代供应商池。"
+                  ],
+                  "reason": null,
+                  "required_data_mode": null,
+                  "available_category_codes": [],
+                  "evidence": [
+                    {
+                      "source": "feishu_transaction_snapshot",
+                      "period": "2026-08",
+                      "claim": "采购集中度与可替代性基于当前评估数据模式的月度收货金额计算。",
+                      "data_mode": "real",
+                      "rows": 2,
+                      "facts": {
+                        "risk_level": "high",
+                        "supplier_spend_share": 0.8571,
+                        "active_supplier_count": 2
+                      }
+                    }
+                  ]
+                },
+                "evidence_refs": [],
+                "error": null,
+                "side_effect_receipt": null,
+                "metrics": {
+                  "attempts": 1,
+                  "duration_ms": 8
+                }
+              },
+              "trace": {
+                "task_id": "current-task-1-1",
+                "call_id": "1c6d1038-7c0c-432e-b768-242903d82c9a",
+                "tool_version": "1.0",
+                "duration_ms": 8
+              }
+            }
+          },
+          {
+            "id": 11,
+            "event": "tool_call",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "task_id": "current-task-1-2",
+              "tool": "assess_operational_risk",
+              "args": {
+                "company_name": "测试-风险供应商",
+                "dimension": "delivery"
+              },
+              "trace": {
+                "task_id": "current-task-1-2",
+                "input_hash": "ebf5e8bafd9eab99b9c94cbb01b24f6b42f76a4a9ae6b66959c98dcc4475c877",
+                "started_at": "2026-09-19T12:58:20.076701+00:00"
+              }
+            }
+          },
+          {
+            "id": 12,
+            "event": "tool_result",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "task_id": "current-task-1-2",
+              "tool": "assess_operational_risk",
+              "result": {
+                "schema_version": 1,
+                "call_id": "1256ca74-71b2-4ecb-9d82-69ca2fae0281",
+                "tool_name": "assess_operational_risk",
+                "tool_version": "1.0",
+                "status": "unavailable",
+                "data": {
+                  "status": "unavailable",
+                  "success": null,
+                  "error": null,
+                  "message": null,
+                  "evidence_refs": [],
+                  "evidence_records": [],
+                  "claims": [],
+                  "dimension": "delivery",
+                  "company_name": "测试-风险供应商",
+                  "supplier_code": null,
+                  "period": "2026-08",
+                  "assessment_status": "missing_data",
+                  "risk_score": null,
+                  "risk_level": null,
+                  "data_coverage": {
+                    "available_fields": [],
+                    "required_fields": [
+                      "on_time_rate"
+                    ],
+                    "coverage_ratio": 0.0
+                  },
+                  "metrics": {},
+                  "reason": "当前快照缺少足以计算该维度的质量/交付指标，不能推断低风险。",
+                  "evidence": []
+                },
+                "evidence_refs": [],
+                "error": null,
+                "side_effect_receipt": null,
+                "metrics": {
+                  "attempts": 1,
+                  "duration_ms": 3
+                }
+              },
+              "trace": {
+                "task_id": "current-task-1-2",
+                "call_id": "1256ca74-71b2-4ecb-9d82-69ca2fae0281",
+                "tool_version": "1.0",
+                "duration_ms": 6
+              }
+            }
+          },
+          {
+            "id": 14,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "blocked",
+              "stage": "executing",
+              "message": "正在通过统一 ToolExecutor 执行任务",
+              "tool_call_count": 2,
+              "completed_tool_count": 2
+            }
+          },
+          {
+            "id": 16,
+            "event": "evidence",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "records": [
+                {
+                  "evidence_id": "assess_business_risk:entity:测试-风险供应商:business_risk:0",
+                  "entity_id": "entity:测试-风险供应商",
+                  "monitor_target_id": null,
+                  "dimension": "business_risk",
+                  "provider": "feishu_transaction_snapshot",
+                  "source_type": "feishu_transaction_snapshot",
+                  "endpoint": null,
+                  "query": {},
+                  "status": "available",
+                  "collected_at": "2026-09-19T12:58:20.071613Z",
+                  "valid_until": null,
+                  "data_mode": "formal",
+                  "content_hash": "0e08d67ccf57eb9ad12047917e0cceeaea26ccc7f72b2bd9248b60cd17bee34e",
+                  "raw_payload_ref": null,
+                  "facts": {
+                    "risk_level": "high",
+                    "supplier_spend_share": 0.8571,
+                    "active_supplier_count": 2
+                  }
+                }
+              ],
+              "coverage": {
+                "required_dimensions": [
+                  "business_risk",
+                  "delivery"
+                ],
+                "covered_dimensions": [
+                  "business_risk"
+                ],
+                "missing_dimensions": [
+                  "delivery"
+                ],
+                "required_items": [
+                  "entity:测试-风险供应商:business_risk:*",
+                  "entity:测试-风险供应商:delivery:*"
+                ],
+                "covered_items": [
+                  "entity:测试-风险供应商:business_risk:*"
+                ],
+                "missing_items": [
+                  "entity:测试-风险供应商:delivery:*"
+                ],
+                "coverage_ratio": 0.5
+              }
+            }
+          },
+          {
+            "id": 17,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "evidence_incomplete",
+              "stage": "evidence",
+              "message": "正在校验证据覆盖度与 Claim 引用",
+              "evidence_status": "1/2 已覆盖",
+              "loop_exit_reason": "all_tasks_processed"
+            }
+          },
+          {
+            "id": 19,
+            "event": "agent_answer",
+            "data": {
+              "status": "needs_review",
+              "summary": "已完成 测试-风险供应商 的经营风险检索，但当前没有可验证的明细结果。",
+              "claims": [],
+              "limitations": [
+                "缺少 delivery 维度的正式证据",
+                "工具结果未提供可验证 Claim"
+              ],
+              "action_proposals": [],
+              "action_receipts": [],
+              "evidence_refs": []
+            }
+          },
+          {
+            "id": 20,
+            "event": "evidence",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "records": [
+                {
+                  "evidence_id": "assess_business_risk:entity:测试-风险供应商:business_risk:0",
+                  "entity_id": "entity:测试-风险供应商",
+                  "monitor_target_id": null,
+                  "dimension": "business_risk",
+                  "provider": "feishu_transaction_snapshot",
+                  "source_type": "feishu_transaction_snapshot",
+                  "endpoint": null,
+                  "query": {},
+                  "status": "available",
+                  "collected_at": "2026-09-19T12:58:20.071613Z",
+                  "valid_until": null,
+                  "data_mode": "formal",
+                  "content_hash": "0e08d67ccf57eb9ad12047917e0cceeaea26ccc7f72b2bd9248b60cd17bee34e",
+                  "raw_payload_ref": null,
+                  "facts": {
+                    "risk_level": "high",
+                    "supplier_spend_share": 0.8571,
+                    "active_supplier_count": 2
+                  }
+                }
+              ],
+              "coverage": {
+                "required_dimensions": [
+                  "business_risk",
+                  "delivery"
+                ],
+                "covered_dimensions": [
+                  "business_risk"
+                ],
+                "missing_dimensions": [
+                  "delivery"
+                ],
+                "required_items": [
+                  "entity:测试-风险供应商:business_risk:*",
+                  "entity:测试-风险供应商:delivery:*"
+                ],
+                "covered_items": [
+                  "entity:测试-风险供应商:business_risk:*"
+                ],
+                "missing_items": [
+                  "entity:测试-风险供应商:delivery:*"
+                ],
+                "coverage_ratio": 0.5
+              }
+            }
+          },
+          {
+            "id": 21,
+            "event": "answer_chunk",
+            "data": {
+              "text": "已完成 测试-风险供应商 的经营风险检索，但当前没有可验证的明细结果。"
+            }
+          },
+          {
+            "id": 23,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "正在整理最终回答",
+              "loop_exit_reason": "no_remediation_spec"
+            }
+          },
+          {
+            "id": 24,
+            "event": "references",
+            "data": {
+              "items": [
+                {
+                  "name": "测试-风险供应商",
+                  "kind": "supplier",
+                  "source": "Harness 工具结果"
+                }
+              ]
+            }
+          },
+          {
+            "id": 25,
+            "event": "workflow_status",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "needs_review",
+              "stage": "decision",
+              "message": "本轮 Harness 工作流已完成",
+              "loop_exit_reason": "no_remediation_spec"
+            }
+          },
+          {
+            "id": 26,
+            "event": "done",
+            "data": {
+              "run_id": "46d26ed3-3080-4276-96aa-6313e6f3713c",
+              "status": "needs_review",
+              "answer": "已完成 测试-风险供应商 的经营风险检索，但当前没有可验证的明细结果。"
+            }
+          }
+        ],
+        "passed": true
+      }
+    ]
+  }
+}

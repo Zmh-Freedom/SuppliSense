@@ -1,0 +1,223 @@
+{
+  "Q46": {
+    "id": "Q46",
+    "session": "recovery",
+    "http_status": 200,
+    "observed_terminal": "cancelled",
+    "event_types": [
+      "session",
+      "workflow_status",
+      "done"
+    ],
+    "events": [
+      {
+        "id": null,
+        "event": "session",
+        "data": "83ccb70b-a892-5f78-be6a-a97800d1351e"
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "cancelled",
+          "stage": "cancelled",
+          "message": "本轮 Agent 工作流已取消"
+        }
+      },
+      {
+        "id": null,
+        "event": "done",
+        "data": {
+          "answer": "本轮 Agent 工作流已取消。",
+          "status": "cancelled",
+          "run_id": "0015dae2-cce6-5d47-812e-75c843994aaf"
+        }
+      }
+    ],
+    "passed": true
+  },
+  "Q47": {
+    "id": "Q47",
+    "session": "recovery",
+    "http_status": 200,
+    "observed_terminal": "completed",
+    "event_types": [
+      "session",
+      "workflow_status",
+      "thinking",
+      "workflow_status",
+      "thinking",
+      "workflow_status",
+      "thinking",
+      "workflow_status",
+      "thinking",
+      "workflow_status",
+      "thinking",
+      "workflow_status",
+      "thinking",
+      "workflow_status",
+      "thinking",
+      "answer_chunk",
+      "workflow_status",
+      "done"
+    ],
+    "events": [
+      {
+        "id": null,
+        "event": "session",
+        "data": "83ccb70b-a892-5f78-be6a-a97800d1351e"
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "understand",
+          "message": "正在分析组合寻源与风险任务..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在分析组合寻源与风险任务..."
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "understand",
+          "message": "正在初始化组合任务..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在初始化组合任务..."
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "planning",
+          "message": "正在规划寻源与风险分析任务..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在规划寻源与风险分析任务..."
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "executing",
+          "message": "正在执行供应商专业分析..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在执行供应商专业分析..."
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "evidence",
+          "message": "正在合并供应商证据..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在合并供应商证据..."
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "decision",
+          "message": "正在生成综合决策..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在生成综合决策..."
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "running",
+          "stage": "decision",
+          "message": "正在整理最终回答..."
+        }
+      },
+      {
+        "id": null,
+        "event": "thinking",
+        "data": {
+          "message": "正在整理最终回答..."
+        }
+      },
+      {
+        "id": null,
+        "event": "answer_chunk",
+        "data": {
+          "text": "基于 0 条证据形成风险结论，综合可信度 0.00。"
+        }
+      },
+      {
+        "id": null,
+        "event": "workflow_status",
+        "data": {
+          "status": "completed",
+          "stage": "completed",
+          "message": "本轮 Agent 工作流已完成"
+        }
+      },
+      {
+        "id": null,
+        "event": "done",
+        "data": {
+          "answer": "基于 0 条证据形成风险结论，综合可信度 0.00。"
+        }
+      }
+    ],
+    "passed": true
+  },
+  "Q60": {
+    "http_status": 200,
+    "events": [
+      {
+        "id": 1,
+        "event": "done",
+        "data": {
+          "status": "completed",
+          "fixture": "agent60_644dbbfbc57b464684681da51c01af76"
+        }
+      }
+    ],
+    "run_status": "COMPLETED",
+    "event_count": 1
+  }
+}

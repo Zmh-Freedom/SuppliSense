@@ -115,7 +115,11 @@ def _format_final_answer(
             lines.append(f"{label}：{result.summary}")
     if pending_approvals:
         lines.append(
-            f"已生成 {len(pending_approvals)} 项加入监控操作，等待人工确认后才会写入监控清单。"
+            (
+                f"已生成 {len(pending_approvals)} 项移出监控操作，等待人工确认后才会更新监控清单。"
+                if all(str(item.get("action_type")) == "remove_watchlist" for item in pending_approvals)
+                else f"已生成 {len(pending_approvals)} 项监控操作，等待人工确认后才会更新监控清单。"
+            )
         )
     for status in watchlist_statuses or []:
         if str(status.get("status")) == "already_watching":
@@ -124,6 +128,8 @@ def _format_final_answer(
         elif str(status.get("status")) == "identity_required":
             name = str(status.get("company_name") or "该企业")
             lines.append(f"{name} 尚未完成主体核验，暂不能加入风险监控清单；请先确认正式企业主体。")
+        elif str(status.get("status")) == "batch_scope_requires_review":
+            lines.append("已识别为批量加入监控请求，但批量范围需要人工确认；系统不会在未审批时写入任何供应商。")
     return "\n\n".join(lines)
 
 
@@ -212,19 +218,25 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
     # verify the identity of a monitoring target may contain the word
     # “监控”, but it is read-only and must not create an add-watchlist proposal.
     requested_action = intent.get("requested_action")
-    if requested_action not in {"add_watchlist", "none"}:
+    if requested_action not in {
+        "add_watchlist", "remove_watchlist", "batch_add_watchlist",
+        "manage_scheduled_report", "none",
+    }:
         requested_action = "none"
     if requested_action == "none" and intent.get("request_watchlist") is True:
         # Compatibility for persisted supervisor states created before the
         # structured requested_action field existed.
         requested_action = "add_watchlist"
     intent["requested_action"] = requested_action
-    intent["request_watchlist"] = requested_action == "add_watchlist"
+    intent["request_watchlist"] = requested_action in {
+        "add_watchlist", "remove_watchlist", "batch_add_watchlist",
+    }
+    intent["request_action"] = requested_action
     # Adding a supplier to monitoring is a write request, not a sourcing
     # requirement.  Do not spend the 30-second sourcing LLM extraction budget
     # on this branch; the target identity was already resolved by the shared
     # conversation context and the action will be gated by approval.
-    if "requirement" not in intent and not intent.get("request_watchlist"):
+    if "requirement" not in intent and not intent.get("request_watchlist") and requested_action != "manage_scheduled_report":
         from app.domains.sourcing_risk.requirement_service import parse_requirement
 
         parsed = await _call_sync(parse_requirement, state.get("user_query", ""))
@@ -234,7 +246,13 @@ async def plan_task(state: AgentTaskState) -> dict[str, Any]:
             fallback = fallback_requirement_from_query(state.get("user_query", ""))
             if fallback:
                 intent["requirement"] = fallback
-    plan = plan_agent_task(state.get("user_query", ""), intent)
+    # Explicit side-effect requests must never be expanded into read-only
+    # risk tasks just because the wording also contains “风险/监控”.
+    plan = (
+        TaskPlan(tasks=[])
+        if requested_action != "none"
+        else plan_agent_task(state.get("user_query", ""), intent)
+    )
     serialized = plan.model_dump(mode="json")
     current_task = intent.get("current_task")
     current_task = current_task if isinstance(current_task, dict) else {}
@@ -407,21 +425,69 @@ async def execute_ready_tasks(state: AgentTaskState) -> dict[str, Any]:
             target.setdefault("target_type", "formal_supplier")
         return target
 
-    if isinstance(intent, dict) and intent.get("request_watchlist") and isinstance(target_names, list):
+    requested_action = str(intent.get("requested_action") or "none") if isinstance(intent, dict) else "none"
+    if requested_action == "none" and isinstance(intent, dict) and intent.get("request_watchlist") is True:
+        # Compatibility for persisted supervisor states created before the
+        # explicit action discriminator was added.
+        requested_action = "add_watchlist"
+    if requested_action == "batch_add_watchlist":
+        watchlist_statuses.append({
+            "status": "batch_scope_requires_review",
+            "scope": "all_visible_suppliers",
+        })
+    if requested_action in {"add_watchlist", "remove_watchlist"} and isinstance(target_names, list):
         resolved_targets = [
             monitor_target(company_name)
             for company_name in target_names
             if isinstance(company_name, str) and company_name.strip()
         ]
         recommendations.extend({
-            "action_type": "add_watchlist",
+            "action_type": requested_action,
             "target": target,
-            "reason": "用户要求对该供应商持续进行风险监控。",
-            "impact": "加入本地风险监控清单，后续定时检查风险与舆情变化。",
+            "reason": (
+                "用户要求对该供应商持续进行风险监控。"
+                if requested_action == "add_watchlist"
+                else "用户要求停止对该供应商进行风险监控。"
+            ),
+            "impact": (
+                "加入本地风险监控清单，后续定时检查风险与舆情变化。"
+                if requested_action == "add_watchlist"
+                else "从本地风险监控清单移除该对象，后续不再产生监控任务。"
+            ),
             "requires_approval": True,
         } for target in resolved_targets
-          if not target.get("already_monitored")
+          if (
+              (
+                  requested_action == "add_watchlist" and not target.get("already_monitored")
+              )
+              or (
+                  requested_action == "remove_watchlist" and target.get("already_monitored")
+              )
+          )
           and (not target.get("identity_required") or target.get("external_identity")))
+    if requested_action == "manage_scheduled_report" and isinstance(target_names, list):
+        # Scheduling a report is a durable write and must reach the same
+        # approval proposal boundary as monitoring mutations.  Do not run a
+        # risk task merely because the request contains the word “风险”.
+        for company_name in target_names:
+            if not isinstance(company_name, str) or not company_name.strip():
+                continue
+            target = monitor_target(company_name)
+            if target.get("identity_required") and not target.get("external_identity"):
+                continue
+            target.update({
+                "action": "create",
+                "company_names": [company_name],
+                "cron": "weekly",
+                "report_type": "excel",
+            })
+            recommendations.append({
+                "action_type": "manage_scheduled_report",
+                "target": target,
+                "reason": "用户要求为该供应商设置每周风险报告。",
+                "impact": "创建每周风险报告任务并按配置生成报告。",
+                "requires_approval": True,
+            })
     return {
         "agent_results": {
             task_id: result.model_dump(mode="json")
