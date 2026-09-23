@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from app.core.config import settings
 from app.core.llm_compat import completion_token_options
 from app.core.logging import get_logger
+from app.core.structured_response import parse_json_object_content
 from app.domains.sourcing_risk.requirement_service import SourcingRequirement
 from app.graphs.agent_core.capability_routing import (
     normalize_analysis_dimensions,
@@ -204,11 +205,12 @@ def extract_conversation_intent(
             **completion_token_options(700),
             timeout=float(os.getenv("LLM_INTENT_EXTRACTION_TIMEOUT", "8")),
         )
-        content = response.choices[0].message.content or ""
-        if not content.strip():
-            raise ValueError("LLM 意图响应为空")
         return ConversationIntentExtraction.model_validate(
-            _normalize_llm_payload(json.loads(content))
+            _normalize_llm_payload(parse_json_object_content(
+                response.choices[0].message.content,
+                operation="intent_extraction",
+                response=response,
+            ))
         )
 
     try:
@@ -260,8 +262,12 @@ def extract_conversation_intent(
     from app.services.conversation_state import resolve_supplier_target_selection
 
     deterministic_target = resolve_supplier_target_selection(message, supplier_references)
+    restored_targets = _restore_truncated_target_prefixes(
+        message,
+        extracted.target_supplier_names,
+    )
     validated_targets = validate_extracted_targets(
-        extracted.target_supplier_names, supplier_references
+        restored_targets, supplier_references
     )
     if deterministic_target.reason in {"explicit_full_name", "explicit_name_or_alias"}:
         validated_targets = deterministic_target.target_supplier_names
@@ -443,6 +449,39 @@ def validate_extracted_targets(
         for target in targets
         if isinstance(target, str) and target.strip()
     ))
+
+
+def _restore_truncated_target_prefixes(message: str, targets: list[str]) -> list[str]:
+    """Restore a single dropped leading Han character from an explicit query.
+
+    This only applies when the company mention is directly before ``的`` and
+    the extracted target equals every character after the mention's first
+    character. It cannot expand arbitrary model guesses from surrounding text.
+    """
+    normalized_message = re.sub(r"\s+", "", message)
+    match = re.match(
+        r"^(?P<mention>.+?)的(?=(?:综合|整体)?(?:风险|财务|营收|净利润|合规|舆情|新闻|ESG|交付|质量))",
+        normalized_message,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return targets
+    explicit_mention = normalize_company_mention(match.group("mention"))
+    if not explicit_mention:
+        return targets
+
+    restored: list[str] = []
+    for target in targets:
+        normalized_target = normalize_company_mention(target)
+        if (
+            len(explicit_mention) == len(normalized_target) + 1
+            and explicit_mention[1:] == normalized_target
+            and re.fullmatch(r"[\u4e00-\u9fff]", explicit_mention[0])
+        ):
+            restored.append(explicit_mention)
+        else:
+            restored.append(target)
+    return restored
 
 
 def _normalize_llm_payload(payload: Any) -> Any:

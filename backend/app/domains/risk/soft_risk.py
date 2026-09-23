@@ -10,6 +10,7 @@ from openai import OpenAI
 from app.core.cache import cache_client
 from app.core.config import settings
 from app.core.llm_compat import completion_token_options
+from app.core.structured_response import StructuredResponseError, parse_json_object_content
 
 logger = logging.getLogger(__name__)
 
@@ -107,28 +108,56 @@ def _call_llm(company_name: str, context: dict[str, Any] | None) -> dict | None:
 输出格式：
 {{"dimensions": {{"舆情风险": {{"score": 整数, "reason": "理由"}}, "ESG风险": ..., "宏观风险": ..., "管理风险": ...}}, "summary": "一句话总结主要风险点"}}"""
 
-    try:
-        response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
-            **completion_token_options(600),
-            timeout=30,
-        )
-        content = response.choices[0].message.content
-        if not content:
+    for attempt in range(2):
+        request_prompt = prompt
+        if attempt:
+            request_prompt += "\n上一轮响应为空或不是合法 JSON。请只返回完整 JSON 对象，不要代码围栏、解释或截断。"
+        try:
+            response = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=[{"role": "user", "content": request_prompt}],
+                temperature=0,
+                response_format={"type": "json_object"},
+                **completion_token_options(600),
+                timeout=30,
+            )
+            result = parse_json_object_content(
+                response.choices[0].message.content,
+                operation="soft_risk",
+                response=response,
+            )
+            dimensions = result.get("dimensions")
+            if not isinstance(dimensions, dict) or not isinstance(result.get("summary"), str):
+                raise StructuredResponseError("missing_required_fields")
+            for dim in SOFT_DIMENSIONS:
+                item = dimensions.get(dim)
+                if item is None:
+                    dimensions[dim] = {"score": 0, "reason": "未分析"}
+                    continue
+                if not isinstance(item, dict):
+                    raise StructuredResponseError("invalid_dimension")
+                score = item.get("score")
+                reason = item.get("reason")
+                if (
+                    not isinstance(score, int)
+                    or isinstance(score, bool)
+                    or not 0 <= score <= SOFT_DIMENSIONS[dim]["max_score"]
+                    or not isinstance(reason, str)
+                ):
+                    raise StructuredResponseError("invalid_dimension")
+            return result
+        except StructuredResponseError as exc:
+            logger.warning(
+                "soft_risk_llm_invalid company=%s attempt=%s reason=%s",
+                company_name,
+                attempt + 1,
+                exc.kind,
+            )
+            if attempt == 0:
+                continue
+        except Exception as exc:
+            # This module uses the standard-library logger; pass context through
+            # the message arguments instead of structlog-style keyword fields.
+            logger.warning("soft_risk_llm_failed company=%s error=%s", company_name, str(exc))
             return None
-        result = json.loads(content)
-        # Validate structure
-        if "dimensions" not in result or "summary" not in result:
-            return None
-        for dim in SOFT_DIMENSIONS:
-            if dim not in result["dimensions"]:
-                result["dimensions"][dim] = {"score": 0, "reason": "未分析"}
-        return result
-    except Exception as e:
-        # This module uses the standard-library logger; pass context through
-        # the message arguments instead of structlog-style keyword fields.
-        logger.warning("soft_risk_llm_failed company=%s error=%s", company_name, str(e))
-        return None
+    return None

@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.core.config import settings
 from app.core.llm_compat import completion_token_options
 from app.core.logging import get_logger
+from app.core.structured_response import parse_json_object_content
 from app.graphs.agent_core.answer_contract import AgentAnswer
 
 logger = get_logger()
@@ -183,13 +184,11 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             **completion_token_options(1800),
             timeout=float(os.getenv("LLM_NARRATION_TIMEOUT", "8")),
         )
-        content = response.choices[0].message.content or "{}"
-        payload = json.loads(content)
-        if isinstance(payload, dict) and payload.get("type") == "json_object":
-            nested_payload = payload.get("content")
-            payload = nested_payload if isinstance(nested_payload, dict) else {
-                key: value for key, value in payload.items() if key != "type"
-            }
+        payload = parse_json_object_content(
+            response.choices[0].message.content,
+            operation="answer_narration",
+            response=response,
+        )
         draft = NarrativeDraft.model_validate(payload)
         if article_count > 0 and any(
             phrase in draft.body_markdown

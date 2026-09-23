@@ -105,6 +105,33 @@ def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeyp
     assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
 
 
+def test_llm_extractor_restores_a_truncated_leading_character_from_explicit_query(monkeypatch):
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                    "capability": "risk",
+                    "target_supplier_names": ["亚迪"],
+                    "analysis_dimensions": ["risk"],
+                    "task_type": "analysis",
+                })))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "请分析一下比亚迪的综合风险", []
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["比亚迪"]
+
+
 def test_llm_extractor_falls_back_to_quoted_company_name_when_model_omits_target(monkeypatch):
     """Quoted legal names remain executable when the model returns no target."""
     class FakeCompletions:

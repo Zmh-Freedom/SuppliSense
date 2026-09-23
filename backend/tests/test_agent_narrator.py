@@ -127,3 +127,22 @@ def test_narrator_falls_back_when_llm_is_not_configured(monkeypatch) -> None:
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "")
 
     assert narrate_answer(answer, "复核青岛三祥科技股份有限公司") is answer
+
+
+def test_narrator_falls_back_when_provider_returns_empty_content(monkeypatch) -> None:
+    answer = _answer()
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(
+                        message=SimpleNamespace(content=""),
+                        finish_reason="stop",
+                    )], usage=SimpleNamespace(completion_tokens=0))
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    assert narrate_answer(answer, "复核青岛三祥科技股份有限公司") is answer

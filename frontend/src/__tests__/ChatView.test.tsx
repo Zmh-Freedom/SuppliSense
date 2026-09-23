@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamCallbacks } from '../api'
+import type { AgentAnswer } from '../types'
 import ChatView from '../components/ChatView'
 
 const mocks = vi.hoisted(() => ({
@@ -92,6 +93,74 @@ describe('ChatView session lifecycle', () => {
     await user.type(input, ' \u3000\n\t ')
     expect(send).toBeDisabled()
     expect(mocks.chatStream).not.toHaveBeenCalled()
+  })
+
+  it('uses the structured answer summary when the done event has no text', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '宁德时代综合风险分析结果',
+        claims: [],
+        limitations: [],
+        action_proposals: [],
+        action_receipts: [],
+        evidence_refs: [],
+      } satisfies AgentAnswer)
+      handlers.onDone?.({ answer: '', status: 'completed' })
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析宁德时代的风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ msgs: Array<{ role: string; content: string }> }>
+      expect(storedSessions[0].msgs.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '宁德时代综合风险分析结果',
+      })
+    })
+  })
+
+  it('persists a visible status when the stream closes without a terminal event', async () => {
+    mocks.chatStream.mockResolvedValue('')
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText(/连接已结束，但服务端没有返回最终结果/)).toBeInTheDocument()
+  })
+
+  it('replays a persisted terminal answer after a clean stream close', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onRun?.({ run_id: 'run-replay' })
+      return ''
+    })
+    mocks.chatRunEventStream.mockImplementation(async (_runId: string, _lastEventId: number | null, handlers: { onEvent: (event: { eventType: string; data: unknown; eventId: number }) => void }) => {
+      handlers.onEvent({
+        eventType: 'done',
+        data: { answer: '从事件回放恢复的回答', status: 'completed' },
+        eventId: 3,
+      })
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ msgs: Array<{ role: string; content: string }> }>
+      expect(storedSessions[0].msgs.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '从事件回放恢复的回答',
+      })
+    })
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-replay', null, expect.any(Object))
   })
 
   it('offers a canonical supplier choice after a short-name clarification', async () => {

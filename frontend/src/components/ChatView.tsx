@@ -360,10 +360,13 @@ export default function ChatView() {
         onDone: (data) => {
           receivedTerminalEvent = true;
           const pendingApproval = approvalAccRef.current;
-          const rawAnswer = answerAccRef.current || data.answer;
-          const finalAnswer = normalizeApprovalAnswer(rawAnswer);
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
+          const rawAnswer = answerAccRef.current.trim()
+            || data.answer?.trim()
+            || agentAnswerAccRef.current?.summary?.trim()
+            || '本轮分析已结束，但服务端没有返回可展示的回答。请查看执行详情后重试。';
+          const finalAnswer = normalizeApprovalAnswer(rawAnswer);
           const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
@@ -457,6 +460,41 @@ export default function ChatView() {
 
     try {
       await chatStream(text, sid, streamCallbacks, 'auto');
+      if (!receivedTerminalEvent) {
+        if (runId) {
+          try {
+            await chatRunEventStream(runId, lastEventId, {
+              onEvent: (event) => {
+                dispatchStreamEvent(event.eventType, event.data, streamCallbacks);
+                lastEventId = event.eventId;
+              },
+            });
+          } catch (replayError) {
+            console.error('Chat event replay after stream close failed:', replayError);
+          }
+        }
+        if (!receivedTerminalEvent) {
+          const message = '连接已结束，但服务端没有返回最终结果。请在执行详情中确认状态后重试。';
+          const structuredAnswer = agentAnswerAccRef.current as AgentAnswer | undefined;
+          const failedWorkflow = {
+            ...workflowAccRef.current,
+            status: 'needs_review' as const,
+            stage: 'decision',
+            message,
+          };
+          workflowAccRef.current = failedWorkflow;
+          persist(sid, [...newMsgs, {
+            role: 'assistant',
+            content: structuredAnswer?.summary?.trim() || message,
+            references: referencesAccRef.current,
+            evidence: evidenceAccRef.current,
+            agentAnswer: structuredAnswer,
+            workflow: failedWorkflow,
+          }]);
+          setStreamState(null);
+          setLoading(false);
+        }
+      }
     } catch (err) {
       if (runId && !receivedTerminalEvent) {
         try {

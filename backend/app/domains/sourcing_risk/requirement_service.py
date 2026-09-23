@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, Validat
 
 from app.core.config import settings
 from app.core.llm_compat import completion_token_options
+from app.core.structured_response import parse_json_object_content
 
 REQUIRED_FIELDS = ("category", "specification")
 MULTI_CATEGORY_SEPARATORS = ("、", ",", "，", "/")
@@ -82,8 +83,11 @@ def extract_requirement(
         **completion_token_options(600),
         timeout=30,
     )
-    content = response.choices[0].message.content
-    return json.loads(content or "{}")
+    return parse_json_object_content(
+        response.choices[0].message.content,
+        operation="sourcing_requirement",
+        response=response,
+    )
 
 
 def repair_requirement(

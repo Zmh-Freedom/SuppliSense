@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.llm_compat import completion_token_options
+from app.core.structured_response import parse_json_object_content
 from app.core.cache import cached, invalidate_cache, cache_client
 from app.db.mongo import get_db
 from app.domains.risk.news_sources import collect_public_news
@@ -90,11 +91,11 @@ def _call_llm(prompt: str) -> dict | None:
             temperature=0.1,
             **completion_token_options(2048),
         )
-        text = resp.choices[0].message.content or "{}"
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("\n", 1)[0]
-        return json.loads(text)
+        return parse_json_object_content(
+            resp.choices[0].message.content,
+            operation="sentiment_analysis",
+            response=resp,
+        )
     except Exception as e:
         logger.warning("LLM sentiment call failed: %s", e)
         return None
