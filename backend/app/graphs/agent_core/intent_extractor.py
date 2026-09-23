@@ -11,6 +11,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
 from app.core.logging import get_logger
 from app.domains.sourcing_risk.requirement_service import SourcingRequirement
 from app.graphs.agent_core.capability_routing import (
@@ -200,7 +201,7 @@ def extract_conversation_intent(
             messages=messages,
             temperature=0,
             response_format={"type": "json_object"},
-            max_tokens=700,
+            **completion_token_options(700),
             timeout=float(os.getenv("LLM_INTENT_EXTRACTION_TIMEOUT", "8")),
         )
         content = response.choices[0].message.content or ""

@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from app.core.cache import cache_client
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ def _call_llm(company_name: str, context: dict[str, Any] | None) -> dict | None:
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
             response_format={"type": "json_object"},
-            max_tokens=600,
+            **completion_token_options(600),
             timeout=30,
         )
         content = response.choices[0].message.content

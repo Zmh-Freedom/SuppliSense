@@ -22,6 +22,7 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
 from app.core.cache import cached, invalidate_cache, cache_client
 from app.db.mongo import get_db
 from app.domains.risk.news_sources import collect_public_news
@@ -87,7 +88,7 @@ def _call_llm(prompt: str) -> dict | None:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=2048,
+            **completion_token_options(2048),
         )
         text = resp.choices[0].message.content or "{}"
         text = text.strip()

@@ -12,6 +12,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
 from app.core.logging import get_logger
 from app.graphs.agent_core.answer_contract import AgentAnswer
 
@@ -179,11 +180,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             ],
             temperature=0.1,
             response_format={"type": "json_object"},
-            # DeepSeek reasoning models may spend part of the generation
-            # budget on hidden reasoning before emitting JSON.  Keep the
-            # visible answer short, but leave enough room for the object to
-            # finish instead of returning a truncated/empty content field.
-            max_tokens=1800,
+            **completion_token_options(1800),
             timeout=float(os.getenv("LLM_NARRATION_TIMEOUT", "8")),
         )
         content = response.choices[0].message.content or "{}"

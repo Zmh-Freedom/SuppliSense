@@ -8,6 +8,7 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
 
 REQUIRED_FIELDS = ("category", "specification")
 MULTI_CATEGORY_SEPARATORS = ("、", ",", "，", "/")
@@ -78,7 +79,7 @@ def extract_requirement(
         ],
         temperature=0,
         response_format={"type": "json_object"},
-        max_tokens=600,
+        **completion_token_options(600),
         timeout=30,
     )
     content = response.choices[0].message.content

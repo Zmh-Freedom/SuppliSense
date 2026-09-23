@@ -1,5 +1,31 @@
 # 项目问题记录
 
+## ISS-20260923-001 MiniMax-M3 使用控制台域名导致聊天模型请求 404
+
+- 发现日期：2026-09-23
+- 状态：已关闭
+- 优先级：P0（聊天模型调用阻断）
+- 用例：MiniMax-M3 意图抽取及 Harness 聊天调用
+- 现象：浏览器提交聊天问题后只显示用户消息，没有助手答案；后端意图抽取请求返回 HTTP 404。
+- 影响：意图抽取、回答生成及其他共用该 LLM 配置的功能无法调用 MiniMax-M3。
+- 根因：`backend/.env` 将 `LLM_BASE_URL` 配成控制台地址 `https://platform.minimaxi.com`。OpenAI SDK 在其后追加 `/chat/completions`，最终请求到了不提供模型 API 的控制台主机。改正地址后进一步发现，当前 Harness 抽取请求以 `max_tokens=700` 调用 M3 时返回空的可见内容；M3 在该请求配置下把生成预算用于思考，导致结构化抽取进入重试和确定性回退。
+- 修复方案：把本地中国区 MiniMax API 的 `LLM_BASE_URL` 改为 `https://api.minimax.cn/v1`；在 `backend/.env.example` 中补充 MiniMax-M3 的正确 OpenAI-compatible 配置示例，保留现有 DeepSeek 默认示例。对 M3 请求使用 `max_completion_tokens` 并显式关闭思考，同时保留其他模型现有请求参数。
+- 验证结果：已将本机 `backend/.env` 指向 MiniMax 中国区 API。真实调用验证 `max_completion_tokens` 加 `thinking.type=disabled` 可返回合法 JSON；Harness 意图抽取返回 `risk / analysis`，共享 LangChain 客户端返回非空回答。一次抽取调用的首个响应无效，现有重试收到有效结果。`python -m compileall -q app` 和 `git diff --check` 均通过；未运行 pytest。
+- 关联提交：e3f2b0c1。
+
+## ISS-20260923-002 意图抽取遗漏公司名称首字
+
+- 发现日期：2026-09-23
+- 状态：待处理
+- 优先级：P2（供应商实体识别准确性）
+- 用例：Harness 风险意图抽取
+- 现象：输入“请分析一下比亚迪的综合风险”时，意图抽取结果将供应商名称识别为“亚迪”。
+- 影响：后续供应商解析可能无法准确匹配用户点名的主体。
+- 根因：待排查，当前仅在 MiniMax-M3 连通验证中观察到一次。
+- 修复方案：排查意图抽取原始实体输出、名称归一化及供应商解析流程，增加覆盖简称/全称的验证样例。
+- 验证结果：2026-09-23 真实 MiniMax-M3 Harness 抽取调用复现，`target_supplier_names=['亚迪']`。
+- 关联提交：e3f2b0c1（发现记录；问题仍待修复）。
+
 ## DOC-20260916-006 用户手册将线下补证、任务关闭及后台运维描述为当前页面操作
 
 - 发现日期：2026-09-16

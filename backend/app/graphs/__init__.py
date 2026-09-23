@@ -4,6 +4,7 @@ import os
 from langchain_openai import ChatOpenAI
 
 from app.core.config import settings
+from app.core.llm_compat import is_minimax_m3
 
 # Retry configuration
 LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
@@ -39,6 +40,11 @@ def build_shared_llm(streaming: bool = False) -> ChatOpenAI:
     - 60s 超时
     - temperature=0
     """
+    provider_options = (
+        {"extra_body": {"thinking": {"type": "disabled"}}}
+        if is_minimax_m3()
+        else {}
+    )
     return ChatOpenAI(
         base_url=settings.LLM_BASE_URL,
         api_key=settings.LLM_API_KEY,
@@ -47,4 +53,5 @@ def build_shared_llm(streaming: bool = False) -> ChatOpenAI:
         streaming=streaming,
         max_retries=LLM_MAX_RETRIES,
         timeout=LLM_TIMEOUT,
+        **provider_options,
     )
