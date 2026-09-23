@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ApprovalData } from '../api';
 import type { AgentWorkflowSnapshot } from '../types';
 
@@ -26,6 +26,7 @@ export interface AgentWorkflowState {
   error?: string;
   done?: boolean;
   workflowStatus?: AgentWorkflowSnapshot;
+  queryText?: string;
 }
 
 interface AgentWorkflowPanelProps {
@@ -33,75 +34,122 @@ interface AgentWorkflowPanelProps {
   onApproval: (approved: boolean) => void;
 }
 
-type PhaseStatus = 'pending' | 'running' | 'complete' | 'error';
+type MilestoneStatus = 'pending' | 'running' | 'complete' | 'waiting' | 'error';
+type JourneyKind = 'risk' | 'comparison' | 'sourcing';
 
-const PHASES = [
-  { key: 'understand', label: '理解需求', icon: '◎' },
-  { key: 'plan', label: '任务规划', icon: '≡' },
-  { key: 'agents', label: 'Agent 执行', icon: '◇' },
-  { key: 'evidence', label: '证据汇总', icon: '▤' },
-  { key: 'decision', label: '风险决策', icon: '✓' },
-] as const;
+const JOURNEYS: Record<JourneyKind, Array<{ label: string; action: string }>> = {
+  risk: [
+    { label: '确认分析对象', action: '正在确认供应商信息' },
+    { label: '查询企业和风险信息', action: '正在查询企业和风险信息' },
+    { label: '核对近期风险证据', action: '正在核对近期风险证据' },
+    { label: '整理风险要点和来源', action: '正在整理风险要点和来源' },
+  ],
+  comparison: [
+    { label: '确认对比对象', action: '正在确认对比对象' },
+    { label: '收集双方相关数据', action: '正在收集双方相关数据' },
+    { label: '对齐风险与业务差异', action: '正在对齐风险与业务差异' },
+    { label: '整理对比结果和来源', action: '正在整理对比结果和来源' },
+  ],
+  sourcing: [
+    { label: '确认采购条件', action: '正在确认采购条件' },
+    { label: '搜索候选供应商', action: '正在搜索候选供应商' },
+    { label: '核对交付与风险信息', action: '正在核对交付与风险信息' },
+    { label: '整理候选对比和来源', action: '正在整理候选对比和来源' },
+  ],
+};
 
-function statusText(status: PhaseStatus): string {
+function statusText(status: MilestoneStatus): string {
   if (status === 'running') return '进行中';
   if (status === 'complete') return '已完成';
+  if (status === 'waiting') return '待你处理';
   if (status === 'error') return '异常';
   return '待开始';
 }
 
-function phaseStatus(state: AgentWorkflowState, index: number): PhaseStatus {
+function journeyKind(queryText?: string): JourneyKind {
+  if (/对比|比较|差异|区别|优劣|哪家更|哪个好/.test(queryText || '')) return 'comparison';
+  if (/寻源|找.{0,8}供应商|推荐.{0,8}供应商|候选供应商|替代.{0,4}供应商|供应商推荐/.test(queryText || '')) return 'sourcing';
+  return 'risk';
+}
+
+function candidateMilestone(state: AgentWorkflowState): number {
+  const workflow = state.workflowStatus;
+  if (!workflow) return state.done ? 3 : state.toolCalls.length > 0 ? 1 : 0;
+  if (['completed', 'needs_review', 'partial'].includes(workflow.status)) return 3;
+  if (workflow.status === 'clarifying') return 0;
+  if (workflow.status === 'waiting_approval') return 3;
+  if (workflow.stage === 'decision') return 3;
+  if (workflow.stage === 'evidence' || workflow.completedToolCount > 0 || state.toolCalls.some(call => call.result !== undefined)) return 2;
+  if (workflow.stage === 'executing' || workflow.stage === 'planning' || state.plan || state.agents || state.toolCalls.length > 0) return 1;
+  return 0;
+}
+
+function milestoneStatus(state: AgentWorkflowState, index: number, activeIndex: number): MilestoneStatus {
   const lifecycle = state.workflowStatus?.status;
-  const stageIndex: Record<string, number> = {
-    understand: 0,
-    planning: 1,
-    executing: 2,
-    evidence: 3,
-    decision: 4,
-    approval: 4,
-    completed: 4,
-    rejected: 4,
+  if (lifecycle === 'completed') return 'complete';
+  if (lifecycle === 'needs_review' || lifecycle === 'partial') {
+    if (index < 3) return 'complete';
+    return 'waiting';
+  }
+  if (lifecycle === 'waiting_approval') {
+    if (index < 3) return 'complete';
+    return 'waiting';
+  }
+  if (lifecycle === 'clarifying') {
+    return index === 0 ? 'waiting' : 'pending';
+  }
+  if (lifecycle === 'failed' || state.error) {
+    if (index < activeIndex) return 'complete';
+    return index === activeIndex ? 'error' : 'pending';
+  }
+  if (lifecycle === 'rejected' || lifecycle === 'stopped' || lifecycle === 'cancelled') {
+    if (index < activeIndex) return 'complete';
+    return index === activeIndex ? 'waiting' : 'pending';
+  }
+  if (state.done) return 'complete';
+  if (index < activeIndex) return 'complete';
+  return index === activeIndex ? 'running' : 'pending';
+}
+
+function lifecycleLabel(status?: string): string {
+  const labels: Record<string, string> = {
+    running: '正在处理',
+    waiting_approval: '等待你确认',
+    completed: '本轮查询已完成',
+    partial: '部分结果待复核',
+    needs_review: '需要人工复核',
+    failed: '执行遇到问题',
+    clarifying: '需要补充信息',
+    stopped: '本轮已停止',
+    cancelled: '本轮已取消',
+    rejected: '操作已拒绝',
   };
-  const currentStage = state.workflowStatus?.stage;
-  if (lifecycle === 'completed' || lifecycle === 'needs_review' || lifecycle === 'rejected') return 'complete';
-  if (currentStage === 'decision' && lifecycle !== 'running') return 'complete';
-  if (lifecycle === 'failed') return index >= (stageIndex[currentStage || ''] ?? 2) ? 'error' : 'complete';
-  if (lifecycle === 'partial') return index >= (stageIndex[currentStage || ''] ?? 3) ? 'error' : 'complete';
-  if (lifecycle === 'waiting_approval') return index < 4 ? 'complete' : index === 4 ? 'running' : 'pending';
-  if (lifecycle === 'stopped' || lifecycle === 'clarifying') return index === 0 ? 'complete' : 'pending';
-  if (lifecycle === 'running' && currentStage && currentStage in stageIndex) {
-    const currentIndex = stageIndex[currentStage];
-    if (index < currentIndex) return 'complete';
-    if (index === currentIndex) return 'running';
-    return 'pending';
+  return labels[status || ''] || '正在处理';
+}
+
+function lifecycleIndicatorClass(status: string, isRunning: boolean): string {
+  if (isRunning) return 'animate-pulse bg-blue-600';
+  if (status === 'failed') return 'bg-red-600';
+  if (['needs_review', 'partial', 'waiting_approval', 'clarifying', 'stopped', 'cancelled', 'rejected'].includes(status)) return 'bg-amber-500';
+  return 'bg-emerald-600';
+}
+
+function currentAction(state: AgentWorkflowState, journey: JourneyKind, activeIndex: number): string {
+  const lifecycle = state.workflowStatus?.status;
+  const message = state.workflowStatus?.message?.trim();
+  if (lifecycle === 'clarifying' || lifecycle === 'failed' || lifecycle === 'waiting_approval' || lifecycle === 'rejected' || lifecycle === 'stopped' || lifecycle === 'cancelled') {
+    return message || lifecycleLabel(lifecycle);
   }
-  if (state.error && index >= 2) return 'error';
-  if (index === 0) {
-    if (state.thinking || state.plan || state.agents) return 'complete';
-    return state.done ? 'complete' : 'running';
-  }
-  if (index === 1) {
-    if (state.plan) return state.agents || state.toolCalls.length > 0 ? 'complete' : 'running';
-    return state.agents || state.toolCalls.length > 0 ? 'complete' : 'pending';
-  }
-  if (index === 2) {
-    if (state.agents) {
-      const statuses = Object.values(state.agents.status);
-      if (statuses.some(status => status === 'error')) return 'error';
-      if (statuses.length > 0 && statuses.every(status => status === 'complete')) return 'complete';
-      return 'running';
-    }
-    return state.toolCalls.length > 0 ? 'running' : 'pending';
-  }
-  if (index === 3) {
-    if (state.toolCalls.some(call => call.result !== undefined)) {
-      return state.approval || state.answerStarted ? 'complete' : 'running';
-    }
-    return state.toolCalls.length > 0 ? 'running' : 'pending';
-  }
-  if (state.error) return 'error';
-  if (state.approval) return 'running';
-  return state.done ? 'complete' : state.toolCalls.length > 0 ? 'running' : 'pending';
+  if (lifecycle === 'needs_review' || lifecycle === 'partial') return '结果已整理，建议核对证据和引用来源';
+  if (lifecycle === 'completed' || state.done) return '本轮分析已完成';
+  const target = state.workflowStatus?.targetSuppliers[0];
+  const action = JOURNEYS[journey][Math.min(activeIndex, 3)].action;
+  return target ? `${action} · ${target}` : action;
+}
+
+function elapsedLabel(seconds: number): string {
+  if (seconds < 60) return `已用时 ${seconds} 秒`;
+  return `已用时 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 
 function compactJson(value: unknown): string {
@@ -166,21 +214,6 @@ function sourceLabel(source: string): string {
   return labels[source] || '已核验数据来源';
 }
 
-function lifecycleLabel(status: string): string {
-  const labels: Record<string, string> = {
-    running: '执行中',
-    waiting_approval: '等待人工确认',
-    completed: '已完成',
-    partial: '部分完成',
-    needs_review: '需人工复核',
-    failed: '失败',
-    clarifying: '等待澄清',
-    stopped: '已停止',
-    rejected: '已拒绝',
-  };
-  return labels[status] || status;
-}
-
 function stageLabel(stage?: string): string {
   const labels: Record<string, string> = {
     understand: '理解需求',
@@ -228,14 +261,32 @@ function externalIdentityFromApprovalArgs(args: Record<string, unknown>): Record
 }
 
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
-  const [expanded, setExpanded] = useState(() => {
-    const lifecycle = state.workflowStatus?.status;
-    return lifecycle !== 'completed' && lifecycle !== 'partial' && lifecycle !== 'needs_review' && lifecycle !== 'failed' && lifecycle !== 'rejected';
-  });
+  const [expanded, setExpanded] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);
+  const workflow = state.workflowStatus;
+  const lifecycle = workflow?.status || (state.error ? 'failed' : state.done ? 'completed' : 'running');
+  const journey = journeyKind(state.queryText);
+  const candidateIndex = candidateMilestone(state);
+  const runId = workflow?.runId;
+  const [progress, setProgress] = useState({ runId, index: candidateIndex });
+  if (progress.runId !== runId || candidateIndex > progress.index) {
+    setProgress({ runId, index: candidateIndex });
+  }
+  const activeIndex = progress.runId === runId ? Math.max(progress.index, candidateIndex) : candidateIndex;
+  const isRunning = lifecycle === 'running' && !state.done && !state.error;
+  const action = currentAction(state, journey, activeIndex);
   const externalProfile = state.approval ? externalIdentityFromApprovalArgs(state.approval.args) : null;
   const isExternalIdentityConfirmation = Boolean(externalProfile);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const startedAt = Date.now();
+    const updateElapsed = () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    const intervalId = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [isRunning, runId]);
 
   const handleApproval = (approved: boolean) => {
     setApprovalTarget(approved ? 'approve' : 'reject');
@@ -243,57 +294,60 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   };
 
   return (
-    <section className="w-full max-w-full overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="执行详情">
-      <button
-        type="button"
-        onClick={() => setExpanded(value => !value)}
-        aria-expanded={expanded}
-        className="flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-3 text-left"
-      >
-        <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
-          <span aria-hidden="true" className="text-[var(--color-primary-bg)]">◇</span>
-          <span className="truncate">执行详情</span>
-          {state.approval && <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-            state.approval.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
-              state.approval.status === 'rejected' || state.approval.status === 'failed' ? 'bg-red-100 text-red-800' :
-                'bg-amber-100 text-amber-800'
-          }`}>{approvalStatusLabel(state.approval.status)}</span>}
-        </span>
-        <span aria-hidden="true" className="shrink-0 text-lg text-gray-400">{expanded ? '⌃' : '⌄'}</span>
-      </button>
+    <section className="w-full max-w-full overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="分析进度">
+      <div className="space-y-4 p-4 sm:p-5">
+        <div className="rounded-xl bg-[var(--color-code-bg)] px-4 py-3" role="status" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
+              <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 rounded-full ${lifecycleIndicatorClass(lifecycle, isRunning)}`} />
+              {lifecycleLabel(lifecycle)}
+            </p>
+            {isRunning && <span className="text-xs text-[var(--color-text-secondary)]">{elapsedLabel(elapsedSeconds)}</span>}
+          </div>
+          <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{action}</p>
+          {workflow?.targetSuppliers.length ? <p className="mt-1 text-xs text-[var(--color-text-secondary)]">分析对象：{workflow.targetSuppliers.join('、')}</p> : null}
+        </div>
+
+        <ol className="space-y-3" aria-label="分析进度里程碑">
+          {JOURNEYS[journey].map((milestone, index) => {
+            const status = milestoneStatus(state, index, activeIndex);
+            return <li key={milestone.label} className="flex items-start gap-3" aria-label={`${milestone.label}：${statusText(status)}`}>
+              <span aria-hidden="true" className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
+                status === 'complete' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
+                  status === 'error' ? 'border-red-300 bg-red-50 text-red-700' :
+                    status === 'waiting' ? 'border-amber-300 bg-amber-50 text-amber-700' :
+                      status === 'running' ? 'border-blue-300 bg-blue-50 text-blue-700' :
+                        'border-gray-200 bg-gray-50 text-gray-400'
+              }`}>{status === 'complete' ? '✓' : status === 'running' ? '◎' : status === 'error' ? '!' : ''}</span>
+              <span className="min-w-0 flex-1">
+                <span className={`block text-sm ${status === 'pending' ? 'text-[var(--color-text-secondary)]' : 'font-medium text-[var(--color-text)]'}`}>{milestone.label}</span>
+                {status === 'running' && index === 2 && (workflow?.completedToolCount || 0) > 0 ? <span className="mt-0.5 block text-xs text-[var(--color-text-secondary)]">已完成 {workflow?.completedToolCount} 项查询</span> : null}
+                {status === 'waiting' && index === 3 && <span className="mt-0.5 block text-xs text-amber-800">待你复核</span>}
+                {status === 'waiting' && lifecycle === 'clarifying' && index === 0 && <span className="mt-0.5 block text-xs text-amber-800">等待你补充信息</span>}
+              </span>
+            </li>;
+          })}
+        </ol>
+
+        {lifecycle !== 'clarifying' && <p className="text-xs text-[var(--color-text-secondary)]">结果将提供依据，最终判断由你确认。</p>}
+        <button type="button" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} className="flex min-h-[44px] w-full items-center justify-between border-t border-[var(--color-border)] pt-3 text-left text-sm font-medium text-[var(--color-text)]">
+          <span>{expanded ? '收起执行详情' : '查看执行详情'}</span><span aria-hidden="true" className="text-gray-400">{expanded ? '⌃' : '⌄'}</span>
+        </button>
+      </div>
 
       {expanded && (
         <div className="space-y-4 border-t border-[var(--color-border)] px-4 py-4">
-          {state.workflowStatus && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3" role="status" aria-live="polite">
+          {workflow && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-[var(--color-text)]">当前状态：{lifecycleLabel(state.workflowStatus.status)}</p>
-              <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">{stageLabel(state.workflowStatus.stage)}</span>
+              <p className="text-xs font-semibold text-[var(--color-text)]">当前状态：{lifecycleLabel(workflow.status)}</p>
+              <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">{stageLabel(workflow.stage)}</span>
             </div>
-            <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{state.workflowStatus.message}</p>
-            {state.workflowStatus.targetSuppliers.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">目标：{state.workflowStatus.targetSuppliers.join('、')}</p>}
-            {(state.workflowStatus.sources.length > 0 || state.workflowStatus.toolCallCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{state.workflowStatus.sources.length > 0 ? state.workflowStatus.sources.map(sourceLabel).join('、') : '已核验数据'} · 已完成 {state.workflowStatus.completedToolCount}/{state.workflowStatus.toolCallCount} 项</p>}
-            {state.workflowStatus.evidenceStatus && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">证据：{state.workflowStatus.evidenceStatus}</p>}
-            {state.workflowStatus.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">本轮结果：{loopExitLabel(state.workflowStatus.loopExitReason)}</p>}
+            <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{workflow.message}</p>
+            {workflow.targetSuppliers.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">目标：{workflow.targetSuppliers.join('、')}</p>}
+            {(workflow.sources.length > 0 || workflow.toolCallCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{workflow.sources.length > 0 ? workflow.sources.map(sourceLabel).join('、') : '已核验数据'} · 已完成 {workflow.completedToolCount}/{workflow.toolCallCount} 项</p>}
+            {workflow.evidenceStatus && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">证据：{workflow.evidenceStatus}</p>}
+            {workflow.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">本轮结果：{loopExitLabel(workflow.loopExitReason)}</p>}
           </div>}
-          <ol className="grid gap-2 sm:grid-cols-5" aria-label="Agent 阶段时间线">
-            {PHASES.map((phase, index) => {
-              const status = phaseStatus(state, index);
-              return (
-                <li key={phase.key} className="flex min-w-0 items-center gap-2 sm:block">
-                  <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-sm font-semibold ${
-                    status === 'complete' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
-                      status === 'error' ? 'border-red-300 bg-red-50 text-red-700' :
-                        status === 'running' ? 'border-blue-300 bg-blue-50 text-blue-700' :
-                          'border-gray-200 bg-gray-50 text-gray-400'
-                  }`} aria-label={`${phase.label}：${statusText(status)}`}>{phase.icon}</span>
-                  <span className="min-w-0 sm:mt-2 sm:block">
-                    <span className="block truncate text-xs font-medium text-[var(--color-text)]">{phase.label}</span>
-                    <span className="block text-[11px] text-gray-400">{statusText(status)}</span>
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
 
           {state.thinking && <p className="truncate text-xs text-gray-500" aria-live="polite">{state.thinking}</p>}
 
@@ -336,9 +390,11 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
               </div>}
             </div>
           )}
+        </div>
+      )}
 
-          {state.approval && (
-            <div className="space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-3" aria-label="人工审批">
+      {state.approval && (
+        <div className="mx-4 mb-4 space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-3" aria-label="人工审批">
               <div className="flex items-start gap-2">
                 <span aria-hidden="true" className="mt-0.5 text-amber-700">!</span>
                 <div className="min-w-0 space-y-1">
@@ -371,12 +427,10 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
                       </button>
                     </div>
                   </>}
-            </div>
-          )}
-
-          {state.error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">工作流异常：{state.error}</p>}
         </div>
       )}
+
+      {state.error && <p role="alert" className="mx-4 mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">工作流异常：{state.error}</p>}
     </section>
   );
 }

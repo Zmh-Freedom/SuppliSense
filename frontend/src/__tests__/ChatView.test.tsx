@@ -315,8 +315,8 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText(/外部寻源在受限时间内未完成/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：需要人工复核')).toBeInTheDocument()
   })
 
   it('sends the current input value when Chinese IME composition has not updated React state', async () => {
@@ -420,8 +420,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    await user.click(await screen.findByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：本轮查询已完成')).toBeInTheDocument()
     expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
   })
 
@@ -447,8 +447,8 @@ describe('ChatView session lifecycle', () => {
 
     expect(screen.getAllByText('业务结论').length).toBeGreaterThan(0)
     expect(screen.getByText('数据说明').closest('details')).not.toHaveAttribute('open')
-    await user.click(await screen.findByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：需要人工复核')).toBeInTheDocument()
     await user.click(screen.getByText('数据说明'))
     expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
   })
@@ -844,8 +844,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    await user.click(await screen.findByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：部分完成')).toBeInTheDocument()
-    expect(screen.queryByText('当前状态：已完成')).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：部分结果待复核')).toBeInTheDocument()
+    expect(screen.queryByText('当前状态：本轮查询已完成')).not.toBeInTheDocument()
   })
 })

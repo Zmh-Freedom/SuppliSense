@@ -22,6 +22,7 @@ export interface ChatStreamViewState {
   agentAnswer: AgentAnswer | null;
   evidence: AgentEvidenceRecord[];
   workflowStatus: AgentWorkflowSnapshot;
+  queryText?: string;
 }
 
 function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierReference; onAnalyze: (name: string) => void }) {
@@ -80,7 +81,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
             <div className="grid gap-2 pt-2 sm:grid-cols-2">{message.references.map(reference => <SupplierReferenceCard key={`${reference.name}-${reference.source ?? ''}`} reference={reference} onAnalyze={onAnalyzeReference} />)}</div>
           </details>}
           {message.role === 'assistant' && <StructuredAgentResult answer={message.agentAnswer} evidence={message.evidence} />}
-          {message.role === 'assistant' && message.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: message.approval ?? null, approvalSubmitting: message.approval?.status === 'submitting', workflowStatus: message.workflow }} onApproval={onApproval} />}
+          {message.role === 'assistant' && message.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: message.approval ?? null, approvalSubmitting: message.approval?.status === 'submitting', workflowStatus: message.workflow, queryText: messages.slice(0, index).reverse().find(previous => previous.role === 'user')?.content }} onApproval={onApproval} />}
         </div>
       </div>
     ))}

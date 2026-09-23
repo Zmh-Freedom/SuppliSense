@@ -235,7 +235,7 @@ export default function ChatView() {
     setLoading(true);
     const initialWorkflow = createWorkflowSnapshot();
     workflowAccRef.current = initialWorkflow;
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], agentAnswer: null, evidence: [], workflowStatus: initialWorkflow });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], agentAnswer: null, evidence: [], workflowStatus: initialWorkflow, queryText: text });
     answerAccRef.current = '';
     approvalAccRef.current = null;
     referencesAccRef.current = [];
