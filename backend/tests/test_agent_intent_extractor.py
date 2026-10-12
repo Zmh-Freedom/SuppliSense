@@ -8,6 +8,7 @@ import pytest
 from app.graphs.agent_core import adapter
 from app.graphs.agent_core import intent_extractor
 from app.graphs.agent_core.capability_routing import (
+    explicit_primary_capability,
     normalize_analysis_dimensions,
     normalize_primary_capability,
 )
@@ -867,6 +868,211 @@ def test_deterministic_intent_marks_sourcing_without_llm():
     assert intent_extractor.infer_task_type("查询当前正式供应商") == "sourcing"
     assert intent_extractor.infer_task_type("分析甲公司当前风险") == "analysis"
     assert intent_extractor.infer_task_type("复核青岛三祥科技股份有限公司") == "analysis"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "把“供应商风险正在上升”翻译成英文",
+        "“找供应商”这四个字的英文怎么说？",
+        "不需要寻源，只帮我算一下1250除以8",
+        "供应商风险分析一般会看哪些指标？",
+        "供应商准入流程应该如何制定？",
+        "解释一下“风险评分”这个概念，不分析具体供应商",
+    ],
+)
+def test_deterministic_task_inference_ignores_meta_and_general_questions(message):
+    assert intent_extractor.infer_task_type(message) == "none"
+
+
+def test_deterministic_fallback_does_not_turn_quoted_translation_into_supplier_analysis():
+    result = intent_extractor._deterministic_extraction_fallback(
+        "把“供应商风险正在上升”翻译成英文"
+    )
+
+    assert result.task_type == "none"
+    assert result.capability == "none"
+    assert result.target_supplier_names == []
+    assert result.analysis_dimensions == []
+
+
+def test_recent_financial_risk_keeps_financial_primary_capability():
+    assert explicit_primary_capability(
+        "分析上海凯众材料科技股份有限公司近三个月的财务风险"
+    ) == "financial"
+    assert explicit_primary_capability("最近三个月风险怎么变了") == "risk_trend"
+
+
+def test_llm_general_risk_method_question_does_not_require_supplier_entity(monkeypatch):
+    payload = {
+        "target_supplier_names": [],
+        "analysis_dimensions": ["risk"],
+        "capability": "risk",
+        "task_type": "analysis",
+        "needs_clarification": True,
+        "missing_fields": ["target_supplier_names"],
+        "interpretation_summary": "用户询问供应商风险分析通常包含哪些指标，属于通用方法咨询。",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "供应商风险分析一般会看哪些指标？", []
+    )
+
+    assert result is not None
+    assert result.task_type == "none"
+    assert result.capability == "none"
+    assert result.target_supplier_names == []
+    assert result.analysis_dimensions == []
+    assert result.needs_clarification is False
+
+
+def test_llm_declared_no_task_is_not_overridden_by_quoted_domain_words(monkeypatch):
+    payload = {
+        "target_supplier_names": [],
+        "analysis_dimensions": [],
+        "capability": "none",
+        "task_type": "none",
+        "interpretation_summary": "用户请求翻译，与供应商分析无关。",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "把“供应商风险正在上升”翻译成英文", []
+    )
+
+    assert result is not None
+    assert result.task_type == "none"
+    assert result.capability == "none"
+    assert result.target_supplier_names == []
+    assert result.analysis_dimensions == []
+
+
+def test_explicit_topic_switch_clears_stale_execution_task_and_pending_clarification():
+    context = {
+        "session_id": "topic-switch",
+        "references": [],
+        "conversation_state": {
+            "current_task": {
+                "task_type": "sourcing",
+                "capability": "sourcing",
+                "requirement": {"category": "工业相机"},
+                "analysis_dimensions": [],
+                "subtasks": [{"tool_name": "discover_supplier_candidates"}],
+            },
+            "pending_clarification": {
+                "task_type": "sourcing",
+                "missing_fields": ["sourcing_requirement"],
+            },
+        },
+        "current_task": {
+            "task_type": "sourcing",
+            "capability": "sourcing",
+            "requirement": {"category": "工业相机"},
+            "analysis_dimensions": [],
+            "subtasks": [{"tool_name": "discover_supplier_candidates"}],
+            "user_message": "忽略前面的采购分析，告诉我一个冷笑话",
+        },
+    }
+    extraction = intent_extractor.ConversationIntentExtraction(
+        capability="none",
+        task_type="none",
+        requested_action="none",
+    )
+
+    result = adapter.apply_extracted_conversation_intent(context, extraction)
+
+    assert result["current_task"]["task_type"] == "none"
+    assert result["current_task"].get("subtasks", []) == []
+    assert result["current_task"].get("requirement") is None
+    assert "pending_clarification" not in result["conversation_state"]
+
+
+def test_sourcing_preferred_supplier_region_is_separate_from_delivery_region():
+    slots = adapter._sourcing_constraint_slots(
+        "找5家工业相机供应商，优先华东，预算50万元，交付到苏州"
+    )
+
+    assert slots["region"] == "华东"
+    assert slots["supply_region"] == "苏州"
+
+
+def test_sourcing_region_preference_does_not_become_delivery_location():
+    context = {
+        "current_task": {
+            "task_type": "sourcing",
+            "llm_sourcing_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "region": None,
+                "supply_region": "华东",
+                "budget": "50万元",
+                "candidate_count": 5,
+            },
+        },
+        "conversation_state": {},
+    }
+
+    result = adapter._apply_harness_sourcing_requirement(
+        context,
+        "找5家工业相机供应商，优先华东，预算50万元",
+    )
+
+    requirement = result["current_task"]["requirement"]
+    assert requirement["region"] == "华东"
+    assert requirement.get("supply_region") is None
+
+
+def test_sourcing_region_preference_keeps_prior_delivery_location():
+    context = {
+        "current_task": {
+            "task_type": "sourcing",
+            "requirement": {
+                "category": "工业相机",
+                "specification": "支持GigE接口",
+                "supply_region": "苏州",
+            },
+            "llm_sourcing_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "支持GigE接口",
+                "region": None,
+                "supply_region": "华东",
+                "budget": "50万元",
+                "candidate_count": 5,
+            },
+        },
+        "conversation_state": {},
+    }
+
+    result = adapter._apply_harness_sourcing_requirement(
+        context,
+        "优先华东，预算50万元",
+    )
+
+    requirement = result["current_task"]["requirement"]
+    assert requirement["region"] == "华东"
+    assert requirement["supply_region"] == "苏州"
 
 
 def test_deterministic_company_name_resolution_removes_operation_prefixes():

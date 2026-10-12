@@ -18,6 +18,9 @@ from app.domains.sourcing_risk.requirement_service import SourcingRequirement
 from app.graphs.agent_core.capability_routing import (
     detect_explicit_capabilities,
     explicit_primary_capability,
+    has_durable_control_expression,
+    is_explicit_no_task,
+    is_non_operational_request,
     normalize_analysis_dimensions,
     normalize_primary_capability,
 )
@@ -189,6 +192,13 @@ def _sourcing_specification_is_required(
 
 def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtraction:
     """Keep explicit quoted targets executable when the LLM is unavailable."""
+    if is_non_operational_request(message):
+        return ConversationIntentExtraction(
+            capability="none",
+            task_type="none",
+            requested_action=explicit_write_action(message),
+            confidence=0.0,
+        )
     quoted = [item.strip() for item in re.findall(r"[“\"「『]([^”\"」』]+)[”\"」』]", message) if item.strip()]
     dimensions: list[str] = []
     dimension_tokens = (
@@ -343,6 +353,29 @@ def extract_conversation_intent(
     except Exception as exc:
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
         return _deterministic_extraction_fallback(message)
+
+    if (
+        extracted.requested_action == "none"
+        and not has_durable_control_expression(message)
+        and (is_non_operational_request(message) or is_explicit_no_task(extracted))
+    ):
+        # A translation, definition, general-method question, or explicit
+        # topic switch can contain domain words without requesting execution.
+        # Keep the model summary, but discard fields that could trigger tools.
+        return extracted.model_copy(update={
+            "target_supplier_names": [],
+            "analysis_dimensions": [],
+            "provider_capabilities": [],
+            "capability": "none",
+            "scope": "none",
+            "sourcing_requirement": None,
+            "time_range": None,
+            "task_type": "none",
+            "needs_clarification": False,
+            "clarification_question": None,
+            "missing_fields": [],
+            "field_sources": {},
+        })
 
     explicit_capability = explicit_primary_capability(message)
     semantic_conflicts: list[str] = []
@@ -911,6 +944,8 @@ def infer_task_type(message: str) -> Literal["sourcing", "analysis", "none"]:
     """Classify the explicit operation before applying dimension filters."""
     text = str(message or "").strip()
     if not text:
+        return "none"
+    if is_non_operational_request(text):
         return "none"
     if "正式供应商" in text and any(
         token in text for token in ("查询", "哪些", "列表", "目录", "清单", "有多少")

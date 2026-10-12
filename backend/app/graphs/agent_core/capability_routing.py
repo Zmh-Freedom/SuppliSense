@@ -49,7 +49,10 @@ _EXPLICIT_CAPABILITY_RULES: tuple[ExplicitCapabilityRule, ...] = (
     ),
     ExplicitCapabilityRule(
         "risk_trend",
-        ("历史风险变化", "风险走势", "上月相比", "环比", "同比", "最近三个月", "近三个月"),
+        (
+            "历史风险变化", "风险变化", "风险走势", "风险趋势", "上月相比",
+            "环比", "同比",
+        ),
     ),
     ExplicitCapabilityRule(
         "identity_review",
@@ -101,6 +104,10 @@ _DYNAMIC_CAPABILITY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
+_TREND_ACTION_MARKERS = (
+    "变化", "变动", "怎么变", "走势", "趋势", "环比", "同比", "相比", "对比上月",
+)
+
 _CAPABILITY_PRIMARY_DIMENSIONS = {
     "sentiment": "sentiment",
     "financial": "financial",
@@ -122,6 +129,7 @@ def detect_explicit_capabilities(message: str) -> list[str]:
         phrase in text
         for phrase in ("预测", "未来", "情景推演", "如果", "假如")
     )
+    has_trend_action = any(phrase in text for phrase in _TREND_ACTION_MARKERS)
     has_scenario = any(phrase in text for phrase in ("如果", "假如", "情景推演"))
     for priority, rule in enumerate(_EXPLICIT_CAPABILITY_RULES):
         if rule.capability == "risk_trend" and has_prediction:
@@ -152,6 +160,8 @@ def detect_explicit_capabilities(message: str) -> list[str]:
     for pattern_priority, (capability, pattern) in enumerate(_DYNAMIC_CAPABILITY_PATTERNS):
         if capability == "risk_trend" and has_prediction:
             continue
+        if capability == "risk_trend" and not has_trend_action:
+            continue
         match = pattern.search(text)
         if match:
             matched.append((match.start(), -len(match.group()), len(_EXPLICIT_CAPABILITY_RULES) + pattern_priority, capability))
@@ -177,6 +187,63 @@ def explicit_primary_capability(message: str) -> str | None:
     if any(token in str(message or "") for token in ("改查", "改看", "改为", "改成")) and candidates:
         return candidates[-1] if len(candidates) == 1 else None
     return candidates[0] if len(candidates) == 1 else None
+
+
+def is_non_operational_request(message: str) -> bool:
+    """Identify explicit meta, general-knowledge, or topic-switch requests.
+
+    These requests may mention supplier capabilities, risk terms, or sourcing
+    phrases as content, but they do not ask the agent to inspect suppliers or
+    discover candidates.
+    """
+    text = str(message or "").strip()
+    if not text:
+        return False
+
+    if any(token in text for token in ("翻译", "英文怎么说", "英语怎么说", "英文如何表达", "英语如何表达")):
+        return True
+    if any(token in text for token in ("润色一下", "帮我润色", "写一封", "整理成一封", "总结下面这段", "总结这段话")):
+        return True
+    if any(token in text for token in ("解释一下", "解释成", "解释为", "是什么概念", "这个概念", "是什么意思")):
+        return True
+    if re.search(r"一般(?:会)?(?:看|关注|包含|有哪些|有什么).{0,12}(?:指标|因素|维度)", text):
+        return True
+    if any(token in text for token in ("如何制定", "怎么制定", "如何建立", "怎么建立")) and "流程" in text:
+        return True
+    if any(token in text for token in ("一般性影响", "一般会带来什么影响", "不用查询具体公司", "不针对具体公司")):
+        return True
+    if any(token in text for token in ("冷笑话", "讲个笑话", "讲一个笑话")) and any(
+        token in text for token in ("忽略前面", "忽略之前", "换个话题", "不聊这个", "告诉我", "讲个", "讲一个")
+    ):
+        return True
+    if any(token in text for token in ("不需要寻源", "不需要找供应商", "不用寻源", "不做寻源")) and any(
+        token in text for token in ("算一下", "计算", "天气", "笑话", "翻译", "代码")
+    ):
+        return True
+    return False
+
+
+def is_explicit_no_task(intent: object) -> bool:
+    """Return whether extraction explicitly classified an empty turn as no task."""
+    if isinstance(intent, dict):
+        provided_fields = set(intent)
+        get_value = intent.get
+    else:
+        provided_fields = set(getattr(intent, "model_fields_set", set()))
+        get_value = lambda key, default=None: getattr(intent, key, default)
+    if not {"capability", "task_type"}.issubset(provided_fields):
+        return False
+    return (
+        get_value("capability", "none") == "none"
+        and get_value("task_type", "none") == "none"
+        and not get_value("target_supplier_names", [])
+        and not get_value("analysis_dimensions", [])
+        and not get_value("provider_capabilities", [])
+        and get_value("sourcing_requirement") is None
+        and get_value("requested_action", "none") == "none"
+        and not get_value("needs_clarification", False)
+        and not get_value("missing_fields", [])
+    )
 
 
 def normalize_primary_capability(

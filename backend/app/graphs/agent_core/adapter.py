@@ -712,6 +712,7 @@ def _apply_harness_sourcing_requirement(
     )
 
     llm_requirement = current_task.pop("llm_sourcing_requirement", None)
+    turn_explicit_slots = _sourcing_constraint_slots(user_message)
     if isinstance(llm_requirement, dict):
         resolved = resolve_harness_requirement_from_llm(llm_requirement)
         # A sourcing follow-up may contain only a new constraint (for example,
@@ -747,6 +748,14 @@ def _apply_harness_sourcing_requirement(
             )
             for key, value in merge_source.items():
                 if value is None or value == "" or value == []:
+                    continue
+                if (
+                    key == "supply_region"
+                    and not turn_explicit_slots.get("supply_region")
+                    and turn_explicit_slots.get("region")
+                    and str(value).strip() == str(turn_explicit_slots["region"]).strip()
+                    and existing.get("supply_region")
+                ):
                     continue
                 if key in {"category", "product", "material", "specification"} and _is_generic_sourcing_constraint(
                     user_message,
@@ -827,6 +836,19 @@ def _apply_harness_sourcing_requirement(
     if resolved.get("status") == "ready":
         requirement = dict(resolved["requirement"])
         explicit_slots = _sourcing_constraint_slots(user_message)
+        preferred_region = explicit_slots.get("region")
+        explicit_delivery_region = explicit_slots.get("supply_region")
+        prior_delivery_region = existing.get("supply_region") if isinstance(existing, dict) else None
+        if (
+            preferred_region
+            and not explicit_delivery_region
+            and not prior_delivery_region
+            and str(requirement.get("supply_region") or "").strip() == str(preferred_region).strip()
+        ):
+            # Models sometimes map “优先华东” to the delivery destination.
+            # Keep the supplier preference in `region`; only a delivery phrase
+            # or a previously captured destination can populate `supply_region`.
+            requirement.pop("supply_region", None)
         for key, value in explicit_slots.items():
             requirement[key] = value
         price_preference = ("优先考虑价格", "优先价格", "成本更优", "成本更低", "更便宜", "低成本", "低价")
@@ -959,6 +981,12 @@ def _sourcing_constraint_slots(user_message: str) -> dict[str, Any]:
     """Extract a small deterministic set of safe follow-up constraints."""
     message = str(user_message or "")
     slots: dict[str, Any] = {}
+    preferred_region = re.search(
+        r"(?:优先(?:考虑|选择)?|倾向(?:于)?)\s*(华东|华南|华北|西南|西北|东北)(?:地区)?",
+        message,
+    )
+    if preferred_region:
+        slots["region"] = preferred_region.group(1)
     budget_clear = re.search(r"预算\s*(?:先|暂时|暂)?\s*(?:不考虑|不设(?:硬性)?限制|不限|取消)", message)
     if budget_clear:
         slots["budget"] = None
@@ -1007,6 +1035,58 @@ def apply_extracted_conversation_intent(
     extracted: Any,
 ) -> dict[str, Any]:
     """Overlay validated LLM intent onto the one shared execution context."""
+    from app.graphs.agent_core.capability_routing import (
+        has_durable_control_expression,
+        is_explicit_no_task,
+        is_non_operational_request,
+    )
+
+    initial_task = dict(execution_context.get("current_task") or {})
+    user_message = str(initial_task.get("user_message") or "")
+    requested_action = getattr(extracted, "requested_action", "none")
+    if (
+        requested_action == "none"
+        and not has_durable_control_expression(user_message)
+        and (is_non_operational_request(user_message) or is_explicit_no_task(extracted))
+    ):
+        # build_execution_context also performs deterministic pre-parsing. A
+        # meta/general turn must clear that provisional task and any pending
+        # clarification before the Harness plans the current turn.
+        conversation_state = dict(execution_context.get("conversation_state") or {})
+        cleared_task = {
+            "task_type": "none",
+            "capability": "none",
+            "scope": "none",
+            "target_supplier_names": [],
+            "analysis_dimensions": [],
+            "subtasks": [],
+            "user_message": user_message,
+        }
+        if initial_task.get("task_id"):
+            cleared_task["task_id"] = initial_task["task_id"]
+        conversation_state["current_task"] = cleared_task
+        conversation_state.pop("pending_clarification", None)
+        conversation_state.pop("current_requirement", None)
+        intent_snapshot = (
+            extracted.model_dump(mode="json")
+            if extracted is not None and callable(getattr(extracted, "model_dump", None))
+            else {
+                "target_supplier_names": [],
+                "analysis_dimensions": [],
+                "capability": "none",
+                "scope": "none",
+                "task_type": "none",
+                "requested_action": "none",
+            }
+        )
+        conversation_state["input_understanding"] = intent_snapshot
+        return {
+            **execution_context,
+            "conversation_state": conversation_state,
+            "current_task": cleared_task,
+            "llm_intent": intent_snapshot,
+        }
+
     if extracted is None:
         from app.graphs.agent_core.intent_extractor import explicit_write_action
 
