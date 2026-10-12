@@ -31,10 +31,19 @@ class NarrativeDraft(BaseModel):
     claim_refs: list[str] = Field(default_factory=list, max_length=30)
 
 
+class GeneralKnowledgeDraft(BaseModel):
+    """Provider response for non-entity-specific procurement guidance."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer_markdown: str = Field(min_length=1, max_length=4000)
+
+
 _COMPANY_PATTERN = re.compile(
     r"[\u4e00-\u9fffA-Za-z0-9（）()·&\-]{2,80}(?:有限责任公司|股份有限公司|集团有限公司|有限公司)"
 )
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[+-]?\d+(?:\.\d+)?%?")
+_STANDARD_CODE_PATTERN = re.compile(r"\b(?:ISO|IATF|AS|SA)\s*-?\s*\d{4,5}\b", re.IGNORECASE)
 
 
 def _normalized_numbers(text: str) -> set[str]:
@@ -233,4 +242,61 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         return degraded(f"provider_error:{type(exc).__name__}")
 
 
-__all__ = ["NarrativeDraft", "narrate_answer"]
+def answer_general_supplier_knowledge(user_message: str) -> str:
+    """Answer a general supplier-risk method question without asserting entity facts."""
+    if not settings.LLM_API_KEY:
+        return ""
+    prompt = {
+        "user_question": user_message,
+        "rules": [
+            "回答用户关于供应商、采购或供应链风险的一般方法问题。",
+            "直接解释指标、评估维度或方法，使用简洁中文；按问题相关性组织内容。",
+            "只能给通用方法建议，不得声称已查询、评估或识别任何具体供应商。",
+            "不得编造公司名称、风险分数、比例、日期、法规条文、当前事件或采购结论。",
+            "说明具体适用性需要结合行业、物料关键度和企业制度判断。",
+            "不要调用或建议调用工具，不要提及模型、内部流程或结构化字段。",
+            "只返回符合 response_schema 的 JSON 对象。",
+        ],
+        "response_schema": GeneralKnowledgeDraft.model_json_schema(),
+    }
+    try:
+        client = OpenAI(
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
+            max_retries=0,
+        )
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是采购风险方法顾问，只提供通用知识，不输出具体供应商事实或评估结论。",
+                },
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            **completion_token_options(1000),
+            timeout=float(os.getenv("LLM_GENERAL_ANSWER_TIMEOUT", "20")),
+        )
+        payload = parse_json_object_content(
+            response.choices[0].message.content,
+            operation="general_supplier_knowledge_answer",
+            response=response,
+        )
+        draft = GeneralKnowledgeDraft.model_validate(payload)
+        # A generic-method path must not smuggle an entity-level conclusion or
+        # unsupported numeric thresholds into a no-evidence answer.
+        numeric_text = _STANDARD_CODE_PATTERN.sub("", draft.answer_markdown)
+        if _COMPANY_PATTERN.search(draft.answer_markdown) or _NUMBER_PATTERN.search(numeric_text):
+            logger.warning("general_knowledge_answer_rejected", reason="entity_or_numeric_claim")
+            return ""
+        return draft.answer_markdown.strip()
+    except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
+        logger.warning("general_knowledge_answer_invalid", error=str(exc))
+    except Exception as exc:
+        logger.warning("general_knowledge_answer_failed", error=type(exc).__name__)
+    return ""
+
+
+__all__ = ["GeneralKnowledgeDraft", "NarrativeDraft", "answer_general_supplier_knowledge", "narrate_answer"]

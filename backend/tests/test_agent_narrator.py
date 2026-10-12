@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
-from app.graphs.agent_core.narrator import NarrativeDraft, _validate_draft, narrate_answer
+from app.graphs.agent_core.narrator import (
+    NarrativeDraft,
+    _validate_draft,
+    answer_general_supplier_knowledge,
+    narrate_answer,
+)
 
 
 def _answer() -> AgentAnswer:
@@ -174,3 +179,54 @@ def test_narrator_disables_sdk_retries_and_marks_safe_fallback(monkeypatch):
     assert len(calls) == 1
     assert client_options[0]["max_retries"] == 0
     assert any("润色" in item for item in result.limitations)
+
+
+def test_general_knowledge_answer_returns_provider_guidance_without_entity_facts(monkeypatch):
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content='{"answer_markdown":"通常从财务、交付、质量、合规和供应链依赖等维度评估，并结合趋势与整改情况判断。"}'
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    answer = answer_general_supplier_knowledge("供应商风险分析一般看哪些指标？")
+
+    assert "财务" in answer
+    assert "供应链依赖" in answer
+
+
+def test_general_knowledge_answer_rejects_numeric_thresholds(monkeypatch):
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content='{"answer_markdown":"逾期超过30天就应列为高风险。"}'
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    assert answer_general_supplier_knowledge("供应商风险一般如何评估？") == ""
+
+
+def test_general_knowledge_answer_allows_standard_identifiers(monkeypatch):
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content='{"answer_markdown":"质量管理体系可参考 ISO 9001，具体还要结合行业要求评估。"}'
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    assert "ISO 9001" in answer_general_supplier_knowledge("供应商风险评估一般看什么？")

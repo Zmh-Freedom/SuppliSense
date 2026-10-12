@@ -23,6 +23,7 @@ from langgraph.graph import END, START, StateGraph
 from app.graphs.agent_core.answer_contract import AgentAnswer, build_agent_answer
 from app.graphs.agent_core.capability_routing import (
     detect_explicit_capabilities,
+    is_general_supplier_knowledge_question,
     normalize_primary_capability,
 )
 from app.graphs.agent_core.evidence_ledger import (
@@ -48,6 +49,7 @@ from app.domains.risk.risk_contract import get_risk_dimension_spec
 PersistCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 ProgressCallback = Callable[[str, dict[str, Any], bool], Awaitable[None] | None]
 NarrateCallback = Callable[[AgentAnswer, str], Awaitable[AgentAnswer] | AgentAnswer]
+KnowledgeAnswerCallback = Callable[[str], Awaitable[str] | str]
 
 _DIMENSION_TO_TOOL = {
     dimension: (spec.tool_name, spec.argument_name)
@@ -1469,6 +1471,7 @@ def build_harness_graph(
     persist: PersistCallback | None = None,
     progress: ProgressCallback | None = None,
     narrate: NarrateCallback | None = None,
+    answer_general_knowledge: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
 ) -> Any:
     """Build the only runtime graph used by Harness-level tests and callers."""
@@ -1797,29 +1800,58 @@ def build_harness_graph(
         )
         if _requests_procurement_action(state):
             answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
+        general_knowledge_attempted = False
         if not claims:
             no_plan = not tasks
+            general_knowledge = no_plan and is_general_supplier_knowledge_question(
+                str(state.get("user_message") or "")
+            )
             current_task = state.get("current_task") or {}
             follow_up = str(current_task.get("sourcing_follow_up") or "")
-            summary = (
-                _summary(answer, state)
-                if follow_up in {"no_match", "ordinal_out_of_range", "candidate_selected"}
-                else _no_plan_summary(state) if no_plan else _summary(answer, state)
-            )
-            limitations = list(answer.limitations)
-            if no_plan and follow_up not in {"no_match", "ordinal_out_of_range", "candidate_selected"}:
-                limitations.append("当前请求未形成可执行任务")
-            answer = answer.model_copy(
-                update={
-                    "status": "needs_review",
+            if general_knowledge:
+                summary = _general_supplier_knowledge_fallback()
+                general_budget = new_budget(state.get("budget"))
+                if (
+                    answer_general_knowledge is not None
+                    and int(state.get("llm_call_count", 0)) < general_budget.max_llm_calls
+                ):
+                    general_knowledge_attempted = True
+                    try:
+                        generated = answer_general_knowledge(str(state.get("user_message") or ""))
+                        if inspect.isawaitable(generated):
+                            generated = await generated
+                        if isinstance(generated, str) and generated.strip():
+                            summary = generated.strip()
+                    except Exception as exc:
+                        logger.warning("general_knowledge_answer_callback_failed", error=str(exc))
+                answer = answer.model_copy(update={
+                    "status": "completed",
                     "summary": summary,
-                    "limitations": list(dict.fromkeys(
-                        [*limitations, "工具结果未提供可验证 Claim"]
-                        if not no_plan
-                        else limitations
-                    )),
-                }
-            )
+                    "limitations": list(dict.fromkeys([
+                        *answer.limitations,
+                        "以上为通用风险评估方法说明，不代表对任何具体供应商的评估结论。",
+                    ])),
+                })
+            else:
+                summary = (
+                    _summary(answer, state)
+                    if follow_up in {"no_match", "ordinal_out_of_range", "candidate_selected"}
+                    else _no_plan_summary(state) if no_plan else _summary(answer, state)
+                )
+                limitations = list(answer.limitations)
+                if no_plan and follow_up not in {"no_match", "ordinal_out_of_range", "candidate_selected"}:
+                    limitations.append("当前请求未形成可执行任务")
+                answer = answer.model_copy(
+                    update={
+                        "status": "needs_review",
+                        "summary": summary,
+                        "limitations": list(dict.fromkeys(
+                            [*limitations, "工具结果未提供可验证 Claim"]
+                            if not no_plan
+                            else limitations
+                        )),
+                    }
+                )
         else:
             answer = answer.model_copy(update={"summary": _summary(answer, state)})
         narration_attempted = False
@@ -1868,7 +1900,7 @@ def build_harness_graph(
             "loop_exit_reason": loop_exit_reason,
             "status": answer.status,
         }
-        if narration_attempted:
+        if narration_attempted or general_knowledge_attempted:
             patch["llm_call_count"] = int(state.get("llm_call_count", 0)) + 1
         await persist_event("render_answer", state, patch)
         return patch
@@ -1912,6 +1944,17 @@ def _no_plan_summary(state: HarnessState) -> str:
     return "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。"
 
 
+def _general_supplier_knowledge_fallback() -> str:
+    """Provide useful generic guidance without relying on the LLM provider."""
+    return (
+        "供应商风险分析通常会从几个方面看：财务与现金流、交付与产能、质量与过程控制、"
+        "合规与法律、经营稳定性，以及舆情和供应链依赖。评估时可结合历史趋势、问题发生频率、"
+        "影响范围和整改情况，区分风险信号与已核实事实。\n\n"
+        "这是一套通用检查思路，不代表对任何具体供应商的评估结论。"
+        "如果你希望分析某家供应商，请提供名称，并说明关注的风险维度。"
+    )
+
+
 def _requests_procurement_action(state: HarnessState) -> bool:
     message = str((state.get("current_task") or {}).get("user_message") or state.get("user_message") or "")
     return any(token in message for token in ("采购动作", "采取动作", "下一步怎么做", "是否需要处理", "要不要处理"))
@@ -1952,6 +1995,7 @@ async def run_harness(
     persist: PersistCallback | None = None,
     progress: ProgressCallback | None = None,
     narrate: NarrateCallback | None = None,
+    answer_general_knowledge: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
 ) -> HarnessState:
@@ -1965,6 +2009,7 @@ async def run_harness(
         persist=persist,
         progress=progress,
         narrate=narrate,
+        answer_general_knowledge=answer_general_knowledge,
         checkpointer=checkpointer,
     )
     return await graph.ainvoke(state, config=active_config)

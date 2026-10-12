@@ -263,7 +263,10 @@ async def stream_harness_graph(
     })
     try:
         async def run_graph() -> Any:
-            from app.graphs.agent_core.narrator import narrate_answer
+            from app.graphs.agent_core.narrator import (
+                answer_general_supplier_knowledge,
+                narrate_answer,
+            )
 
             return await run_harness(
                 state,
@@ -273,6 +276,9 @@ async def stream_harness_graph(
                 progress=progress,
                 narrate=lambda answer, message: asyncio.to_thread(
                     narrate_answer, answer, message
+                ),
+                answer_general_knowledge=lambda message: asyncio.to_thread(
+                    answer_general_supplier_knowledge, message
                 ),
             )
 

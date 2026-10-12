@@ -223,6 +223,20 @@ def is_non_operational_request(message: str) -> bool:
     return False
 
 
+def is_general_supplier_knowledge_question(message: str) -> bool:
+    """Identify general supplier-risk method questions that need no business data."""
+    text = str(message or "").strip().lower()
+    if not text or not any(token in text for token in ("供应商", "供应链", "采购")):
+        return False
+    if not any(token in text for token in ("风险", "评估", "管理", "指标", "因素", "维度")):
+        return False
+    return any(token in text for token in (
+        "一般", "通常", "通用", "哪些指标", "什么指标", "哪些因素", "哪些维度",
+        "看什么", "关注什么", "怎么评估", "如何评估", "评估方法", "评估流程",
+        "如何建立", "怎么建立", "评估体系",
+    ))
+
+
 def is_explicit_no_task(intent: object) -> bool:
     """Return whether extraction explicitly classified an empty turn as no task."""
     if isinstance(intent, dict):

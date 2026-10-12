@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -161,6 +162,14 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("app.services.clarification.formal_supplier_identity_clarification", lambda *_args: None)
     monkeypatch.setattr("app.services.clarification.external_assessment_clarification", lambda *_args: None)
     monkeypatch.setattr(narrator, "narrate_answer", lambda answer, _message: answer)
+    monkeypatch.setattr(
+        narrator,
+        "answer_general_supplier_knowledge",
+        lambda _message: (
+            "供应商风险通常从财务、履约、质量、合规和供应链依赖等维度评估。"
+            "还要结合历史趋势、问题影响和整改情况判断。"
+        ),
+    )
 
     async def no_checkpointer():
         return None
@@ -241,7 +250,40 @@ def test_chat_general_supplier_question_returns_without_business_tool_or_supplie
     assert "clarification" not in event_types
     assert "tool_call" not in event_types
     assert event_types[-1] == "done"
+    assert events[-1][1]["status"] == "completed"
     assert full_chain_chat.calls == []
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert answer["status"] == "completed", answer
+    assert "财务" in answer["summary"]
+    assert "履约" in answer["summary"]
+    assert "具体供应商" in "".join(answer["limitations"])
+
+
+def test_harness_general_knowledge_respects_llm_call_budget():
+    from app.graphs.harness import run_harness
+
+    calls: list[str] = []
+    message = "供应商风险分析一般会看哪些指标？"
+    result = asyncio.run(
+        run_harness(
+            {
+                "session_id": str(uuid4()),
+                "turn_id": str(uuid4()),
+                "run_id": str(uuid4()),
+                "user_message": message,
+                "execution_context": {},
+                "current_task": {},
+                "llm_call_count": 1,
+                "budget": {"max_llm_calls": 1},
+            },
+            answer_general_knowledge=lambda text: calls.append(text) or "不应调用",
+        )
+    )
+
+    assert calls == []
+    assert result["llm_call_count"] == 1
+    assert result["answer"]["status"] == "completed"
+    assert "财务" in result["answer"]["summary"]
 
 
 def test_chat_translation_of_domain_phrase_does_not_call_business_tools(full_chain_chat):
@@ -267,6 +309,8 @@ def test_chat_translation_of_domain_phrase_does_not_call_business_tools(full_cha
     assert "tool_call" not in event_types
     assert event_types[-1] == "done"
     assert full_chain_chat.calls == []
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert "财务、履约、质量" not in answer["summary"]
 
 
 @pytest.mark.parametrize(
@@ -298,6 +342,8 @@ def test_chat_negation_and_topic_switch_do_not_call_business_tools(full_chain_ch
     assert "tool_call" not in event_types
     assert event_types[-1] == "done"
     assert full_chain_chat.calls == []
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert "财务、履约、质量" not in answer["summary"]
 
 
 def test_chat_sourcing_request_passes_normalized_constraints_to_tool_executor(full_chain_chat):
