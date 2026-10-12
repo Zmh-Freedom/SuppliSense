@@ -79,7 +79,7 @@
 - 根因：供应商模型偶尔偏离 JSON schema；字段来源提示要求填充字段，却没有足够约束其他字段或 null 枚举值。
 - 修复方案：评估对可安全归一化的来源键和空 `requested_action` 做窄范围响应修复，或进一步收紧结构化输出提示，同时保留 schema 校验和重试。
 - 验证结果：实际模型调用最终成功，`task_type=analysis`、`capability=risk`、维度为 `risk,financial,business_risk`；首个无效响应由现有重试恢复。
-- 关联提交：待提交。
+- 关联提交：`c9f8a820`。
 
 ## ISS-20260923-001 MiniMax-M3 使用控制台域名导致聊天模型请求 404
 
