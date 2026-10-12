@@ -12,6 +12,9 @@
 - 修复方案：复用现有 Agent conversation/60 题评测资产，新增脱敏、固定、无外部服务依赖的输入理解用例；为每例定义会话状态、结构化期望字段和安全路由期望，并提供可重复的逐字段评估报告。
 - 验证结果：新增 36 条固定对话样例，覆盖单轮/多轮、意图能力、实体解析、寻源约束、歧义、寒暄和写操作安全；评测器校验 JSONL 契约并输出逐字段、逐标签准确率。输入理解评测器、意图抽取、上下文及既有对话评测联合回归 109/109 通过。全后端测试曾运行 460.93 秒后因依赖服务不可用中断：521 passed、23 failed、65 errors、4 skipped；日志中 PostgreSQL `localhost:5432` 连接被拒绝，MongoDB `localhost:27017` 连接也被拒绝。23 项失败尚未逐项归因，因此不据此判断为本次改动回归。
 - 关联提交：`6f6d3c50`。
+- 复发记录（2026-10-12，容器恢复）：清理容器后，根目录 `.env` 缺失；Compose 默认无法解析必需变量。`.env.docker` 的 MongoDB/PostgreSQL 密码与 `backend/.env` 不一致，现有持久化数据卷拒绝前者账号。修复方案：使用 `backend/.env` 重建 MongoDB、PostgreSQL、Redis 开发依赖容器配置，保留已有数据卷。
+- 验证结果（复发）：三个依赖容器均为 healthy；使用后端开发配置认证 MongoDB/PostgreSQL 成功。全量后端 pytest 1165 passed、4 skipped、7 warnings，45.47 秒；4 项为需显式设置 `RUN_AGENT_60_LIVE=1` 的真实 Agent 60 live 用例。使用错误密码覆盖配置的首次测试曾在 320.45 秒被中断，结果为 520 passed、23 failed、47 errors、4 skipped，不作为代码回归结论。
+- 关联提交：`6f6d3c50`（阶段1代码）；本次环境恢复验证随问题日志提交。
 
 ## ISS-20260923-001 MiniMax-M3 使用控制台域名导致聊天模型请求 404
 
