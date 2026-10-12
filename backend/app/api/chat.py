@@ -570,6 +570,18 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
             requested_write_action = explicit_write_action(req.message)
             is_write_action = requested_write_action != "none"
+            llm_intent = execution_context.get("llm_intent")
+            llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
+            explicitly_no_business_task = (
+                not is_write_action
+                and llm_intent.get("task_type") == "none"
+                and llm_intent.get("capability") == "none"
+                and llm_intent.get("requested_action", "none") == "none"
+                and not llm_intent.get("target_supplier_names")
+                and not llm_intent.get("analysis_dimensions")
+                and not llm_intent.get("provider_capabilities")
+                and not llm_intent.get("sourcing_requirement")
+            )
             from app.services.clarification import (
                 external_assessment_clarification,
                 formal_supplier_identity_clarification,
@@ -579,10 +591,14 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # approval path.  The read-only identity/scope preflight cannot
             # know about cached external identity evidence and used to stop
             # the request before the confirmation card could be rendered.
-            identity_clarification = None if is_write_action else await asyncio.to_thread(
-                formal_supplier_identity_clarification,
-                resolved_target_names,
-                req.message,
+            identity_clarification = (
+                None
+                if is_write_action or explicitly_no_business_task
+                else await asyncio.to_thread(
+                    formal_supplier_identity_clarification,
+                    resolved_target_names,
+                    req.message,
+                )
             )
             if identity_clarification:
                 await _persist_pending_clarification(
@@ -603,17 +619,21 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     user_role,
                     req.message,
                 )
-                if _is_uuid(user_id) and not is_write_action
+                if _is_uuid(user_id) and not is_write_action and not explicitly_no_business_task
                 else None
             )
             if scope_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
-            external_clarification = None if is_write_action else await asyncio.to_thread(
-                external_assessment_clarification,
-                resolved_target_names,
-                supplier_references,
-                req.message,
+            external_clarification = (
+                None
+                if is_write_action or explicitly_no_business_task
+                else await asyncio.to_thread(
+                    external_assessment_clarification,
+                    resolved_target_names,
+                    supplier_references,
+                    req.message,
+                )
             )
             if external_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': external_clarification.message, 'missing': external_clarification.missing, 'missing_fields': external_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
@@ -621,11 +641,15 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             has_structured_context = bool(
                 supplier_references or conversation_state.get("active_suppliers")
             )
-            clar = None if is_write_action else detect_clarification_needed(
-                req.message,
-                supplier_references=supplier_references,
-                resolved_target_names=resolved_target_names,
-                has_structured_context=has_structured_context,
+            clar = (
+                None
+                if is_write_action or explicitly_no_business_task
+                else detect_clarification_needed(
+                    req.message,
+                    supplier_references=supplier_references,
+                    resolved_target_names=resolved_target_names,
+                    has_structured_context=has_structured_context,
+                )
             )
             if clar:
                 await _persist_pending_clarification(
@@ -637,8 +661,6 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # Model-detected ambiguity can request clarification after the
             # deterministic identity, access, and policy checks have run.
             # Write requests stay on the approval workflow's own validation.
-            llm_intent = execution_context.get("llm_intent")
-            llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
             clarification_question = str(
                 llm_intent.get("clarification_question") or ""
             ).strip()[:300]
