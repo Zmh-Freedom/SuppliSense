@@ -162,6 +162,91 @@ def test_llm_extractor_preserves_explicit_time_range_as_a_structured_field(monke
     assert result.field_sources["time_range"] == "explicit"
 
 
+def test_llm_extractor_preserves_user_facing_interpretation_and_ambiguity_fields(monkeypatch):
+    payload = {
+        "target_supplier_names": [],
+        "analysis_dimensions": [],
+        "capability": "financial",
+        "task_type": "analysis",
+        "interpretation_summary": "用户想看当前对话中该供应商近三个月的财务表现。",
+        "ambiguities": ["当前对话提到过两家供应商，无法确定指代对象。"],
+        "missing_fields": ["target_supplier_names"],
+        "needs_clarification": True,
+        "clarification_question": "你想查看哪一家供应商？",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "那看一下财务呢？",
+        [{"name": "甲电机有限公司"}, {"name": "乙电机有限公司"}],
+        conversation_context={
+            "history": [],
+            "conversation_state": {
+                "selected_supplier_names": ["甲电机有限公司", "乙电机有限公司"],
+                "current_task": {"analysis_dimensions": ["risk"]},
+            },
+        },
+    )
+
+    assert result is not None
+    assert result.interpretation_summary.startswith("用户想看")
+    assert result.ambiguities == ["当前对话提到过两家供应商，无法确定指代对象。"]
+    assert result.missing_fields == ["target_supplier_names"]
+    assert result.needs_clarification is True
+    assert result.clarification_question == "你想查看哪一家供应商？"
+
+
+def test_llm_extractor_retries_once_with_explicit_capability_conflict(monkeypatch):
+    calls: list[dict] = []
+    payloads = [
+        {"capability": "sentiment", "analysis_dimensions": ["sentiment"], "task_type": "analysis"},
+        {
+            "capability": "financial",
+            "analysis_dimensions": ["financial"],
+            "task_type": "analysis",
+            "interpretation_summary": "用户要查看该供应商的财务情况。",
+        },
+    ]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            payload = payloads[min(len(calls) - 1, 1)]
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "分析甲电机有限公司的财务情况",
+        [{"name": "甲电机有限公司"}],
+    )
+
+    assert result is not None
+    assert len(calls) == 2
+    assert "冲突" in calls[1]["messages"][-1]["content"]
+    assert result.capability == "financial"
+    assert result.interpretation_summary == "用户要查看该供应商的财务情况。"
+
+
 @pytest.mark.parametrize("time_range", ["过去三个月", "近三个月"])
 def test_llm_extractor_marks_three_month_range_as_explicit(time_range):
     extraction = intent_extractor.ConversationIntentExtraction(
@@ -577,6 +662,39 @@ def test_persisted_input_understanding_uses_target_resolved_for_executable_task(
     understanding = result["conversation_state"]["input_understanding"]
     assert understanding["target_supplier_names"] == ["青岛三祥科技股份有限公司"]
     assert understanding["field_sources"]["target_supplier_names"] == "explicit"
+
+
+def test_persisted_input_understanding_keeps_model_summary_and_clarification_state():
+    context = {
+        "current_task": {
+            "task_type": "analysis",
+            "target_supplier_names": [],
+            "analysis_dimensions": ["financial"],
+        },
+        "llm_intent": {
+            "task_type": "analysis",
+            "analysis_dimensions": ["financial"],
+            "requested_action": "none",
+            "interpretation_summary": "用户要查看当前任务涉及供应商的财务情况。",
+            "ambiguities": ["当前会话提到两家供应商，指代不明确。"],
+            "missing_fields": ["target_supplier_names"],
+            "needs_clarification": True,
+            "clarification_question": "你想查看哪一家供应商？",
+        },
+    }
+
+    result = adapter._persist_input_understanding(
+        context,
+        user_message="那看一下财务呢？",
+        previous_state={},
+    )
+
+    understanding = result["conversation_state"]["input_understanding"]
+    assert understanding["interpretation_summary"] == "用户要查看当前任务涉及供应商的财务情况。"
+    assert understanding["ambiguities"] == ["当前会话提到两家供应商，指代不明确。"]
+    assert understanding["missing_fields"] == ["target_supplier_names"]
+    assert understanding["needs_clarification"] is True
+    assert understanding["clarification_question"] == "你想查看哪一家供应商？"
 
 
 def test_load_execution_context_passes_prior_turn_and_saves_final_parse_snapshot(monkeypatch):

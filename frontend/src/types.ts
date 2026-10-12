@@ -351,6 +351,11 @@ export interface AgentInputUnderstanding {
   requested_action?: string;
   time_range?: string;
   confidence?: number;
+  interpretation_summary?: string;
+  ambiguities?: string[];
+  missing_fields?: string[];
+  needs_clarification?: boolean;
+  clarification_question?: string | null;
   field_sources?: Record<string, string>;
 }
 

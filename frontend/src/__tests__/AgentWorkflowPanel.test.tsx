@@ -92,6 +92,8 @@ describe('AgentWorkflowPanel', () => {
         capability: 'financial',
         target_supplier_names: ['甲电机有限公司'],
         analysis_dimensions: ['financial'],
+        interpretation_summary: '用户想看甲电机有限公司的财务表现。',
+        ambiguities: ['时间范围没有明确指定。'],
         field_sources: {
           target_supplier_names: 'conversation_state',
           analysis_dimensions: 'explicit',
@@ -108,6 +110,8 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByText('会话上下文')).toBeInTheDocument()
     expect(screen.getByText('本轮输入')).toBeInTheDocument()
     expect(screen.getByText(/财务分析/)).toBeInTheDocument()
+    expect(screen.getByText('用户想看甲电机有限公司的财务表现。')).toBeInTheDocument()
+    expect(screen.getByLabelText('理解中的歧义')).toHaveTextContent('时间范围没有明确指定。')
   })
 
   it('keeps review as an explicit human review state instead of marking it as a decision complete', () => {

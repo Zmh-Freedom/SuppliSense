@@ -571,6 +571,30 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
 
+            # Model-detected ambiguity can request clarification after the
+            # deterministic identity, access, and policy checks have run.
+            # Write requests stay on the approval workflow's own validation.
+            llm_intent = execution_context.get("llm_intent")
+            llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
+            clarification_question = str(
+                llm_intent.get("clarification_question") or ""
+            ).strip()[:300]
+            raw_missing_fields = llm_intent.get("missing_fields")
+            allowed_missing_fields = {
+                "target_supplier_names", "analysis_dimensions",
+                "sourcing_requirement", "time_range",
+            }
+            missing_fields = [
+                field for field in raw_missing_fields if field in allowed_missing_fields
+            ] if isinstance(raw_missing_fields, list) else []
+            if (
+                not is_write_action
+                and llm_intent.get("needs_clarification") is True
+                and clarification_question
+            ):
+                yield f"event: clarification\ndata: {json.dumps({'message': clarification_question, 'missing': missing_fields, 'missing_fields': missing_fields, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
+                return
+
             # Resolve mode only after target resolution and fallback clarification.
             mode = req.mode
             # The deterministic write-intent parser is authoritative for the

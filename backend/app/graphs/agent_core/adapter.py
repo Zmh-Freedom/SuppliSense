@@ -349,6 +349,7 @@ def load_execution_context(
         user_message,
         execution_context["references"],
         conversation_context={
+            "session_id": session_id,
             "history": execution_context["history"],
             "conversation_state": previous_state if isinstance(previous_state, dict) else {},
         },
@@ -417,6 +418,19 @@ def _persist_input_understanding(
         task_type=raw_task_type,
         requested_action=requested_action,
         confidence=float(raw_intent.get("confidence") or 0.0),
+        interpretation_summary=str(raw_intent.get("interpretation_summary") or ""),
+        ambiguities=_text_list(raw_intent.get("ambiguities"))[:5],
+        missing_fields=[
+            field for field in _text_list(raw_intent.get("missing_fields"))[:4]
+            if field in {
+                "target_supplier_names", "analysis_dimensions",
+                "sourcing_requirement", "time_range",
+            }
+        ],
+        needs_clarification=bool(raw_intent.get("needs_clarification")),
+        clarification_question=(
+            str(raw_intent.get("clarification_question") or "")[:300] or None
+        ),
     )
     context_snapshot = _conversation_context_snapshot({
         "history": execution_context.get("history", []),
@@ -1061,6 +1075,21 @@ def apply_extracted_conversation_intent(
     conversation_state["current_task"] = current_task
     intent_snapshot = extracted.model_dump(mode="json")
     conversation_state["input_understanding"] = intent_snapshot
+    logger.info(
+        "conversation_intent_execution_overlay",
+        session_id=execution_context.get("session_id"),
+        normalized_intent={
+            "target_supplier_names": intent_snapshot.get("target_supplier_names", []),
+            "analysis_dimensions": intent_snapshot.get("analysis_dimensions", []),
+            "capability": intent_snapshot.get("capability", "none"),
+        },
+        executable_task={
+            "target_supplier_names": current_task.get("target_supplier_names", []),
+            "analysis_dimensions": current_task.get("analysis_dimensions", []),
+            "capability": current_task.get("capability", "none"),
+            "task_type": current_task.get("task_type", "none"),
+        },
+    )
     return {
         **execution_context,
         "conversation_state": conversation_state,

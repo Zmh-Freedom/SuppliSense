@@ -141,3 +141,51 @@ def test_chat_stream_fails_closed_when_llm_targets_are_lost(
     assert response.status_code == 200
     assert "会话上下文校验失败，已停止执行" in response.text
     assert "缺少待评估供应商名称" not in response.text
+
+
+def test_chat_stream_uses_model_clarification_before_starting_harness(
+    authenticated_chat_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _context(["甲电机有限公司", "乙电机有限公司"], ["financial"])
+    context["llm_intent"].update({
+        "needs_clarification": True,
+        "missing_fields": ["target_supplier_names"],
+        "ambiguities": ["当前会话中有两家供应商，无法确定指代对象。"],
+        "clarification_question": "你想查看哪一家供应商？",
+    })
+    monkeypatch.setattr(
+        "app.graphs.agent_core.adapter.load_execution_context",
+        lambda *_args: context,
+    )
+    monkeypatch.setattr(
+        "app.services.clarification.formal_supplier_identity_clarification",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.services.clarification.review_scope_clarification",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.services.clarification.external_assessment_clarification",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.services.clarification.detect_clarification_needed",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def fail_if_started(*_args, **_kwargs):
+        raise AssertionError("Harness must not run while model ambiguity is unresolved")
+        yield ""
+
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", fail_if_started)
+
+    response = authenticated_chat_client.post(
+        "/api/v1/chat/stream",
+        json={"message": "那看一下财务呢？", "session_id": str(uuid4())},
+    )
+
+    assert response.status_code == 200
+    assert 'event: clarification\ndata: {"message": "你想查看哪一家供应商？"' in response.text
+    assert '"missing_fields": ["target_supplier_names"]' in response.text

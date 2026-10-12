@@ -16,6 +16,7 @@ from app.core.logging import get_logger
 from app.core.structured_response import parse_json_object_content
 from app.domains.sourcing_risk.requirement_service import SourcingRequirement
 from app.graphs.agent_core.capability_routing import (
+    explicit_primary_capability,
     normalize_analysis_dimensions,
     normalize_primary_capability,
 )
@@ -74,6 +75,13 @@ class ConversationIntentExtraction(BaseModel):
         "manage_scheduled_report", "none",
     ] = "none"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    interpretation_summary: str = Field(default="", max_length=240)
+    ambiguities: list[str] = Field(default_factory=list, max_length=5)
+    missing_fields: list[Literal[
+        "target_supplier_names", "analysis_dimensions", "sourcing_requirement", "time_range",
+    ]] = Field(default_factory=list, max_length=4)
+    needs_clarification: bool = False
+    clarification_question: str | None = Field(default=None, max_length=300)
     field_sources: dict[str, Literal[
         "explicit", "explicit_alias", "alias_resolution", "conversation_state",
         "pending_task", "merged_with_conversation_state", "explicit_override",
@@ -183,6 +191,9 @@ def extract_conversation_intent(
         "response_schema": ConversationIntentExtraction.model_json_schema(),
         "rules": [
             "Return one JSON object only.",
+            "Also return interpretation_summary as one short user-facing sentence; do not reveal hidden chain-of-thought.",
+            "Return ambiguities and missing_fields only when they materially prevent choosing a safe, useful task.",
+            "Set needs_clarification=true only if the user must answer before execution; then provide one concise clarification_question. Optional preferences are not missing required fields.",
             "First identify the primary capability from the allowed capability values; do not classify by matching a single keyword.",
             "Capability mapping: sourcing=寻源, risk=综合风险, financial=财务, sentiment=舆情, compliance=合规, esg=ESG, risk_trend=历史风险变化, risk_prediction=未来风险趋势, risk_network=供应链关系或传染风险, report=报告, watchlist_scope=监控清单或本人负责供应商范围, identity_review=主体核验, company_profile=工商资料, legal_risk=司法风险, business_risk=经营风险, risk_comparison=企业对比, quality=质量, delivery=交付。",
             "Set scope to describe whether this is one supplier, a supplier group, a product category, the user's responsible suppliers, a formal directory, or a pending confirmation.",
@@ -219,7 +230,11 @@ def extract_conversation_intent(
         {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
     ]
 
+    extraction_attempt = 0
+
     def request_extraction(messages: list[dict[str, str]]) -> ConversationIntentExtraction:
+        nonlocal extraction_attempt
+        extraction_attempt += 1
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=messages,
@@ -228,13 +243,26 @@ def extract_conversation_intent(
             **completion_token_options(700),
             timeout=float(os.getenv("LLM_INTENT_EXTRACTION_TIMEOUT", "8")),
         )
-        return ConversationIntentExtraction.model_validate(
-            _normalize_llm_payload(parse_json_object_content(
-                response.choices[0].message.content,
-                operation="intent_extraction",
-                response=response,
-            ))
+        payload = parse_json_object_content(
+            response.choices[0].message.content,
+            operation="intent_extraction",
+            response=response,
         )
+        if isinstance(payload, dict):
+            logger.info(
+                "conversation_intent_model_candidate",
+                session_id=(conversation_context or {}).get("session_id"),
+                attempt=extraction_attempt,
+                target_supplier_names=payload.get("target_supplier_names", []),
+                analysis_dimensions=payload.get("analysis_dimensions", []),
+                capability=payload.get("capability", "none"),
+                task_type=payload.get("task_type", "none"),
+                needs_clarification=payload.get("needs_clarification", False),
+                missing_fields=payload.get("missing_fields", []),
+                interpretation_summary=payload.get("interpretation_summary", ""),
+                ambiguities=payload.get("ambiguities", []),
+            )
+        return ConversationIntentExtraction.model_validate(_normalize_llm_payload(payload))
 
     try:
         extracted = request_extraction(base_messages)
@@ -257,6 +285,38 @@ def extract_conversation_intent(
     except Exception as exc:
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
         return _deterministic_extraction_fallback(message)
+
+    explicit_capability = explicit_primary_capability(message)
+    semantic_conflicts: list[str] = []
+    if explicit_capability and extracted.capability != explicit_capability:
+        semantic_conflicts.append(
+            f"当前输入存在唯一明确能力 {explicit_capability}，模型返回了 {extracted.capability}"
+        )
+    if extracted.needs_clarification and not extracted.clarification_question:
+        semantic_conflicts.append("模型标记需要澄清，但没有给出澄清问题")
+    if semantic_conflicts:
+        logger.info(
+            "conversation_intent_semantic_retry",
+            session_id=(conversation_context or {}).get("session_id"),
+            conflicts=semantic_conflicts,
+        )
+        try:
+            extracted = request_extraction([
+                *base_messages,
+                {"role": "assistant", "content": extracted.model_dump_json(exclude_none=True)},
+                {
+                    "role": "user",
+                    "content": (
+                        "请只针对以下可验证冲突重新检查本轮理解，并返回完整 JSON："
+                        + "；".join(semantic_conflicts)
+                        + "。结合当前消息和会话上下文判断，若上下文已消除歧义则不要追问。"
+                    ),
+                },
+            ])
+        except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as retry_exc:
+            logger.warning("conversation_intent_semantic_retry_invalid", error=str(retry_exc))
+        except Exception as retry_exc:
+            logger.warning("conversation_intent_semantic_retry_failed", error=str(retry_exc))
 
     detected_action = explicit_write_action(message)
     raw_capability = extracted.capability
@@ -301,11 +361,26 @@ def extract_conversation_intent(
     if not validated_targets and any(token in message for token in _ANALYSIS_TOKENS):
         quoted = re.findall(r"[“\"「『]([^”\"」』]+)[”\"」』]", message)
         validated_targets = list(dict.fromkeys(item.strip() for item in quoted if item.strip()))
+    clarification_question = extracted.clarification_question
+    if extracted.needs_clarification and not clarification_question:
+        missing_labels = {
+            "target_supplier_names": "要分析的供应商",
+            "analysis_dimensions": "分析内容",
+            "sourcing_requirement": "采购品类或产品",
+            "time_range": "时间范围",
+        }
+        requested_labels = [missing_labels[field] for field in extracted.missing_fields]
+        clarification_question = (
+            f"请补充{'、'.join(requested_labels)}，我再继续处理。"
+            if requested_labels
+            else "我还不能确定你希望处理的具体任务，请补充一下目标或分析内容。"
+        )
     validated = extracted.model_copy(update={
         "target_supplier_names": validated_targets,
         "analysis_dimensions": extracted_dimensions,
         "capability": capability,
         "task_type": task_type,
+        "clarification_question": clarification_question,
         # The model may over-read the word “监控” in a read-only identity
         # request. A write action is allowed only when the current message
         # contains an explicit add/monitor instruction.
@@ -319,6 +394,17 @@ def extract_conversation_intent(
             context_snapshot,
         ),
     })
+    logger.info(
+        "conversation_intent_normalized",
+        session_id=(conversation_context or {}).get("session_id"),
+        target_supplier_names=validated.target_supplier_names,
+        analysis_dimensions=validated.analysis_dimensions,
+        capability=validated.capability,
+        task_type=validated.task_type,
+        needs_clarification=validated.needs_clarification,
+        missing_fields=validated.missing_fields,
+        interpretation_summary=validated.interpretation_summary,
+    )
     logger.info(
         "conversation_intent_extracted",
         target_supplier_names=validated.target_supplier_names,

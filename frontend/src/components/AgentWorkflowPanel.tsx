@@ -397,6 +397,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
         <div className="space-y-4 border-t border-[var(--color-border)] px-4 py-4">
           {workflow?.inputUnderstanding && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3" aria-label="本轮理解">
             <h3 className="text-xs font-semibold text-[var(--color-text)]">本轮理解</h3>
+            {workflow.inputUnderstanding.interpretation_summary && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{workflow.inputUnderstanding.interpretation_summary}</p>}
             <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
               {workflow.inputUnderstanding.task_type === 'sourcing' ? '供应商寻源' : workflow.inputUnderstanding.task_type === 'analysis' ? '分析任务' : '对话请求'}
               {workflow.inputUnderstanding.capability && workflow.inputUnderstanding.capability !== 'none' ? ` · ${CAPABILITY_LABELS[workflow.inputUnderstanding.capability] || workflow.inputUnderstanding.capability}` : ''}
@@ -410,6 +411,9 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
                 </dd>
               </div>)}
             </dl>}
+            {workflow.inputUnderstanding.ambiguities?.length ? <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-amber-700" aria-label="理解中的歧义">
+              {workflow.inputUnderstanding.ambiguities.map((ambiguity, index) => <li key={`${index}-${ambiguity}`}>{ambiguity}</li>)}
+            </ul> : null}
           </div>}
           {workflow && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
