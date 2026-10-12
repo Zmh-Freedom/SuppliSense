@@ -68,6 +68,19 @@
 - 验证结果：`/health/ready` 返回 ready，MongoDB、Redis、PostgreSQL 和 Harness checkpointer 均健康；登录 API 对历史账号返回 401。真实模型配置为 MiniMax-M3。等待登录后完成聊天验证。
 - 关联提交：`3b6c989a`。
 
+## ISS-20261012-006 MiniMax 实际调用偶发返回不符合意图解析契约的 JSON
+
+- 发现日期：2026-10-12
+- 状态：已观察，重试恢复；待评估是否需加固
+- 优先级：P2（增加解析重试和响应延迟）
+- 用例：MiniMax-M3 实际调用“分析甲公司的综合风险”
+- 现象：后端重启后真实模型首次返回 `requested_action: null`，且 `field_sources` 含 `scope` 等不支持的字段；Pydantic 校验拒绝该响应，现有重试随后得到合法结果并提取出 `risk / financial / business_risk`。
+- 影响：该调用最终成功，但模型结构化输出不稳定时会触发额外重试，若重试持续失败则可能转入确定性回退。
+- 根因：供应商模型偶尔偏离 JSON schema；字段来源提示要求填充字段，却没有足够约束其他字段或 null 枚举值。
+- 修复方案：评估对可安全归一化的来源键和空 `requested_action` 做窄范围响应修复，或进一步收紧结构化输出提示，同时保留 schema 校验和重试。
+- 验证结果：实际模型调用最终成功，`task_type=analysis`、`capability=risk`、维度为 `risk,financial,business_risk`；首个无效响应由现有重试恢复。
+- 关联提交：待提交。
+
 ## ISS-20260923-001 MiniMax-M3 使用控制台域名导致聊天模型请求 404
 
 - 发现日期：2026-09-23
