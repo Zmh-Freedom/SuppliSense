@@ -66,7 +66,7 @@
 - 根因：当前开发数据库账号与历史文档记录不一致，且没有配置 `INITIAL_ADMIN_PASSWORD`。
 - 修复方案：由用户在当前浏览器使用已获准的测试账号登录，或提供可用的专用测试账号；登录后继续执行真实多轮验证。未创建用户、重置密码或绕过认证。
 - 验证结果：`/health/ready` 返回 ready，MongoDB、Redis、PostgreSQL 和 Harness checkpointer 均健康；登录 API 对历史账号返回 401。真实模型配置为 MiniMax-M3。等待登录后完成聊天验证。
-- 关联提交：待提交。
+- 关联提交：`3b6c989a`。
 
 ## ISS-20260923-001 MiniMax-M3 使用控制台域名导致聊天模型请求 404
 
