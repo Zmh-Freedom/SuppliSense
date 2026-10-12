@@ -240,11 +240,114 @@ describe('ChatView session lifecycle', () => {
   it('does not load another account\'s legacy or scoped chat history', () => {
     localStorage.setItem('session', JSON.stringify({ username: 'xiaoli.meng', role: 'purchaser' }))
     localStorage.setItem('chat_sessions:minhao.zhou', JSON.stringify([OLD_SESSION]))
+    localStorage.setItem('chat_active_session:minhao.zhou', OLD_SESSION.sid)
 
     renderChat()
 
     expect(screen.queryByText('旧会话')).not.toBeInTheDocument()
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
+  })
+
+  it('restores the most recently updated session after reload', () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([
+      {
+        sid: 'newer-session',
+        title: '最新会话',
+        msgs: [{ role: 'user', content: '最新会话里的问题' }],
+        updatedAt: 20,
+      },
+      {
+        sid: 'older-session',
+        title: '较旧会话',
+        msgs: [{ role: 'user', content: '旧会话里的问题' }],
+        updatedAt: 10,
+      },
+    ]))
+
+    renderChat()
+
+    expect(screen.getByText('最新会话里的问题')).toBeInTheDocument()
+    expect(screen.queryByText('旧会话里的问题')).not.toBeInTheDocument()
+  })
+
+  it('restores the explicitly selected session even when another session was updated later', () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([
+      {
+        sid: 'recently-updated',
+        title: '最近更新',
+        msgs: [{ role: 'user', content: '最近更新的内容' }],
+        updatedAt: 20,
+      },
+      {
+        sid: 'active-session',
+        title: '当前会话',
+        msgs: [{ role: 'user', content: '当前会话内容' }],
+        updatedAt: 10,
+      },
+    ]))
+    localStorage.setItem('chat_active_session', 'active-session')
+
+    renderChat()
+
+    expect(screen.getByText('当前会话内容')).toBeInTheDocument()
+    expect(screen.queryByText('最近更新的内容')).not.toBeInTheDocument()
+  })
+
+  it('keeps the newest session when trimming history to fifty sessions', async () => {
+    const existingSessions = Array.from({ length: 51 }, (_, index) => ({
+      sid: `session-${index}`,
+      title: `会话 ${index}`,
+      msgs: [{ role: 'user', content: `历史问题 ${index}` }],
+      updatedAt: 100 - index,
+    }))
+    localStorage.setItem('chat_sessions', JSON.stringify(existingSessions))
+    localStorage.setItem('chat_active_session', 'session-0')
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '本轮已完成', status: 'completed' })
+      return '本轮已完成'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '追加一轮分析')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ sid: string }>
+      expect(storedSessions).toHaveLength(50)
+      expect(storedSessions.some(session => session.sid === 'session-0')).toBe(true)
+      expect(storedSessions.some(session => session.sid === 'session-50')).toBe(false)
+    })
+  })
+
+  it('removes the conversational switch prefix when confirming a supplier candidate', async () => {
+    const submittedMessages: string[] = []
+    let calls = 0
+    mocks.chatStream.mockImplementation(async (message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      submittedMessages.push(message)
+      calls += 1
+      if (calls === 1) {
+        handlers.onClarification?.({
+          message: '请确认正式供应商',
+          missing: ['supplier_identity'],
+          candidates: [{ supplier_id: 'supplier:kaizhong', supplier_name: '上海凯众材料科技股份有限公司', short_name: '上海凯众材料' }],
+        })
+      } else {
+        handlers.onDone?.({ answer: '财务分析完成', status: 'completed' })
+      }
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '那改看上海凯众材料科技股份有限公司，分析近三个月的财务情况')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await user.click(await screen.findByRole('button', { name: /上海凯众材料科技股份有限公司/ }))
+
+    await waitFor(() => expect(submittedMessages).toHaveLength(2))
+    expect(submittedMessages[1]).not.toContain('那改看')
+    expect(submittedMessages[1]).toContain('上海凯众材料科技股份有限公司')
+    expect(submittedMessages[1]).toContain('近三个月的财务情况')
   })
 
   it('does not recreate a deleted session when its stream completes', async () => {

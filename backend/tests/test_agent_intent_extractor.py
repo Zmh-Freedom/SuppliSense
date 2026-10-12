@@ -162,6 +162,35 @@ def test_llm_extractor_preserves_explicit_time_range_as_a_structured_field(monke
     assert result.field_sources["time_range"] == "explicit"
 
 
+@pytest.mark.parametrize("time_range", ["过去三个月", "近三个月"])
+def test_llm_extractor_marks_three_month_range_as_explicit(time_range):
+    extraction = intent_extractor.ConversationIntentExtraction(
+        target_supplier_names=["甲电机有限公司"],
+        analysis_dimensions=["financial"],
+        time_range=time_range,
+        task_type="analysis",
+    )
+
+    sources = intent_extractor._derive_field_sources(
+        f"分析甲电机有限公司{time_range}的财务情况",
+        extraction,
+        [{"name": "甲电机有限公司"}],
+        {},
+    )
+
+    assert sources["time_range"] == "explicit"
+
+
+def test_llm_payload_safely_normalizes_null_action_and_discards_unknown_source_keys():
+    normalized = intent_extractor._normalize_llm_payload({
+        "requested_action": None,
+        "field_sources": {"scope": "explicit", "analysis_dimensions": "explicit"},
+    })
+
+    assert normalized["requested_action"] == "none"
+    assert normalized["field_sources"] == {"analysis_dimensions": "explicit"}
+
+
 def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeypatch):
     """Model wording must not turn ``一下`` into part of the legal name."""
     class FakeCompletions:
@@ -188,6 +217,35 @@ def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeyp
 
     assert result is not None
     assert result.target_supplier_names == ["青岛三祥科技股份有限公司"]
+
+
+def test_llm_extractor_normalizes_company_switch_prefix(monkeypatch):
+    payload = {
+        "target_supplier_names": ["那改看上海凯众材料科技股份有限公司"],
+        "analysis_dimensions": ["financial"],
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "那改看上海凯众材料科技股份有限公司，分析近三个月的财务情况",
+        [{"name": "上海凯众材料科技股份有限公司"}],
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["上海凯众材料科技股份有限公司"]
 
 
 def test_llm_extractor_restores_a_truncated_leading_character_from_explicit_query(monkeypatch):
@@ -492,6 +550,33 @@ def test_llm_intent_overlay_persists_field_values_and_sources_in_conversation_st
         "target_supplier_names": "conversation_state",
         "analysis_dimensions": "explicit",
     }
+
+
+def test_persisted_input_understanding_uses_target_resolved_for_executable_task():
+    context = {
+        "references": [{"name": "青岛三祥科技股份有限公司"}],
+        "current_task": {
+            "task_type": "analysis",
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+        },
+        "llm_intent": {
+            "task_type": "analysis",
+            "target_supplier_names": [],
+            "analysis_dimensions": ["risk"],
+            "requested_action": "none",
+        },
+    }
+
+    result = adapter._persist_input_understanding(
+        context,
+        user_message="请分析青岛三祥科技股份有限公司的综合风险",
+        previous_state={},
+    )
+
+    understanding = result["conversation_state"]["input_understanding"]
+    assert understanding["target_supplier_names"] == ["青岛三祥科技股份有限公司"]
+    assert understanding["field_sources"]["target_supplier_names"] == "explicit"
 
 
 def test_load_execution_context_passes_prior_turn_and_saves_final_parse_snapshot(monkeypatch):

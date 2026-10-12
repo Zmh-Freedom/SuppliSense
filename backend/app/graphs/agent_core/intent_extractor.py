@@ -468,9 +468,19 @@ def _derive_field_sources(
         else:
             sources["sourcing_requirement"] = "explicit"
 
-    if any(token in message for token in ("最近", "近30天", "近一个月", "最近一个月", "过去一个月", "近半年", "今年")):
+    if extraction.time_range and _has_explicit_time_range(message):
         sources["time_range"] = "explicit"
     return sources
+
+
+def _has_explicit_time_range(message: str) -> bool:
+    text = re.sub(r"\s+", "", str(message or ""))
+    if any(token in text for token in (
+        "最近", "本月", "上月", "本季度", "上季度", "今年", "去年",
+        "本年度", "上年度", "近半年", "过去半年", "近一年", "过去一年",
+    )):
+        return True
+    return bool(re.search(r"(?:近|过去|最近)[0-9一二三四五六七八九十半]+(?:天|日|周|星期|个月|月|季度|年)", text))
 
 
 def has_explicit_watchlist_request(message: str) -> bool:
@@ -667,6 +677,17 @@ def _normalize_llm_payload(payload: Any) -> Any:
                 return payload
         if isinstance(wrapped_content, dict):
             payload = wrapped_content
+    payload = dict(payload)
+    if payload.get("requested_action") is None:
+        payload["requested_action"] = "none"
+    field_sources = payload.get("field_sources")
+    if isinstance(field_sources, dict):
+        supported_fields = {
+            "target_supplier_names", "analysis_dimensions", "sourcing_requirement", "time_range",
+        }
+        payload["field_sources"] = {
+            key: value for key, value in field_sources.items() if key in supported_fields
+        }
     dimension_map = {
         "风险": "risk",
         "风险评估": "risk",

@@ -391,7 +391,7 @@ def _persist_input_understanding(
     raw_intent = execution_context.get("llm_intent")
     raw_intent = raw_intent if isinstance(raw_intent, dict) else {}
     target_names = raw_intent.get("target_supplier_names")
-    if not isinstance(target_names, list):
+    if not isinstance(target_names, list) or not target_names:
         target_names = current_task.get("target_supplier_names", [])
     dimensions = raw_intent.get("analysis_dimensions")
     if not isinstance(dimensions, list):

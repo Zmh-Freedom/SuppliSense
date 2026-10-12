@@ -29,6 +29,7 @@ interface Session {
 }
 
 const STORAGE_KEY = 'chat_sessions';
+const ACTIVE_SESSION_KEY = 'chat_active_session';
 
 /** Scope browser-only chat state to the authenticated account. */
 function storageScope(): string {
@@ -71,9 +72,28 @@ function loadSessions(): Session[] {
   } catch { return []; }
 }
 
+function loadActiveSessionId(sessions: Session[]): string {
+  try {
+    const activeSid = localStorage.getItem(scopedKey(ACTIVE_SESSION_KEY));
+    if (activeSid && sessions.some(session => session.sid === activeSid)) return activeSid;
+  } catch {
+    // Fall back to the most recently updated session when storage is unavailable.
+  }
+  return sessions.reduce((latest, session) => session.updatedAt > latest.updatedAt ? session : latest, sessions[0])?.sid || '';
+}
+
+function saveActiveSessionId(sid: string): void {
+  try {
+    if (sid) localStorage.setItem(scopedKey(ACTIVE_SESSION_KEY), sid);
+    else localStorage.removeItem(scopedKey(ACTIVE_SESSION_KEY));
+  } catch {
+    // Chat remains usable when browser storage is unavailable.
+  }
+}
+
 function saveSessions(sessions: Session[]) {
   // keep last 50 sessions max
-  const trimmed = sessions.slice(-50);
+  const trimmed = sessions.slice(0, 50);
   localStorage.setItem(scopedKey(STORAGE_KEY), JSON.stringify(trimmed));
 }
 
@@ -117,6 +137,7 @@ function restoreConfirmedSupplierQuestion(
   if (!original) return `查看${canonicalName}的风险情况`;
 
   let restored = original;
+  restored = restored.replace(/^(?:那)?改看(?:一下)?\s*/, '');
   const aliases = [candidate.short_name, canonicalName]
     .filter((value): value is string => Boolean(value?.trim()))
     .sort((left, right) => right.length - left.length);
@@ -158,10 +179,7 @@ function restoreConfirmedSupplierQuestion(
 export default function ChatView() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
-  const [activeSid, setActiveSid] = useState<string>(() => {
-    const list = loadSessions();
-    return list.length > 0 ? list[list.length - 1].sid : '';
-  });
+  const [activeSid, setActiveSid] = useState<string>(() => loadActiveSessionId(loadSessions()));
   const [input, setInput] = useState<string>(() => {
     const queryInput = searchParams.get('q');
     if (queryInput) return queryInput;
@@ -229,6 +247,7 @@ export default function ChatView() {
     const isNewSession = forceNewSession || !activeSid;
     const sid = isNewSession ? createSessionId() : activeSid;
     if (isNewSession) setActiveSid(sid);
+    saveActiveSessionId(sid);
 
     const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs, isNewSession);
@@ -729,12 +748,14 @@ export default function ChatView() {
 
   const newChat = () => {
     setActiveSid('');
+    saveActiveSessionId('');
     setStreamState(null);
     setLoading(false);
   };
 
   const switchSession = (sid: string) => {
     setActiveSid(sid);
+    saveActiveSessionId(sid);
     setStreamState(null);
     setLoading(false);
   };
@@ -745,7 +766,9 @@ export default function ChatView() {
     saveSessions(list);
     setSessions(list);
     if (activeSid === sid) {
-      setActiveSid(list.length > 0 ? list[0].sid : '');
+      const nextSid = list.length > 0 ? list[0].sid : '';
+      setActiveSid(nextSid);
+      saveActiveSessionId(nextSid);
     }
   };
 

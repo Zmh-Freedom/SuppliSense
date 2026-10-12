@@ -16,6 +16,7 @@ export function setStoredUser(username: string, role: string): void {
   // login. Authenticated ChatView instances use a username-scoped key.
   localStorage.removeItem('chat_sessions');
   localStorage.removeItem('chat_input');
+  localStorage.removeItem('chat_active_session');
   localStorage.setItem(SESSION_KEY, JSON.stringify({ username, role }));
 }
 
@@ -27,6 +28,7 @@ export function clearStoredUser(): void {
     if (username) {
       localStorage.removeItem(`chat_sessions:${encodeURIComponent(username)}`);
       localStorage.removeItem(`chat_input:${encodeURIComponent(username)}`);
+      localStorage.removeItem(`chat_active_session:${encodeURIComponent(username)}`);
     }
   } catch {
     // Continue clearing the auth marker even if local storage is malformed.
@@ -34,6 +36,7 @@ export function clearStoredUser(): void {
   // Remove legacy unscoped values as a safety net for older browser sessions.
   localStorage.removeItem('chat_sessions');
   localStorage.removeItem('chat_input');
+  localStorage.removeItem('chat_active_session');
   localStorage.removeItem(SESSION_KEY);
 }
 
