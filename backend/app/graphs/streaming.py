@@ -247,9 +247,20 @@ async def stream_harness_graph(
                 snapshot,
             )
 
-    yield _workflow_status("running", "understand", "正在解析结构化任务上下文")
     if run_id and user_id:
         await publish("run", {"run_id": active_run_id, "turn_id": active_turn_id})
+    input_understanding = (
+        control_context.get("conversation_state", {}).get("input_understanding")
+        if isinstance(control_context.get("conversation_state"), dict)
+        else None
+    ) or control_context.get("llm_intent")
+    await publish("workflow_status", {
+        "run_id": active_run_id,
+        "status": "running",
+        "stage": "understand",
+        "message": "正在解析结构化任务上下文",
+        **({"input_understanding": input_understanding} if isinstance(input_understanding, dict) else {}),
+    })
     try:
         async def run_graph() -> Any:
             from app.graphs.agent_core.narrator import narrate_answer
@@ -497,7 +508,19 @@ async def stream_agent_supervisor_graph(
     final_status = "completed"
     discovered_references: list[dict] = []
 
-    yield _workflow_status("running", "understand", "正在分析组合寻源与风险任务...")
+    context = execution_context if isinstance(execution_context, dict) else {}
+    conversation_state = context.get("conversation_state")
+    input_understanding = (
+        conversation_state.get("input_understanding")
+        if isinstance(conversation_state, dict)
+        else None
+    ) or context.get("llm_intent")
+    yield _workflow_status(
+        "running",
+        "understand",
+        "正在分析组合寻源与风险任务...",
+        **({"input_understanding": input_understanding} if isinstance(input_understanding, dict) else {}),
+    )
     yield _sse_event("thinking", {"message": "正在分析组合寻源与风险任务..."})
 
     try:

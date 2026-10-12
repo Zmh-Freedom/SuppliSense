@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ApprovalData } from '../api';
-import type { AgentWorkflowSnapshot } from '../types';
+import type { AgentInputUnderstanding, AgentWorkflowSnapshot } from '../types';
 
 export type AgentStatus = 'running' | 'complete' | 'error';
 
@@ -70,6 +70,64 @@ function journeyKind(queryText?: string): JourneyKind {
   if (/对比|比较|差异|区别|优劣|哪家更|哪个好/.test(queryText || '')) return 'comparison';
   if (/寻源|找.{0,8}供应商|推荐.{0,8}供应商|候选供应商|替代.{0,4}供应商|供应商推荐/.test(queryText || '')) return 'sourcing';
   return 'risk';
+}
+
+const INPUT_FIELD_LABELS: Record<string, string> = {
+  target_supplier_names: '分析对象',
+  analysis_dimensions: '分析维度',
+  sourcing_requirement: '采购条件',
+  time_range: '时间范围',
+};
+
+const INPUT_SOURCE_LABELS: Record<string, string> = {
+  explicit: '本轮输入',
+  explicit_alias: '本轮别名',
+  alias_resolution: '名称别名解析',
+  conversation_state: '会话上下文',
+  pending_task: '待确认任务',
+  merged_with_conversation_state: '与历史条件合并',
+  explicit_override: '本轮修改',
+};
+
+const CAPABILITY_LABELS: Record<string, string> = {
+  sourcing: '供应商寻源',
+  risk: '综合风险',
+  financial: '财务分析',
+  business_risk: '经营风险',
+  quality: '质量风险',
+  delivery: '交付风险',
+  esg: 'ESG',
+  sentiment: '舆情分析',
+  compliance: '合规分析',
+  risk_trend: '风险趋势',
+  risk_prediction: '风险预测',
+  risk_network: '供应链关系',
+  report: '报告生成',
+  identity_review: '主体核验',
+  company_profile: '工商资料',
+};
+
+function inputValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join('、');
+  if (typeof value !== 'object' || value === null) return String(value ?? '');
+  const labels: Record<string, string> = {
+    category: '品类', product: '产品', specification: '规格', quantity: '数量',
+    budget: '预算', region: '地区', supply_region: '供货地区', delivery: '交付',
+    qualifications: '资质', optional_conditions: '偏好',
+  };
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== null && item !== undefined && item !== '')
+    .map(([key, item]) => `${labels[key] || key}：${Array.isArray(item) ? item.join('、') : String(item)}`)
+    .join('；');
+}
+
+function inputFieldRows(input: AgentInputUnderstanding): Array<[string, string, string]> {
+  return Object.entries(INPUT_FIELD_LABELS)
+    .flatMap(([key, label]) => {
+      const value = input[key as keyof AgentInputUnderstanding];
+      const rendered = inputValue(value);
+      return rendered ? [[label, rendered, INPUT_SOURCE_LABELS[input.field_sources?.[key] || ''] || '本轮解析']] : [];
+    });
 }
 
 function candidateMilestone(state: AgentWorkflowState): number {
@@ -337,6 +395,22 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
 
       {expanded && (
         <div className="space-y-4 border-t border-[var(--color-border)] px-4 py-4">
+          {workflow?.inputUnderstanding && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3" aria-label="本轮理解">
+            <h3 className="text-xs font-semibold text-[var(--color-text)]">本轮理解</h3>
+            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+              {workflow.inputUnderstanding.task_type === 'sourcing' ? '供应商寻源' : workflow.inputUnderstanding.task_type === 'analysis' ? '分析任务' : '对话请求'}
+              {workflow.inputUnderstanding.capability && workflow.inputUnderstanding.capability !== 'none' ? ` · ${CAPABILITY_LABELS[workflow.inputUnderstanding.capability] || workflow.inputUnderstanding.capability}` : ''}
+            </p>
+            {inputFieldRows(workflow.inputUnderstanding).length > 0 && <dl className="mt-2 space-y-2">
+              {inputFieldRows(workflow.inputUnderstanding).map(([label, value, source]) => <div key={label} className="flex flex-wrap items-start justify-between gap-2 text-xs">
+                <dt className="text-[var(--color-text-secondary)]">{label}</dt>
+                <dd className="flex flex-wrap items-center justify-end gap-1.5 text-right text-[var(--color-text)]">
+                  <span>{value}</span>
+                  <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]">{source}</span>
+                </dd>
+              </div>)}
+            </dl>}
+          </div>}
           {workflow && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold text-[var(--color-text)]">当前状态：{lifecycleLabel(workflow.status)}</p>

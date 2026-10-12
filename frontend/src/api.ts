@@ -150,6 +150,7 @@ export interface StreamCallbacks {
     run_id?: string;
     tool_call_count?: number;
     completed_tool_count?: number;
+    input_understanding?: import('./types').AgentInputUnderstanding;
   }) => void;
   onPlan?: (data: { steps: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> }) => void;
   onAgentSelection?: (data: { agents: string[]; reasoning: string }) => void;

@@ -42,7 +42,20 @@ def test_harness_stream_emits_contract_events(monkeypatch):
             stream_harness_graph(
                 "分析甲公司风险",
                 "session-1",
-                {"current_task": {"target_supplier_names": ["甲公司"]}},
+                {
+                    "current_task": {"target_supplier_names": ["甲公司"]},
+                    "llm_intent": {
+                        "task_type": "analysis",
+                        "capability": "risk",
+                        "target_supplier_names": ["甲公司"],
+                        "analysis_dimensions": ["risk"],
+                        "field_sources": {
+                            "target_supplier_names": "explicit",
+                            "analysis_dimensions": "explicit",
+                        },
+                        "confidence": 0.93,
+                    },
+                },
             )
         )
     )
@@ -53,6 +66,8 @@ def test_harness_stream_emits_contract_events(monkeypatch):
     assert '"status": "needs_review"' in events
     assert "event: evidence" in events
     assert "event: done" in events
+    assert '"input_understanding"' in events
+    assert '"field_sources": {"target_supplier_names": "explicit"' in events
     assert saved_turns == [("session-1", "分析甲公司风险", "证据不足\n- 甲公司风险数据暂未形成确定结论", [])]
     answer_chunk = next(line for line in events.splitlines() if line.startswith('data: {"text":'))
     assert "evidence:internal-secret" not in answer_chunk

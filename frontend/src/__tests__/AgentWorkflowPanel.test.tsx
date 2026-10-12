@@ -83,6 +83,33 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByText('1. 综合风险核验')).toBeInTheDocument()
   })
 
+  it('shows parsed fields and whether each came from this turn or conversation context', async () => {
+    const state = createState()
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      inputUnderstanding: {
+        task_type: 'analysis',
+        capability: 'financial',
+        target_supplier_names: ['甲电机有限公司'],
+        analysis_dimensions: ['financial'],
+        field_sources: {
+          target_supplier_names: 'conversation_state',
+          analysis_dimensions: 'explicit',
+        },
+        confidence: 0.91,
+      },
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: '查看执行详情' }))
+
+    expect(screen.getByText('本轮理解')).toBeInTheDocument()
+    expect(screen.getByText('甲电机有限公司')).toBeInTheDocument()
+    expect(screen.getByText('会话上下文')).toBeInTheDocument()
+    expect(screen.getByText('本轮输入')).toBeInTheDocument()
+    expect(screen.getByText(/财务分析/)).toBeInTheDocument()
+  })
+
   it('keeps review as an explicit human review state instead of marking it as a decision complete', () => {
     const state = createState()
     state.workflowStatus = {

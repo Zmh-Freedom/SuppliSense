@@ -269,6 +269,7 @@ export default function ChatView() {
             loopExitReason: data.loop_exit_reason ?? previous.loopExitReason,
             toolCallCount: data.tool_call_count ?? previous.toolCallCount,
             completedToolCount: data.completed_tool_count ?? previous.completedToolCount,
+            inputUnderstanding: data.input_understanding ?? previous.inputUnderstanding,
           };
           workflowAccRef.current = next;
           setStreamState(prev => prev ? { ...prev, workflowStatus: next } : null);

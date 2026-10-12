@@ -32,7 +32,7 @@ def test_load_execution_context_prefers_postgres_snapshot_over_mongo(
     )
     monkeypatch.setattr(
         "app.graphs.agent_core.intent_extractor.extract_conversation_intent",
-        lambda *_args: None,
+        lambda *_args, **_kwargs: None,
     )
 
     context = adapter.load_execution_context(

@@ -77,6 +77,91 @@ def test_llm_extractor_runs_for_entity_only_follow_up(monkeypatch):
     assert calls[0]["messages"][0]["role"] == "system"
 
 
+def test_llm_extractor_uses_bounded_history_and_marks_field_sources(monkeypatch):
+    calls: list[dict] = []
+    payload = {
+        "target_supplier_names": ["甲电机有限公司"],
+        "analysis_dimensions": ["financial"],
+        "capability": "financial",
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "那财务呢？",
+        [{"name": "甲电机有限公司", "aliases": ["甲电机"]}],
+        conversation_context={
+            "history": [
+                {"role": "user", "content": "帮我看甲电机有限公司的综合风险。"},
+                {"role": "assistant", "content": "风险分析已完成。"},
+            ],
+            "conversation_state": {
+                "selected_supplier_names": ["甲电机有限公司"],
+                "current_task": {
+                    "task_type": "analysis",
+                    "capability": "risk",
+                    "analysis_dimensions": ["risk"],
+                    "target_supplier_names": ["甲电机有限公司"],
+                },
+            },
+        },
+    )
+
+    prompt = json.loads(calls[0]["messages"][1]["content"])
+    assert prompt["conversation_context"]["recent_history"][-1]["content"] == "风险分析已完成。"
+    assert prompt["conversation_context"]["previous_task"]["analysis_dimensions"] == ["risk"]
+    assert result is not None
+    assert result.field_sources == {
+        "target_supplier_names": "conversation_state",
+        "analysis_dimensions": "explicit",
+    }
+
+
+def test_llm_extractor_preserves_explicit_time_range_as_a_structured_field(monkeypatch):
+    payload = {
+        "target_supplier_names": ["甲电机有限公司"],
+        "analysis_dimensions": ["risk"],
+        "capability": "risk_trend",
+        "time_range": "最近一个月",
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "甲电机有限公司最近一个月有什么变化？",
+        [{"name": "甲电机有限公司"}],
+    )
+
+    assert result is not None
+    assert result.time_range == "最近一个月"
+    assert result.field_sources["time_range"] == "explicit"
+
+
 def test_llm_extractor_normalizes_spoken_filler_in_explicit_company_name(monkeypatch):
     """Model wording must not turn ``一下`` into part of the legal name."""
     class FakeCompletions:
@@ -375,6 +460,85 @@ def test_entity_only_follow_up_inherits_previous_analysis_dimensions():
 
     assert result["current_task"]["analysis_dimensions"] == ["risk"]
     assert result["current_task"]["subtasks"][0]["dimension"] == "risk"
+
+
+def test_llm_intent_overlay_persists_field_values_and_sources_in_conversation_state():
+    extraction = intent_extractor.ConversationIntentExtraction(
+        target_supplier_names=["甲电机有限公司"],
+        analysis_dimensions=["financial"],
+        capability="financial",
+        task_type="analysis",
+        confidence=0.91,
+        field_sources={
+            "target_supplier_names": "conversation_state",
+            "analysis_dimensions": "explicit",
+        },
+    )
+    context = {
+        "session_id": "session-1",
+        "references": [{"name": "甲电机有限公司"}],
+        "conversation_state": {"selected_supplier_names": ["甲电机有限公司"]},
+        "current_task": {
+            "task_id": "current-task",
+            "user_message": "那财务呢？",
+            "target_supplier_names": ["甲电机有限公司"],
+        },
+    }
+
+    result = adapter.apply_extracted_conversation_intent(context, extraction)
+
+    assert result["conversation_state"]["input_understanding"]["target_supplier_names"] == ["甲电机有限公司"]
+    assert result["conversation_state"]["input_understanding"]["field_sources"] == {
+        "target_supplier_names": "conversation_state",
+        "analysis_dimensions": "explicit",
+    }
+
+
+def test_load_execution_context_passes_prior_turn_and_saves_final_parse_snapshot(monkeypatch):
+    from app.domains.agent_run import state_store
+
+    previous = {
+        "history": [
+            {"role": "user", "content": "分析甲电机有限公司的风险"},
+            {"role": "assistant", "content": "风险分析已完成"},
+        ],
+        "references": [{"name": "甲电机有限公司", "aliases": ["甲电机"]}],
+        "conversation_state": {
+            "selected_supplier_names": ["甲电机有限公司"],
+            "current_task": {
+                "task_type": "analysis",
+                "capability": "risk",
+                "target_supplier_names": ["甲电机有限公司"],
+                "analysis_dimensions": ["risk"],
+            },
+        },
+    }
+    monkeypatch.setattr(
+        state_store.session_state_store,
+        "get_execution_context",
+        lambda _session_id, _user_id: previous,
+    )
+    captured: list[dict] = []
+
+    def extract(_message, _references, *, conversation_context):
+        captured.append(conversation_context)
+        return intent_extractor.ConversationIntentExtraction(
+            target_supplier_names=["甲电机有限公司"],
+            analysis_dimensions=["financial"],
+            capability="financial",
+            task_type="analysis",
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(intent_extractor, "extract_conversation_intent", extract)
+
+    result = adapter.load_execution_context("session-1", "那财务呢？", "user-1")
+
+    assert captured[0]["history"] == previous["history"]
+    assert captured[0]["conversation_state"]["current_task"]["analysis_dimensions"] == ["risk"]
+    assert result["current_task"]["target_supplier_names"] == ["甲电机有限公司"]
+    assert result["conversation_state"]["input_understanding"]["field_sources"]["target_supplier_names"] == "conversation_state"
+    assert result["conversation_state"]["input_understanding"]["field_sources"]["analysis_dimensions"] == "explicit"
 
 
 def test_build_execution_context_inherits_dimensions_for_explicit_company_follow_up():

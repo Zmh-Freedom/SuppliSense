@@ -344,14 +344,100 @@ def load_execution_context(
         references=context.get("references", []),
         previous_state=context.get("conversation_state", context.get("state", {})),
     )
-    extracted = extract_conversation_intent(user_message, execution_context["references"])
+    previous_state = context.get("conversation_state", context.get("state", {}))
+    extracted = extract_conversation_intent(
+        user_message,
+        execution_context["references"],
+        conversation_context={
+            "history": execution_context["history"],
+            "conversation_state": previous_state if isinstance(previous_state, dict) else {},
+        },
+    )
     resolved = apply_extracted_conversation_intent(execution_context, extracted)
     resolved = _enforce_scope_query_intent(resolved, user_message)
     resolved = _apply_identity_verification_intent(resolved, user_message)
     resolved = _apply_monitor_target_id_intent(resolved, user_message)
     resolved = _apply_harness_sourcing_requirement(resolved, user_message)
     resolved = _apply_sourcing_follow_up(resolved, user_message)
+    resolved = _persist_input_understanding(
+        resolved,
+        user_message=user_message,
+        previous_state=previous_state if isinstance(previous_state, dict) else {},
+    )
     return validate_execution_context(resolved, source="load_execution_context")
+
+
+def _persist_input_understanding(
+    execution_context: dict[str, Any],
+    *,
+    user_message: str,
+    previous_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Store the final normalized parse with deterministic per-field provenance."""
+    from app.graphs.agent_core.intent_extractor import (
+        ConversationIntentExtraction,
+        _conversation_context_snapshot,
+        _derive_field_sources,
+        explicit_write_action,
+        should_extract_conversation_intent,
+    )
+
+    current_task = execution_context.get("current_task")
+    current_task = current_task if isinstance(current_task, dict) else {}
+    if not should_extract_conversation_intent(user_message) and explicit_write_action(user_message) == "none":
+        conversation_state = dict(execution_context.get("conversation_state") or {})
+        conversation_state.pop("input_understanding", None)
+        return {**execution_context, "conversation_state": conversation_state}
+    raw_intent = execution_context.get("llm_intent")
+    raw_intent = raw_intent if isinstance(raw_intent, dict) else {}
+    target_names = raw_intent.get("target_supplier_names")
+    if not isinstance(target_names, list):
+        target_names = current_task.get("target_supplier_names", [])
+    dimensions = raw_intent.get("analysis_dimensions")
+    if not isinstance(dimensions, list):
+        dimensions = current_task.get("analysis_dimensions", [])
+    raw_task_type = raw_intent.get("task_type")
+    if raw_task_type not in {"sourcing", "analysis", "none"}:
+        raw_task_type = current_task.get("task_type")
+    if raw_task_type not in {"sourcing", "analysis", "none"}:
+        raw_task_type = "analysis" if target_names or dimensions else "none"
+    requested_action = raw_intent.get("requested_action") or explicit_write_action(user_message)
+    extraction = ConversationIntentExtraction(
+        target_supplier_names=target_names,
+        analysis_dimensions=dimensions,
+        provider_capabilities=raw_intent.get("provider_capabilities") or current_task.get("provider_capabilities", []),
+        capability=raw_intent.get("capability") or current_task.get("capability") or "none",
+        scope=raw_intent.get("scope") or current_task.get("scope") or "none",
+        sourcing_requirement=(
+            raw_intent.get("sourcing_requirement")
+            or current_task.get("requirement")
+            or current_task.get("llm_sourcing_requirement")
+        ),
+        time_range=raw_intent.get("time_range"),
+        task_type=raw_task_type,
+        requested_action=requested_action,
+        confidence=float(raw_intent.get("confidence") or 0.0),
+    )
+    context_snapshot = _conversation_context_snapshot({
+        "history": execution_context.get("history", []),
+        "conversation_state": previous_state,
+    })
+    field_sources = _derive_field_sources(
+        user_message,
+        extraction,
+        execution_context.get("references", []),
+        context_snapshot,
+    )
+    understanding = extraction.model_copy(update={"field_sources": field_sources}).model_dump(
+        mode="json", exclude_none=True
+    )
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    conversation_state["input_understanding"] = understanding
+    return {
+        **execution_context,
+        "conversation_state": conversation_state,
+        "llm_intent": understanding,
+    }
 
 
 def _apply_identity_verification_intent(
@@ -833,6 +919,16 @@ def apply_extracted_conversation_intent(
             })
             conversation_state = dict(execution_context.get("conversation_state") or {})
             conversation_state["current_task"] = current_task
+            conversation_state["input_understanding"] = {
+                "target_supplier_names": list(current_task.get("target_supplier_names") or []),
+                "analysis_dimensions": [],
+                "capability": "none",
+                "scope": "single_supplier",
+                "task_type": "none",
+                "requested_action": action,
+                "confidence": 0.0,
+                "field_sources": {},
+            }
             return {
                 **execution_context,
                 "conversation_state": conversation_state,
@@ -856,6 +952,7 @@ def apply_extracted_conversation_intent(
     sourcing_requirement = getattr(extracted, "sourcing_requirement", None)
     task_type = getattr(extracted, "task_type", "none")
     requested_action = getattr(extracted, "requested_action", "none")
+    time_range = getattr(extracted, "time_range", None)
     is_watchlist_write = requested_action in {
         "add_watchlist", "remove_watchlist", "batch_add_watchlist",
     }
@@ -930,6 +1027,8 @@ def apply_extracted_conversation_intent(
         current_task["llm_sourcing_requirement"] = sourcing_requirement.model_dump(
             mode="json", exclude_none=True
         )
+    if time_range:
+        current_task["time_range"] = time_range
     if capability == "sourcing" or task_type == "sourcing":
         current_task["task_type"] = "sourcing"
     elif (target_names or dimensions) and not is_write_action:
@@ -946,6 +1045,8 @@ def apply_extracted_conversation_intent(
             dimensions=dimensions,
         ).model_dump(mode="json")
         planned["user_message"] = str(current_task.get("user_message") or "")
+        if time_range:
+            planned["time_range"] = time_range
         if provider_capabilities:
             planned["provider_capabilities"] = provider_capabilities
         # The planner returns the executable task matrix, but capability and
@@ -958,11 +1059,13 @@ def apply_extracted_conversation_intent(
             planned["scope"] = scope
         current_task = planned
     conversation_state["current_task"] = current_task
+    intent_snapshot = extracted.model_dump(mode="json")
+    conversation_state["input_understanding"] = intent_snapshot
     return {
         **execution_context,
         "conversation_state": conversation_state,
         "current_task": current_task,
-        "llm_intent": extracted.model_dump(mode="json"),
+        "llm_intent": intent_snapshot,
     }
 
 

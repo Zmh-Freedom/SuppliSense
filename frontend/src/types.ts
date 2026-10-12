@@ -341,6 +341,19 @@ export type AgentWorkflowLifecycle =
   | 'clarifying'
   | 'stopped';
 
+export interface AgentInputUnderstanding {
+  task_type?: string;
+  capability?: string;
+  scope?: string;
+  target_supplier_names?: string[];
+  analysis_dimensions?: string[];
+  sourcing_requirement?: Record<string, unknown> | null;
+  requested_action?: string;
+  time_range?: string;
+  confidence?: number;
+  field_sources?: Record<string, string>;
+}
+
 export interface AgentWorkflowSnapshot {
   status: AgentWorkflowLifecycle | string;
   stage?: string;
@@ -352,6 +365,7 @@ export interface AgentWorkflowSnapshot {
   completedToolCount: number;
   evidenceStatus?: string;
   loopExitReason?: string;
+  inputUnderstanding?: AgentInputUnderstanding;
 }
 
 export interface SupplierReference {

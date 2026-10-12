@@ -869,13 +869,23 @@ def test_supervisor_stream_maps_agent_results_to_public_sse_events() -> None:
         return [
             event
             async for event in stream_fn(
-                FakeGraph(), "找供应商并评估风险", "stream-run"
+                FakeGraph(),
+                "找供应商并评估风险",
+                "stream-run",
+                execution_context={"llm_intent": {
+                    "task_type": "sourcing",
+                    "capability": "sourcing",
+                    "field_sources": {"sourcing_requirement": "explicit"},
+                }},
             )
         ]
 
     raw_events = asyncio.run(collect_events())
     events = [_parse_sse_event(event) for event in raw_events]
     event_types = [event_type for event_type, _ in events]
+
+    initial_status = next(payload for event_type, payload in events if event_type == "workflow_status")
+    assert initial_status["input_understanding"]["capability"] == "sourcing"
 
     business_event_types = [event_type for event_type in event_types if event_type != "workflow_status"]
     assert business_event_types == [
