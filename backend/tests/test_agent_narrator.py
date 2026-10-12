@@ -7,6 +7,7 @@ from app.graphs.agent_core.narrator import (
     _validate_draft,
     answer_general_supplier_knowledge,
     narrate_answer,
+    translate_user_text,
 )
 
 
@@ -230,3 +231,19 @@ def test_general_knowledge_answer_allows_standard_identifiers(monkeypatch):
     monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
 
     assert "ISO 9001" in answer_general_supplier_knowledge("供应商风险评估一般看什么？")
+
+
+def test_translate_user_text_returns_model_translation_without_rewriting_content(monkeypatch):
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content='{"answer_markdown":"Supplier risk is increasing."}'
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    assert translate_user_text("把‘供应商风险正在上升’翻译成英文") == "Supplier risk is increasing."

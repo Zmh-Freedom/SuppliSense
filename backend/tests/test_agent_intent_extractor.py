@@ -1275,6 +1275,15 @@ def test_explicit_overall_risk_keeps_requested_generic_dimension() -> None:
     ) == ["risk", "financial"]
 
 
+def test_explicit_single_dimension_drops_model_added_secondary_dimension() -> None:
+    assert normalize_analysis_dimensions(
+        "分析测试供应商有限公司的财务风险",
+        ["financial", "business_risk"],
+        "financial",
+        "financial",
+    ) == ["financial"]
+
+
 def test_explicit_targets_merge_known_reference_hits_and_other_full_names(monkeypatch):
     payload = {
         "target_supplier_names": ["上海凯众材料科技股份有限公司", "青岛三祥科技股份有限公司"],

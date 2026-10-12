@@ -24,6 +24,8 @@ from app.graphs.agent_core.answer_contract import AgentAnswer, build_agent_answe
 from app.graphs.agent_core.capability_routing import (
     detect_explicit_capabilities,
     is_general_supplier_knowledge_question,
+    is_out_of_scope_request,
+    is_translation_request,
     normalize_primary_capability,
 )
 from app.graphs.agent_core.evidence_ledger import (
@@ -1472,6 +1474,7 @@ def build_harness_graph(
     progress: ProgressCallback | None = None,
     narrate: NarrateCallback | None = None,
     answer_general_knowledge: KnowledgeAnswerCallback | None = None,
+    answer_translation: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
 ) -> Any:
     """Build the only runtime graph used by Harness-level tests and callers."""
@@ -1800,22 +1803,66 @@ def build_harness_graph(
         )
         if _requests_procurement_action(state):
             answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
-        general_knowledge_attempted = False
+        no_plan_llm_attempted = False
         if not claims:
             no_plan = not tasks
-            general_knowledge = no_plan and is_general_supplier_knowledge_question(
-                str(state.get("user_message") or "")
+            user_message = str(state.get("user_message") or "")
+            translation = no_plan and is_translation_request(user_message)
+            out_of_scope = no_plan and is_out_of_scope_request(user_message)
+            general_knowledge = (
+                no_plan
+                and not translation
+                and not out_of_scope
+                and is_general_supplier_knowledge_question(user_message)
             )
             current_task = state.get("current_task") or {}
             follow_up = str(current_task.get("sourcing_follow_up") or "")
-            if general_knowledge:
+            if translation:
+                summary = "我暂时无法完成这段翻译，请稍后重试。"
+                translation_budget = new_budget(state.get("budget"))
+                translation_succeeded = False
+                if (
+                    answer_translation is not None
+                    and int(state.get("llm_call_count", 0)) < translation_budget.max_llm_calls
+                ):
+                    no_plan_llm_attempted = True
+                    try:
+                        generated = answer_translation(user_message)
+                        if inspect.isawaitable(generated):
+                            generated = await generated
+                        if isinstance(generated, str) and generated.strip():
+                            summary = generated.strip()
+                            translation_succeeded = True
+                    except Exception as exc:
+                        logger.warning("translation_answer_callback_failed", error=str(exc))
+                answer = answer.model_copy(
+                    update={
+                        "status": "completed" if translation_succeeded else "needs_review",
+                        "summary": summary,
+                        "limitations": list(dict.fromkeys([
+                            *answer.limitations,
+                            "本轮仅处理文本翻译，未查询供应商或调用业务工具。",
+                        ])),
+                    }
+                )
+            elif out_of_scope:
+                answer = answer.model_copy(
+                    update={
+                        "status": "completed",
+                        "summary": (
+                            "我是采购与供应商风险助手，主要协助供应商风险分析、供应商评估和寻源。"
+                            "这类闲聊或一般计算不在当前服务范围内。"
+                        ),
+                    }
+                )
+            elif general_knowledge:
                 summary = _general_supplier_knowledge_fallback()
                 general_budget = new_budget(state.get("budget"))
                 if (
                     answer_general_knowledge is not None
                     and int(state.get("llm_call_count", 0)) < general_budget.max_llm_calls
                 ):
-                    general_knowledge_attempted = True
+                    no_plan_llm_attempted = True
                     try:
                         generated = answer_general_knowledge(str(state.get("user_message") or ""))
                         if inspect.isawaitable(generated):
@@ -1900,7 +1947,7 @@ def build_harness_graph(
             "loop_exit_reason": loop_exit_reason,
             "status": answer.status,
         }
-        if narration_attempted or general_knowledge_attempted:
+        if narration_attempted or no_plan_llm_attempted:
             patch["llm_call_count"] = int(state.get("llm_call_count", 0)) + 1
         await persist_event("render_answer", state, patch)
         return patch
@@ -1996,6 +2043,7 @@ async def run_harness(
     progress: ProgressCallback | None = None,
     narrate: NarrateCallback | None = None,
     answer_general_knowledge: KnowledgeAnswerCallback | None = None,
+    answer_translation: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
 ) -> HarnessState:
@@ -2010,6 +2058,7 @@ async def run_harness(
         progress=progress,
         narrate=narrate,
         answer_general_knowledge=answer_general_knowledge,
+        answer_translation=answer_translation,
         checkpointer=checkpointer,
     )
     return await graph.ainvoke(state, config=active_config)

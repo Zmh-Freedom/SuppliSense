@@ -170,6 +170,11 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
             "还要结合历史趋势、问题影响和整改情况判断。"
         ),
     )
+    monkeypatch.setattr(
+        narrator,
+        "translate_user_text",
+        lambda _message: "Supplier risk is increasing.",
+    )
 
     async def no_checkpointer():
         return None
@@ -197,7 +202,9 @@ def test_chat_financial_request_runs_parser_harness_tool_and_returns_evidence_an
     message = "分析测试供应商有限公司的财务风险"
     full_chain_chat.responses[message] = {
         "target_supplier_names": ["测试供应商有限公司"],
-        "analysis_dimensions": ["financial"],
+        # The model sometimes adds an unsupported dimension even when the
+        # user explicitly asks for a single capability.
+        "analysis_dimensions": ["financial", "business_risk"],
         "capability": "financial",
         "scope": "single_supplier",
         "task_type": "analysis",
@@ -310,7 +317,8 @@ def test_chat_translation_of_domain_phrase_does_not_call_business_tools(full_cha
     assert event_types[-1] == "done"
     assert full_chain_chat.calls == []
     answer = next(payload for event_type, payload in events if event_type == "agent_answer")
-    assert "财务、履约、质量" not in answer["summary"]
+    assert answer["status"] == "completed"
+    assert "Supplier risk is increasing." in answer["summary"]
 
 
 @pytest.mark.parametrize(
@@ -343,6 +351,9 @@ def test_chat_negation_and_topic_switch_do_not_call_business_tools(full_chain_ch
     assert event_types[-1] == "done"
     assert full_chain_chat.calls == []
     answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert answer["status"] == "completed"
+    assert "采购与供应商风险助手" in answer["summary"]
+    assert "请补充供应商" not in answer["summary"]
     assert "财务、履约、质量" not in answer["summary"]
 
 

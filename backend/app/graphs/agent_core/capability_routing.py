@@ -223,6 +223,29 @@ def is_non_operational_request(message: str) -> bool:
     return False
 
 
+def is_translation_request(message: str) -> bool:
+    """Identify an explicit request to translate user-supplied text."""
+    text = str(message or "").strip().lower()
+    return any(
+        token in text
+        for token in ("翻译", "translate", "英文怎么说", "英语怎么说", "英文如何表达", "英语如何表达")
+    )
+
+
+def is_out_of_scope_request(message: str) -> bool:
+    """Identify explicit utility or entertainment requests outside procurement."""
+    text = str(message or "").strip()
+    if not text:
+        return False
+    return any(
+        token in text
+        for token in (
+            "冷笑话", "讲个笑话", "讲一个笑话", "讲笑话", "来个笑话",
+            "算一下", "计算一下", "天气怎么样",
+        )
+    )
+
+
 def is_general_supplier_knowledge_question(message: str) -> bool:
     """Identify general supplier-risk method questions that need no business data."""
     text = str(message or "").strip().lower()
@@ -299,8 +322,10 @@ def normalize_analysis_dimensions(
         or explicit_primary_capability(message) != normalized_capability
     ):
         return normalized_dimensions
-    remaining = [item for item in normalized_dimensions if item != "risk"]
     primary_dimension = _CAPABILITY_PRIMARY_DIMENSIONS.get(normalized_capability)
     if primary_dimension:
-        return list(dict.fromkeys([primary_dimension, *remaining]))
-    return remaining
+        # A unique explicit capability is the user's scope. Keep the model's
+        # primary dimension, but discard unrequested dimensions that could
+        # otherwise launch extra tools (for example business_risk for finance).
+        return [primary_dimension]
+    return [item for item in normalized_dimensions if item != "risk"]

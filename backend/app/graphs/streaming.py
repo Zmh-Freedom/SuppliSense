@@ -266,6 +266,7 @@ async def stream_harness_graph(
             from app.graphs.agent_core.narrator import (
                 answer_general_supplier_knowledge,
                 narrate_answer,
+                translate_user_text,
             )
 
             return await run_harness(
@@ -279,6 +280,9 @@ async def stream_harness_graph(
                 ),
                 answer_general_knowledge=lambda message: asyncio.to_thread(
                     answer_general_supplier_knowledge, message
+                ),
+                answer_translation=lambda message: asyncio.to_thread(
+                    translate_user_text, message
                 ),
             )
 
