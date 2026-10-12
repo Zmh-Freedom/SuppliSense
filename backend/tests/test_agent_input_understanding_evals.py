@@ -100,3 +100,51 @@ def test_repository_input_understanding_corpus_has_required_coverage() -> None:
 
     assert len(cases) >= 36
     assert {"single_turn", "multi_turn", "entity_resolution", "sourcing_constraints", "write_safety", "ambiguity"} <= tags
+
+
+def test_production_runner_uses_context_builder_extractor_and_overlay(monkeypatch) -> None:
+    from app.graphs.agent_core import intent_extractor
+
+    captured: dict = {}
+
+    def fake_extractor(message, references, *, conversation_context):
+        captured.update({
+            "message": message,
+            "references": references,
+            "conversation_context": conversation_context,
+        })
+        return intent_extractor.ConversationIntentExtraction(
+            target_supplier_names=["甲电机有限公司"],
+            analysis_dimensions=["financial"],
+            capability="financial",
+            scope="single_supplier",
+            task_type="analysis",
+            field_sources={"target_supplier_names": "conversation_state", "analysis_dimensions": "explicit"},
+        )
+
+    monkeypatch.setattr(intent_extractor, "extract_conversation_intent", fake_extractor)
+    case = {
+        "id": "multi-turn-real-runner",
+        "tags": ["multi_turn"],
+        "conversation": [
+            {"role": "user", "content": "分析甲电机有限公司的综合风险。"},
+            {"role": "assistant", "content": "已完成分析。"},
+            {"role": "user", "content": "那财务呢？"},
+        ],
+        "context": {
+            "references": [{"name": "甲电机有限公司"}],
+            "conversation_state": {"selected_supplier_names": ["甲电机有限公司"]},
+        },
+        "expected": {},
+    }
+
+    observed = agent_input_understanding.run_production_input_understanding_case(case)
+
+    assert captured["message"] == "那财务呢？"
+    assert captured["references"] == [{"name": "甲电机有限公司"}]
+    assert captured["conversation_context"]["history"] == case["conversation"][:-1]
+    assert captured["conversation_context"]["conversation_state"] == case["context"]["conversation_state"]
+    assert observed["intent"]["target_supplier_names"] == ["甲电机有限公司"]
+    assert observed["intent"]["analysis_dimensions"] == ["financial"]
+    assert observed["field_sources"]["target_supplier_names"] == "conversation_state"
+    assert observed["decision"] == {"route": "execute", "missing_fields": []}
