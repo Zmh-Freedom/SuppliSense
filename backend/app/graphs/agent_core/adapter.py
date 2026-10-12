@@ -398,9 +398,9 @@ def _persist_input_understanding(
     if not isinstance(dimensions, list):
         dimensions = current_task.get("analysis_dimensions", [])
     raw_task_type = raw_intent.get("task_type")
-    if raw_task_type not in {"sourcing", "analysis", "none"}:
+    if raw_task_type not in {"sourcing", "analysis", "comparison", "none"}:
         raw_task_type = current_task.get("task_type")
-    if raw_task_type not in {"sourcing", "analysis", "none"}:
+    if raw_task_type not in {"sourcing", "analysis", "comparison", "none"}:
         raw_task_type = "analysis" if target_names or dimensions else "none"
     requested_action = raw_intent.get("requested_action") or explicit_write_action(user_message)
     extraction = ConversationIntentExtraction(
@@ -447,6 +447,8 @@ def _persist_input_understanding(
     )
     conversation_state = dict(execution_context.get("conversation_state") or {})
     conversation_state["input_understanding"] = understanding
+    if not extraction.needs_clarification:
+        conversation_state.pop("pending_clarification", None)
     return {
         **execution_context,
         "conversation_state": conversation_state,
@@ -923,6 +925,71 @@ def apply_extracted_conversation_intent(
         from app.graphs.agent_core.intent_extractor import explicit_write_action
 
         current_task = dict(execution_context.get("current_task") or {})
+        conversation_state = dict(execution_context.get("conversation_state") or {})
+        pending = conversation_state.get("pending_clarification")
+        if isinstance(pending, dict) and pending:
+            targets = _text_list(
+                current_task.get("target_supplier_names")
+                or pending.get("target_supplier_names")
+            )
+            dimensions = _text_list(
+                current_task.get("analysis_dimensions")
+                or pending.get("analysis_dimensions")
+            )
+            provider_capabilities = _text_list(
+                current_task.get("provider_capabilities")
+                or pending.get("provider_capabilities")
+            )
+            capability = str(current_task.get("capability") or pending.get("capability") or "none")
+            task_type = str(pending.get("task_type") or current_task.get("task_type") or "analysis")
+            if task_type == "none" and (targets or dimensions or provider_capabilities):
+                task_type = "analysis"
+            current_task.update({
+                "target_supplier_names": targets,
+                "analysis_dimensions": dimensions,
+                "provider_capabilities": provider_capabilities,
+                "capability": capability,
+                "task_type": task_type,
+            })
+            for key in ("scope", "time_range", "requirement"):
+                if pending.get(key) is not None:
+                    current_task[key] = pending[key]
+            if task_type == "comparison":
+                current_task["comparison"] = True
+            missing_fields = [
+                field for field in pending.get("missing_fields", [])
+                if not (
+                    field == "target_supplier_names" and targets
+                    or field == "analysis_dimensions" and dimensions
+                )
+            ]
+            conversation_state["selected_supplier_names"] = targets
+            conversation_state["selected_suppliers"] = targets
+            conversation_state["current_task"] = current_task
+            if missing_fields:
+                pending = {**pending, "missing_fields": missing_fields}
+                conversation_state["pending_clarification"] = pending
+            else:
+                conversation_state.pop("pending_clarification", None)
+            restored_intent = {
+                **pending,
+                "target_supplier_names": targets,
+                "analysis_dimensions": dimensions,
+                "provider_capabilities": provider_capabilities,
+                "capability": capability,
+                "task_type": task_type,
+                "scope": current_task.get("scope", "none"),
+                "needs_clarification": bool(missing_fields),
+                "missing_fields": missing_fields,
+                "requested_action": "none",
+                "confidence": 0.35,
+            }
+            return {
+                **execution_context,
+                "conversation_state": conversation_state,
+                "current_task": current_task,
+                "llm_intent": restored_intent,
+            }
         action = explicit_write_action(str(current_task.get("user_message") or ""))
         if action != "none":
             current_task.update({
@@ -1045,6 +1112,9 @@ def apply_extracted_conversation_intent(
         current_task["time_range"] = time_range
     if capability == "sourcing" or task_type == "sourcing":
         current_task["task_type"] = "sourcing"
+    elif task_type == "comparison":
+        current_task["task_type"] = "comparison"
+        current_task["comparison"] = True
     elif (target_names or dimensions) and not is_write_action:
         current_task["task_type"] = "analysis"
     conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
@@ -1069,6 +1139,9 @@ def apply_extracted_conversation_intent(
         # prove that the active graph will execute the requested capability.
         if capability != "none":
             planned["capability"] = capability
+        if task_type == "comparison":
+            planned["task_type"] = "comparison"
+            planned["comparison"] = True
         if scope != "none":
             planned["scope"] = scope
         current_task = planned

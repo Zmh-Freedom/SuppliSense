@@ -153,6 +153,49 @@ def test_llm_capability_survives_supplier_plan_replacement() -> None:
     assert resolved["current_task"]["scope"] == "single_supplier"
 
 
+def test_compound_financial_and_legal_request_plans_both_capabilities() -> None:
+    company = "上海凯众材料科技股份有限公司"
+    current_task = {
+        "task_id": "compound-analysis",
+        "task_type": "analysis",
+        "user_message": f"分析{company}的财务和司法风险，财务重点看现金流，司法重点看当前未结案件",
+        "target_supplier_names": [company],
+        "analysis_dimensions": ["financial"],
+        "provider_capabilities": ["legal_risk"],
+        "capability": "financial",
+    }
+
+    plan = _build_default_plan({
+        "current_task": current_task,
+        "execution_context": {"references": [], "conversation_state": {}},
+    })
+
+    assert {task.tool_name for task in plan} >= {"query_financials", "lookup_legal_risk"}
+
+
+def test_negated_sentiment_is_not_added_to_legal_task_plan() -> None:
+    company = "上海凯众材料科技股份有限公司"
+    current_task = {
+        "task_id": "legal-only",
+        "task_type": "analysis",
+        "user_message": f"那先不看舆情了，改查{company}的司法风险，重点看当前未结案件",
+        "target_supplier_names": [company],
+        "analysis_dimensions": [],
+        "provider_capabilities": ["legal_risk"],
+        "capability": "legal_risk",
+    }
+
+    plan = _build_default_plan({
+        "current_task": current_task,
+        "execution_context": {"references": [], "conversation_state": {}},
+    })
+
+    tools = {task.tool_name for task in plan}
+    assert "lookup_legal_risk" in tools
+    assert "sentiment_analysis" not in tools
+    assert "lookup_company_news" not in tools
+
+
 def test_harness_new_sourcing_turn_replaces_previous_category(monkeypatch) -> None:
     monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
     context = {

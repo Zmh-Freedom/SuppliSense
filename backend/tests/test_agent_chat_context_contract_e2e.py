@@ -116,6 +116,52 @@ def test_chat_stream_rejects_anonymous_request(client) -> None:
     assert response.status_code == 401
 
 
+def test_clarification_persists_confirmed_slots_to_postgres_state(
+    authenticated_chat_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = str(uuid4())
+    session_id = str(uuid4())
+    stored = {}
+    context = _context([], ["financial"])
+    context["llm_intent"].update({
+        "capability": "financial",
+        "provider_capabilities": ["legal_risk"],
+        "task_type": "analysis",
+        "needs_clarification": True,
+        "missing_fields": ["target_supplier_names"],
+        "clarification_question": "请问要分析哪家供应商？",
+    })
+    context["current_task"]["provider_capabilities"] = ["legal_risk"]
+    context["current_task"]["capability"] = "financial"
+    monkeypatch.setattr(chat_api, "_optional_agent_user_id", lambda _request: user_id)
+    monkeypatch.setattr("app.graphs.agent_core.adapter.load_execution_context", lambda *_args: context)
+    monkeypatch.setattr("app.services.agent_session_guard.acquire_agent_session_run", lambda _sid: "token")
+    monkeypatch.setattr("app.services.agent_session_guard.release_agent_session_run", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.formal_supplier_identity_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.review_scope_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.external_assessment_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.detect_clarification_needed", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.update_execution_context",
+        lambda _sid, _uid, saved: stored.update({"session_id": _sid, "user_id": _uid, "context": saved}),
+    )
+    monkeypatch.setattr("app.domains.agent_run.state_store.session_state_store.get_session", lambda *_args: None)
+    monkeypatch.setattr("app.domains.agent_run.state_store.session_state_store.create_session", lambda *_args, **_kwargs: None)
+
+    response = authenticated_chat_client.post(
+        "/api/v1/chat/stream",
+        json={"message": "帮我看一下这家公司", "session_id": session_id},
+    )
+
+    assert response.status_code == 200
+    assert 'event: clarification' in response.text
+    pending = stored["context"]["conversation_state"]["pending_clarification"]
+    assert pending["analysis_dimensions"] == ["financial"]
+    assert pending["provider_capabilities"] == ["legal_risk"]
+    assert pending["missing_fields"] == ["target_supplier_names"]
+
+
 def test_chat_stream_fails_closed_when_llm_targets_are_lost(
     authenticated_chat_client,
     monkeypatch: pytest.MonkeyPatch,

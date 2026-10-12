@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
@@ -20,7 +21,10 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.graphs.agent_core.answer_contract import AgentAnswer, build_agent_answer
-from app.graphs.agent_core.capability_routing import normalize_primary_capability
+from app.graphs.agent_core.capability_routing import (
+    detect_explicit_capabilities,
+    normalize_primary_capability,
+)
 from app.graphs.agent_core.evidence_ledger import (
     Claim,
     EvidenceLedger,
@@ -445,6 +449,23 @@ def _append_derived_tasks(
     return tasks
 
 
+def _has_active_request_phrase(message: str, phrases: tuple[str, ...]) -> bool:
+    """Ignore capability keywords inside an explicitly cancelled clause."""
+    text = str(message or "")
+    for phrase in phrases:
+        start = 0
+        while (position := text.find(phrase, start)) >= 0:
+            clause_prefix = re.split(r"[，,。；;！？!?]", text[:position])[-1]
+            if not re.search(
+                r"(?:不看|先不看|不查|先不查|不需要|无需|不用看|不用查|不必看|不必查|别看|别查)"
+                r"\s*(?:再)?(?:了)?$",
+                clause_prefix,
+            ):
+                return True
+            start = position + len(phrase)
+    return False
+
+
 def _append_capability_tasks(
     tasks: list[HarnessTask],
     current_task: Mapping[str, Any],
@@ -455,6 +476,7 @@ def _append_capability_tasks(
     if not names:
         return
     message = str(current_task.get("user_message") or "")
+    explicit_capabilities = set(detect_explicit_capabilities(message))
     capability_requests = {
         "risk": ("assess_risk", "risk"),
         "financial": ("query_financials", "financial"),
@@ -475,18 +497,32 @@ def _append_capability_tasks(
     llm_capability = str(current_task.get("capability") or "")
     llm_request = capability_requests.get(llm_capability)
     requests = [
-        (("舆情", "新闻", "负面信息"), "sentiment_analysis", "sentiment"),
-        (("供应链关系", "关联关系", "传染风险", "风险传染"), "contagion_analysis", "risk_network"),
-        (("预测", "未来", "趋势预测"), "predict_risk", "risk_prediction"),
-        (("替代供应商", "备选供应商", "供应商替代"), "find_alternatives", "sourcing"),
-        (("生成报告", "风险评估报告", "导出报告"), "generate_report", "report"),
+        (("sentiment", ("舆情", "新闻", "负面信息")), "sentiment_analysis", "sentiment"),
+        (("risk_network", ("供应链关系", "关联关系", "传染风险", "风险传染")), "contagion_analysis", "risk_network"),
+        (("risk_prediction", ("预测", "未来", "趋势预测")), "predict_risk", "risk_prediction"),
+        (("sourcing", ("替代供应商", "备选供应商", "供应商替代")), "find_alternatives", "sourcing"),
+        (("report", ("生成报告", "风险评估报告", "导出报告")), "generate_report", "report"),
     ]
     if llm_request is not None:
         requests.append(((), llm_request[0], llm_request[1]))
     existing = {task.tool_name for task in tasks}
     prefix = str(current_task.get("task_id") or "task")
-    for tokens, tool_name, dimension in requests:
-        if tool_name in existing or (tokens and not any(token in message for token in tokens)):
+    for capability_rule, tool_name, dimension in requests:
+        if not capability_rule:
+            requested_capability, tokens = llm_capability, ()
+        else:
+            requested_capability, tokens = capability_rule
+        if tool_name in existing:
+            continue
+        if (
+            capability_rule
+            and requested_capability not in explicit_capabilities
+            and not _has_active_request_phrase(message, tokens)
+        ):
+            continue
+        if not capability_rule and explicit_capabilities and requested_capability not in explicit_capabilities:
+            continue
+        if tokens and not any(token in message for token in tokens):
             continue
         for name in dict.fromkeys(names):
             argument_name = _DIMENSION_TO_TOOL.get(dimension, ("", "company_name"))[1]
@@ -524,6 +560,7 @@ def _append_tianyancha_tasks(
         for item in current_task.get("provider_capabilities", [])
         if str(item).strip()
     }
+    explicit_capabilities = set(detect_explicit_capabilities(message))
     token_rules = {
         "identity": ("主体身份", "主体核验", "统一社会信用代码", "法人", "登记状态"),
         "legal_risk": ("司法", "诉讼", "被执行", "失信", "限制消费"),
@@ -534,8 +571,10 @@ def _append_tianyancha_tasks(
     if "天眼查" in message:
         requested.add("identity")
     for capability, tokens in token_rules.items():
-        if any(token in message for token in tokens):
+        if _has_active_request_phrase(message, tokens):
             requested.add(capability)
+    if not _has_active_request_phrase(message, token_rules["news"]):
+        requested.discard("news")
     tool_by_capability = {
         "identity": ("lookup_company_identity", "identity_review"),
         "legal_risk": ("lookup_legal_risk", "legal_risk"),

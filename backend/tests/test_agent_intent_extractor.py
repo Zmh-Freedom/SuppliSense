@@ -997,7 +997,7 @@ def test_write_or_durable_control_expression_cannot_be_overridden(message: str) 
         ("预测青岛三祥科技股份有限公司未来 6 个月的风险", "risk_prediction", "analysis", []),
         ("核验青岛三祥科技股份有限公司的主体身份", "identity_review", "analysis", []),
         ("给我青岛三祥科技股份有限公司的电话和官网", "company_profile", "analysis", []),
-        ("比较青岛三祥科技股份有限公司和上海海拉电子有限公司", "risk_comparison", "analysis", []),
+        ("比较青岛三祥科技股份有限公司和上海海拉电子有限公司", "risk_comparison", "comparison", []),
         ("分析青岛三祥科技股份有限公司的交付周期", "delivery", "analysis", ["delivery"]),
         ("帮我寻找工业相机的替代供应商", "sourcing", "sourcing", ["risk"]),
         ("生成青岛三祥科技股份有限公司的风险报告", "report", "analysis", []),
@@ -1066,3 +1066,207 @@ def test_explicit_overall_risk_keeps_requested_generic_dimension() -> None:
         "financial",
         "financial",
     ) == ["risk", "financial"]
+
+
+def test_explicit_targets_merge_known_reference_hits_and_other_full_names(monkeypatch):
+    payload = {
+        "target_supplier_names": ["上海凯众材料科技股份有限公司", "青岛三祥科技股份有限公司"],
+        "analysis_dimensions": ["financial"],
+        "capability": "financial",
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent(
+        "比较上海凯众材料科技股份有限公司和青岛三祥科技股份有限公司的财务表现",
+        [{"name": "上海凯众材料科技股份有限公司"}],
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["上海凯众材料科技股份有限公司", "青岛三祥科技股份有限公司"]
+    assert result.capability == "risk_comparison"
+    assert result.task_type == "comparison"
+
+
+def test_explicit_compound_capabilities_are_added_to_executable_intent(monkeypatch):
+    payload = {
+        "target_supplier_names": ["上海凯众材料科技股份有限公司"],
+        "analysis_dimensions": ["financial", "risk"],
+        "provider_capabilities": [],
+        "capability": "financial",
+        "task_type": "analysis",
+        "interpretation_summary": "同时分析财务和司法风险。",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent(
+        "分析上海凯众材料科技股份有限公司的财务和司法风险，财务重点看现金流，司法重点看当前未结案件",
+        [],
+    )
+
+    assert result is not None
+    assert result.analysis_dimensions == ["financial"]
+    assert "legal_risk" in result.provider_capabilities
+    assert result.capability == "financial"
+
+
+def test_explicit_compound_request_overrides_wrong_llm_primary_capability(monkeypatch):
+    payload = {
+        "target_supplier_names": ["上海凯众材料科技股份有限公司"],
+        "analysis_dimensions": ["financial", "risk"],
+        "provider_capabilities": ["legal_risk"],
+        "capability": "legal_risk",
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent(
+        "分析上海凯众材料科技股份有限公司的财务和司法风险，财务重点看现金流，司法重点看当前未结案件",
+        [],
+    )
+
+    assert result is not None
+    assert result.capability == "financial"
+    assert result.analysis_dimensions == ["financial"]
+    assert "legal_risk" in result.provider_capabilities
+
+
+def test_llm_misplaced_provider_capability_in_dimensions_is_repaired_before_validation():
+    normalized = intent_extractor._normalize_llm_payload({
+        "analysis_dimensions": ["financial", "legal_risk"],
+        "provider_capabilities": [],
+    })
+
+    assert normalized["analysis_dimensions"] == ["financial"]
+    assert normalized["provider_capabilities"] == ["legal_risk"]
+
+
+def test_negated_capability_does_not_trigger_semantic_retry(monkeypatch):
+    calls = []
+    payload = {
+        "target_supplier_names": ["甲电机有限公司"],
+        "analysis_dimensions": [],
+        "provider_capabilities": ["legal_risk"],
+        "capability": "legal_risk",
+        "task_type": "analysis",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            calls.append(_kwargs)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent(
+        "那先不看舆情了，改查甲电机有限公司的司法风险",
+        [],
+    )
+
+    assert result is not None
+    assert result.capability == "legal_risk"
+    assert len(calls) == 1
+
+
+def test_pending_clarification_slots_survive_company_only_follow_up(monkeypatch):
+    payload = {
+        "target_supplier_names": ["上海凯众材料科技股份有限公司"],
+        "analysis_dimensions": [],
+        "provider_capabilities": [],
+        "capability": "none",
+        "task_type": "none",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent(
+        "上海凯众材料科技股份有限公司",
+        [],
+        conversation_context={
+            "conversation_state": {
+                "pending_clarification": {
+                    "task_type": "analysis",
+                    "capability": "financial",
+                    "target_supplier_names": [],
+                    "analysis_dimensions": ["financial"],
+                    "provider_capabilities": ["legal_risk"],
+                    "missing_fields": ["target_supplier_names"],
+                },
+            },
+        },
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == ["上海凯众材料科技股份有限公司"]
+    assert result.analysis_dimensions == ["financial"]
+    assert result.provider_capabilities == ["legal_risk"]
+
+
+def test_vague_recent_status_request_keeps_a_default_review_task(monkeypatch):
+    payload = {
+        "target_supplier_names": [],
+        "analysis_dimensions": [],
+        "capability": "none",
+        "task_type": "none",
+        "needs_clarification": True,
+        "missing_fields": ["target_supplier_names"],
+        "clarification_question": "请提供供应商名称。",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent("帮我看一下这家公司最近怎么样", [])
+
+    assert result is not None
+    assert result.capability == "risk"
+    assert result.task_type == "analysis"
+    assert result.analysis_dimensions == ["risk", "financial", "business_risk"]
+    assert result.needs_clarification is True
+    assert result.missing_fields == ["target_supplier_names"]

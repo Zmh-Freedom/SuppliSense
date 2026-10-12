@@ -32,6 +32,10 @@ _EXPLICIT_CAPABILITY_RULES: tuple[ExplicitCapabilityRule, ...] = (
         ("舆情", "新闻动态", "新闻报道", "负面信息", "负面舆情", "负面报道", "媒体报道", "新闻"),
     ),
     ExplicitCapabilityRule(
+        "legal_risk",
+        ("司法风险", "司法", "当前未结案件", "当前未决案件"),
+    ),
+    ExplicitCapabilityRule(
         "financial",
         ("财务数据", "财务", "营业收入", "营收", "净利润", "现金流", "负债率", "资产负债", "财报"),
     ),
@@ -124,11 +128,16 @@ def detect_explicit_capabilities(message: str) -> list[str]:
         # correction entirely.
         if rule.capability == "financial" and has_scenario:
             continue
-        phrase_matches = [
-            (text.find(phrase), len(phrase))
-            for phrase in rule.phrases
-            if phrase in text
-        ]
+        phrase_matches = []
+        for phrase in rule.phrases:
+            start = 0
+            while (position := text.find(phrase, start)) >= 0:
+                prefix = text[max(0, position - 12):position]
+                # Ignore a capability explicitly cancelled in the same clause.
+                clause_prefix = re.split(r"[，,。；;！？!?]", prefix)[-1]
+                if not re.search(r"(?:不看|先不看|不查|先不查|不需要|无需|不用看|不用查)\s*(?:再)?$", clause_prefix):
+                    phrase_matches.append((position, len(phrase)))
+                start = position + len(phrase)
         if not phrase_matches:
             continue
         first_position = min(position for position, _length in phrase_matches)
@@ -156,6 +165,10 @@ def explicit_primary_capability(message: str) -> str | None:
     if any(phrase in str(message or "") for phrase in _GENERIC_RISK_REQUEST_PHRASES):
         return None
     candidates = detect_explicit_capabilities(message)
+    # A correction clause states the final requested capability. Earlier
+    # capabilities in the same sentence may have been explicitly cancelled.
+    if any(token in str(message or "") for token in ("改查", "改看", "改为", "改成")) and candidates:
+        return candidates[-1] if len(candidates) == 1 else None
     return candidates[0] if len(candidates) == 1 else None
 
 

@@ -145,4 +145,32 @@ def test_narrator_falls_back_when_provider_returns_empty_content(monkeypatch) ->
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
     monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
 
-    assert narrate_answer(answer, "复核青岛三祥科技股份有限公司") is answer
+    result = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+    assert result.summary == answer.summary
+    assert any("润色" in item for item in result.limitations)
+
+
+def test_narrator_disables_sdk_retries_and_marks_safe_fallback(monkeypatch):
+    client_options = []
+    calls = []
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    calls.append(_kwargs)
+                    raise TimeoutError("provider timeout")
+
+    def create_client(**kwargs):
+        client_options.append(kwargs)
+        return FakeClient()
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", create_client)
+
+    result = narrate_answer(_answer(), "复核青岛三祥科技股份有限公司")
+
+    assert len(calls) == 1
+    assert client_options[0]["max_retries"] == 0
+    assert any("润色" in item for item in result.limitations)

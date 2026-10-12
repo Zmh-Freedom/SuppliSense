@@ -18,6 +18,63 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = get_logger()
 
 
+async def _persist_pending_clarification(
+    session_id: str,
+    user_id: str,
+    execution_context: dict[str, Any],
+    missing_fields: list[str],
+) -> None:
+    """Keep confirmed intent slots in PostgreSQL while the API asks a question."""
+    if not (_is_uuid(session_id) and _is_uuid(user_id)):
+        return
+    from app.domains.agent_run.state_store import session_state_store
+
+    session = await asyncio.to_thread(session_state_store.get_session, session_id)
+    if session is None:
+        await asyncio.to_thread(
+            session_state_store.create_session,
+            user_id,
+            session_id=session_id,
+        )
+    elif str(session.user_id or "") != user_id:
+        raise PermissionError("Agent 会话不属于当前用户")
+
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    current_task = dict(execution_context.get("current_task") or {})
+    intent = execution_context.get("llm_intent")
+    intent = intent if isinstance(intent, dict) else {}
+    pending = {
+        key: value
+        for key, value in {
+            "task_type": intent.get("task_type") or current_task.get("task_type"),
+            "capability": intent.get("capability") or current_task.get("capability"),
+            "scope": intent.get("scope") or current_task.get("scope"),
+            "target_supplier_names": intent.get("target_supplier_names") or current_task.get("target_supplier_names"),
+            "analysis_dimensions": intent.get("analysis_dimensions") or current_task.get("analysis_dimensions"),
+            "provider_capabilities": intent.get("provider_capabilities") or current_task.get("provider_capabilities"),
+            "time_range": intent.get("time_range") or current_task.get("time_range"),
+            "requirement": intent.get("sourcing_requirement") or current_task.get("requirement") or current_task.get("llm_sourcing_requirement"),
+            "interpretation_summary": intent.get("interpretation_summary"),
+            "missing_fields": list(dict.fromkeys(missing_fields)),
+        }.items()
+        if value not in (None, "", [])
+    }
+    conversation_state["pending_clarification"] = pending
+    if current_task:
+        conversation_state["current_task"] = current_task
+    target_names = pending.get("target_supplier_names")
+    if isinstance(target_names, list) and target_names:
+        conversation_state["selected_supplier_names"] = target_names
+        conversation_state["selected_suppliers"] = target_names
+    persisted_context = {**execution_context, "conversation_state": conversation_state}
+    await asyncio.to_thread(
+        session_state_store.update_execution_context,
+        session_id,
+        user_id,
+        persisted_context,
+    )
+
+
 def _is_uuid(value: str) -> bool:
     try:
         uuid.UUID(value)
@@ -528,6 +585,9 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 req.message,
             )
             if identity_clarification:
+                await _persist_pending_clarification(
+                    sid, user_id, execution_context, identity_clarification.missing
+                )
                 yield f"event: clarification\ndata: {json.dumps({'message': identity_clarification.message, 'missing': identity_clarification.missing, 'missing_fields': identity_clarification.missing, 'candidates': identity_clarification.candidates, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
             # Scope enforcement is meaningful only for a verified application
@@ -568,6 +628,9 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 has_structured_context=has_structured_context,
             )
             if clar:
+                await _persist_pending_clarification(
+                    sid, user_id, execution_context, clar.missing
+                )
                 yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
 
@@ -592,6 +655,9 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 and llm_intent.get("needs_clarification") is True
                 and clarification_question
             ):
+                await _persist_pending_clarification(
+                    sid, user_id, execution_context, missing_fields
+                )
                 yield f"event: clarification\ndata: {json.dumps({'message': clarification_question, 'missing': missing_fields, 'missing_fields': missing_fields, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
 

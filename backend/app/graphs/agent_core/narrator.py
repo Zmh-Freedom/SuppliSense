@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import time
 from typing import Any
 
 from openai import OpenAI
@@ -168,8 +169,30 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         ],
         "response_schema": NarrativeDraft.model_json_schema(),
     }
+    started_at = time.monotonic()
+
+    def degraded(reason: str, request_id: str | None = None) -> AgentAnswer:
+        elapsed_ms = round((time.monotonic() - started_at) * 1000)
+        logger.warning(
+            "answer_narration_degraded",
+            reason=reason,
+            elapsed_ms=elapsed_ms,
+            request_id=request_id,
+        )
+        limitation = "自然语言润色暂不可用；以下结论仍基于已校验的证据。"
+        limitations = list(answer.limitations)
+        if limitation not in limitations:
+            limitations.append(limitation)
+        return answer.model_copy(update={"limitations": limitations})
+
     try:
-        client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
+        # The request has a strict timeout; SDK retries multiply that budget
+        # and were responsible for long waits before the deterministic fallback.
+        client = OpenAI(
+            api_key=settings.LLM_API_KEY,
+            base_url=settings.LLM_BASE_URL,
+            max_retries=0,
+        )
         response = client.chat.completions.create(
             model=settings.LLM_MODEL,
             messages=[
@@ -194,19 +217,20 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             phrase in draft.body_markdown
             for phrase in ("未包含新闻原文", "无法逐条列出原文", "没有新闻原文")
         ):
-            logger.warning("answer_narration_rejected", reason="article_evidence_contradiction")
-            return answer
+            return degraded("article_evidence_contradiction", getattr(response, "_request_id", None))
         validation_error = _draft_validation_error(draft, answer, user_message)
         if validation_error is not None:
-            logger.warning("answer_narration_rejected", reason=validation_error)
-            return answer
+            return degraded(validation_error, getattr(response, "_request_id", None))
+        logger.info(
+            "answer_narration_completed",
+            elapsed_ms=round((time.monotonic() - started_at) * 1000),
+            request_id=getattr(response, "_request_id", None),
+        )
         return answer.model_copy(update={"summary": f"{draft.headline}\n\n{draft.body_markdown}"})
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
-        logger.warning("answer_narration_invalid", error=str(exc))
-        return answer
+        return degraded(f"invalid_response:{type(exc).__name__}")
     except Exception as exc:
-        logger.warning("answer_narration_failed", error=str(exc))
-        return answer
+        return degraded(f"provider_error:{type(exc).__name__}")
 
 
 __all__ = ["NarrativeDraft", "narrate_answer"]
