@@ -14,6 +14,7 @@ from app.core.structured_response import parse_json_object_content
 REQUIRED_FIELDS = ("category", "specification")
 MULTI_CATEGORY_SEPARATORS = ("、", ",", "，", "/")
 _REGION_NAMES = ("华东", "华南", "华北", "西南", "西北", "东北")
+_SPECIFIC_CATEGORY_TERMS = ("工业连接器", "汽车线束", "螺栓", "螺母", "螺钉", "螺丝")
 _SOURCING_REQUEST_PATTERN = re.compile(
     r"(?:找|推荐|寻找|采购|需要|查找|搜索|查看|查|看|做)"
     r"(?:一下|下)?(?P<target>.+?)(?:供应商|厂家|厂商|寻源)"
@@ -220,6 +221,13 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
         "qualification": "qualifications",
     }
     payload = dict(raw)
+    product_text = str(payload.get("product") or payload.get("material") or "")
+    specific_category = next(
+        (term for term in _SPECIFIC_CATEGORY_TERMS if term in product_text),
+        None,
+    )
+    if specific_category:
+        payload["category"] = specific_category
     for source, target in aliases.items():
         if not payload.get(target) and payload.get(source) is not None:
             payload[target] = payload[source]
@@ -230,6 +238,20 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
         {key: value for key, value in payload.items() if key in allowed}
     )
     result = validated.model_dump(mode="json", exclude_none=True)
+    if result.get("region", "").endswith("地区"):
+        result["region"] = result["region"][:-2]
+    specification = str(result.get("specification") or "")
+    temperature_range = re.search(
+        r"工作温度\s*[:：]?\s*(-?\d+(?:\.\d+)?)\s*(?:℃|°C|摄氏度)?\s*(?:到|至|~|～|—|-)\s*"
+        r"(-?\d+(?:\.\d+)?)\s*(?:℃|°C|摄氏度)?",
+        specification,
+        re.IGNORECASE,
+    )
+    protection_grade = re.search(r"防护等级\s*[:：]?\s*IP\s*(\d+[A-Za-z]?)", specification, re.IGNORECASE)
+    if temperature_range and protection_grade:
+        low, high = temperature_range.groups()
+        grade = protection_grade.group(1).upper()
+        result["specification"] = f"工作温度{low}到{high}摄氏度；防护等级IP{grade}"
     if not result.get("specification"):
         result["specification"] = result.get("product") or result.get("material") or result.get("category")
     if raw.get("request_id"):

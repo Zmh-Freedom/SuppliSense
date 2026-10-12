@@ -560,6 +560,7 @@ def test_llm_intent_overlay_replaces_historic_target_and_keeps_one_task_matrix()
     result = adapter.apply_extracted_conversation_intent(context, extraction)
 
     assert result["current_task"]["target_supplier_names"] == ["四川建安工业有限责任公司"]
+    assert result["current_task"]["task_type"] == "action_draft"
     assert result["current_task"]["analysis_dimensions"] == ["risk", "esg", "sentiment", "compliance"]
     assert len(result["current_task"]["subtasks"]) == 4
     assert result["conversation_state"]["selected_supplier_names"] == ["四川建安工业有限责任公司"]
@@ -1270,3 +1271,171 @@ def test_vague_recent_status_request_keeps_a_default_review_task(monkeypatch):
     assert result.analysis_dimensions == ["risk", "financial", "business_risk"]
     assert result.needs_clarification is True
     assert result.missing_fields == ["target_supplier_names"]
+
+
+def test_llm_candidates_do_not_override_ambiguous_singular_context(monkeypatch):
+    payload = {
+        "target_supplier_names": ["甲电机有限公司", "乙电机有限公司"],
+        "analysis_dimensions": ["sentiment"],
+        "capability": "sentiment",
+        "scope": "supplier_group",
+        "task_type": "analysis",
+        "requested_action": "none",
+        "confidence": 0.95,
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "它的舆情怎么样？",
+        [{"name": "甲电机有限公司"}, {"name": "乙电机有限公司"}],
+        conversation_context={
+            "session_id": "ambiguous-singular",
+            "history": [],
+            "conversation_state": {
+                "selected_supplier_names": ["甲电机有限公司", "乙电机有限公司"],
+            },
+        },
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert result.missing_fields == ["target_supplier_names"]
+    assert result.clarification_question
+
+
+def test_llm_candidates_do_not_resolve_a_duplicate_supplier_alias(monkeypatch):
+    payload = {
+        "target_supplier_names": ["上海海拉电子有限公司", "海拉汽车科技有限公司"],
+        "analysis_dimensions": ["risk"],
+        "capability": "risk",
+        "scope": "supplier_group",
+        "task_type": "analysis",
+        "requested_action": "none",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    result = intent_extractor.extract_conversation_intent(
+        "看看海拉的风险。",
+        [
+            {"name": "上海海拉电子有限公司", "aliases": ["海拉"]},
+            {"name": "海拉汽车科技有限公司", "aliases": ["海拉"]},
+        ],
+        conversation_context={"session_id": "duplicate-alias", "conversation_state": {}},
+    )
+
+    assert result is not None
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert result.missing_fields == ["target_supplier_names"]
+
+
+def test_sourcing_policy_requests_spec_but_accepts_known_history_scope(monkeypatch):
+    class FakeCompletions:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(self.payload)))]
+            )
+
+    class FakeOpenAI:
+        payload = {}
+
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions(self.payload))
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    FakeOpenAI.payload = {
+        "capability": "sourcing", "task_type": "sourcing", "scope": "product_category",
+        "sourcing_requirement": {"category": "蓄电池", "specification": "蓄电池"},
+        "requested_action": "none",
+    }
+    underdefined = intent_extractor.extract_conversation_intent(
+        "找蓄电池供应商，优先考虑价格。", []
+    )
+    assert underdefined is not None
+    assert underdefined.needs_clarification is True
+    assert underdefined.missing_fields == ["sourcing_requirement"]
+
+    FakeOpenAI.payload = {
+        "capability": "sourcing", "task_type": "sourcing", "scope": "supplier_directory",
+        "sourcing_requirement": {"category": "制动系统", "specification": "制动系统"},
+        "requested_action": "none", "needs_clarification": True,
+        "ambiguities": ["历史合作范围不明确"],
+        "clarification_question": "请说明历史范围。",
+    }
+    historical = intent_extractor.extract_conversation_intent(
+        "帮我找能供应制动系统的历史合作供应商。", []
+    )
+    assert historical is not None
+    assert historical.needs_clarification is False
+    assert historical.scope == "product_category"
+
+
+def test_watchlist_action_overrides_analysis_dimensions_in_execution_task():
+    extraction = intent_extractor.ConversationIntentExtraction(
+        target_supplier_names=["甲电机有限公司"],
+        analysis_dimensions=["risk"],
+        capability="watchlist_scope",
+        scope="single_supplier",
+        task_type="analysis",
+        requested_action="add_watchlist",
+    )
+    context = {
+        "session_id": "write-with-risk-dimension",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_type": "analysis",
+            "target_supplier_names": ["甲电机有限公司"],
+            "analysis_dimensions": ["risk"],
+            "subtasks": [{"tool_name": "assess_risk"}],
+        },
+    }
+
+    result = adapter.apply_extracted_conversation_intent(context, extraction)
+
+    assert result["current_task"]["task_type"] == "action_draft"
+    assert result["current_task"]["analysis_dimensions"] == ["risk"]
+    assert len(result["current_task"]["subtasks"]) == 1
+
+
+def test_small_talk_does_not_default_to_sourcing_task():
+    context = adapter.build_execution_context(
+        session_id="small-talk",
+        user_message="你好，今天可以帮我做什么？",
+        history=[],
+        references=[],
+        previous_state={},
+    )
+
+    assert context["current_task"]["task_type"] == "none"
+    assert context["current_task"].get("target_supplier_names", []) == []
+    assert context["current_task"].get("analysis_dimensions", []) == []

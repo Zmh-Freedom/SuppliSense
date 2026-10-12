@@ -180,19 +180,23 @@ def _evaluation_decision(
             return {"route": "clarify", "missing_fields": ["supplier"]}
         return {"route": "approval", "missing_fields": []}
 
+    if entity_resolution.get("status") == "ambiguous":
+        return {"route": "clarify", "missing_fields": ["supplier_identity"]}
+
     if intent.get("needs_clarification"):
         missing_fields = list(intent.get("missing_fields") or [])
         if "target_supplier_names" in missing_fields:
             missing_fields = ["supplier"]
         elif "sourcing_requirement" in missing_fields:
             requirement = current_task.get("requirement") or intent.get("sourcing_requirement") or {}
+            category = str(requirement.get("category") or "").strip()
             missing_fields = [
-                "product_or_category" if not requirement.get("category") else "specification"
+                "product_or_category"
+                if not category or category in {"一家合适", "合适的供应商", "供应商", "产品", "合适产品"}
+                else "specification"
             ]
         return {"route": "clarify", "missing_fields": missing_fields}
 
-    if entity_resolution.get("status") == "ambiguous":
-        return {"route": "clarify", "missing_fields": ["supplier_identity"]}
     if intent.get("task_type") == "none" or intent.get("capability") == "none":
         return {"route": "respond", "missing_fields": []}
     if intent.get("task_type") == "sourcing":
@@ -267,7 +271,7 @@ def run_production_input_understanding_case(case: dict[str, Any]) -> dict[str, A
     elif intent.get("sourcing_requirement") is None:
         intent["sourcing_requirement"] = None
     executable_task_type = task.get("task_type")
-    if executable_task_type == "action_draft":
+    if executable_task_type:
         intent["task_type"] = executable_task_type
 
     output: dict[str, Any] = {

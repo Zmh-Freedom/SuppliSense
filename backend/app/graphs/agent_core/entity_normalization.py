@@ -31,9 +31,11 @@ _COMPANY_MENTION_PREFIXES = tuple(sorted(
 ))
 
 _LEADING_FILLER_RE = re.compile(
-    r"^(?:(?:请|帮我|麻烦)\s*)?(?:改查|改看|查看|查询|查找|分析|评估|复核|监控|看看|先查|展示|显示|核查|预测|确认|生成|对比|比较|处理)\s*(?:一下|下)?\s*"
+    r"^(?:(?:请|帮我|麻烦)\s*)?(?:改查|改看|查看|查询|查找|分析|评估|复核|监控|看看|看|先查|查|展示|显示|核查|预测|确认|生成|对比|比较|处理)\s*(?:一下|下)?\s*"
     r"|^(?:一下|下)\s*"
 )
+_LEADING_NEGATION_OR_CONFIRMATION_RE = re.compile(r"^(?:(?:不要|别)\s*(?:把|将)?|就是)\s*")
+_LEADING_TIME_RANGE_RE = re.compile(r"^(?:最近|近|过去)\s*\d+(?:天|日|周|个月|月|年)\s*")
 
 
 def normalize_company_mention(value: str) -> str:
@@ -44,9 +46,11 @@ def normalize_company_mention(value: str) -> str:
     # exact-name lookups and evidence labels.
     text = text.replace("(", "（").replace(")", "）")
     text = re.sub(r"[\s\u3000]+", "", text).strip()
+    text = _LEADING_TIME_RANGE_RE.sub("", text, count=1)
     previous = None
     while text and text != previous:
         previous = text
+        text = _LEADING_NEGATION_OR_CONFIRMATION_RE.sub("", text, count=1).strip()
         text = _LEADING_FILLER_RE.sub("", text, count=1).strip()
         for prefix in _COMPANY_MENTION_PREFIXES:
             if text.startswith(prefix):

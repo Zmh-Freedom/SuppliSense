@@ -143,6 +143,50 @@ def should_extract_conversation_intent(message: str) -> bool:
     return True
 
 
+def _sourcing_specification_is_required(
+    message: str,
+    requirement: dict[str, Any],
+    conversation_state: dict[str, Any],
+) -> bool:
+    """Require technical detail for a new broad request, not every follow-up.
+
+    Category text copied into ``specification`` by normalization is not a real
+    specification. Richly constrained searches and historical-supplier lookup
+    can proceed without one; an open-ended new category should clarify first.
+    """
+    category = str(requirement.get("category") or requirement.get("product") or "").strip()
+    specification = str(requirement.get("specification") or "").strip()
+    if not category or (specification and specification.casefold() not in {
+        category.casefold(), str(requirement.get("product") or "").strip().casefold(),
+    }):
+        return False
+
+    normalized_message = str(message or "")
+    if any(token in normalized_message for token in ("历史合作供应商", "历史合作方", "历史合作记录")):
+        return False
+
+    pending = conversation_state.get("pending_clarification")
+    if isinstance(pending, dict) and "specification" in (pending.get("missing_fields") or []):
+        return True
+
+    previous = conversation_state.get("current_requirement")
+    if not isinstance(previous, dict):
+        previous_task = conversation_state.get("current_task")
+        previous = previous_task.get("requirement") if isinstance(previous_task, dict) else None
+    previous_category = str((previous or {}).get("category") or "").strip()
+    if previous_category and previous_category.casefold() == category.casefold():
+        return False
+
+    sufficient_filters = sum((
+        bool(requirement.get("candidate_count")),
+        bool(requirement.get("budget")),
+        bool(requirement.get("region") or requirement.get("supply_region")),
+        bool(requirement.get("qualifications")),
+        bool(requirement.get("quantity")),
+    ))
+    return sufficient_filters < 3
+
+
 def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtraction:
     """Keep explicit quoted targets executable when the LLM is unavailable."""
     quoted = [item.strip() for item in re.findall(r"[“\"「『]([^”\"」』]+)[”\"」』]", message) if item.strip()]
@@ -209,6 +253,8 @@ def extract_conversation_intent(
             "Capability mapping: sourcing=寻源, risk=综合风险, financial=财务, sentiment=舆情, compliance=合规, esg=ESG, risk_trend=历史风险变化, risk_prediction=未来风险趋势, risk_network=供应链关系或传染风险, report=报告, watchlist_scope=监控清单或本人负责供应商范围, identity_review=主体核验, company_profile=工商资料, legal_risk=司法风险, business_risk=经营风险, risk_comparison=企业对比, quality=质量, delivery=交付。",
             "Set scope to describe whether this is one supplier, a supplier group, a product category, the user's responsible suppliers, a formal directory, or a pending confirmation.",
             "For capability='sourcing', always return sourcing_requirement with the explicitly requested product/category and constraints; use null only when the product/category is genuinely absent.",
+            "For a new broad product-category request, ask for a technical specification if the category alone is not enough; complete filters (candidate count, budget, region, qualification, or quantity) may make an initial search actionable. A constraint-only follow-up to a confirmed sourcing requirement does not need the product specification again.",
+            "When the user asks for historical cooperation suppliers, interpret that as suppliers in the user's recorded cooperation history unless they explicitly ask for a platform-wide or external search; do not ask which history scope they mean.",
             "Extract explicitly named companies from the current message even when they are absent from known_supplier_references.",
             "Use known_supplier_references only to resolve pronouns or aliases such as '这家' and '上述两家'.",
             "Do not invent companies, supplier codes, risk findings, or actions.",
@@ -353,6 +399,15 @@ def extract_conversation_intent(
     extracted_dimensions = normalize_analysis_dimensions(
         message, extracted_dimensions, raw_capability, capability, detected_action
     )
+    if (
+        any(token in message for token in (
+            "综合风险", "整体风险", "全面风险", "总体风险", "全部风险", "供应商风险",
+        ))
+        and not any(token in message for token in (
+            "财务", "现金流", "经营", "运营", "质量", "交付", "ESG", "esg", "舆情", "合规", "诉讼",
+        ))
+    ):
+        extracted_dimensions = ["risk"]
     if any(phrase in message for phrase in _GENERIC_REVIEW_PHRASES):
         if not extracted_dimensions:
             extracted_dimensions = ["risk", "financial", "business_risk"]
@@ -381,9 +436,17 @@ def extract_conversation_intent(
         phrase in message
         for phrase in ("综合风险", "整体风险", "全面风险", "全部风险", "总体风险")
     )
-    if len(explicit_capabilities) > 1 and not requests_overall_risk:
+    if len(explicit_capabilities) > 1 and not requests_overall_risk and detected_action == "none":
         extracted_dimensions = [item for item in extracted_dimensions if item != "risk"]
         primary_explicit = explicit_capabilities[0]
+        explicit_dimensions = [
+            item for item in explicit_capabilities
+            if item in {"financial", "sentiment", "business_risk", "quality", "delivery", "esg", "compliance"}
+        ]
+        extracted_dimensions = list(dict.fromkeys([
+            *explicit_dimensions,
+            *[item for item in extracted_dimensions if item not in explicit_dimensions],
+        ]))
         if primary_explicit in {
             "financial", "sentiment", "legal_risk", "business_risk", "quality",
             "delivery", "esg", "compliance", "risk_network", "risk_trend",
@@ -446,6 +509,33 @@ def extract_conversation_intent(
     pending_targets = pending.get("target_supplier_names", []) if isinstance(pending, dict) else []
     if not validated_targets and isinstance(pending_targets, list):
         validated_targets = [item for item in pending_targets if isinstance(item, str) and item.strip()]
+    from app.graphs.agent_core.entity_memory import memory_from_state, resolve_turn
+
+    raw_conversation_state = (
+        conversation_context.get("conversation_state")
+        if isinstance(conversation_context, dict)
+        else {}
+    )
+    contextual_resolution = resolve_turn(
+        message,
+        session_id=str((conversation_context or {}).get("session_id") or ""),
+        previous_memory=memory_from_state(
+            raw_conversation_state if isinstance(raw_conversation_state, dict) else {},
+            session_id=str((conversation_context or {}).get("session_id") or ""),
+        ),
+        references=supplier_references,
+    )
+    context_requires_clarification = contextual_resolution.needs_clarification
+    if context_requires_clarification:
+        # LLM candidates are suggestions. A deterministic ambiguous alias or
+        # singular reference must not be converted into one or more targets.
+        validated_targets = []
+    elif contextual_resolution.reason in {
+        "ordinal_reference", "plural_reference", "singular_reference", "exclusion",
+    } and contextual_resolution.target_supplier_names:
+        # Ordinals and pronouns are bound by the stored focus set. A model
+        # suggestion for a different supplier must not replace that binding.
+        validated_targets = contextual_resolution.target_supplier_names
     if "risk_comparison" in explicit_capabilities and len(validated_targets) >= 2:
         capability = "risk_comparison"
         task_type = "comparison"
@@ -471,6 +561,46 @@ def extract_conversation_intent(
             if requested_labels
             else "我还不能确定你希望处理的具体任务，请补充一下目标或分析内容。"
         )
+    normalized_requirement = (
+        extracted.sourcing_requirement.model_dump(mode="json", exclude_none=True)
+        if extracted.sourcing_requirement is not None
+        else {}
+    )
+    historical_sourcing = (
+        task_type == "sourcing"
+        and bool(normalized_requirement.get("category"))
+        and any(token in message for token in ("历史合作供应商", "历史合作方", "历史合作记录"))
+    )
+    require_sourcing_specification = (
+        task_type == "sourcing"
+        and _sourcing_specification_is_required(
+            message,
+            normalized_requirement,
+            raw_conversation_state if isinstance(raw_conversation_state, dict) else {},
+        )
+    )
+    if task_type == "sourcing":
+        category = str(normalized_requirement.get("category") or "").strip()
+        scope = (
+            "product_category"
+            if category and category not in {"一家合适", "合适的供应商", "供应商", "产品", "合适产品"}
+            else "none"
+        )
+    if detected_action == "batch_add_watchlist":
+        scope = "supplier_group"
+    needs_clarification = extracted.needs_clarification or context_requires_clarification or require_sourcing_specification
+    missing_fields = list(extracted.missing_fields)
+    if context_requires_clarification and "target_supplier_names" not in missing_fields:
+        missing_fields.append("target_supplier_names")
+    if context_requires_clarification:
+        clarification_question = "我无法从当前会话唯一确定要处理的供应商，请确认具体企业。"
+    if require_sourcing_specification and "sourcing_requirement" not in missing_fields:
+        missing_fields.append("sourcing_requirement")
+    if require_sourcing_specification:
+        clarification_question = "请补充产品的具体规格或技术要求，我再继续筛选供应商。"
+    if historical_sourcing and not missing_fields:
+        needs_clarification = False
+        clarification_question = None
     validated = extracted.model_copy(update={
         "target_supplier_names": validated_targets,
         "analysis_dimensions": extracted_dimensions,
@@ -479,19 +609,24 @@ def extract_conversation_intent(
         "scope": scope,
         "task_type": task_type,
         "clarification_question": clarification_question,
+        "needs_clarification": needs_clarification,
+        "missing_fields": missing_fields,
         # The model may over-read the word “监控” in a read-only identity
         # request. A write action is allowed only when the current message
         # contains an explicit add/monitor instruction.
         "requested_action": detected_action or "none",
     })
-    validated = validated.model_copy(update={
-        "field_sources": _derive_field_sources(
-            message,
-            validated,
-            supplier_references,
-            context_snapshot,
-        ),
-    })
+    field_sources = _derive_field_sources(
+        message,
+        validated,
+        supplier_references,
+        context_snapshot,
+    )
+    if validated_targets and contextual_resolution.reason in {
+        "ordinal_reference", "plural_reference", "singular_reference", "exclusion",
+    }:
+        field_sources["target_supplier_names"] = "conversation_state"
+    validated = validated.model_copy(update={"field_sources": field_sources})
     logger.info(
         "conversation_intent_normalized",
         session_id=(conversation_context or {}).get("session_id"),
@@ -763,6 +898,8 @@ def _expand_generic_risk_dimensions(message: str, dimensions: list[str]) -> list
     # expanding it to financial and business checks would multiply calls and
     # change the established “这些供应商的风险情况” contract.
     if any(token in text for token in ("这些供应商", "上述供应商", "所有供应商")):
+        return list(dict.fromkeys(dimensions))
+    if any(token in text for token in ("综合风险", "整体风险", "全面风险", "总体风险", "全部风险")):
         return list(dict.fromkeys(dimensions))
     if any(token in text for token in _GENERIC_RISK_QUERY_TOKENS):
         if dimensions and set(dimensions) <= {"risk"}:

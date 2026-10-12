@@ -49,6 +49,15 @@ def test_parse_requirement_extracts_complete_natural_language_purchase_request(m
     assert result["requirement"]["region"] == "华东"
 
 
+def test_harness_requirement_canonicalizes_temperature_and_ip_specification():
+    normalized = requirement_service._normalise_harness_requirement({
+        "category": "工业连接器",
+        "specification": "工作温度：-40℃ ~ 125℃；防护等级：IP67",
+    })
+
+    assert normalized["specification"] == "工作温度-40到125摄氏度；防护等级IP67"
+
+
 def test_parse_requirement_uses_deterministic_historical_supplier_fallback(monkeypatch):
     """Historical-supplier wording must not be blocked by an incomplete LLM extraction."""
     monkeypatch.setattr(

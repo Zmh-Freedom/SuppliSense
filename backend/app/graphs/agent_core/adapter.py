@@ -442,6 +442,15 @@ def _persist_input_understanding(
         execution_context.get("references", []),
         context_snapshot,
     )
+    entity_resolution = (execution_context.get("conversation_state") or {}).get("entity_resolution") or {}
+    if (
+        extraction.target_supplier_names
+        and (
+            entity_resolution.get("reason") == "ordinal_reference"
+            or re.search(r"第[一二三四五六七八九十\d]+家|前[两三四五六七八九十\d]+家|排名第一", user_message)
+        )
+    ):
+        field_sources["target_supplier_names"] = "conversation_state"
     understanding = extraction.model_copy(update={"field_sources": field_sources}).model_dump(
         mode="json", exclude_none=True
     )
@@ -675,6 +684,7 @@ def _apply_harness_sourcing_requirement(
     """Bind one validated sourcing requirement before the Harness graph starts."""
     current_task = dict(execution_context.get("current_task") or {})
     conversation_state = dict(execution_context.get("conversation_state") or {})
+    prior_conversation_state = dict(conversation_state)
     if current_task.get("task_type") != "sourcing" and not _is_sourcing_constraint_follow_up(
         current_task,
         conversation_state,
@@ -816,15 +826,72 @@ def _apply_harness_sourcing_requirement(
     current_task["requirement_extraction_source"] = resolved.get("extraction_source")
     if resolved.get("status") == "ready":
         requirement = dict(resolved["requirement"])
-        current_task["requirement"] = requirement
-        conversation_state["current_requirement"] = requirement
+        explicit_slots = _sourcing_constraint_slots(user_message)
+        for key, value in explicit_slots.items():
+            requirement[key] = value
+        price_preference = ("优先考虑价格", "优先价格", "成本更优", "成本更低", "更便宜", "低成本", "低价")
+        if any(token in user_message for token in price_preference):
+            requirement["must_have"] = [
+                item for item in requirement.get("must_have", [])
+                if not any(term in str(item) for term in ("价格", "成本", "低价", "便宜"))
+            ]
+        if explicit_slots:
+            prior_extraction_source = resolved.get("extraction_source")
+            resolved = resolve_harness_requirement_from_llm(requirement)
+            if prior_extraction_source == "context_merge" and resolved.get("status") == "ready":
+                resolved["extraction_source"] = "context_merge"
+        if resolved.get("status") == "ready":
+            requirement = dict(resolved["requirement"])
+            current_task["requirement"] = requirement
+            conversation_state["current_requirement"] = requirement
+        else:
+            current_task["requirement_missing"] = list(resolved.get("missing") or ["category"])
+        current_task["requirement_status"] = resolved.get("status")
+        current_task["requirement_extraction_source"] = resolved.get("extraction_source")
     else:
         current_task["requirement_missing"] = list(resolved.get("missing") or ["category"])
+        current_task["requirement_status"] = resolved.get("status")
+        current_task["requirement_extraction_source"] = resolved.get("extraction_source")
+    llm_intent = execution_context.get("llm_intent")
+    if resolved.get("status") == "ready" and isinstance(llm_intent, dict):
+        from app.graphs.agent_core.intent_extractor import _sourcing_specification_is_required
+
+        requirement = resolved.get("requirement") or current_task.get("requirement") or {}
+        specification_context = dict(prior_conversation_state)
+        if isinstance(existing, dict) and not specification_context.get("current_requirement"):
+            specification_context["current_requirement"] = existing
+        requires_specification = _sourcing_specification_is_required(
+            user_message, requirement, specification_context,
+        )
+        missing_now = list(llm_intent.get("missing_fields") or [])
+        if requires_specification:
+            if "sourcing_requirement" not in missing_now:
+                missing_now.append("sourcing_requirement")
+            llm_intent = {
+                **llm_intent,
+                "needs_clarification": True,
+                "missing_fields": missing_now,
+                "clarification_question": "请补充产品的具体规格或技术要求，我再继续筛选供应商。",
+            }
+        elif "sourcing_requirement" in missing_now:
+            missing_fields = [
+                field for field in missing_now
+                if field != "sourcing_requirement"
+            ]
+            llm_intent = {
+                **llm_intent,
+                "needs_clarification": bool(missing_fields),
+                "missing_fields": missing_fields,
+                "clarification_question": None if not missing_fields else llm_intent.get("clarification_question"),
+            }
     conversation_state["current_task"] = current_task
+    if isinstance(llm_intent, dict):
+        conversation_state["input_understanding"] = llm_intent
     return {
         **execution_context,
         "conversation_state": conversation_state,
         "current_task": current_task,
+        **({"llm_intent": llm_intent} if isinstance(llm_intent, dict) else {}),
     }
 
 
@@ -892,18 +959,37 @@ def _sourcing_constraint_slots(user_message: str) -> dict[str, Any]:
     """Extract a small deterministic set of safe follow-up constraints."""
     message = str(user_message or "")
     slots: dict[str, Any] = {}
-    if "预算有限" in message:
+    budget_clear = re.search(r"预算\s*(?:先|暂时|暂)?\s*(?:不考虑|不设(?:硬性)?限制|不限|取消)", message)
+    if budget_clear:
+        slots["budget"] = None
+    elif "预算有限" in message:
         slots["budget"] = "预算有限"
     budget_match = re.search(
-        r"预算\s*(?:不超过|最多|上限|控制在)?\s*(\d+(?:\.\d+)?)\s*(万元?|万|千元?|元)",
+        r"(?P<tax>含税)?\s*预算\s*(?P<bound>不超过|最多|上限|控制在)?\s*(?P<amount>\d+(?:\.\d+)?)(?P<spacing>\s*)(?P<unit>万元?|万|千元?|元)",
         message,
     )
-    if budget_match:
-        amount, unit = budget_match.groups()
+    if budget_match and not budget_clear:
+        amount, spacing, unit = budget_match.group("amount", "spacing", "unit")
         normalized_unit = {"万": "万元", "千": "千元"}.get(unit, unit)
-        slots["budget"] = f"{amount} {normalized_unit}"
+        bound = budget_match.group("bound")
+        tax = "含税" if budget_match.group("tax") or "含税" in message[:budget_match.start()] else ""
+        if bound:
+            slots["budget"] = f"{tax}{bound}{amount}{spacing}{normalized_unit}"
+        else:
+            slots["budget"] = f"{amount}{spacing}{normalized_unit}"
+    destination = re.search(r"(?:交付|交货|配送)(?:到|至)\s*([\u4e00-\u9fffA-Za-z0-9（）()]{2,24})", message)
+    if destination:
+        slots["supply_region"] = destination.group(1).rstrip("，,。；;")
+    delivery_time = re.search(
+        r"((?:\d+(?:\.\d+)?|[一二三四五六七八九十]+)(?:个)?(?:工作日|天|周|个月|月|年)内)(?:交付|交货)",
+        message,
+    )
+    if delivery_time:
+        slots["delivery"] = delivery_time.group(1)
+    if re.search(r"优先\s*交(?:付|货)周期|交(?:付|货)周期优先", message):
+        slots["delivery"] = "优先交货周期" if "交货周期" in message else "优先交付周期"
     optional: list[str] = []
-    for token in ("成本更优", "成本更低", "更便宜", "低成本", "低价"):
+    for token in ("优先考虑价格", "优先价格", "成本更优", "成本更低", "更便宜", "低成本", "低价"):
         if token in message:
             optional.append(token)
     if "总成本" in message:
@@ -1059,18 +1145,36 @@ def apply_extracted_conversation_intent(
         references=execution_context.get("references") or [],
         llm_candidates=target_names,
     )
-    # LLM-extracted explicit names are the validated source of truth for this
-    # turn. The deterministic resolver is still used for pronouns/aliases,
-    # but must not prepend conversational verbs such as “将” to a company
-    # name and then violate the shared context contract.
-    target_names = target_names or resolved.target_supplier_names
+    # Ambiguous aliases and singular references must remain targetless even
+    # when the model or an earlier context overlay supplied candidate names.
+    # Explicit current-turn identities resolve without this ambiguity status.
+    if resolved.needs_clarification and resolved.reason in {
+        "ambiguous_alias", "ambiguous_singular_reference",
+    }:
+        target_names = []
+        current_task["target_supplier_names"] = []
+        conversation_state["selected_supplier_names"] = []
+        conversation_state["selected_suppliers"] = []
+    else:
+        # LLM-extracted explicit names are validated for this turn. The
+        # deterministic resolver also handles pronouns/aliases, but must not
+        # prepend conversational verbs such as “将” to a company name.
+        target_names = target_names or resolved.target_supplier_names
     if target_names:
         current_task["target_supplier_names"] = target_names
         conversation_state["selected_supplier_names"] = target_names
         conversation_state["selected_suppliers"] = target_names
     if requested_action in {"remove_watchlist", "batch_add_watchlist", "manage_scheduled_report"}:
         # Structured side-effect requests own the turn even when the model
-        # also emits a generic analysis dimension such as ``risk``.
+        # also emits analysis dimensions such as ``risk``. The write workflow
+        # must not inherit a read-only execution plan.
+        dimensions = []
+        current_task["analysis_dimensions"] = []
+        current_task["subtasks"] = []
+        current_task["task_type"] = "action_draft"
+    elif requested_action == "add_watchlist" and not dimensions:
+        # A watchlist follow-up with no current-turn analysis request must not
+        # inherit dimensions from the previous identity or risk analysis.
         dimensions = []
         current_task["analysis_dimensions"] = []
         current_task["subtasks"] = []
@@ -1090,11 +1194,6 @@ def apply_extracted_conversation_intent(
         dimensions = []
         current_task["analysis_dimensions"] = []
         current_task["subtasks"] = []
-    elif is_write_action:
-        dimensions = []
-        current_task["analysis_dimensions"] = []
-        current_task["subtasks"] = []
-        current_task["task_type"] = "action_draft"
     elif target_names:
         # A company-only follow-up means "run the last explicit analysis for
         # this company". Do not inherit sourcing or an old execution plan.
@@ -1144,7 +1243,11 @@ def apply_extracted_conversation_intent(
             planned["comparison"] = True
         if scope != "none":
             planned["scope"] = scope
+        if is_write_action:
+            planned["task_type"] = "action_draft"
         current_task = planned
+    elif is_write_action:
+        current_task["task_type"] = "action_draft"
     conversation_state["current_task"] = current_task
     intent_snapshot = extracted.model_dump(mode="json")
     conversation_state["input_understanding"] = intent_snapshot
@@ -1214,6 +1317,8 @@ def build_execution_context(
     inferred_task_type = infer_task_type(user_message)
     if inferred_task_type == "sourcing":
         current_task["task_type"] = "sourcing"
+    elif inferred_task_type == "none" and not current_task.get("target_supplier_names") and not current_task.get("analysis_dimensions"):
+        current_task["task_type"] = "none"
     targets = list(current_task.get("target_supplier_names") or [])
     dimensions = list(current_task.get("analysis_dimensions") or [])
     previous_task = previous_state.get("current_task") if isinstance(previous_state, dict) else None
@@ -1237,6 +1342,7 @@ def build_execution_context(
         planned["user_message"] = user_message
         conversation_state["current_task"] = planned
         current_task = planned
+    conversation_state["current_task"] = current_task
 
     return {
         "session_id": session_id,

@@ -36,6 +36,10 @@ _EXPLICIT_CAPABILITY_RULES: tuple[ExplicitCapabilityRule, ...] = (
         ("司法风险", "司法", "当前未结案件", "当前未决案件"),
     ),
     ExplicitCapabilityRule(
+        "business_risk",
+        ("经营风险", "运营风险", "经营状况", "经营和交付风险", "运营和交付风险"),
+    ),
+    ExplicitCapabilityRule(
         "financial",
         ("财务数据", "财务", "营业收入", "营收", "净利润", "现金流", "负债率", "资产负债", "财报"),
     ),
@@ -162,9 +166,12 @@ def has_durable_control_expression(message: str) -> bool:
 
 def explicit_primary_capability(message: str) -> str | None:
     """Return one capability only when the message is unambiguous."""
-    if any(phrase in str(message or "") for phrase in _GENERIC_RISK_REQUEST_PHRASES):
+    text = str(message or "")
+    if "诉讼" in text and "行政处罚" in text:
+        return "compliance" if any(token in text for token in ("有没有", "是否有", "是否存在", "有无")) else None
+    if any(phrase in text for phrase in _GENERIC_RISK_REQUEST_PHRASES):
         return None
-    candidates = detect_explicit_capabilities(message)
+    candidates = detect_explicit_capabilities(text)
     # A correction clause states the final requested capability. Earlier
     # capabilities in the same sentence may have been explicitly cancelled.
     if any(token in str(message or "") for token in ("改查", "改看", "改为", "改成")) and candidates:
