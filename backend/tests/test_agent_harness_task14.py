@@ -54,6 +54,20 @@ def test_harness_requirement_extracts_complete_natural_language_purchase_request
     assert result["requirement"]["region"] == "华东"
 
 
+def test_harness_requirement_extracts_quantity_and_product_from_purchase_request(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+
+    result = resolve_harness_requirement(
+        "采购1000件不锈钢螺栓，规格M8×30，含税预算不超过2万元，交付到苏州。"
+    )
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "螺栓"
+    assert result["requirement"]["product"] == "不锈钢螺栓"
+    assert result["requirement"]["quantity"] == 1000
+    assert result["requirement"]["specification"] == "M8×30"
+
+
 def test_harness_requirement_extracts_material_number_for_read_only_sourcing(monkeypatch) -> None:
     monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
 
@@ -121,6 +135,40 @@ def test_harness_uses_llm_requirement_slots_before_legacy_wording_fallback() -> 
     assert resolved["current_task"]["capability"] == "sourcing"
     assert resolved["current_task"]["requirement"]["category"] == "蓄电池"
     assert planned[0].tool_name == "discover_supplier_candidates"
+
+
+def test_harness_does_not_reask_optional_fields_for_known_material_number(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    context = {
+        "references": [],
+        "conversation_state": {},
+        "llm_intent": {
+            "needs_clarification": False,
+            "missing_fields": [],
+            "clarification_question": None,
+        },
+        "current_task": {
+            "task_id": "source-material-number",
+            "task_type": "sourcing",
+            "user_message": "帮我为物料号23748163寻找供应商，优先展示历史合作候选。",
+            "llm_sourcing_requirement": {
+                "category": "后轮制动鼓",
+                "product": "23748163",
+                "material": "23748163",
+                "specification": "23748163",
+            },
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        context["current_task"]["user_message"],
+    )
+
+    assert resolved["current_task"]["requirement_status"] == "ready"
+    assert resolved["current_task"]["requirement"]["material"] == "23748163"
+    assert resolved["llm_intent"]["needs_clarification"] is False
+    assert resolved["llm_intent"]["missing_fields"] == []
 
 
 def test_llm_capability_survives_supplier_plan_replacement() -> None:

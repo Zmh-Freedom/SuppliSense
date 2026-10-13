@@ -15,6 +15,7 @@ from app.graphs.agent_core.planner import plan_supplier_analysis_task
 from app.services.conversation_state import build_conversation_state
 
 logger = get_logger()
+_SOURCING_MATERIAL_NUMBER_PATTERN = re.compile(r"物料号(?:为|是|[:：])?\s*(\d{4,})")
 
 
 class ExecutionContextContractViolation(RuntimeError):
@@ -839,6 +840,17 @@ def _apply_harness_sourcing_requirement(
         preferred_region = explicit_slots.get("region")
         explicit_delivery_region = explicit_slots.get("supply_region")
         prior_delivery_region = existing.get("supply_region") if isinstance(existing, dict) else None
+        prior_supplier_region = existing.get("region") if isinstance(existing, dict) else None
+        if (
+            explicit_delivery_region
+            and not preferred_region
+            and not prior_supplier_region
+            and str(requirement.get("region") or "").strip()
+            == str(explicit_delivery_region).strip()
+        ):
+            # A destination may be copied into both slots by the model. Keep
+            # it as a delivery constraint, not a supplier-location filter.
+            requirement.pop("region", None)
         if (
             preferred_region
             and not explicit_delivery_region
@@ -882,11 +894,22 @@ def _apply_harness_sourcing_requirement(
         specification_context = dict(prior_conversation_state)
         if isinstance(existing, dict) and not specification_context.get("current_requirement"):
             specification_context["current_requirement"] = existing
-        requires_specification = _sourcing_specification_is_required(
+        is_material_number_lookup = (
+            current_task.get("task_type") == "sourcing"
+            and len(_SOURCING_MATERIAL_NUMBER_PATTERN.findall(user_message)) == 1
+        )
+        requires_specification = not is_material_number_lookup and _sourcing_specification_is_required(
             user_message, requirement, specification_context,
         )
         missing_now = list(llm_intent.get("missing_fields") or [])
-        if requires_specification:
+        if is_material_number_lookup:
+            llm_intent = {
+                **llm_intent,
+                "needs_clarification": False,
+                "missing_fields": [],
+                "clarification_question": None,
+            }
+        elif requires_specification:
             if "sourcing_requirement" not in missing_now:
                 missing_now.append("sourcing_requirement")
             llm_intent = {
@@ -987,6 +1010,19 @@ def _sourcing_constraint_slots(user_message: str) -> dict[str, Any]:
     )
     if preferred_region:
         slots["region"] = preferred_region.group(1)
+    else:
+        region_before_supplier = re.search(
+            r"(华东|华南|华北|西南|西北|东北)(?:地区)?[^，,。；;\n]{0,16}(?:供应商|厂家|厂商)",
+            message,
+        )
+        destination = re.search(
+            r"(?:交付|交货|配送)(?:到|至)\s*([\u4e00-\u9fffA-Za-z0-9（）()]{2,24})",
+            message,
+        )
+        if region_before_supplier and not (
+            destination and destination.group(1).startswith(region_before_supplier.group(1))
+        ):
+            slots["region"] = region_before_supplier.group(1)
     budget_clear = re.search(r"预算\s*(?:先|暂时|暂)?\s*(?:不考虑|不设(?:硬性)?限制|不限|取消)", message)
     if budget_clear:
         slots["budget"] = None

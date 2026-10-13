@@ -17,6 +17,7 @@ from app.api import chat as chat_api
 from app.core.config import settings
 from app.core.deps import get_current_user
 from app.graphs.agent_core.evidence_ledger import build_evidence_record
+from app.tools.contracts import SourcingCandidatesOutput
 from app.tools.registry import ToolPayload, ToolRegistry, ToolSpec
 
 
@@ -51,6 +52,34 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
 
     tool_calls: list[dict] = []
     model_responses: dict[str, dict] = {}
+    sourcing_scenario: dict[str, list[dict]] = {
+        "local_candidates": [{
+            "candidate_id": "acceptance-local-camera",
+            "supplier_name": "华东精密视觉有限公司",
+            "candidate_type": "historical",
+            "source": "internal_history",
+            "source_type": "internal",
+            "categories": ["工业相机"],
+            "main_products": "工业相机",
+            "regions": ["华东"],
+            "match_reasons": ["品类匹配", "华东地区"],
+            "website_url": "https://local-camera.example.test",
+        }],
+        "external_candidates": [{
+            "candidate_id": "acceptance-external-camera",
+            "supplier_name": "苏州光鉴科技有限公司",
+            "candidate_type": "external",
+            "source": "web_search",
+            "source_type": "external",
+            "source_title": "工业相机产品介绍",
+            "source_reference": "https://external-camera.example.test/products",
+            "categories": ["工业相机"],
+            "main_products": "GigE 工业相机",
+            "regions": ["华东"],
+            "match_reasons": ["规格方向匹配", "供货地区匹配"],
+            "website_url": "https://external-camera.example.test",
+        }],
+    }
 
     def query_financials(company_name: str) -> dict:
         tool_calls.append({"tool": "query_financials", "company_name": company_name})
@@ -78,26 +107,50 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
 
     def discover_supplier_candidates(requirement: dict) -> dict:
         tool_calls.append({"tool": "discover_supplier_candidates", "requirement": requirement})
-        evidence = build_evidence_record(
-            evidence_id="acceptance-sourcing-evidence",
-            entity_id="sourcing",
-            dimension="sourcing",
-            provider="acceptance-sourcing-provider",
-            source_type="internal",
-            payload={"candidate_count": 5},
-            collected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        ).model_dump(mode="json")
-        claim = {
-            "claim_id": "acceptance-sourcing-claim",
-            "entity_id": "sourcing",
-            "dimension": "sourcing",
-            "statement": "按已确认条件检索到 5 家供应商候选。",
-            "value": 5,
-            "fact_path": "candidate_count",
-            "evidence_refs": ["acceptance-sourcing-evidence"],
-            "confidence": 0.95,
+        local_candidates = list(sourcing_scenario["local_candidates"])
+        external_candidates = list(sourcing_scenario["external_candidates"])
+        candidates = [*local_candidates, *external_candidates]
+        evidence_records = []
+        claims = []
+        for index, candidate in enumerate(candidates):
+            evidence_id = f"acceptance-sourcing-evidence-{index}"
+            evidence_records.append(build_evidence_record(
+                evidence_id=evidence_id,
+                entity_id="sourcing",
+                dimension="sourcing",
+                provider=str(candidate["source"]),
+                source_type=str(candidate["source_type"]),
+                payload={key: value for key, value in candidate.items() if key != "candidate_id"},
+                collected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ).model_dump(mode="json"))
+            claims.append({
+                "claim_id": f"acceptance-sourcing-claim-{index}",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": f"{candidate['supplier_name']} 为寻源候选。",
+                "value": candidate["supplier_name"],
+                "fact_path": "supplier_name",
+                "evidence_refs": [evidence_id],
+                "confidence": 0.95,
+            })
+        found = bool(candidates)
+        return {
+            "status": "success" if found else "not_found",
+            "source": "local_and_external",
+            "source_order": ["local_history", "web_search"],
+            "requirement": requirement,
+            "candidates": candidates,
+            "local_candidates": local_candidates,
+            "external_candidates": external_candidates,
+            "local_status": "success" if local_candidates else "not_found",
+            "external_status": "success" if external_candidates else "not_found",
+            "external_stop_reason": "candidate_count_reached" if external_candidates else "no_candidates",
+            "external_failure_reasons": [],
+            "external_loop": {},
+            "evidence_records": evidence_records,
+            "claims": claims,
+            "message": "返回本地和外部候选" if found else "当前条件下没有匹配候选",
         }
-        return {"status": "success", "evidence_records": [evidence], "claims": [claim]}
 
     registry = ToolRegistry()
     tool = StructuredTool.from_function(
@@ -132,7 +185,7 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
             max_attempts=1,
             evidence_required=True,
         ),
-        output_model=ToolPayload,
+        output_model=SourcingCandidatesOutput,
     )
 
     class FakeOpenAI:
@@ -193,6 +246,7 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
                 client=client,
                 calls=tool_calls,
                 responses=model_responses,
+                sourcing_scenario=sourcing_scenario,
             )
     finally:
         app.dependency_overrides.pop(get_current_user, None)
@@ -358,7 +412,7 @@ def test_chat_negation_and_topic_switch_do_not_call_business_tools(full_chain_ch
 
 
 def test_chat_sourcing_request_passes_normalized_constraints_to_tool_executor(full_chain_chat):
-    message = "找5家工业相机供应商，优先华东，预算50万元，要求支持IATF 16949，规格为200万像素GigE接口"
+    message = "采购500台并找5家工业相机供应商，优先华东，预算50万元，要求支持IATF 16949，规格为200万像素GigE接口"
     full_chain_chat.responses[message] = {
         "target_supplier_names": [],
         "analysis_dimensions": [],
@@ -375,6 +429,7 @@ def test_chat_sourcing_request_passes_normalized_constraints_to_tool_executor(fu
             "budget": "50万元",
             "qualifications": "IATF 16949",
             "candidate_count": 5,
+            "quantity": 500,
         },
         "confidence": 0.98,
         "interpretation_summary": "寻找5家符合已述规格和约束的工业相机供应商。",
@@ -404,6 +459,82 @@ def test_chat_sourcing_request_passes_normalized_constraints_to_tool_executor(fu
     assert requirement.get("supply_region") is None
     assert requirement["budget"] == "50万元"
     assert requirement["candidate_count"] == 5
+    assert requirement["quantity"] == 500
+    assert "已找到 2 家寻源候选" in answer["summary"]
+    assert "历史合作 1 家、外部待核验 1 家" in answer["summary"]
+    assert "目标候选数：5家" in answer["summary"]
+    assert "采购数量：500" in answer["summary"]
+    assert "优先地区：华东" in answer["summary"]
+    assert "预算：50万元" in answer["summary"]
+    assert "规格：200万像素 GigE 接口" in answer["summary"]
+    assert "资质：IATF 16949" in answer["summary"]
+    tool_result = next(payload for event_type, payload in events if event_type == "tool_result")
+    tool_data = tool_result["result"]["data"]
+    assert [item["supplier_name"] for item in tool_data["candidates"]] == [
+        "华东精密视觉有限公司",
+        "苏州光鉴科技有限公司",
+    ]
+    references = next(payload["items"] for event_type, payload in events if event_type == "references")
+    assert [item["name"] for item in references] == [
+        "华东精密视觉有限公司",
+        "苏州光鉴科技有限公司",
+    ]
+
+
+def test_chat_sourcing_request_reports_no_candidates_without_supplier_clarification(full_chain_chat):
+    full_chain_chat.sourcing_scenario["local_candidates"] = []
+    full_chain_chat.sourcing_scenario["external_candidates"] = []
+    message = "采购500台并找5家工业相机供应商，优先华东，预算50万元，要求支持IATF 16949，规格为200万像素GigE接口"
+    full_chain_chat.responses[message] = {
+        "target_supplier_names": [],
+        "analysis_dimensions": [],
+        "capability": "sourcing",
+        "scope": "product_category",
+        "task_type": "sourcing",
+        "requested_action": "none",
+        "sourcing_requirement": {
+            "category": "工业相机",
+            "product": "工业相机",
+            "specification": "200万像素 GigE 接口",
+            "region": "华东",
+            "supply_region": None,
+            "budget": "50万元",
+            "qualifications": "IATF 16949",
+            "candidate_count": 5,
+            "quantity": 500,
+        },
+        "confidence": 0.98,
+        "interpretation_summary": "寻找符合已述规格和约束的工业相机供应商。",
+        "field_sources": {"sourcing_requirement": "explicit"},
+    }
+
+    response = full_chain_chat.client.post(
+        "/api/v1/chat/stream",
+        json={"message": message, "session_id": str(uuid4()), "mode": "auto"},
+    )
+
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+    event_types = [event_type for event_type, _ in events]
+    assert "clarification" not in event_types
+    assert "tool_call" in event_types
+    assert "tool_result" in event_types
+    assert "references" not in event_types
+    assert event_types[-1] == "done"
+    assert len(full_chain_chat.calls) == 1
+    tool_result = next(payload for event_type, payload in events if event_type == "tool_result")
+    assert tool_result["result"]["status"] == "not_found"
+    assert tool_result["result"]["data"]["candidates"] == []
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert "已按“工业相机”完成历史合作和外部候选检索" in answer["summary"]
+    assert "当前没有匹配候选" in answer["summary"]
+    assert "目标候选数：5家" in answer["summary"]
+    assert "采购数量：500" in answer["summary"]
+    assert "优先地区：华东" in answer["summary"]
+    assert "预算：50万元" in answer["summary"]
+    assert "规格：200万像素 GigE 接口" in answer["summary"]
+    assert "资质：IATF 16949" in answer["summary"]
+    assert "请补充供应商" not in answer["summary"]
 
 
 def test_chat_missing_supplier_target_clarifies_without_calling_business_tools(full_chain_chat):

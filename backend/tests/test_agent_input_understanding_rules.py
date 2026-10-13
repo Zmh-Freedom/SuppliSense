@@ -26,6 +26,19 @@ def test_sourcing_slots_keep_budget_tax_delivery_time_and_destination() -> None:
     assert slots["supply_region"] == "苏州"
 
 
+def test_sourcing_slots_recognize_region_before_product_and_supplier() -> None:
+    slots = _sourcing_constraint_slots("帮我找华南汽车线束供应商，要求具备IATF 16949资质。")
+
+    assert slots["region"] == "华南"
+    assert "supply_region" not in slots
+
+
+def test_quantity_bearing_purchase_request_routes_to_sourcing_even_with_delivery_terms() -> None:
+    message = "采购1000件不锈钢螺栓，规格M8×30，含税预算不超过2万元，交付到苏州。"
+
+    assert explicit_primary_capability(message) == "sourcing"
+
+
 def test_harness_merges_explicit_single_turn_sourcing_slots(monkeypatch) -> None:
     monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
     context = {
@@ -54,6 +67,35 @@ def test_harness_merges_explicit_single_turn_sourcing_slots(monkeypatch) -> None
     assert requirement["budget"] == "含税不超过2万元"
     assert requirement["delivery"] == "三个月内"
     assert requirement["supply_region"] == "苏州"
+
+
+def test_harness_does_not_turn_delivery_destination_into_supplier_region(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    context = {
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_type": "sourcing",
+            "llm_sourcing_requirement": {
+                "category": "螺栓",
+                "product": "不锈钢螺栓",
+                "specification": "M8×30",
+                "quantity": 1000,
+                "region": "苏州",
+                "supply_region": "苏州",
+                "budget": "含税不超过2万元",
+            },
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        "采购1000件不锈钢螺栓，规格M8×30，含税预算不超过2万元，交付到苏州。",
+    )
+
+    requirement = resolved["current_task"]["requirement"]
+    assert requirement["supply_region"] == "苏州"
+    assert "region" not in requirement
 
 
 def test_complete_filters_release_specification_clarification(monkeypatch) -> None:

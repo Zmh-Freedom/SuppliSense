@@ -177,6 +177,10 @@ def has_durable_control_expression(message: str) -> bool:
 def explicit_primary_capability(message: str) -> str | None:
     """Return one capability only when the message is unambiguous."""
     text = str(message or "")
+    if _is_quantity_bearing_purchase_request(text) and not any(
+        token in text for token in ("风险分析", "风险评估", "风险复核", "质量风险", "交付风险")
+    ):
+        return "sourcing"
     if "诉讼" in text and "行政处罚" in text:
         return "compliance" if any(token in text for token in ("有没有", "是否有", "是否存在", "有无")) else None
     if any(phrase in text for phrase in _GENERIC_RISK_REQUEST_PHRASES):
@@ -187,6 +191,17 @@ def explicit_primary_capability(message: str) -> str | None:
     if any(token in str(message or "") for token in ("改查", "改看", "改为", "改成")) and candidates:
         return candidates[-1] if len(candidates) == 1 else None
     return candidates[0] if len(candidates) == 1 else None
+
+
+def _is_quantity_bearing_purchase_request(message: str) -> bool:
+    """Recognize concrete read-only sourcing requests that name an order quantity."""
+    match = re.search(
+        r"(?:采购|购买|订购)\s*\d+(?:\.\d+)?\s*(?:件|台|套|个|只|箱|吨|公斤|千克|米|根|枚|张|组|批)\s*[^，,。；;\n]{2,}",
+        str(message or ""),
+    )
+    if not match:
+        return False
+    return not is_non_operational_request(message)
 
 
 def is_non_operational_request(message: str) -> bool:

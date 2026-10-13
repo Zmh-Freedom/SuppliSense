@@ -87,6 +87,61 @@ def test_narrative_validation_rejects_generic_review_for_comprehensive_risk_ques
     assert _validate_draft(draft, answer, "查看青岛三祥科技股份有限公司的风险情况") is False
 
 
+def test_narrative_validation_requires_sourcing_constraints_from_deterministic_summary() -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary=(
+            "已找到 2 家寻源候选。检索条件：品类：工业相机；目标候选数：5家；"
+            "优先地区：华东；预算：50万元；规格：200万像素GigE接口；资质：IATF 16949。"
+        ),
+        claims=[ValidatedClaim(
+            claim_id="sourcing-candidate-count",
+            entity_id="sourcing",
+            dimension="sourcing",
+            statement="已找到2家寻源候选。",
+            value=2,
+            fact_path="candidate_count",
+            evidence_refs=["sourcing-evidence"],
+            confidence=0.9,
+            validation_status="supported",
+        )],
+    )
+    draft = NarrativeDraft(
+        headline="寻源建议",
+        body_markdown="已找到2家寻源候选，可查看下方列表。",
+        claim_refs=["sourcing-candidate-count"],
+    )
+
+    assert _validate_draft(draft, answer, "找5家工业相机供应商，优先华东") is False
+
+
+def test_narrator_keeps_deterministic_sourcing_summary_and_constraints(monkeypatch) -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="已找到2家寻源候选。检索条件：目标候选数：5家；优先地区：华东；预算：50万元。",
+        claims=[ValidatedClaim(
+            claim_id="sourcing-candidate-count",
+            entity_id="sourcing",
+            dimension="sourcing",
+            statement="已找到2家寻源候选。",
+            value=2,
+            fact_path="candidate_count",
+            evidence_refs=["sourcing-evidence"],
+            confidence=0.9,
+            validation_status="supported",
+        )],
+    )
+
+    class UnexpectedNarrator:
+        def __init__(self, **_kwargs):
+            raise AssertionError("deterministic sourcing answer should not be rewritten")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
+
+    assert narrate_answer(answer, "找5家华东工业相机供应商，预算50万元") is answer
+
+
 def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
     answer = _answer()
 

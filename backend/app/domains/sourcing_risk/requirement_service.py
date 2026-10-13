@@ -353,13 +353,26 @@ def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | No
 
     target = _clean_sourcing_target(match.group("target"))
     target = re.split(r"(?:要求|规格|技术要求|需要满足|优先|交付|到货|数量|预算|认证)", target, maxsplit=1)[0]
-    category = target.strip(" ：:的")
+    product = target.strip(" ：:的")
+    quantity_match = re.match(
+        r"(?P<quantity>\d+(?:\.\d+)?)\s*(?:件|台|套|个|只|箱|吨|公斤|千克|米|根|枚|张|组|批)\s*",
+        product,
+    )
+    quantity = int(float(quantity_match.group("quantity"))) if quantity_match else None
+    if quantity_match:
+        product = product[quantity_match.end():].strip(" ：:的")
+    if not product:
+        return None
+    category = next(
+        (term for term in _SPECIFIC_CATEGORY_TERMS if term in product),
+        product,
+    )
     if not category or _contains_multiple_categories(category):
         return None
 
     specification: str | None = None
     specification_match = re.search(
-        r"(?:要求|规格|技术要求|需要满足)\s*(?P<spec>.+?)(?=(?:优先|交付|到货|数量|预算|地区|区域)|$)",
+        r"(?:要求|规格|技术要求|需要满足)\s*(?P<spec>.+?)(?=(?:优先|交付|到货|数量|含税预算|预算|地区|区域)|$)",
         message or "",
     )
     if specification_match:
@@ -371,8 +384,9 @@ def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | No
 
     return {
         "category": category,
-        "product": category,
+        "product": product,
         "specification": specification,
+        **({"quantity": quantity} if quantity is not None else {}),
         "region": region,
         "supply_region": region,
         "must_have": [item.strip() for item in re.split(r"[，,、]", specification) if item.strip()],

@@ -83,6 +83,7 @@ def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
 def _requested_topic_terms(user_message: str) -> tuple[str, ...]:
     """Return a small topic guard so narration cannot erase the question."""
     topic_rules = (
+        (("寻源", "找供应商", "寻找供应商", "供应商候选"), ("寻源", "供应商候选", "候选供应商")),
         (("综合风险", "风险情况", "风险评估", "风险分析"), ("综合风险分析", "风险评估", "风险分析")),
         (("供应链关系", "关联关系", "传染风险", "风险传染"), ("供应链", "关联", "传染")),
         (("财务", "营收", "净利润"), ("财务", "营收", "净利润")),
@@ -112,8 +113,8 @@ def _draft_validation_error(
     if not set(draft.claim_refs).issubset(claim_ids):
         return "unknown_claim_ref"
     source_text = " ".join(str(item.get("statement") or "") for item in claims)
-    allowed_numbers = _normalized_numbers(source_text) | {"100"}
-    allowed_numeric_values = _numeric_values(source_text) | {100.0}
+    allowed_numbers = _normalized_numbers(source_text) | _normalized_numbers(answer.summary) | {"100"}
+    allowed_numeric_values = _numeric_values(source_text) | _numeric_values(answer.summary) | {100.0}
     for number in _normalized_numbers(draft.body_markdown):
         if number in allowed_numbers:
             continue
@@ -131,6 +132,12 @@ def _draft_validation_error(
     topic_terms = _requested_topic_terms(user_message)
     if topic_terms and not any(term in narrative_text for term in topic_terms):
         return "missing_requested_topic"
+    requirement_match = re.search(r"检索条件：(.+?)(?:。|$)", answer.summary)
+    if requirement_match:
+        for condition in requirement_match.group(1).split("；"):
+            label, separator, value = condition.partition("：")
+            if separator and value and value not in narrative_text:
+                return f"missing_sourcing_constraint:{label}"
     # A narrative must not turn a recommendation into a completed write action.
     forbidden_success = ("已加入监控", "已完成审批", "已切换供应商", "已暂停采购")
     if not answer.action_receipts and any(token in draft.body_markdown for token in forbidden_success):
@@ -145,6 +152,12 @@ def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer, user_message: st
 
 def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
     """Generate a readable summary from validated claims, with safe fallback."""
+    if "检索条件：" in answer.summary:
+        # The Harness already composed a deterministic answer from the
+        # normalized sourcing request and candidate result. Rewriting it from
+        # evidence claims would drop user-provided filters or add unsupported
+        # procurement advice.
+        return answer
     if not settings.LLM_API_KEY or not answer.claims:
         return answer
     claims = _claim_payload(answer)
@@ -168,6 +181,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             "只根据 validated_claims 和 limitations 写采购人员能直接理解的结论。",
             "不得新增公司、数字、日期、风险等级、来源或采购动作。",
             "如果存在 limitations，只能说明当前资料覆盖不足，不能把缺失数据推断成风险。",
+            "如果 deterministic_summary 含有‘检索条件’，最终正文必须保留该行里的每个需求值，包括地区、预算、数量、规格和资质；可以用自然表述，但不可遗漏、替换或新增约束。",
             "如果 validated_claims 中 articles_count 大于0，必须说明已有新闻可在下方逐条查看，不能写“未包含新闻原文”或“无法逐条列出原文”。",
             "不要输出表格，不要提及 Claim、证据复核点、Harness、工具、任务、模型或内部字段。",
             "不要只复述综合风险评分或套用‘供应商复核’；必须先回答用户明确请求的主能力。",

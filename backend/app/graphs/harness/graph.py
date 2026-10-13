@@ -985,6 +985,39 @@ def _watchlist_risk_overview(
     return "；".join(parts) + "。"
 
 
+def _format_sourcing_requirement(requirement: dict[str, Any]) -> str:
+    """Render the confirmed search constraints in the user-facing summary."""
+    parts: list[str] = []
+    category = str(requirement.get("category") or "").strip()
+    product = str(requirement.get("product") or "").strip()
+    material = str(requirement.get("material") or "").strip()
+    if category and not (category.isdigit() and category == material):
+        parts.append(f"品类：{category}")
+    if product and product not in {category, material}:
+        parts.append(f"产品：{product}")
+    if material and (material.isdigit() or material not in {category, product}):
+        parts.append(f"物料号：{material}")
+    if isinstance(requirement.get("candidate_count"), int):
+        parts.append(f"目标候选数：{requirement['candidate_count']}家")
+    if isinstance(requirement.get("quantity"), int):
+        parts.append(f"采购数量：{requirement['quantity']}")
+    if requirement.get("region"):
+        parts.append(f"优先地区：{str(requirement['region']).strip()}")
+    if requirement.get("supply_region"):
+        parts.append(f"交付地区：{str(requirement['supply_region']).strip()}")
+    if requirement.get("budget"):
+        parts.append(f"预算：{str(requirement['budget']).strip()}")
+    if requirement.get("specification"):
+        parts.append(f"规格：{str(requirement['specification']).strip()}")
+    if requirement.get("qualifications"):
+        parts.append(f"资质：{str(requirement['qualifications']).strip()}")
+    if requirement.get("delivery"):
+        parts.append(f"交付要求：{str(requirement['delivery']).strip()}")
+    if requirement.get("risk_limit"):
+        parts.append(f"风险筛选：{str(requirement['risk_limit']).strip()}")
+    return f"检索条件：{'；'.join(parts)}。" if parts else ""
+
+
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     current_task = state.get("current_task") or {}
     target_names = [
@@ -1213,6 +1246,10 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         all_candidates = data.get("candidates") if isinstance(data.get("candidates"), list) else []
         result_candidates = data.get("results") if isinstance(data.get("results"), list) else []
         formal_items = data.get("items") if isinstance(data.get("items"), list) else []
+        requirement = data.get("requirement") if isinstance(data.get("requirement"), dict) else {}
+        if not requirement and isinstance(current_task.get("requirement"), dict):
+            requirement = current_task["requirement"]
+        requirement_summary = _format_sourcing_requirement(requirement)
         count = values.get("alternatives_count", data.get("alternatives_count"))
         if all_candidates and not local_candidates:
             external_names = {
@@ -1226,15 +1263,24 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 and str(item.get("supplier_name") or item.get("company_name") or "").strip() not in external_names
             ]
         if local_candidates or external_candidates:
+            base_summary = (
+                f"已找到 {len(local_candidates) + len(external_candidates)} 家寻源候选，其中历史合作 "
+                f"{len(local_candidates)} 家、外部待核验 {len(external_candidates)} 家。"
+            )
+            if requirement_summary:
+                base_summary += f" {requirement_summary}"
             return _summary_with_boundary(
                 answer,
-                f"已找到 {len(local_candidates) + len(external_candidates)} 家寻源候选，其中历史合作 {len(local_candidates)} 家、外部待核验 {len(external_candidates)} 家。",
+                base_summary,
                 "下面按来源分组展示匹配品类、主营产品和下一步核验事项。",
             )
         if result_candidates or formal_items:
+            base_summary = f"已找到 {len(result_candidates) or len(formal_items)} 家供应商候选。"
+            if requirement_summary:
+                base_summary += f" {requirement_summary}"
             return _summary_with_boundary(
                 answer,
-                f"已找到 {len(result_candidates) or len(formal_items)} 家供应商候选。",
+                base_summary,
                 "下面按来源展示主营品类、主营产品和当前状态。",
             )
         if not isinstance(count, (int, float)):
@@ -1244,7 +1290,8 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 return f"已按“{category}”发起寻源，但本地供应商库暂时不可用，当前没有可用候选；请稍后重试。"
             if data.get("external_failure_reasons") or str(data.get("external_status") or "") in {"failed", "unavailable"}:
                 return f"已按“{category}”完成本地检索，但外部候选来源暂时不可用，当前没有可用候选；可稍后重试或补充内部供应商资料。"
-            return f"已按“{category}”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            base_summary = f"已按“{category}”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            return f"{base_summary} {requirement_summary}" if requirement_summary else base_summary
         return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "下面展示候选来源、主营产品和当前核验状态。")
     if primary_capability == "company_profile":
         profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]

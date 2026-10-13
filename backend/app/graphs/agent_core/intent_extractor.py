@@ -225,6 +225,8 @@ def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtrac
     dimensions = normalize_analysis_dimensions(
         message, dimensions, raw_capability, capability, requested_action
     )
+    if capability == "sourcing":
+        dimensions = []
     task_type = "sourcing" if capability == "sourcing" else "analysis" if (capability != "none" or quoted or generic_review) else "none"
     return ConversationIntentExtraction(
         target_supplier_names=quoted,
@@ -604,8 +606,18 @@ def extract_conversation_intent(
         and bool(normalized_requirement.get("category"))
         and any(token in message for token in ("历史合作供应商", "历史合作方", "历史合作记录"))
     )
+    explicit_material_numbers = re.findall(
+        r"物料号(?:为|是|[:：])?\s*(\d{4,})",
+        message or "",
+    )
+    material_number_sourcing = (
+        task_type == "sourcing"
+        and detected_action == "none"
+        and len(explicit_material_numbers) == 1
+    )
     require_sourcing_specification = (
         task_type == "sourcing"
+        and not material_number_sourcing
         and _sourcing_specification_is_required(
             message,
             normalized_requirement,
@@ -631,6 +643,13 @@ def extract_conversation_intent(
         missing_fields.append("sourcing_requirement")
     if require_sourcing_specification:
         clarification_question = "请补充产品的具体规格或技术要求，我再继续筛选供应商。"
+    if material_number_sourcing:
+        # The material number is a usable lookup key for the internal history
+        # index. Quantity, destination, and a repeated material description
+        # can refine a later comparison, but they must not block candidate recall.
+        missing_fields = []
+        needs_clarification = False
+        clarification_question = None
     if historical_sourcing and not missing_fields:
         needs_clarification = False
         clarification_question = None

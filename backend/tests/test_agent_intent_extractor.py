@@ -896,6 +896,16 @@ def test_deterministic_fallback_does_not_turn_quoted_translation_into_supplier_a
     assert result.analysis_dimensions == []
 
 
+def test_deterministic_fallback_keeps_quantity_purchase_on_sourcing_path():
+    result = intent_extractor._deterministic_extraction_fallback(
+        "采购1000件不锈钢螺栓，规格M8×30，含税预算不超过2万元，交付到苏州。"
+    )
+
+    assert result.capability == "sourcing"
+    assert result.task_type == "sourcing"
+    assert result.analysis_dimensions == []
+
+
 def test_recent_financial_risk_keeps_financial_primary_capability():
     assert explicit_primary_capability(
         "分析上海凯众材料科技股份有限公司近三个月的财务风险"
@@ -1612,6 +1622,24 @@ def test_sourcing_policy_requests_spec_but_accepts_known_history_scope(monkeypat
     assert historical is not None
     assert historical.needs_clarification is False
     assert historical.scope == "product_category"
+
+    FakeOpenAI.payload = {
+        "capability": "sourcing", "task_type": "sourcing", "scope": "product_category",
+        "sourcing_requirement": {
+            "category": "物料号寻源", "product": "23748163", "material": "23748163",
+            "specification": "23748163",
+        },
+        "requested_action": "none", "needs_clarification": True,
+        "missing_fields": ["sourcing_requirement"],
+        "clarification_question": "请补充物料名称、规格、数量和交付地区。",
+    }
+    material_number = intent_extractor.extract_conversation_intent(
+        "帮我为物料号23748163寻找供应商，优先展示历史合作候选。", []
+    )
+    assert material_number is not None
+    assert material_number.needs_clarification is False
+    assert material_number.missing_fields == []
+    assert material_number.clarification_question is None
 
 
 def test_watchlist_action_overrides_analysis_dimensions_in_execution_task():
