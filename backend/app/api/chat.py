@@ -18,6 +18,19 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = get_logger()
 
 
+async def _load_stream_execution_context(
+    session_id: str,
+    message: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Load the single request context without blocking the streaming loop."""
+    from app.graphs.agent_core.adapter import load_execution_context
+
+    if _is_uuid(session_id) and _is_uuid(user_id):
+        return await asyncio.to_thread(load_execution_context, session_id, message, user_id)
+    return await asyncio.to_thread(load_execution_context, session_id, message)
+
+
 async def _persist_pending_clarification(
     session_id: str,
     user_id: str,
@@ -535,14 +548,12 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             try:
                 from app.graphs.agent_core.adapter import (
                     ExecutionContextContractViolation,
-                    load_execution_context,
                     validate_execution_context,
                 )
 
-                if _is_uuid(sid) and _is_uuid(user_id):
-                    execution_context = load_execution_context(sid, req.message, user_id)
-                else:
-                    execution_context = load_execution_context(sid, req.message)
+                execution_context = await _load_stream_execution_context(
+                    sid, req.message, user_id
+                )
                 validate_execution_context(
                     execution_context, source="chat_stream_endpoint"
                 )

@@ -151,11 +151,10 @@ def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
 
 
 def rebuild_all_supplier_scores(*, clear_history: bool = True) -> dict:
-    """Recalculate every supplier score using the current scoring contract.
+    """Recalculate supplier scores without deleting existing risk evidence.
 
-    Existing snapshots, alerts and PostgreSQL assessment history are removed
-    before rebuilding so consumers never see a mixed v2/v3 score timeline.
-    Supplier master and watchlist records themselves are retained.
+    ``clear_history`` is retained for callers, but historical records are
+    versioned evidence and must not be erased during an incomplete rebuild.
     """
     from app.db.mongo import get_db
 
@@ -166,8 +165,8 @@ def rebuild_all_supplier_scores(*, clear_history: bool = True) -> dict:
             name = str(doc.get("display_name") or doc.get("company_name") or "").strip()
             if name:
                 names.add(name)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise ValueError("监控名单读取失败，已停止评分重建") from exc
     # The Feishu snapshot is the active supplier read model; historical rows
     # from previous syncs must not re-enter the refresh scope.
     try:
@@ -177,19 +176,14 @@ def rebuild_all_supplier_scores(*, clear_history: bool = True) -> dict:
             name = str(doc.get("name") or doc.get("supplier_name") or "").strip()
             if name:
                 names.add(name)
-    except Exception:
-        pass
+    except Exception as exc:
+        raise ValueError("供应商名单读取失败，已停止评分重建") from exc
+    if not names:
+        raise ValueError("重建名单为空，已停止评分重建")
 
-    removed_snapshots = db["alert_snapshots"].delete_many({}).deleted_count
-    removed_alerts = db["alerts"].delete_many({}).deleted_count
+    removed_snapshots = 0
+    removed_alerts = 0
     removed_history = 0
-    if clear_history:
-        try:
-            from app.domains.risk.repo_assessment import clear_history as clear_pg_history
-            removed_history = clear_pg_history()
-        except Exception:
-            # PostgreSQL is optional for the operational risk path.
-            removed_history = 0
 
     refreshed: list[str] = []
     failures: list[dict[str, str]] = []

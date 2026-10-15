@@ -456,16 +456,16 @@ def _build_compliance_status(company_name: str) -> dict:
         return 0
 
     # Sanctions
-    sanctions_clean = True
+    sanctions_clean = False
     sanctions_count = 0
     try:
-        from app.domains.risk.sanctions_service import assess_sanctions
-        sanctions = assess_sanctions(company_name)
-        if sanctions:
-            sanctions_clean = sanctions.get("clean", True)
-            sanctions_count = sanctions.get("match_count", 0)
-    except Exception:
-        pass
+        from app.domains.risk.sanctions_service import check_sanctions
+
+        sanctions = check_sanctions(company_name)
+        sanctions_clean = sanctions["clean"]
+        sanctions_count = sanctions["match_count"]
+    except Exception as exc:
+        raise ValueError("制裁筛查不可用") from exc
 
     return {
         "sanctions_clean": sanctions_clean,

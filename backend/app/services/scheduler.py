@@ -161,8 +161,8 @@ def _scheduled_feishu_supplier_sync() -> None:
         result = sync_supplier_tables()
         if result.get("tables", {}).get("supplier_master", {}).get("status") == "ok":
             sync_supplier_responsibilities()
-    except Exception as exc:
-        logger.error("feishu_supplier_sync_failed", error=str(exc))
+    except Exception:
+        logger.exception("feishu_supplier_sync_failed")
 
 
 def start_scheduler() -> None:

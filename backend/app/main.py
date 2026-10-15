@@ -119,9 +119,6 @@ def _validate_config():
 
 def create_default_admin():
     """Create default admin user if no users exist."""
-    import secrets
-    import string
-
     from app.domains.auth.service import create_user, list_users
     from app.schemas.user import UserCreate, UserRole
 
@@ -129,14 +126,11 @@ def create_default_admin():
     if not users:
         password = os.getenv("INITIAL_ADMIN_PASSWORD")
         if not password:
-            alphabet = string.ascii_letters + string.digits + "!@#$%&*"
-            password = "".join(secrets.choice(alphabet) for _ in range(16))
             logger.warning(
-                "default_admin_created_with_random_password",
-                username="admin",
-                password=password,
-                hint="请保存此密码！设置 INITIAL_ADMIN_PASSWORD 环境变量可自定义。",
+                "default_admin_creation_skipped",
+                reason="请通过 INITIAL_ADMIN_PASSWORD 设置初始管理员密码。",
             )
+            return
         try:
             create_user(UserCreate(
                 username="admin",

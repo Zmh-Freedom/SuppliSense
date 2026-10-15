@@ -2,7 +2,10 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.domains.sourcing.service import (
+    _batch_assess_risk,
     _filter_category_candidates,
     approve_application,
     reject_application,
@@ -11,6 +14,40 @@ from app.domains.sourcing.service import (
     verify_external_candidate,
     _search_internal_history_candidates,
 )
+
+
+def test_batch_assess_risk_does_not_rank_when_snapshot_query_fails(monkeypatch) -> None:
+    db = {"alert_snapshots": MagicMock()}
+    db["alert_snapshots"].aggregate.side_effect = RuntimeError("mongo unavailable")
+    monkeypatch.setattr("app.db.mongo.get_db", lambda: db)
+
+    with pytest.raises(ValueError, match="风险快照读取失败"):
+        _batch_assess_risk([{"supplier_name": "甲公司"}])
+
+
+def test_search_suppliers_marks_request_failed_when_risk_read_fails(monkeypatch) -> None:
+    from app.domains.sourcing import service
+
+    statuses: list[str] = []
+    monkeypatch.setattr(service, "get_request", lambda _id: {"category": "工业相机", "spec": ""})
+    monkeypatch.setattr(
+        service, "update_request_status", lambda _id, status, *_args: statuses.append(status)
+    )
+    monkeypatch.setattr(
+        service, "_search_feishu_snapshot_suppliers",
+        lambda _req: [{"supplier_name": f"供应商{i}", "match_score": 0.8} for i in range(3)],
+    )
+    monkeypatch.setattr(service, "_filter_category_candidates", lambda candidates, _category: candidates)
+    monkeypatch.setattr(service, "_search_internal_history_candidates", lambda _req: [])
+    monkeypatch.setattr(service, "_stage_gaishi_candidates", lambda _req, _id: [])
+    monkeypatch.setattr(
+        service, "_batch_assess_risk", lambda _candidates: (_ for _ in ()).throw(ValueError("风险快照读取失败"))
+    )
+
+    with pytest.raises(ValueError, match="风险快照读取失败"):
+        search_suppliers("request-1")
+
+    assert statuses == ["searching", "failed"]
 
 
 def test_nonexistent_approve_raises(monkeypatch):

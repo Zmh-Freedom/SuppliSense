@@ -2,12 +2,11 @@
 Audit logging service. Failure must never break the main flow.
 """
 
-import logging
-
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.domains.auth.audit_repo import create_log
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def log_action(
@@ -31,5 +30,5 @@ def log_action(
             ip_address=ip_address,
             user_agent=user_agent,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("audit_log_write_failed", action=action, user_id=user_id, error=str(exc))

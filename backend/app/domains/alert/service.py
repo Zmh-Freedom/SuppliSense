@@ -1,13 +1,13 @@
 import asyncio
 import json
-import logging
 import uuid
 from datetime import datetime, timezone
 
+from app.core.logging import get_logger
 from app.db.mongo import get_db
 from app.schemas import RiskCalculateResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MONITOR_TARGET_TYPES = {"formal_supplier", "external_candidate", "company"}
 
@@ -515,6 +515,7 @@ def detect_changes(
     company_name: str,
     *,
     monitor_target_id: str | None = None,
+    emit_alert: bool = True,
 ) -> dict:
     """Compare latest snapshot with second-latest, return changes."""
     db = get_db()
@@ -573,7 +574,7 @@ def detect_changes(
         for c in changes
     ) else "warning" if changes else "normal"
 
-    if changes:
+    if changes and emit_alert:
         # apply custom alert rules
         from app.domains.alert.rules import evaluate_changes, get_rules
         rules = get_rules(company_name)

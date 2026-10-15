@@ -5,9 +5,10 @@ from bson import ObjectId
 
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, UploadFile
 
-from app.core.deps import get_current_user, require_admin
+from app.core.deps import get_current_user, require_admin, require_admin_or_purchaser
+from app.domains.auth.audit import log_action
 from app.db.mongo import get_db
 from app.domains.alert.rules import get_rules, set_rules
 from app.domains.alert.review_tasks import (
@@ -126,8 +127,8 @@ def _json_safe(value: Any) -> Any:
     },
 )
 async def alert_status(company_name: str = Query(..., description="企业名称")):
-    snapshot = get_latest_snapshot(company_name)
-    changes = detect_changes(company_name)
+    snapshot = await asyncio.to_thread(get_latest_snapshot, company_name)
+    changes = await asyncio.to_thread(detect_changes, company_name, emit_alert=False)
     return {
         "has_snapshot": snapshot is not None,
         "last_checked": snapshot["checked_at"].isoformat() if snapshot else None,
@@ -175,14 +176,14 @@ async def alert_snapshots(
     },
 )
 async def alert_check(req: CompanyRequest):
-    snapshot = get_latest_snapshot(req.company_name)
+    snapshot = await asyncio.to_thread(get_latest_snapshot, req.company_name)
     if snapshot is None:
         return {
             "company_name": req.company_name,
             "changed": False,
             "message": "暂无历史快照，请先执行风险评估",
         }
-    return await asyncio.to_thread(detect_changes, req.company_name)
+    return await asyncio.to_thread(detect_changes, req.company_name, emit_alert=False)
 
 
 @router.get(
@@ -756,7 +757,9 @@ async def watch_upload(file: UploadFile):
         500: {"description": "服务器内部错误"},
     },
 )
-async def check_all_watched():
+async def check_all_watched(
+    _current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
     """Free: compare snapshots + AkShare financial for all watched companies."""
     return await asyncio.to_thread(run_financial_check)
 
@@ -770,9 +773,20 @@ async def check_all_watched():
         500: {"description": "服务器内部错误"},
     },
 )
-async def refresh_alert(req: CompanyRequest):
+async def refresh_alert(
+    request: Request,
+    req: CompanyRequest,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
     """Paid: refresh single company via Tianyancha API."""
-    return await asyncio.to_thread(refresh_company, req.company_name)
+    result = await asyncio.to_thread(refresh_company, req.company_name)
+    await asyncio.to_thread(
+        log_action, "alert.paid_refresh", user_id=current_user.id,
+        resource_type="company", resource_id=req.company_name,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return result
 
 
 @router.post(
@@ -783,9 +797,18 @@ async def refresh_alert(req: CompanyRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def refresh_all_watched():
+async def refresh_all_watched(
+    request: Request,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
     """Paid: refresh ALL watched companies via Tianyancha API."""
-    return await asyncio.to_thread(run_refresh_all)
+    result = await asyncio.to_thread(run_refresh_all)
+    await asyncio.to_thread(
+        log_action, "alert.paid_refresh_all", user_id=current_user.id,
+        resource_type="watchlist", ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return result
 
 
 @router.get(
@@ -811,8 +834,20 @@ async def list_rules(company_name: str = Query(None, description="企业名称�
         500: {"description": "服务器内部错误"},
     },
 )
-async def update_rules(req: RulesRequest):
-    return set_rules(req.company_name, [r.model_dump() for r in req.rules])
+async def update_rules(
+    request: Request,
+    req: RulesRequest,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
+    result = await asyncio.to_thread(set_rules, req.company_name, [r.model_dump() for r in req.rules])
+    await asyncio.to_thread(
+        log_action, "alert.rules_updated", user_id=current_user.id,
+        resource_type="alert_rules", resource_id=req.company_name or "__global__",
+        details={"rule_count": len(req.rules)},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return result
 
 
 @router.get(

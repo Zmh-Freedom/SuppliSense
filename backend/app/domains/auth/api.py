@@ -2,6 +2,7 @@
 Authentication API routes.
 """
 
+import asyncio
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -12,6 +13,7 @@ from app.core.config import settings
 from app.core.deps import get_current_active_user, require_admin
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, create_refresh_token, decode_token
+from app.domains.auth.audit import log_action
 from app.schemas.user import (
     Token,
     UserCreate,
@@ -31,6 +33,27 @@ from app.domains.auth.service import (
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+async def _audit_request(
+    action: str,
+    request: Request,
+    *,
+    user_id: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    details: dict | None = None,
+) -> None:
+    await asyncio.to_thread(
+        log_action,
+        action,
+        user_id=user_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        details=details,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
 
 
 class LoginRequest(BaseModel):
@@ -73,7 +96,12 @@ async def register(
 ):
     """Register a new user (admin only)."""
     try:
-        user = create_user(user_data)
+        user = await asyncio.to_thread(create_user, user_data)
+        await _audit_request(
+            "auth.user_created", request, user_id=current_user.id,
+            resource_type="user", resource_id=user.id,
+            details={"role": user.role.value if isinstance(user.role, UserRole) else user.role},
+        )
         return UserResponse(
             id=user.id,
             username=user.username,
@@ -103,8 +131,9 @@ async def register(
 @limiter.limit(settings.RATE_LIMIT_AUTH)
 async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
     """Login and get access token."""
-    user = authenticate_user(form_data.username, form_data.password)
+    user = await asyncio.to_thread(authenticate_user, form_data.username, form_data.password)
     if not user:
+        await _audit_request("auth.login_failed", request, resource_type="user", resource_id=form_data.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
@@ -112,12 +141,15 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
         )
 
     if not user.is_active:
+        await _audit_request("auth.login_denied", request, user_id=user.id, resource_type="user", resource_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="用户已被禁用",
         )
 
-    return _create_tokens(user)
+    tokens = _create_tokens(user)
+    await _audit_request("auth.login", request, user_id=user.id, resource_type="user", resource_id=user.id)
+    return tokens
 
 
 @router.post(
@@ -133,20 +165,23 @@ async def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends
 @limiter.limit(settings.RATE_LIMIT_AUTH)
 async def login_json(request: Request, req: LoginRequest, response: Response):
     """Login with JSON body, sets HttpOnly cookie."""
-    user = authenticate_user(req.username, req.password)
+    user = await asyncio.to_thread(authenticate_user, req.username, req.password)
     if not user:
+        await _audit_request("auth.login_failed", request, resource_type="user", resource_id=req.username)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="用户名或密码错误",
         )
 
     if not user.is_active:
+        await _audit_request("auth.login_denied", request, user_id=user.id, resource_type="user", resource_id=user.id)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="用户已被禁用",
         )
 
     tokens = _create_tokens(user)
+    await _audit_request("auth.login", request, user_id=user.id, resource_type="user", resource_id=user.id)
 
     response.set_cookie(
         key="access_token",
@@ -191,7 +226,7 @@ async def refresh_token(request: Request, req: RefreshRequest, response: Respons
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的刷新令牌")
 
-    user = get_user_by_id(user_id)
+    user = await asyncio.to_thread(get_user_by_id, user_id)
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已禁用")
 
@@ -255,20 +290,26 @@ async def change_password(
     from app.core.security import verify_password, get_password_hash
     from app.core.config import settings
 
-    if not verify_password(req.old_password, current_user.password_hash):
+    if not await asyncio.to_thread(verify_password, req.old_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
 
+    password_hash = await asyncio.to_thread(get_password_hash, req.new_password)
     if settings.USE_PG_USERS:
         from app.domains.auth.user_repo import update_user as pg_update_user
-        pg_update_user(current_user.id, password_hash=get_password_hash(req.new_password))
+        await asyncio.to_thread(pg_update_user, current_user.id, password_hash=password_hash)
     else:
         from app.db.mongo import get_db
         from bson import ObjectId
-        db = get_db()
-        db["users"].update_one(
-            {"_id": ObjectId(current_user.id)},
-            {"$set": {"password_hash": get_password_hash(req.new_password)}},
+        await asyncio.to_thread(
+            lambda: get_db()["users"].update_one(
+                {"_id": ObjectId(current_user.id)},
+                {"$set": {"password_hash": password_hash}},
+            )
         )
+    await _audit_request(
+        "auth.password_changed", request, user_id=current_user.id,
+        resource_type="user", resource_id=current_user.id,
+    )
     return {"detail": "密码已修改"}
 
 
@@ -315,7 +356,7 @@ async def get_all_users(
     current_user: UserInDB = Depends(require_admin),
 ):
     """Get all users (admin only)."""
-    users = list_users()
+    users = await asyncio.to_thread(list_users)
     return [
         UserResponse(
             id=user.id,
@@ -350,12 +391,18 @@ async def update_user_endpoint(
     current_user: UserInDB = Depends(require_admin),
 ):
     """Update a user (admin only)."""
-    user = update_user(user_id, update_data)
+    user = await asyncio.to_thread(update_user, user_id, update_data)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="用户不存在",
         )
+
+    await _audit_request(
+        "auth.user_updated", request, user_id=current_user.id,
+        resource_type="user", resource_id=user_id,
+        details={"fields": sorted(update_data.model_dump(exclude_unset=True))},
+    )
 
     return UserResponse(
         id=user.id,
@@ -393,11 +440,16 @@ async def delete_user_endpoint(
             detail="不能删除自己",
         )
 
-    success = delete_user(user_id)
+    success = await asyncio.to_thread(delete_user, user_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="用户不存在",
         )
+
+    await _audit_request(
+        "auth.user_deleted", request, user_id=current_user.id,
+        resource_type="user", resource_id=user_id,
+    )
 
     return {"status": "deleted"}

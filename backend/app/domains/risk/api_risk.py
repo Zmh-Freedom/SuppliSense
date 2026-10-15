@@ -14,7 +14,7 @@ router = APIRouter(dependencies=[Depends(get_current_user)])
 @router.post(
     "/rebuild-scores",
     summary="按最新评分体系重建全部供应商评分",
-    description="管理员专用：清理旧评分快照、告警和评估历史，并按当前证据重算全部供应商。",
+    description="管理员专用：按当前证据重算全部供应商评分；保留既有快照、告警和评估历史。",
 )
 async def rebuild_scores(current_user=Depends(get_current_user)):
     if getattr(getattr(current_user, "role", None), "value", current_user.role) not in {"admin", "administrator"}:

@@ -154,7 +154,7 @@ def check_alert(
     from app.tools.evidence import attach_tool_evidence
 
     return attach_tool_evidence(
-        detect_changes(company_name, monitor_target_id=monitor_target_id),
+        detect_changes(company_name, monitor_target_id=monitor_target_id, emit_alert=False),
         tool_name="check_alert",
         entity_id=monitor_target_id or f"entity:{company_name}",
         dimension="risk_monitoring",

@@ -119,7 +119,11 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         }
 
     # 3. 快速风险查分（MongoDB 快照，不调外部 API）
-    risk_map = _batch_assess_risk(candidates) if candidates else {}
+    try:
+        risk_map = _batch_assess_risk(candidates) if candidates else {}
+    except ValueError:
+        update_request_status(request_id, "failed")
+        raise
 
     # 4. 排序
     results = []
@@ -844,8 +848,8 @@ def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
                 "risk_level": doc.get("risk_level", "unknown"),
                 "summary": doc.get("risk_level", "未知"),
             }
-    except Exception:
-        pass  # 聚合失败则降级为默认值
+    except Exception as exc:
+        raise ValueError("风险快照读取失败，已停止寻源排序") from exc
 
     # 未找到快照的补充默认值
     for name in names:
