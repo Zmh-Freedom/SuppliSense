@@ -17,6 +17,8 @@ cd .. && docker compose --env-file .env.docker config --quiet
 
 首次在本地执行 Compose 校验时，先复制 `.env.docker.example` 为 `.env.docker`，并将所有 `CHANGE_ME` 替换为本机生成的随机值或实际环境凭据。`.env.docker` 已被 `.gitignore` 忽略，禁止提交到版本库；只提交配置模板，不提交密钥。
 
+首次启动且数据库没有用户时，必须设置 `INITIAL_ADMIN_PASSWORD`；服务会用该值创建管理员，但不会将密码写入日志。已有用户时该变量不会重置密码。缺失该值或保留模板占位符会阻止首次启动。
+
 CLI 输出 JSON。`PASS` 表示门禁已验证，`FAIL` 表示代码/配置门禁失败，`BLOCKED` 表示外部环境没有执行或不可达。只要存在 `FAIL` 或 `BLOCKED`，`ready_for_release` 就是 `false`，退出码为 2。特别是 `migration_schema` 的 `BLOCKED` 不能被解释为 PostgreSQL 或 MongoDB 已通过集成验证。
 
 ## 上线前门槛

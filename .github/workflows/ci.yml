@@ -64,6 +64,7 @@ jobs:
 
     env:
       SECRET_KEY: ci-secret-key-for-testing-only-32chars
+      INITIAL_ADMIN_PASSWORD: ci-admin-bootstrap-only
       MONGO_HOST: 127.0.0.1
       MONGO_PORT: 27017
       MONGO_USER: root

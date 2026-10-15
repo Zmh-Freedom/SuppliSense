@@ -98,6 +98,9 @@ def _validate_config():
         "CHANGE_ME_生成一个64位随机字符串",
     ):
         errors.append("SECRET_KEY 仍为占位符，请设置真实的随机密钥。")
+    admin_password = os.getenv("INITIAL_ADMIN_PASSWORD", "")
+    if admin_password.startswith("CHANGE_ME"):
+        errors.append("INITIAL_ADMIN_PASSWORD 仍为占位符，请设置首次管理员密码。")
     if settings.FEISHU_BITABLE_ENABLED:
         missing_feishu = [
             name for name, value in (
@@ -126,11 +129,11 @@ def create_default_admin():
     if not users:
         password = os.getenv("INITIAL_ADMIN_PASSWORD")
         if not password:
-            logger.warning(
-                "default_admin_creation_skipped",
+            logger.error(
+                "default_admin_creation_blocked",
                 reason="请通过 INITIAL_ADMIN_PASSWORD 设置初始管理员密码。",
             )
-            return
+            raise SystemExit(1)
         try:
             create_user(UserCreate(
                 username="admin",
