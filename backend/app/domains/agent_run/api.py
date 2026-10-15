@@ -6,12 +6,13 @@ from collections.abc import Coroutine
 from typing import Annotated, Any, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.config import agent_run_v2_route, settings
 from app.core.errors import DomainError
 from app.core.deps import get_current_user
+from app.domains.auth.audit import log_action
 from app.domains.agent_run.service import (
     cancel_run,
     create_sourcing_risk_run,
@@ -153,9 +154,26 @@ async def resolve_agent_run_identity(
 
 @router.post("/{run_id}/approvals/{approval_id}/decisions", summary="提交审批决定")
 @router.post("/{run_id}/approvals/{approval_id}", summary="提交审批决定（兼容旧路径）", deprecated=True)
-async def approve_agent_run(run_id: UUID, approval_id: UUID, data: ApprovalDecisionRequest, current_user: UserInDB = Depends(get_current_user)):
+async def approve_agent_run(
+    run_id: UUID,
+    approval_id: UUID,
+    data: ApprovalDecisionRequest,
+    request: Request,
+    current_user: UserInDB = Depends(get_current_user),
+):
     _require_v2_route(current_user, allow_shadow=False)
-    return await asyncio.to_thread(decide_action_proposal, str(run_id), str(approval_id), data, current_user.id, current_user.role.value)
+    result = await asyncio.to_thread(
+        decide_action_proposal, str(run_id), str(approval_id), data,
+        current_user.id, current_user.role.value,
+    )
+    await asyncio.to_thread(
+        log_action, "agent.approval_decided", user_id=current_user.id,
+        resource_type="agent_action_proposal", resource_id=str(approval_id),
+        details={"run_id": str(run_id), "decision": data.decision},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return result
 
 
 @router.post("/{run_id}/cancel", summary="取消任务")

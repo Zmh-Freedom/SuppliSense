@@ -54,6 +54,31 @@ def test_agent_run_endpoints_require_authentication(agent_client):
     assert response.status_code == 401
 
 
+def test_approval_decision_records_actor_and_request_ip(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.domains.agent_run import api
+
+    audit_calls: list[dict] = []
+    monkeypatch.setattr(api, "_require_v2_route", lambda *_args, **_kwargs: "execute")
+    monkeypatch.setattr(api, "decide_action_proposal", lambda *_args: {"status": "approved"})
+    monkeypatch.setattr(
+        api, "log_action", lambda action, **kwargs: audit_calls.append({"action": action, **kwargs}),
+        raising=False,
+    )
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/approvals/00000000-0000-4000-8000-000000000002/decisions",
+        headers=agent_headers,
+        json={"expected_version": 1, "decision": "approved"},
+    )
+
+    assert response.status_code == 200
+    assert audit_calls[0]["action"] == "agent.approval_decided"
+    assert audit_calls[0]["user_id"] == "00000000-0000-0000-0000-000000000011"
+    assert audit_calls[0]["ip_address"]
+
+
 def test_event_endpoint_replays_events_after_last_event_id(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
     """Ignoring Last-Event-ID would replay an already applied event after reconnect."""
     from app.domains.agent_run import api
