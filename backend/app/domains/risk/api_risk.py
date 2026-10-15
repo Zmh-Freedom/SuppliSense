@@ -1,13 +1,14 @@
 import asyncio
-import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from app.core.deps import get_current_user
+from app.core.logging import get_logger
+from app.schemas.user import UserInDB
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.domains.risk.service import assess_risk, calculate_risk
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
@@ -70,7 +71,12 @@ async def risk_calculate(request: RiskCalculateRequest):
         500: {"description": "服务器内部错误"},
     },
 )
-async def risk_assess(request: RiskAssessRequest, background_tasks: BackgroundTasks):
+async def risk_assess(
+    request: RiskAssessRequest,
+    background_tasks: BackgroundTasks,
+    http_request: Request,
+    current_user: UserInDB = Depends(get_current_user),
+):
     from datetime import datetime, timedelta, timezone
     from app.db.mongo import get_db
 
@@ -124,11 +130,15 @@ async def risk_assess(request: RiskAssessRequest, background_tasks: BackgroundTa
         fresh.is_stale = False
 
         from app.domains.auth.audit import log_action
-        log_action(
+        await asyncio.to_thread(
+            log_action,
             action="assess_risk",
+            user_id=current_user.id,
             resource_type="company",
             resource_id=request.company_name,
             details={"risk_score": fresh.risk_score, "risk_level": fresh.risk_level},
+            ip_address=http_request.client.host if http_request.client else None,
+            user_agent=http_request.headers.get("user-agent"),
         )
 
         return fresh
