@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.deps import get_current_active_user, require_admin
 from app.core.rate_limit import limiter
 from app.core.security import create_access_token, create_refresh_token, decode_token
-from app.domains.auth.audit import log_action
+from app.domains.auth.audit import AuditUnavailable, log_action
 from app.schemas.user import (
     Token,
     UserCreate,
@@ -43,17 +43,22 @@ async def _audit_request(
     resource_type: str | None = None,
     resource_id: str | None = None,
     details: dict | None = None,
+    required: bool = False,
 ) -> None:
-    await asyncio.to_thread(
-        log_action,
-        action,
-        user_id=user_id,
-        resource_type=resource_type,
-        resource_id=resource_id,
-        details=details,
-        ip_address=request.client.host if request.client else None,
-        user_agent=request.headers.get("user-agent"),
-    )
+    try:
+        await asyncio.to_thread(
+            log_action,
+            action,
+            user_id=user_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            details=details,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            required=required,
+        )
+    except AuditUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 class LoginRequest(BaseModel):
@@ -96,6 +101,12 @@ async def register(
 ):
     """Register a new user (admin only)."""
     try:
+        await _audit_request(
+            "auth.user_create_requested", request, user_id=current_user.id,
+            resource_type="user", resource_id=user_data.username,
+            details={"role": user_data.role.value if isinstance(user_data.role, UserRole) else user_data.role},
+            required=True,
+        )
         user = await asyncio.to_thread(create_user, user_data)
         await _audit_request(
             "auth.user_created", request, user_id=current_user.id,
@@ -293,6 +304,10 @@ async def change_password(
     if not await asyncio.to_thread(verify_password, req.old_password, current_user.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
 
+    await _audit_request(
+        "auth.password_change_requested", request, user_id=current_user.id,
+        resource_type="user", resource_id=current_user.id, required=True,
+    )
     password_hash = await asyncio.to_thread(get_password_hash, req.new_password)
     if settings.USE_PG_USERS:
         from app.domains.auth.user_repo import update_user as pg_update_user
@@ -391,6 +406,12 @@ async def update_user_endpoint(
     current_user: UserInDB = Depends(require_admin),
 ):
     """Update a user (admin only)."""
+    await _audit_request(
+        "auth.user_update_requested", request, user_id=current_user.id,
+        resource_type="user", resource_id=user_id,
+        details={"fields": sorted(update_data.model_dump(exclude_unset=True))},
+        required=True,
+    )
     user = await asyncio.to_thread(update_user, user_id, update_data)
     if not user:
         raise HTTPException(
@@ -440,6 +461,10 @@ async def delete_user_endpoint(
             detail="不能删除自己",
         )
 
+    await _audit_request(
+        "auth.user_delete_requested", request, user_id=current_user.id,
+        resource_type="user", resource_id=user_id, required=True,
+    )
     success = await asyncio.to_thread(delete_user, user_id)
     if not success:
         raise HTTPException(

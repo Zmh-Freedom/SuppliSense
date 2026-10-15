@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, UploadFile
 
 from app.core.deps import get_current_user, require_admin, require_admin_or_purchaser
-from app.domains.auth.audit import log_action
+from app.core.paid_quota import PaidQuotaExceeded, PaidQuotaUnavailable, reserve_paid_refresh
+from app.domains.auth.audit import AuditUnavailable, log_action
 from app.db.mongo import get_db
 from app.domains.alert.rules import get_rules, set_rules
 from app.domains.alert.review_tasks import (
@@ -33,6 +34,7 @@ from app.domains.alert.service import (
     get_snapshot_history,
     get_watchlist_target_risk_detail,
     get_watchlist_target_summaries,
+    get_watchlist_targets,
     resolve_watchlist_identity,
     confirm_watchlist_identity,
     refresh_company,
@@ -41,6 +43,28 @@ from app.domains.alert.service import (
 from app.services.scheduler import run_financial_check, run_refresh_all
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+async def _require_alert_audit(
+    action: str,
+    request: Request,
+    current_user: UserInDB,
+    *,
+    resource_type: str,
+    resource_id: str | None = None,
+    details: dict | None = None,
+) -> None:
+    try:
+        await asyncio.to_thread(
+            log_action, action, user_id=current_user.id,
+            resource_type=resource_type, resource_id=resource_id,
+            details=details,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            required=True,
+        )
+    except AuditUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 class CompanyRequest(BaseModel):
@@ -779,6 +803,16 @@ async def refresh_alert(
     current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
     """Paid: refresh single company via Tianyancha API."""
+    await _require_alert_audit(
+        "alert.paid_refresh_requested", request, current_user,
+        resource_type="company", resource_id=req.company_name,
+    )
+    try:
+        await asyncio.to_thread(reserve_paid_refresh, current_user.id, 1)
+    except PaidQuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except PaidQuotaUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     result = await asyncio.to_thread(refresh_company, req.company_name)
     await asyncio.to_thread(
         log_action, "alert.paid_refresh", user_id=current_user.id,
@@ -802,6 +836,17 @@ async def refresh_all_watched(
     current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
     """Paid: refresh ALL watched companies via Tianyancha API."""
+    await _require_alert_audit(
+        "alert.paid_refresh_all_requested", request, current_user,
+        resource_type="watchlist",
+    )
+    targets = await asyncio.to_thread(get_watchlist_targets)
+    try:
+        await asyncio.to_thread(reserve_paid_refresh, current_user.id, max(1, len(targets)))
+    except PaidQuotaExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except PaidQuotaUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     result = await asyncio.to_thread(run_refresh_all)
     await asyncio.to_thread(
         log_action, "alert.paid_refresh_all", user_id=current_user.id,
@@ -839,6 +884,11 @@ async def update_rules(
     req: RulesRequest,
     current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
+    await _require_alert_audit(
+        "alert.rules_update_requested", request, current_user,
+        resource_type="alert_rules", resource_id=req.company_name or "__global__",
+        details={"rule_count": len(req.rules)},
+    )
     result = await asyncio.to_thread(set_rules, req.company_name, [r.model_dump() for r in req.rules])
     await asyncio.to_thread(
         log_action, "alert.rules_updated", user_id=current_user.id,

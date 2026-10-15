@@ -55,6 +55,7 @@ def test_rule_update_rejects_viewer(monkeypatch) -> None:
 def test_paid_refresh_records_actor_and_ip(monkeypatch) -> None:
     audit_calls: list[dict] = []
     monkeypatch.setattr(alert_api, "refresh_company", lambda _name: {"status": "ok"})
+    monkeypatch.setattr(alert_api, "reserve_paid_refresh", lambda _user_id, _cost: None)
     monkeypatch.setattr(
         alert_api, "log_action", lambda action, **kwargs: audit_calls.append({"action": action, **kwargs}),
         raising=False,
@@ -65,7 +66,9 @@ def test_paid_refresh_records_actor_and_ip(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    assert audit_calls[0]["action"] == "alert.paid_refresh"
+    assert [call["action"] for call in audit_calls] == [
+        "alert.paid_refresh_requested", "alert.paid_refresh"
+    ]
     assert audit_calls[0]["user_id"] == "test-user"
     assert audit_calls[0]["ip_address"]
 
@@ -86,3 +89,66 @@ def test_alert_status_read_does_not_emit_alert(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert calls == [{"emit_alert": False}]
+
+
+def test_paid_refresh_stops_before_provider_when_quota_is_exhausted(monkeypatch) -> None:
+    from app.core.paid_quota import PaidQuotaExceeded
+
+    called: list[str] = []
+    monkeypatch.setattr(alert_api, "log_action", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        alert_api,
+        "reserve_paid_refresh",
+        lambda _user_id, _cost: (_ for _ in ()).throw(PaidQuotaExceeded()),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        alert_api, "refresh_company", lambda name: called.append(name) or {"status": "ok"}
+    )
+
+    response = _client(UserRole.PURCHASER).post(
+        "/api/v1/alerts/refresh", json={"company_name": "甲公司"}
+    )
+
+    assert response.status_code == 429
+    assert called == []
+
+
+def test_paid_refresh_all_reserves_for_each_watched_company(monkeypatch) -> None:
+    reserved: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        alert_api,
+        "get_watchlist_targets",
+        lambda: [{"company_name": name} for name in ("甲公司", "乙公司", "丙公司")],
+    )
+    monkeypatch.setattr(
+        alert_api, "reserve_paid_refresh", lambda user_id, cost: reserved.append((user_id, cost))
+    )
+    monkeypatch.setattr(alert_api, "run_refresh_all", lambda: {"checked": 3, "alerts": []})
+    monkeypatch.setattr(alert_api, "log_action", lambda *_args, **_kwargs: None)
+
+    response = _client(UserRole.PURCHASER).post("/api/v1/alerts/refresh-all")
+
+    assert response.status_code == 200
+    assert reserved == [("test-user", 3)]
+
+
+def test_paid_refresh_stops_before_provider_when_required_audit_fails(monkeypatch) -> None:
+    from app.domains.auth.audit import AuditUnavailable
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        alert_api,
+        "log_action",
+        lambda _action, **kwargs: (_ for _ in ()).throw(AuditUnavailable("audit unavailable"))
+        if kwargs.get("required") else None,
+    )
+    monkeypatch.setattr(alert_api, "reserve_paid_refresh", lambda *_args: called.append("reserved"))
+    monkeypatch.setattr(alert_api, "refresh_company", lambda _name: called.append("provider"))
+
+    response = _client(UserRole.PURCHASER).post(
+        "/api/v1/alerts/refresh", json={"company_name": "甲公司"}
+    )
+
+    assert response.status_code == 503
+    assert called == []

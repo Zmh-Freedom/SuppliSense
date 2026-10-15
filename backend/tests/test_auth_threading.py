@@ -4,9 +4,12 @@ import asyncio
 import threading
 from types import SimpleNamespace
 
-from fastapi import Request, Response
+import pytest
+from fastapi import HTTPException, Request, Response
 
 from app.domains.auth import api as auth_api
+from app.domains.auth.audit import AuditUnavailable
+from app.schemas.user import UserCreate, UserRole
 
 
 def test_login_json_authentication_runs_off_event_loop(monkeypatch) -> None:
@@ -41,3 +44,26 @@ def test_login_json_authentication_runs_off_event_loop(monkeypatch) -> None:
     assert observed and observed[0] != caller_thread
     assert audit_calls[0]["action"] == "auth.login"
     assert audit_calls[0]["user_id"] == "user-1"
+
+
+def test_register_stops_before_user_creation_when_required_audit_fails(monkeypatch) -> None:
+    created: list[str] = []
+    monkeypatch.setattr(
+        auth_api, "create_user", lambda user: created.append(user.username)
+    )
+    monkeypatch.setattr(
+        auth_api, "log_action",
+        lambda _action, **kwargs: (_ for _ in ()).throw(AuditUnavailable("audit unavailable"))
+        if kwargs.get("required") else None,
+    )
+    request = Request({"type": "http", "method": "POST", "path": "/auth/register", "headers": []})
+    admin = SimpleNamespace(id="admin-1", role=UserRole.ADMIN)
+    user_data = UserCreate(
+        username="newuser", email="new@example.com", password="StrongPass123", role=UserRole.VIEWER
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        asyncio.run(auth_api.register(request, user_data, admin))
+
+    assert raised.value.status_code == 503
+    assert created == []

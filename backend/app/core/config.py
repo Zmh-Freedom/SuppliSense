@@ -134,6 +134,8 @@ class Settings(BaseSettings):
     # Rate Limiting
     RATE_LIMIT_GLOBAL: str = "60/minute"
     RATE_LIMIT_AUTH: str = "5/minute"
+    PAID_REFRESH_USER_DAILY_LIMIT: int = Field(default=50, ge=1)
+    PAID_REFRESH_GLOBAL_DAILY_LIMIT: int = Field(default=500, ge=1)
 
     # CORS
     CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "http://127.0.0.1:5174,http://localhost:5174,http://localhost:3000").split(",")

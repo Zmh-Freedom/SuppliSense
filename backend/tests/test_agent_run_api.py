@@ -74,9 +74,35 @@ def test_approval_decision_records_actor_and_request_ip(
     )
 
     assert response.status_code == 200
-    assert audit_calls[0]["action"] == "agent.approval_decided"
+    assert [call["action"] for call in audit_calls] == [
+        "agent.approval_decision_requested", "agent.approval_decided"
+    ]
+    assert audit_calls[0]["required"] is True
     assert audit_calls[0]["user_id"] == "00000000-0000-0000-0000-000000000011"
     assert audit_calls[0]["ip_address"]
+
+
+def test_approval_decision_stops_when_required_audit_fails(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.domains.agent_run import api
+    from app.domains.auth.audit import AuditUnavailable
+
+    decisions: list[str] = []
+    monkeypatch.setattr(api, "_require_v2_route", lambda *_args, **_kwargs: "execute")
+    monkeypatch.setattr(api, "decide_action_proposal", lambda *_args: decisions.append("decided"))
+    monkeypatch.setattr(
+        api, "log_action", lambda _action, **_kwargs: (_ for _ in ()).throw(AuditUnavailable("审计服务暂不可用"))
+    )
+
+    response = agent_client.post(
+        f"/api/v1/agent-runs/{RUN_ID}/approvals/00000000-0000-4000-8000-000000000002/decisions",
+        headers=agent_headers,
+        json={"expected_version": 1, "decision": "approved"},
+    )
+
+    assert response.status_code == 503
+    assert decisions == []
 
 
 def test_event_endpoint_replays_events_after_last_event_id(agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch):
@@ -241,6 +267,7 @@ def test_approval_decision_uses_canonical_nested_path(agent_client, agent_header
 
     observed: list[object] = []
     monkeypatch.setattr(api, "decide_action_proposal", lambda *args: observed.append(args) or {"run": {"id": RUN_ID}})
+    monkeypatch.setattr(api, "log_action", lambda *_args, **_kwargs: None)
 
     response = agent_client.post(
         f"/api/v1/agent-runs/{RUN_ID}/approvals/{RUN_ID}/decisions",

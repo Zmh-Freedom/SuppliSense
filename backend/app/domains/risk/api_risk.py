@@ -4,6 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from app.core.deps import get_current_user
 from app.core.logging import get_logger
+from app.domains.auth.audit import AuditUnavailable, log_action
 from app.schemas.user import UserInDB
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.domains.risk.service import assess_risk, calculate_risk
@@ -12,14 +13,31 @@ logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
 
+async def _require_risk_audit(
+    action: str, request: Request, user_id: str, company_name: str,
+) -> None:
+    try:
+        await asyncio.to_thread(
+            log_action, action=action, user_id=user_id,
+            resource_type="company", resource_id=company_name,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"), required=True,
+        )
+    except AuditUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post(
     "/rebuild-scores",
     summary="按最新评分体系重建全部供应商评分",
     description="管理员专用：按当前证据重算全部供应商评分；保留既有快照、告警和评估历史。",
 )
-async def rebuild_scores(current_user=Depends(get_current_user)):
+async def rebuild_scores(http_request: Request, current_user=Depends(get_current_user)):
     if getattr(getattr(current_user, "role", None), "value", current_user.role) not in {"admin", "administrator"}:
         raise HTTPException(status_code=403, detail="仅管理员可重建全部供应商评分")
+    await _require_risk_audit(
+        "risk_score_rebuild_requested", http_request, current_user.id, "__all__"
+    )
     from app.domains.risk.service import rebuild_all_supplier_scores
 
     return await asyncio.to_thread(rebuild_all_supplier_scores)
@@ -116,10 +134,16 @@ async def risk_assess(
 
         # Stale or force_refresh: return cached data, refresh in background
         if request.force_refresh or age >= timedelta(hours=2):
+            await _require_risk_audit(
+                "assess_risk_refresh_requested", http_request, current_user.id, request.company_name
+            )
             background_tasks.add_task(_refresh_assessment, request.company_name)
             return resp
 
     # No cache at all — must compute synchronously
+    await _require_risk_audit(
+        "assess_risk_requested", http_request, current_user.id, request.company_name
+    )
     try:
         fresh = await asyncio.wait_for(
             asyncio.to_thread(assess_risk, request),
@@ -129,7 +153,6 @@ async def risk_assess(
         fresh.cache_age_hours = 0
         fresh.is_stale = False
 
-        from app.domains.auth.audit import log_action
         await asyncio.to_thread(
             log_action,
             action="assess_risk",
