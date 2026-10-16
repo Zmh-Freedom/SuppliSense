@@ -3,6 +3,8 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+from pymongo.errors import DuplicateKeyError
+
 from app.core.logging import get_logger
 from app.db.mongo import get_db
 from app.schemas import RiskCalculateResponse
@@ -77,6 +79,62 @@ def _can_access_target(target: dict, user_id: str | None, user_role: str | None)
     return str(target.get("owner_user_id") or "") == str(user_id)
 
 
+def _require_target_access(target: dict, user_id: str, user_role: str) -> None:
+    if not _can_access_target(target, user_id, user_role):
+        raise PermissionError("无权修改该监控对象")
+
+
+def _target_access_filter(target: dict, user_id: str, user_role: str) -> dict:
+    if user_role == "admin":
+        return {}
+    scope = (
+        {"supplier_id": str(target["supplier_id"])}
+        if target.get("supplier_id")
+        else {"owner_user_id": str(user_id)}
+    )
+    if target.get("monitor_target_id"):
+        scope["monitor_target_id"] = str(target["monitor_target_id"])
+    return scope
+
+
+def validate_watchlist_add_access(
+    *,
+    user_id: str,
+    user_role: str,
+    company_name: str | None = None,
+    monitor_target_id: str | None = None,
+    supplier_id: str | None = None,
+    candidate_id: str | None = None,
+    company_id: str | None = None,
+) -> None:
+    """Preflight a watchlist add without writing, including resolved supplier scope."""
+    name = (company_name or "").strip()
+    existing = _find_watchlist_target(
+        monitor_target_id=monitor_target_id,
+        supplier_id=supplier_id,
+        candidate_id=candidate_id,
+        company_id=company_id,
+        company_name=name or None,
+        backfill_id=False,
+    )
+    if existing:
+        _require_target_access(existing, user_id, user_role)
+
+    resolved_supplier_id = supplier_id or (existing or {}).get("supplier_id")
+    resolved_candidate_id = candidate_id or (existing or {}).get("candidate_id")
+    db = get_db()
+    if not resolved_supplier_id and resolved_candidate_id:
+        candidate = db["external_supplier_candidates"].find_one({"_id": resolved_candidate_id})
+        if candidate:
+            resolved_supplier_id = candidate.get("supplier_id")
+    if not resolved_supplier_id and not resolved_candidate_id and not company_id and name:
+        from app.domains.sourcing.supplier_repo import resolve_supplier_id
+
+        resolved_supplier_id = resolve_supplier_id(name)
+    if resolved_supplier_id:
+        _require_target_access({"supplier_id": str(resolved_supplier_id)}, user_id, user_role)
+
+
 def get_watchlist_targets(user_id: str | None = None, user_role: str | None = None) -> list[dict]:
     """Return complete monitoring objects and lazily backfill legacy rows."""
     db = get_db()
@@ -111,6 +169,7 @@ def _find_watchlist_target(
     candidate_id: str | None = None,
     company_id: str | None = None,
     company_name: str | None = None,
+    backfill_id: bool = True,
 ) -> dict | None:
     db = get_db()
     query = _target_query(
@@ -126,7 +185,7 @@ def _find_watchlist_target(
     if not isinstance(document, dict):
         return None
     target = _target_from_document(document)
-    if target.get("monitor_target_id"):
+    if target.get("monitor_target_id") or not backfill_id:
         return target
     target["monitor_target_id"] = str(uuid.uuid4())
     db["watchlist"].update_one(
@@ -642,6 +701,8 @@ def add_to_watchlist(
     company_id: str | None = None,
     supplier_code: str | None = None,
     owner_user_id: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
 ) -> dict:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
@@ -660,6 +721,7 @@ def add_to_watchlist(
         candidate_id=candidate_id,
         company_id=company_id,
         company_name=name or None,
+        backfill_id=False,
     )
 
     # Resolve existing identities only. Monitoring must never create a supplier.
@@ -685,6 +747,12 @@ def add_to_watchlist(
     if supplier_doc:
         company_id = company_id or supplier_doc.get("company_id")
         supplier_code = supplier_code or supplier_doc.get("supplier_code")
+    if actor_user_id:
+        actor_role = actor_role or ""
+        if existing:
+            _require_target_access(existing, actor_user_id, actor_role)
+        if sid:
+            _require_target_access({"supplier_id": str(sid)}, actor_user_id, actor_role)
     if not name and not (sid or candidate_id or company_id):
         raise ValueError("监控对象缺少企业名称或稳定身份 ID")
     resolved_type = target_type or (
@@ -702,6 +770,9 @@ def add_to_watchlist(
     identity_status = "candidate" if resolved_type == "external_candidate" else (
         "verified" if sid or company_id else "unresolved"
     )
+    target_owner_user_id = (existing or {}).get("owner_user_id")
+    if not existing and not sid:
+        target_owner_user_id = str(owner_user_id or actor_user_id) if (owner_user_id or actor_user_id) else None
     target_doc = {
         "monitor_target_id": target_id,
         "target_type": resolved_type,
@@ -713,7 +784,7 @@ def add_to_watchlist(
         "company_id": company_id,
         "supplier_code": supplier_code,
         "monitor_status": "active",
-        "owner_user_id": owner_user_id or (existing or {}).get("owner_user_id"),
+        "owner_user_id": target_owner_user_id,
         "added_at": datetime.now(timezone.utc),
     }
     identity_filter = _target_query(
@@ -723,11 +794,28 @@ def add_to_watchlist(
         company_id=company_id,
         company_name=name or None,
     )
-    db["watchlist"].update_one(
-        identity_filter,
-        {"$set": target_doc},
-        upsert=True,
-    )
+    update_fields = dict(target_doc)
+    insert_owner = update_fields.pop("owner_user_id", None)
+    update = {"$set": update_fields}
+    actor_owned_insert = bool(actor_user_id and not sid)
+    if insert_owner and not actor_owned_insert:
+        update["$setOnInsert"] = {"owner_user_id": insert_owner}
+    update_filter = identity_filter
+    if existing:
+        if actor_user_id:
+            update_filter = {"$and": [identity_filter, _target_access_filter(existing, actor_user_id, actor_role or "")]}
+        update_result = db["watchlist"].update_one(update_filter, update, upsert=False)
+        if actor_user_id and update_result.matched_count == 0:
+            raise PermissionError("监控对象所有权已变化，请刷新后重试")
+    else:
+        if actor_owned_insert:
+            update_filter = {"$and": [identity_filter, {"owner_user_id": str(actor_user_id)}]}
+        try:
+            db["watchlist"].update_one(update_filter, update, upsert=True)
+        except DuplicateKeyError as exc:
+            if actor_user_id and not sid:
+                raise PermissionError("监控对象已由其他用户创建，无权修改") from exc
+            raise
     _broadcast_alert_update()
     return {**target_doc, "status": "watching"}
 
@@ -739,6 +827,8 @@ def remove_from_watchlist(
     supplier_id: str | None = None,
     candidate_id: str | None = None,
     company_id: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
 ) -> dict:
     db = get_db()
     target = _find_watchlist_target(
@@ -757,7 +847,18 @@ def remove_from_watchlist(
     )
     if not query:
         raise ValueError("移出监控缺少监控对象 ID 或企业名称")
-    db["watchlist"].delete_one(query)
+    delete_query = query
+    if actor_user_id:
+        if target is None:
+            raise ValueError("监控对象不存在或无权访问")
+        actor_role = actor_role or ""
+        _require_target_access(target, actor_user_id, actor_role)
+        if actor_role != "admin":
+            scope = _target_access_filter(target, actor_user_id, actor_role)
+            delete_query = {"$and": [query, scope]}
+    delete_result = db["watchlist"].delete_one(delete_query)
+    if actor_user_id and delete_result.deleted_count == 0:
+        raise PermissionError("监控对象所有权已变化，请刷新后重试")
     _broadcast_alert_update()
     return {
         "monitor_target_id": (target or {}).get("monitor_target_id") or monitor_target_id,
@@ -770,7 +871,12 @@ def remove_from_watchlist(
     }
 
 
-def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
+def resolve_watchlist_identity(
+    monitor_target_id: str,
+    limit: int = 10,
+    user_id: str | None = None,
+    user_role: str | None = None,
+) -> dict:
     """Resolve a monitoring target name to verified company candidates.
 
     This reuses both the canonical identity resolver and the supplier-master
@@ -780,6 +886,8 @@ def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
     target = _find_watchlist_target(monitor_target_id=monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
+    if user_id is not None or user_role is not None:
+        _require_target_access(target, user_id or "", user_role or "")
     from app.domains.company.service import search_identity
     from app.domains.alert.intake_service import (
         _external_identity_candidate,
@@ -869,6 +977,7 @@ def confirm_watchlist_identity(
     monitor_target_id: str,
     company_id: str,
     user_id: str,
+    user_role: str | None = None,
     *,
     source_reference: str | None = None,
     comment: str | None = None,
@@ -877,6 +986,8 @@ def confirm_watchlist_identity(
     target = _find_watchlist_target(monitor_target_id=monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
+    if user_role is not None:
+        _require_target_access(target, user_id, user_role)
 
     from app.domains.company.service import get_company
 
@@ -897,8 +1008,13 @@ def confirm_watchlist_identity(
         "source_reference": source_reference or company.get("source_reference"),
         "comment": comment,
     }
-    db["watchlist"].update_one(
-        {"monitor_target_id": monitor_target_id},
+    update_result = db["watchlist"].update_one(
+        {
+            "$and": [
+                {"monitor_target_id": monitor_target_id},
+                _target_access_filter(target, user_id, user_role) if user_role and user_role != "admin" else {},
+            ]
+        },
         {"$set": {
             "company_id": canonical_id,
             "company_name": canonical_name,
@@ -909,6 +1025,8 @@ def confirm_watchlist_identity(
             "updated_at": now,
         }},
     )
+    if user_role and user_role != "admin" and update_result.matched_count == 0:
+        raise PermissionError("监控对象所有权已变化，请刷新后重试")
     _broadcast_alert_update()
     updated = _find_watchlist_target(monitor_target_id=monitor_target_id) or target
     return {

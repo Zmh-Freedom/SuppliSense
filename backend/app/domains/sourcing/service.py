@@ -248,7 +248,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
     }
 
 
-def select_result(result_id: str, action: str, user_id: str) -> dict:
+def select_result(
+    result_id: str, action: str, user_id: str, user_role: str | None = None,
+) -> dict:
     result = get_result(result_id)
     if not result:
         raise ValueError(f"寻源结果不存在: {result_id}")
@@ -256,11 +258,15 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
     supplier_name = result.get("supplier_name", "")
     request_id = result.get("request_id")
 
-    update_result_action(result_id, action)
-
     if action == "watchlist":
         from app.domains.alert.service import add_to_watchlist
-        add_to_watchlist(supplier_name)
+        add_to_watchlist(
+            supplier_name,
+            owner_user_id=user_id if user_role is not None else None,
+            actor_user_id=user_id if user_role is not None else None,
+            actor_role=user_role,
+        )
+        update_result_action(result_id, action)
         return {"success": True, "action": "watchlist", "message": f"已将 {supplier_name} 加入监控列表"}
     elif action == "apply_access":
         aid = create_access_application(
@@ -268,6 +274,7 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
             request_id=request_id,
             applicant_id=user_id,
         )
+        update_result_action(result_id, action)
         return {"success": True, "action": "apply_access", "application_id": aid}
 
     return {"success": False, "message": f"未知动作: {action}"}

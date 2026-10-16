@@ -39,6 +39,7 @@ from app.domains.alert.service import (
     confirm_watchlist_identity,
     refresh_company,
     remove_from_watchlist,
+    validate_watchlist_add_access,
 )
 from app.services.scheduler import run_financial_check, run_refresh_all
 
@@ -65,6 +66,38 @@ async def _require_alert_audit(
         )
     except AuditUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+async def _record_alert_audit(
+    action: str,
+    request: Request,
+    current_user: UserInDB,
+    *,
+    resource_type: str,
+    resource_id: str | None = None,
+    details: dict | None = None,
+) -> None:
+    await asyncio.to_thread(
+        log_action, action, user_id=current_user.id,
+        resource_type=resource_type, resource_id=resource_id,
+        details=details,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+def _preflight_watchlist_adds(
+    targets: list[dict], user_id: str, user_role: str,
+) -> None:
+    access_fields = {
+        "company_name", "monitor_target_id", "supplier_id", "candidate_id", "company_id",
+    }
+    for target in targets:
+        validate_watchlist_add_access(
+            **{key: value for key, value in target.items() if key in access_fields},
+            user_id=user_id,
+            user_role=user_role,
+        )
 
 
 class CompanyRequest(BaseModel):
@@ -313,7 +346,10 @@ async def create_monitor_review_task(
             req.task_type,
             req.payload,
             current_user.id,
+            current_user.role.value,
         )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -327,11 +363,13 @@ async def list_monitor_review_tasks(
     monitor_target_id: str | None = Query(None, description="监控对象 ID"),
     current_user: UserInDB = Depends(get_current_user),
 ):
-    return {
-        "tasks": await asyncio.to_thread(
+    try:
+        tasks = await asyncio.to_thread(
             list_review_tasks, monitor_target_id, current_user.id, current_user.role.value
         )
-    }
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return {"tasks": tasks}
 
 
 @router.get(
@@ -585,31 +623,64 @@ async def select_monitor_intake_candidate_endpoint(
     "/intakes/{intake_id}/confirmation",
     summary="确认调查并加入监控",
     description="确认所选主体后创建稳定监控对象，并尽可能保存首次风险评估基线。",
-    responses={400: {"description": "尚未选择主体"}, 404: {"description": "调查不存在"}},
+    responses={
+        400: {"description": "尚未选择主体"},
+        403: {"description": "无权加入该供应商监控"},
+        404: {"description": "调查不存在"},
+        503: {"description": "审计服务暂不可用"},
+    },
 )
 async def confirm_monitor_intake_endpoint(
     intake_id: str,
-    current_user: UserInDB = Depends(get_current_user),
+    request: Request,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
+    await _require_alert_audit(
+        "alert.monitor_intake_confirmation_requested", request, current_user,
+        resource_type="monitor_intake", resource_id=intake_id,
+    )
     try:
-        return await asyncio.to_thread(confirm_monitor_intake, intake_id, str(current_user.id))
+        result = await asyncio.to_thread(
+            confirm_monitor_intake, intake_id, str(current_user.id), current_user.role.value
+        )
     except ValueError as exc:
         status_code = 404 if "调查不存在" in str(exc) else 400
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.monitor_intake_confirmation_denied", request, current_user,
+            resource_type="monitor_intake", resource_id=intake_id,
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    await _record_alert_audit(
+        "alert.monitor_intake_confirmed", request, current_user,
+        resource_type="monitor_intake", resource_id=intake_id,
+        details={"monitor_target_id": result.get("monitor_target", {}).get("monitor_target_id")},
+    )
+    return result
 
 
 @router.get(
     "/watch/{monitor_target_id}/identity-candidates",
     summary="检索监控对象主体候选",
     description="复用寻源主体解析能力，根据监控对象名称返回企业主体候选；只检索，不自动绑定主体。",
-    responses={404: {"description": "监控对象不存在"}},
+    responses={403: {"description": "无权访问该监控对象"}, 404: {"description": "监控对象不存在"}},
 )
 async def monitor_identity_candidates(
     monitor_target_id: str,
+    current_user: UserInDB = Depends(get_current_user),
     limit: int = Query(10, ge=1, le=20, description="最大候选数"),
 ):
     try:
-        return await asyncio.to_thread(resolve_watchlist_identity, monitor_target_id, limit)
+        return await asyncio.to_thread(
+            resolve_watchlist_identity,
+            monitor_target_id,
+            limit,
+            str(current_user.id),
+            current_user.role.value,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -619,21 +690,30 @@ async def monitor_identity_candidates(
     summary="确认并绑定监控对象主体",
     description="由采购人员选择已核验企业主体并绑定到监控对象，记录确认来源和操作人。",
     responses={
+        403: {"description": "无权访问该监控对象"},
         400: {"description": "主体未核验或请求无效"},
         404: {"description": "监控对象或企业主体不存在"},
+        503: {"description": "审计服务暂不可用"},
     },
 )
 async def confirm_monitor_identity(
     monitor_target_id: str,
     req: MonitorIdentityConfirmationRequest,
-    current_user: UserInDB = Depends(get_current_user),
+    request: Request,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
+    await _require_alert_audit(
+        "alert.monitor_identity_confirmation_requested", request, current_user,
+        resource_type="monitor_target", resource_id=monitor_target_id,
+        details={"company_id": req.company_id},
+    )
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             confirm_watchlist_identity,
             monitor_target_id,
             req.company_id,
             str(current_user.id),
+            current_user.role.value,
             source_reference=req.source_reference,
             comment=req.comment,
         )
@@ -641,6 +721,18 @@ async def confirm_monitor_identity(
         message = str(exc)
         status_code = 404 if message in {"监控对象不存在", "企业主体不存在"} else 400
         raise HTTPException(status_code=status_code, detail=message) from exc
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.monitor_identity_confirmation_denied", request, current_user,
+            resource_type="monitor_target", resource_id=monitor_target_id,
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    await _record_alert_audit(
+        "alert.monitor_identity_confirmed", request, current_user,
+        resource_type="monitor_target", resource_id=monitor_target_id,
+        details={"company_id": req.company_id},
+    )
+    return result
 
 
 @router.post(
@@ -648,31 +740,50 @@ async def confirm_monitor_identity(
     summary="添加监控对象",
     description="将指定供应商、寻源候选或企业主体添加到风险监控，系统将定期检查其风险变化。",
     responses={
+        403: {"description": "无权监控该对象"},
         400: {"description": "请求参数错误"},
+        503: {"description": "审计服务暂不可用"},
         500: {"description": "服务器内部错误"},
     },
 )
 async def watch_company(
+    request: Request,
     req: WatchRequest,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
-    if req.supplier_id:
-        from app.domains.supplier.access import can_access_supplier
-        allowed = await asyncio.to_thread(
-            can_access_supplier, req.supplier_id, current_user.id, current_user.role.value
-        )
-        if not allowed:
-            raise HTTPException(status_code=403, detail="无权将该供应商加入个人监控")
-    return add_to_watchlist(
-        req.company_name,
-        target_type=req.target_type,
-        monitor_target_id=req.monitor_target_id,
-        supplier_id=req.supplier_id,
-        candidate_id=req.candidate_id,
-        company_id=req.company_id,
-        supplier_code=req.supplier_code,
-        owner_user_id=current_user.id,
+    resource_id = req.monitor_target_id or req.supplier_id or req.candidate_id or req.company_id or req.company_name
+    await _require_alert_audit(
+        "alert.watch_add_requested", request, current_user,
+        resource_type="monitor_target", resource_id=resource_id,
     )
+    try:
+        result = await asyncio.to_thread(
+            add_to_watchlist,
+            req.company_name,
+            target_type=req.target_type,
+            monitor_target_id=req.monitor_target_id,
+            supplier_id=req.supplier_id,
+            candidate_id=req.candidate_id,
+            company_id=req.company_id,
+            supplier_code=req.supplier_code,
+            owner_user_id=current_user.id,
+            actor_user_id=current_user.id,
+            actor_role=current_user.role.value,
+        )
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.watch_add_denied", request, current_user,
+            resource_type="monitor_target", resource_id=resource_id,
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _record_alert_audit(
+        "alert.watch_added", request, current_user,
+        resource_type="monitor_target", resource_id=result.get("monitor_target_id") or resource_id,
+        details={"target_type": result.get("target_type")},
+    )
+    return result
 
 
 @router.post(
@@ -680,36 +791,60 @@ async def watch_company(
     summary="批量添加监控对象",
     description="优先接受带稳定身份的 targets；companies 仅作为旧名称批量接口兼容。",
     responses={
+        403: {"description": "批次中包含无权监控的对象"},
         400: {"description": "请求参数错误"},
+        503: {"description": "审计服务暂不可用"},
         500: {"description": "服务器内部错误"},
     },
 )
 async def watch_batch(
+    request: Request,
     req: BatchRequest,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
-    if req.targets:
-        results = []
-        for target in req.targets:
-            if target.supplier_id:
-                from app.domains.supplier.access import can_access_supplier
-                allowed = await asyncio.to_thread(
-                    can_access_supplier, target.supplier_id, current_user.id, current_user.role.value
-                )
-                if not allowed:
-                    raise HTTPException(status_code=403, detail="包含无权监控的供应商")
-            results.append(add_to_watchlist(
-                target.company_name,
-                target_type=target.target_type,
-                monitor_target_id=target.monitor_target_id,
-                supplier_id=target.supplier_id,
-                candidate_id=target.candidate_id,
-                company_id=target.company_id,
-                supplier_code=target.supplier_code,
+    targets = (
+        [target.model_dump(exclude_none=True) for target in req.targets]
+        if req.targets
+        else [{"company_name": name.strip()} for name in req.companies if name.strip()]
+    )
+    await _require_alert_audit(
+        "alert.watch_batch_requested", request, current_user,
+        resource_type="watchlist", details={"target_count": len(targets)},
+    )
+    try:
+        await asyncio.to_thread(
+            _preflight_watchlist_adds, targets, current_user.id, current_user.role.value
+        )
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.watch_batch_denied", request, current_user,
+            resource_type="watchlist", details={"target_count": len(targets)},
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        results = [
+            await asyncio.to_thread(
+                add_to_watchlist,
+                target.get("company_name"),
+                **{key: value for key, value in target.items() if key != "company_name"},
                 owner_user_id=current_user.id,
-            ))
-    else:
-        results = [add_to_watchlist(name.strip(), owner_user_id=current_user.id) for name in req.companies if name.strip()]
+                actor_user_id=current_user.id,
+                actor_role=current_user.role.value,
+            )
+            for target in targets
+        ]
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.watch_batch_denied", request, current_user,
+            resource_type="watchlist", details={"target_count": len(targets), "phase": "write"},
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _record_alert_audit(
+        "alert.watch_batch_added", request, current_user,
+        resource_type="watchlist", details={"added_count": len(results)},
+    )
     return {"added": len(results), "results": results}
 
 
@@ -718,11 +853,17 @@ async def watch_batch(
     summary="上传 Excel 批量导入监控对象",
     description="优先读取监控对象稳定身份字段；兼容只包含企业名称的旧模板，并将其标记为待核验企业主体。",
     responses={
+        403: {"description": "文件中包含无权监控的对象"},
         400: {"description": "文件格式错误或解析失败"},
+        503: {"description": "审计服务暂不可用"},
         500: {"description": "服务器内部错误"},
     },
 )
-async def watch_upload(file: UploadFile):
+async def watch_upload(
+    file: UploadFile,
+    request: Request,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
     import openpyxl
 
     wb = openpyxl.load_workbook(file.file, read_only=True)
@@ -752,7 +893,7 @@ async def watch_upload(file: UploadFile):
                 field_indexes[field] = header_lookup[alias.lower()]
                 break
 
-    results = []
+    targets: list[dict] = []
     if field_indexes:
         for row in rows[1:]:
             if not any(clean(value) for value in row):
@@ -763,13 +904,51 @@ async def watch_upload(file: UploadFile):
             }
             if not any(payload.get(field) for field in ("company_name", "supplier_id", "candidate_id", "company_id", "monitor_target_id")):
                 continue
-            results.append(add_to_watchlist(**payload))
+            targets.append({key: value for key, value in payload.items() if value is not None})
     else:
         for row in rows:
             for cell in row:
                 value = clean(cell)
                 if value and len(value) > 2 and not value.startswith("#"):
-                    results.append(add_to_watchlist(value))
+                    targets.append({"company_name": value})
+    await _require_alert_audit(
+        "alert.watch_upload_requested", request, current_user,
+        resource_type="watchlist", details={"target_count": len(targets)},
+    )
+    try:
+        await asyncio.to_thread(
+            _preflight_watchlist_adds, targets, current_user.id, current_user.role.value
+        )
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.watch_upload_denied", request, current_user,
+            resource_type="watchlist", details={"target_count": len(targets)},
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    try:
+        results = [
+            await asyncio.to_thread(
+                add_to_watchlist,
+                target.get("company_name"),
+                **{key: value for key, value in target.items() if key != "company_name"},
+                owner_user_id=current_user.id,
+                actor_user_id=current_user.id,
+                actor_role=current_user.role.value,
+            )
+            for target in targets
+        ]
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.watch_upload_denied", request, current_user,
+            resource_type="watchlist", details={"target_count": len(targets), "phase": "write"},
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await _record_alert_audit(
+        "alert.watch_upload_completed", request, current_user,
+        resource_type="watchlist", details={"added_count": len(results)},
+    )
     return {"total": len(results), "results": results}
 
 
@@ -937,24 +1116,52 @@ async def predict_one(company_name: str, current_user: UserInDB = Depends(get_cu
     summary="从监控列表移除企业",
     description="将指定企业从预警监控列表中移除，不再对其风险变化进行监控。",
     responses={
+        403: {"description": "无权移除该监控对象"},
         400: {"description": "请求参数错误"},
+        404: {"description": "监控对象不存在"},
+        503: {"description": "审计服务暂不可用"},
         500: {"description": "服务器内部错误"},
     },
 )
 async def unwatch_company(
+    request: Request,
     company_name: str | None = Query(None, description="企业名称（兼容参数）"),
     monitor_target_id: str | None = Query(None, description="监控对象 ID"),
     supplier_id: str | None = Query(None, description="正式供应商 ID"),
     candidate_id: str | None = Query(None, description="外部候选 ID"),
     company_id: str | None = Query(None, description="企业主体 ID"),
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
 ):
-    return remove_from_watchlist(
-        company_name,
-        monitor_target_id=monitor_target_id,
-        supplier_id=supplier_id,
-        candidate_id=candidate_id,
-        company_id=company_id,
+    resource_id = monitor_target_id or supplier_id or candidate_id or company_id or company_name
+    await _require_alert_audit(
+        "alert.watch_remove_requested", request, current_user,
+        resource_type="monitor_target", resource_id=resource_id,
     )
+    try:
+        result = await asyncio.to_thread(
+            remove_from_watchlist,
+            company_name,
+            monitor_target_id=monitor_target_id,
+            supplier_id=supplier_id,
+            candidate_id=candidate_id,
+            company_id=company_id,
+            actor_user_id=current_user.id,
+            actor_role=current_user.role.value,
+        )
+    except PermissionError as exc:
+        await _record_alert_audit(
+            "alert.watch_remove_denied", request, current_user,
+            resource_type="monitor_target", resource_id=resource_id,
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        status_code = 404 if "不存在" in str(exc) else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    await _record_alert_audit(
+        "alert.watch_removed", request, current_user,
+        resource_type="monitor_target", resource_id=result.get("monitor_target_id") or resource_id,
+    )
+    return result
 
 
 @router.get(

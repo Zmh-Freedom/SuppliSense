@@ -72,6 +72,25 @@ def _target(monitor_target_id: str) -> dict[str, Any] | None:
     return document
 
 
+def _authorize_target_access(
+    monitor_target_id: str,
+    user_id: str,
+    user_role: str,
+    *,
+    target: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if user_role == "admin":
+        return target or _target(monitor_target_id) or {}
+    target = target if target is not None else _target(monitor_target_id)
+    if target is None:
+        raise PermissionError("无权访问该监控对象")
+    from app.domains.alert.service import _can_access_target
+
+    if not _can_access_target(target, str(user_id), user_role):
+        raise PermissionError("无权访问该监控对象")
+    return target
+
+
 def _append_event(
     cur: Any,
     task_id: UUID,
@@ -130,6 +149,7 @@ def get_review_task(task_id: str, user_id: str, user_role: str) -> dict[str, Any
         task = _fetch_task(cur, task_id)
     if task is not None:
         _authorize(task, user_id, user_role)
+        _authorize_target_access(task["monitor_target_id"], user_id, user_role)
     return task
 
 
@@ -150,6 +170,8 @@ def get_latest_review_task(monitor_target_id: str) -> dict[str, Any] | None:
 def list_review_tasks(
     monitor_target_id: str | None, user_id: str, user_role: str
 ) -> list[dict[str, Any]]:
+    if monitor_target_id:
+        _authorize_target_access(monitor_target_id, user_id, user_role)
     clauses: list[str] = []
     values: list[Any] = []
     if monitor_target_id:
@@ -165,7 +187,22 @@ def list_review_tasks(
             tuple(values),
         )
         columns = [desc[0] for desc in cur.description]
-        return [_row(dict(zip(columns, row, strict=True))) for row in cur.fetchall()]
+        tasks = [_row(dict(zip(columns, row, strict=True))) for row in cur.fetchall()]
+    if user_role == "admin":
+        return tasks
+    accessible_targets: dict[str, bool] = {}
+    for task in tasks:
+        target_id = str(task.get("monitor_target_id") or "")
+        if target_id not in accessible_targets:
+            try:
+                _authorize_target_access(target_id, user_id, user_role)
+                accessible_targets[target_id] = True
+            except PermissionError:
+                accessible_targets[target_id] = False
+    return [
+        task for task in tasks
+        if accessible_targets.get(str(task.get("monitor_target_id") or ""), False)
+    ]
 
 
 def create_review_task(
@@ -173,21 +210,31 @@ def create_review_task(
     task_type: str,
     payload: dict[str, Any],
     requested_by: str,
+    user_role: str | None = None,
 ) -> dict[str, Any]:
     if task_type not in REVIEW_TASK_TYPES:
         raise ValueError("不支持的复核任务类型")
     target = _target(monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
+    if user_role is not None:
+        _authorize_target_access(
+            monitor_target_id, str(requested_by), user_role, target=target
+        )
     with get_cursor() as (_, cur):
+        requester_clause = "AND requested_by = %s" if user_role is not None and user_role != "admin" else ""
+        existing_params: list[Any] = [monitor_target_id, task_type]
+        if requester_clause:
+            existing_params.append(str(requested_by))
         cur.execute(
-            """
+            f"""
             SELECT id FROM monitor_review_tasks
             WHERE monitor_target_id = %s AND task_type = %s
               AND status IN ('pending_approval', 'approved', 'executing')
+              {requester_clause}
             ORDER BY created_at DESC LIMIT 1
             """,
-            (monitor_target_id, task_type),
+            tuple(existing_params),
         )
         existing = cur.fetchone()
         if existing:
@@ -225,6 +272,7 @@ def decide_review_task(
         columns = [desc[0] for desc in cur.description]
         task = _row(dict(zip(columns, row, strict=True)))
         _authorize(task, user_id, user_role)
+        _authorize_target_access(task["monitor_target_id"], user_id, user_role)
         if task["version"] != expected_version:
             raise ValueError("复核任务已发生变化，请刷新后重试")
         if task["status"] != "pending_approval":
@@ -334,6 +382,7 @@ def execute_review_task(
         columns = [desc[0] for desc in cur.description]
         task = _row(dict(zip(columns, row, strict=True)))
         _authorize(task, user_id, user_role)
+        _authorize_target_access(task["monitor_target_id"], user_id, user_role)
         if task["version"] != expected_version:
             raise ValueError("复核任务已发生变化，请刷新后重试")
         if task["status"] != "approved":

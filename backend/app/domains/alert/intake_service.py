@@ -316,7 +316,7 @@ def select_monitor_intake_candidate(intake_id: str, candidate_id: str, user_id: 
     return get_monitor_intake(intake_id, user_id) or {}
 
 
-def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
+def confirm_monitor_intake(intake_id: str, user_id: str, user_role: str | None = None) -> dict:
     document = get_db()[INTAKE_COLLECTION].find_one({"intake_id": intake_id, "created_by": user_id})
     if not isinstance(document, dict):
         raise ValueError("调查不存在或无权访问")
@@ -339,6 +339,8 @@ def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
         company_id=candidate.get("company_id"),
         supplier_code=candidate.get("supplier_code"),
         owner_user_id=user_id,
+        actor_user_id=user_id if user_role is not None else None,
+        actor_role=user_role,
     )
     baseline_status = "not_available"
     try:

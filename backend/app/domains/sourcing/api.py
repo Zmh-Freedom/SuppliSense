@@ -7,8 +7,9 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.core.deps import get_current_user, require_admin, require_admin_or_analyst
+from app.core.deps import get_current_user, require_admin, require_admin_or_analyst, require_admin_or_purchaser
 from app.core.logging import get_logger
+from app.domains.auth.audit import AuditUnavailable, log_action
 from app.schemas.sourcing import (
     SelectResultRequest,
     SourcingRequestInput,
@@ -18,6 +19,7 @@ from app.schemas.sourcing import (
     SupplierInput,
     SupplierUpdateInput,
 )
+from app.schemas.user import UserInDB
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sourcing", tags=["sourcing"], dependencies=[Depends(get_current_user)])
@@ -123,11 +125,55 @@ async def get_request_detail(request_id: str):
     summary="勾选寻源结果",
     description="对寻源结果执行动作: watchlist(加入监控) / apply_access(申请准入)。",
 )
-async def select_result(result_id: str, body: SelectResultRequest, request: Request):
+async def select_result(
+    result_id: str,
+    body: SelectResultRequest,
+    request: Request,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
     from app.domains.sourcing.service import select_result as _select
 
-    user_id = getattr(request.state, "user_id", "anonymous")
-    return await asyncio.to_thread(_select, result_id, body.action, user_id)
+    user_id = str(current_user.id)
+    if body.action == "watchlist":
+        try:
+            await asyncio.to_thread(
+                log_action,
+                "sourcing.watchlist_add_requested",
+                user_id=user_id,
+                resource_type="sourcing_result",
+                resource_id=result_id,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                required=True,
+            )
+        except AuditUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        result = await asyncio.to_thread(
+            _select, result_id, body.action, user_id, current_user.role.value
+        )
+    except PermissionError as exc:
+        await asyncio.to_thread(
+            log_action,
+            "sourcing.watchlist_add_denied",
+            user_id=user_id,
+            resource_type="sourcing_result",
+            resource_id=result_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if body.action == "watchlist":
+        await asyncio.to_thread(
+            log_action,
+            "sourcing.watchlist_added",
+            user_id=user_id,
+            resource_type="sourcing_result",
+            resource_id=result_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    return result
 
 
 @router.post(
