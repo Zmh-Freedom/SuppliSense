@@ -265,3 +265,7 @@ for _event_type in (
 from app.domains.sourcing_risk.action_service import execute_sourcing_risk_action
 
 register_consumer(V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME, execute_sourcing_risk_action)
+
+from app.domains.agent_run.projection import project_chat_completion
+
+register_consumer("agent.chat.completed", "chat_display", project_chat_completion)

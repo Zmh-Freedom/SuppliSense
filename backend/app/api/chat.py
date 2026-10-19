@@ -504,8 +504,10 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 yield f"event: done\ndata: {json.dumps({'answer': recovery_message(), 'status': 'needs_review'}, ensure_ascii=False)}\n\n"
                 return
             run_id = str(cancelled.get("id") or "")
-            yield _workflow_status("cancelled", "cancelled", "本轮 Agent 工作流已取消")
-            yield f"event: done\ndata: {json.dumps({'answer': '本轮 Agent 工作流已取消。', 'status': 'cancelled', 'run_id': run_id}, ensure_ascii=False)}\n\n"
+            status = str(cancelled.get("status") or "cancelled").lower()
+            message = "本轮 Agent 工作流已取消。" if status == "cancelled" else "本轮 Agent 工作流已结束，保留已提交的结果。"
+            yield _workflow_status(status, "cancelled" if status == "cancelled" else "completed", message)
+            yield f"event: done\ndata: {json.dumps({'answer': message, 'status': status, 'run_id': run_id}, ensure_ascii=False)}\n\n"
             return
 
         if is_chat_resume_request(req.message) or is_chat_reject_request(req.message):
@@ -715,14 +717,18 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             ):
                 from app.domains.agent_run.state_store import session_state_store
 
-                control = await asyncio.to_thread(
-                    session_state_store.start_harness_turn,
-                    sid,
-                    user_id,
-                    req.message,
-                    request={"mode": req.mode},
-                    state={"execution_context": execution_context},
-                )
+                try:
+                    control = await asyncio.to_thread(
+                        session_state_store.start_harness_turn,
+                        sid,
+                        user_id,
+                        req.message,
+                        request={"mode": req.mode},
+                        state={"execution_context": execution_context},
+                    )
+                except ValueError as exc:
+                    yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+                    return
                 execution_context["_control_plane"] = {
                     "turn_id": str(control["turn"].id),
                     "run_id": str(control["run"].id),

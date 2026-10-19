@@ -411,78 +411,14 @@ def cancel_active_harness_run(
     user_id: str,
     user_role: str,
 ) -> dict[str, Any] | None:
-    """Cancel the current durable Harness run for a chat session.
+    """Cancel through the same transaction owner used by graph completion."""
+    from app.domains.agent_run.coordinator import run_coordinator
 
-    Harness runs use their own ``RUNNING`` control-plane status and therefore
-    cannot go through the sourcing-risk V2 transition table.  The update is
-    still optimistic and appends the same replayable ``done`` event used by
-    the event-stream endpoint.
-    """
     del user_role
     run = get_latest_harness_run_for_session(session_id, user_id)
     if run is None:
         return None
-    if run.get("status") == AgentRunStatus.CANCELLED.value:
-        return run
-    if run.get("status") in {
-        AgentRunStatus.COMPLETED.value,
-        AgentRunStatus.PARTIAL.value,
-        AgentRunStatus.NEEDS_REVIEW.value,
-        AgentRunStatus.ACTION_FAILED.value,
-        AgentRunStatus.FAILED.value,
-        AgentRunStatus.ROLLBACK_FROZEN.value,
-    }:
-        raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许取消", 409)
-    run_id = str(run["id"])
-    expected_version = int(run["version"])
-    with get_cursor() as (_, cur):
-        cur.execute(
-            """
-            UPDATE agent_runs
-            SET status = 'CANCELLED',
-                version = version + 1,
-                error_code = 'AGENT_RUN_CANCELLED_BY_USER',
-                updated_at = NOW(),
-                completed_at = NOW()
-            WHERE id = %s
-              AND user_id = %s
-              AND version = %s
-              AND status NOT IN ('COMPLETED', 'PARTIAL', 'NEEDS_REVIEW',
-                                 'ACTION_FAILED', 'FAILED', 'CANCELLED',
-                                 'ROLLBACK_FROZEN')
-            RETURNING *
-            """,
-            (run_id, user_id, expected_version),
-        )
-        row = cur.fetchone()
-        updated = (
-            dict(zip((column[0] for column in cur.description), row))
-            if row is not None
-            else None
-        )
-        if updated is None:
-            _raise_version_conflict()
-        append_event(
-            run_id,
-            int(updated["version"]),
-            "done",
-            {
-                "status": "cancelled",
-                "run_id": run_id,
-                "message": "用户已取消本轮 Agent 工作流",
-            },
-            cur=cur,
-        )
-        cur.execute(
-            """
-            UPDATE agent_turns
-            SET status = %s, completed_at = NOW(),
-                assistant_message = COALESCE(assistant_message, '用户已取消本轮 Agent 工作流')
-            WHERE run_id = %s AND status IN ('received', 'running', 'waiting_approval')
-            """,
-            (TurnStatus.CANCELLED.value, run_id),
-        )
-    return updated
+    return run_coordinator.cancel(str(run["id"]), user_id)
 
 
 def decide_action_proposal(
@@ -521,6 +457,8 @@ def stream_harness_events(
     run_id: str, last_event_id: int, user_id: str, user_role: str
 ) -> Iterator[dict[str, Any]]:
     """Replay the chat Harness event log without projecting V2 business tables."""
+    from app.domains.agent_run.coordinator import run_coordinator
+
     cursor = last_event_id
     while True:
         run = _get_authorized_run(run_id, user_id, user_role)
@@ -533,10 +471,10 @@ def stream_harness_events(
                     "event_type": event["event_type"],
                     "data": dict(event.get("payload") or {}),
                 }
-            if run["status"] in TERMINAL_STATUSES:
+            if run["status"] in TERMINAL_STATUSES or run_coordinator.is_paused(run_id):
                 return
             continue
-        if run["status"] in TERMINAL_STATUSES:
+        if run["status"] in TERMINAL_STATUSES or run_coordinator.is_paused(run_id):
             return
         time.sleep(2)
         yield {"event_type": "keepalive", "data": {}}

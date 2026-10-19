@@ -55,7 +55,8 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
     expected_turn_id = "00000000-0000-4000-8000-000000000004"
 
     class FakeStore:
-        def persist_harness_snapshot(self, run_id, event_type, snapshot):
+        def persist_harness_snapshot(self, run_id, event_type, snapshot, *, permit):
+            assert permit.run_id == expected_run_id
             calls.append((run_id, event_type, snapshot["run_id"]))
 
         def update_execution_context(self, _session_id, _user_id, context):
@@ -65,6 +66,20 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
         "app.domains.agent_run.state_store.session_state_store",
         FakeStore(),
     )
+    from app.domains.agent_run.coordinator import ExecutionPermit, run_coordinator
+
+    monkeypatch.setattr(run_coordinator, "claim", lambda run_id, owner: ExecutionPermit(run_id, "attempt", 1))
+    monkeypatch.setattr(run_coordinator, "check", lambda permit: None)
+
+    def finish(permit, **kwargs):
+        assert kwargs["snapshot"]["run_id"] == expected_run_id
+        updated_contexts.append(kwargs["next_context"])
+        return [
+            {"event_type": name, "payload": payload, "event_id": index}
+            for index, (name, payload) in enumerate(kwargs["events"], 1)
+        ]
+
+    monkeypatch.setattr(run_coordinator, "finish", finish)
     monkeypatch.setattr(
         "app.graphs.agent_core.adapter.save_execution_turn",
         lambda *_args: None,
@@ -116,7 +131,7 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
         )
     )
 
-    assert any(event.startswith("event: agent_answer") for event in events)
+    assert any("\nevent: agent_answer\n" in event for event in events)
     assert calls == [(expected_run_id, "load_session", expected_run_id)]
     assert updated_contexts
 

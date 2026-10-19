@@ -1156,6 +1156,7 @@ def test_harness_maps_explicit_capabilities_to_tools(message: str, tool_name: st
 
 
 def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing.service.discover_read_only_sourcing_candidates", lambda _req: {"local_candidates": [], "external_candidates": []})
     formal = {
         "supplier_id": "supplier-1",
         "supplier_name": "华东钢材有限公司",
@@ -1201,6 +1202,7 @@ def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monk
 
 
 def test_harness_sourcing_exposes_external_candidate_as_pending_verification(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing.service.discover_read_only_sourcing_candidates", lambda _req: {"local_candidates": [], "external_candidates": []})
     external = {
         "candidate_id": "candidate-1",
         "supplier_name": "公开钢材候选有限公司",

@@ -116,6 +116,23 @@ jobs:
       - name: Run PostgreSQL, MongoDB, and Redis integration tests
         run: python -m pytest -v -m "integration and not agent_e2e_live"
 
+      - name: Run isolated Run lifecycle and projection races
+        run: |
+          python - <<'PY'
+          import os
+          import psycopg2
+          connection = psycopg2.connect(
+              host=os.environ['PG_HOST'], port=os.environ['PG_PORT'],
+              user=os.environ['PG_USER'], password=os.environ['PG_PASSWORD'],
+              dbname=os.environ['PG_DB'],
+          )
+          connection.autocommit = True
+          with connection.cursor() as cursor:
+              cursor.execute('CREATE DATABASE run_lifecycle_test')
+          connection.close()
+          PY
+          PG_DB=run_lifecycle_test MONGO_DB=run_lifecycle_test python -m pytest -q tests/test_run_coordinator.py tests/test_run_coordinator_integration.py tests/test_harness_execution_control.py tests/test_harness_managed_runner.py
+
       - name: Upload backend coverage
         uses: actions/upload-artifact@v4
         with:

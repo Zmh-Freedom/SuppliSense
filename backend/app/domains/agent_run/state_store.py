@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from psycopg2.extras import Json
 
 from app.db.postgres import PgCursor, get_cursor
+from app.domains.agent_run.coordinator import ExecutionPermit, lock_run, require_active
 from app.domains.agent_run.harness_contracts import (
     AgentRun,
     AgentSession,
@@ -92,6 +93,12 @@ class SessionStateStore:
     ) -> dict[str, Any]:
         """Atomically create/update the control-plane records for one Chat turn."""
         with get_cursor() as (_, cur):
+            # Serialize even the first request for a previously unseen Session.
+            cur.execute(
+                """INSERT INTO agent_sessions (id,user_id,status,state) VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (id) DO NOTHING""",
+                (session_id, user_id, SessionStatus.ACTIVE.value, Json(state or {})),
+            )
             cur.execute(
                 "SELECT * FROM agent_sessions WHERE id = %s FOR UPDATE",
                 (session_id,),
@@ -113,10 +120,21 @@ class SessionStateStore:
                 raise RuntimeError("Agent session 创建失败")
 
             cur.execute(
+                """SELECT id FROM agent_runs WHERE session_id=%s
+                   AND status NOT IN ('COMPLETED','PARTIAL','NEEDS_REVIEW','ACTION_FAILED',
+                                      'FAILED','CANCELLED','ROLLBACK_FROZEN') LIMIT 1""",
+                (session_id,),
+            )
+            if cur.fetchone() is not None:
+                raise ValueError("当前会话仍有未结束的任务，请先停止或恢复该任务")
+
+            cur.execute(
                 "SELECT COALESCE(MAX(turn_number), 0) + 1 FROM agent_turns WHERE session_id = %s",
                 (session_id,),
             )
             turn_number = int(cur.fetchone()[0])
+            next_session_state = dict(state or {})
+            next_session_state["projection_start_turn"] = session.state.get("projection_start_turn", turn_number)
             turn_id = str(uuid.uuid4())
             cur.execute(
                 """
@@ -149,6 +167,11 @@ class SessionStateStore:
                 session_id=session_id,
             )
             cur.execute(
+                """INSERT INTO agent_run_executions (run_id,state,lease_until)
+                   VALUES (%s,'QUEUED',clock_timestamp() + INTERVAL '30 seconds')""",
+                (run["id"],),
+            )
+            cur.execute(
                 "UPDATE agent_turns SET run_id = %s WHERE id = %s RETURNING *",
                 (run["id"], turn_id),
             )
@@ -160,7 +183,7 @@ class SessionStateStore:
                 WHERE id = %s
                 RETURNING *
                 """,
-                (Json(state or {}), session_id),
+                (Json(next_session_state), session_id),
             )
             session = _session_from_row(cur, cur.fetchone())
         if session is None or turn is None:
@@ -189,9 +212,13 @@ class SessionStateStore:
         run_id: str,
         event_type: str,
         snapshot: dict[str, Any],
+        *,
+        permit: ExecutionPermit | None = None,
     ) -> AgentRun:
         """Persist one Harness snapshot and its control-plane projections atomically."""
         with get_cursor() as (_, cur):
+            raw_run = lock_run(cur, run_id)
+            require_active(cur, raw_run, permit)
             cur.execute(
                 "SELECT * FROM agent_runs WHERE id = %s FOR UPDATE",
                 (run_id,),
@@ -199,7 +226,9 @@ class SessionStateStore:
             run = _run_from_row(cur, cur.fetchone())
             if run is None:
                 raise ValueError("Agent Harness run 不存在")
-            status = _run_status_from_snapshot(snapshot)
+            # The public terminal and its final events belong to finish(), not
+            # to a checkpoint-adjacent node callback.
+            status = "RUNNING" if permit else _run_status_from_snapshot(snapshot)
             next_version = run.version + 1
             cur.execute(
                 """
@@ -246,10 +275,10 @@ class SessionStateStore:
                     WHERE id = %s
                     """,
                     (
-                        _turn_status_from_snapshot(snapshot),
+                        TurnStatus.RUNNING.value if permit else _turn_status_from_snapshot(snapshot),
                         Json(snapshot),
                         _snapshot_answer_text(snapshot),
-                        _turn_status_from_snapshot(snapshot),
+                        TurnStatus.RUNNING.value if permit else _turn_status_from_snapshot(snapshot),
                         turn_id,
                     ),
                 )
@@ -267,9 +296,12 @@ class SessionStateStore:
         run_id: str,
         event_type: str,
         payload: dict[str, Any],
+        *,
+        permit: ExecutionPermit | None = None,
     ) -> dict[str, Any]:
         """Append a replayable chat event without fabricating a state snapshot."""
         with get_cursor() as (_, cur):
+            require_active(cur, lock_run(cur, run_id), permit)
             cur.execute("SELECT version FROM agent_runs WHERE id = %s FOR UPDATE", (run_id,))
             row = cur.fetchone()
             if row is None:

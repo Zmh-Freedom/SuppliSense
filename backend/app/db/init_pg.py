@@ -259,6 +259,23 @@ DDL_STATEMENTS = [
     """,
     "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS session_id UUID",
     """
+    CREATE TABLE IF NOT EXISTS agent_run_executions (
+        run_id UUID PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        state VARCHAR(32) NOT NULL CHECK (state IN
+            ('QUEUED','RUNNING','PAUSED','CANCEL_REQUESTED','SUCCEEDED','FAILED','CANCELLED')),
+        attempt_id UUID,
+        fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+        owner_id TEXT,
+        lease_until TIMESTAMPTZ,
+        cancel_requested_at TIMESTAMPTZ,
+        terminal_event_id BIGINT,
+        quality VARCHAR(32),
+        pause_reason TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_execution_lease_expiry ON agent_run_executions (lease_until) WHERE state IN ('RUNNING','QUEUED')",
+    """
     DO $$ BEGIN
         IF NOT EXISTS (
             SELECT 1 FROM pg_constraint

@@ -46,6 +46,7 @@ from app.graphs.harness.state import (
     utc_now_iso,
 )
 from app.domains.risk.risk_contract import get_risk_dimension_spec
+from app.domains.agent_run.coordinator import ExecutionLost
 
 
 PersistCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
@@ -1523,12 +1524,15 @@ def build_harness_graph(
     answer_general_knowledge: KnowledgeAnswerCallback | None = None,
     answer_translation: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
+    control: Callable[[], Awaitable[None]] | None = None,
 ) -> Any:
     """Build the only runtime graph used by Harness-level tests and callers."""
 
     active_executor = executor or ToolExecutor(TOOL_REGISTRY)
 
     async def persist_event(event: str, state: HarnessState, patch: dict[str, Any] | None = None) -> None:
+        if control:
+            await control()
         snapshot = dict(state)
         if patch:
             snapshot.update(patch)
@@ -1633,6 +1637,8 @@ def build_harness_graph(
                 task.status = "running"
 
             async def execute_one(index: int, task: HarnessTask) -> ToolOutcome:
+                if control:
+                    await control()
                 context = ToolContext(
                     session_id=state["session_id"],
                     run_id=state["run_id"],
@@ -1676,6 +1682,8 @@ def build_harness_graph(
                     active_executor.execute(task.tool_name, task.arguments, context),
                     timeout=max(0.001, remaining_seconds),
                 )
+                if control:
+                    await control()
                 if progress:
                     result = progress(
                         "tool_result",
@@ -1701,6 +1709,9 @@ def build_harness_graph(
                 *(execute_one(index, task) for index, task in enumerate(wave)),
                 return_exceptions=True,
             )
+            for result in wave_results:
+                if isinstance(result, (ExecutionLost, asyncio.CancelledError)):
+                    raise result
             for task, result in zip(wave, wave_results, strict=True):
                 if isinstance(result, asyncio.TimeoutError):
                     task.status = "failed"
@@ -2004,14 +2015,21 @@ def build_harness_graph(
         return {"status": state.get("status", "needs_review")}
 
     graph = StateGraph(HarnessState)
-    graph.add_node("load_session", load_session)
-    graph.add_node("resolve_turn", resolve_turn)
-    graph.add_node("build_plan", build_plan)
-    graph.add_node("execute_ready_tasks", execute_ready_tasks)
-    graph.add_node("validate_evidence", validate_evidence)
-    graph.add_node("remediate", remediate)
-    graph.add_node("render_answer", render_answer)
-    graph.add_node("persist_turn", persist_turn)
+    def controlled(node):
+        async def invoke(state: HarnessState) -> dict[str, Any]:
+            if control:
+                await control()
+            return await node(state)
+        return invoke
+
+    graph.add_node("load_session", controlled(load_session))
+    graph.add_node("resolve_turn", controlled(resolve_turn))
+    graph.add_node("build_plan", controlled(build_plan))
+    graph.add_node("execute_ready_tasks", controlled(execute_ready_tasks))
+    graph.add_node("validate_evidence", controlled(validate_evidence))
+    graph.add_node("remediate", controlled(remediate))
+    graph.add_node("render_answer", controlled(render_answer))
+    graph.add_node("persist_turn", controlled(persist_turn))
     graph.add_edge(START, "load_session")
     graph.add_edge("load_session", "resolve_turn")
     graph.add_edge("resolve_turn", "build_plan")
@@ -2093,6 +2111,7 @@ async def run_harness(
     answer_translation: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
+    control: Callable[[], Awaitable[None]] | None = None,
 ) -> HarnessState:
     """Invoke the unified graph with the required LangGraph thread identity."""
     active_config = dict(config or {})
@@ -2100,6 +2119,7 @@ async def run_harness(
     configurable.setdefault("thread_id", state["run_id"])
     active_config["configurable"] = configurable
     graph = build_harness_graph(
+        control=control,
         executor=executor,
         persist=persist,
         progress=progress,

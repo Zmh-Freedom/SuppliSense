@@ -3,14 +3,36 @@
 from __future__ import annotations
 
 from uuid import uuid4
+from contextlib import asynccontextmanager
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.api import chat as chat_api
 from app.core.deps import get_current_user
 
 
 pytestmark = [pytest.mark.agent_e2e, pytest.mark.agent_chat_contract]
+
+
+@pytest.fixture
+def client(app, monkeypatch):
+    """Route contracts must not start databases, scheduler, or real providers."""
+    @asynccontextmanager
+    async def isolated_lifespan(_app):
+        yield
+
+    monkeypatch.setattr(app.router, "lifespan_context", isolated_lifespan)
+    monkeypatch.setattr("app.domains.auth.service.get_user_by_id", lambda _uid: None)
+    monkeypatch.setattr("app.domains.auth.preferences.build_preference_context", lambda _uid: "")
+    monkeypatch.setattr("app.services.agent_session_guard.acquire_agent_session_run", lambda _sid: "test-token")
+    monkeypatch.setattr("app.services.agent_session_guard.renew_agent_session_run", lambda *_args: True)
+    monkeypatch.setattr("app.services.agent_session_guard.release_agent_session_run", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.formal_supplier_identity_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.review_scope_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.external_assessment_clarification", lambda *_args: None)
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture

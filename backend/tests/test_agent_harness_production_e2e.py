@@ -177,6 +177,9 @@ async def _test_production_harness_missing_data_finishes_needs_review(
 ) -> None:
     """A real production tool gap must persist as needs_review, never low risk."""
     context = production_harness_context
+    from app.domains.agent_run.coordinator import run_coordinator
+
+    run_coordinator.cancel(context["run_id"], context["user_id"])
     marker = context["marker"]
     missing_context = {
         "history": [],
@@ -235,6 +238,11 @@ def test_production_harness_http_sse_persists_server_terminal_state(
     """The authenticated FastAPI/SSE boundary must expose the same durable terminal state."""
     from app.graphs.agent_core import adapter
     from app.main import app
+
+    from app.domains.agent_run.coordinator import run_coordinator
+
+    # End the fixture placeholder before HTTP creates the actual new Turn.
+    run_coordinator.cancel(production_harness_context["run_id"], production_harness_context["user_id"])
 
     base_context = production_harness_context["context"]
     context = {
