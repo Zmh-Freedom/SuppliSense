@@ -143,3 +143,5 @@ S1–S5 实现完成，第一阶段代码交付范围已完成；阶段 2、3 �
 - 本批最终后端定向门禁 123 passed，提交记录随 issue-log 同步；离线 Agent E2E 为 100 passed，前端为 143 passed，lint/build 通过。
 - 部署需应用 `init_pg.py` 新增列与 `agent_action_receipts` 表；未新增依赖，未修改已有 REST 返回模型。
 - 保留当前开发分支并形成可审阅提交。独立 worker、scheduler/投递拆分及进程退出自动接管仍按第三阶段实施；本轮未将其标记完成。
+
+- 续作实现提交：`14561b62`；最终后端定向 123 passed，离线 Agent E2E 100 passed，前端 143 passed，lint/build 通过。保留当前分支，未推送或合并。
