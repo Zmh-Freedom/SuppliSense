@@ -103,3 +103,13 @@
 - 部署前必须执行新增 schema。内部 `agent_run_executions` 不加入旧 API 返回模型。
 - 不将本批交付标记为第一阶段全部完成：完成 Supervisor 生命周期和 checkpoint 恢复门禁后，才进入评估记录阶段。
 - 执行裁定：在当前开发分支按后端与前端形成相关提交；数据库迁移和所有调用点一起提交，避免中间版本缺少新表/许可参数。代价是后端提交覆盖面较大，需要真库与独立审查共同验证。
+
+### 首批验证与提交
+
+- 文档与问题依据：`d285e32a`。
+- 后端核心与 CI：`6a06f317`；前端隔离与恢复：`d97e7fcc`。
+- 后端定向回归 53 passed，包含真实 PG/Mongo 的并发、回滚、投影与生产 Harness 链路；测试库为独立 `run_lifecycle_test`。
+- 离线标记集：`pytest -m "agent_e2e and not integration"` 100 passed。
+- 前端全量 19 文件、143 passed；`npm run lint`、`npm run build` 通过。
+- 独立审查三项发现均已通过 RED→GREEN 回归；另补 QUEUED 遗留、满队列尾部及 PAUSED 回放回归。
+- 尚未完成的门禁：Supervisor 统一协调、可信 checkpoint 校验及安全续跑；阶段 2/3 未开始。阶段 1 总验收保持开放。
