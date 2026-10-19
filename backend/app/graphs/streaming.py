@@ -104,6 +104,8 @@ async def _produce_harness_events(
     checkpointer: Any = None,
     turn_id: str | None = None,
     run_id: str | None = None,
+    resume_permit: Any = None,
+    resume_state: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Run the unified Harness and publish durable progress as it happens."""
     from app.graphs.harness import run_harness
@@ -115,7 +117,7 @@ async def _produce_harness_events(
     # A checkpoint thread is execution state, not session state. Reusing the
     # session thread lets an earlier task_specs list override this run's task.
     configurable["thread_id"] = active_run_id
-    configurable.setdefault("checkpoint_ns", "chat:harness")
+    configurable["checkpoint_ns"] = ""
     config["configurable"] = configurable
     active_turn_id = turn_id or str(uuid.uuid4())
     control_context = dict(execution_context)
@@ -142,7 +144,14 @@ async def _produce_harness_events(
         # external lookup can emit and persist a needs_review terminal state.
         state["budget"] = {"max_duration_seconds": _LIVE_SOURCING_MAX_DURATION_SECONDS}
 
-    permit = await asyncio.to_thread(run_coordinator.claim, active_run_id, f"api:{uuid.uuid4()}") if run_id and user_id else None
+    permit = resume_permit or (await asyncio.to_thread(run_coordinator.claim, active_run_id, f"api:{uuid.uuid4()}") if run_id and user_id else None)
+    if permit:
+        from app.graphs.checkpoint_recovery import input_digest
+
+        record = await asyncio.to_thread(run_coordinator.recovery_record, active_run_id, user_id)
+        state["input_digest"] = input_digest(record["execution_input"])
+    if resume_state is not None:
+        state = resume_state
     queue: asyncio.Queue[tuple[str, dict[str, Any], int | None]] = asyncio.Queue()
     progress_seen = False
 
@@ -299,6 +308,7 @@ async def _produce_harness_events(
 
             return await run_harness(
                 state,
+                **({"resume": True} if resume_state is not None else {}),
                 checkpointer=checkpointer,
                 config=config,
                 persist=persist,

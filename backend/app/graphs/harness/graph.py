@@ -2112,6 +2112,7 @@ async def run_harness(
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
     control: Callable[[], Awaitable[None]] | None = None,
+    resume: bool = False,
 ) -> HarnessState:
     """Invoke the unified graph with the required LangGraph thread identity."""
     active_config = dict(config or {})
@@ -2128,7 +2129,7 @@ async def run_harness(
         answer_translation=answer_translation,
         checkpointer=checkpointer,
     )
-    return await graph.ainvoke(state, config=active_config)
+    return await graph.ainvoke(None if resume else state, config=active_config)
 
 
 def _parse_time(value: str | None) -> datetime:

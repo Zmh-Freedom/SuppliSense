@@ -205,7 +205,7 @@ async def _run_sourcing(context: AgentTaskContext) -> AgentResult:
 
     from app.domains.sourcing_risk.discovery_service import discover_candidates
 
-    discovery = await asyncio.to_thread(
+    discovery = await _provider_call(
         discover_candidates, requirement, {"minimum_candidate_count": 3}
     )
     if not isinstance(discovery, dict):
@@ -240,7 +240,7 @@ async def _run_risk(context: AgentTaskContext) -> AgentResult:
     if not company_names:
         return AgentResult(agent="risk", status="needs_review", summary="缺少待评估供应商名称。")
     risk_records = [
-        (name, await asyncio.to_thread(calculate_company_risk_preview, name))
+        (name, await _provider_call(calculate_company_risk_preview, name))
         for name in company_names
     ]
     evidence = [
@@ -298,7 +298,7 @@ async def _run_compliance(context: AgentTaskContext) -> AgentResult:
 
     from app.domains.risk.sanctions_service import check_sanctions
 
-    results = [(name, await asyncio.to_thread(check_sanctions, name)) for name in company_names]
+    results = [(name, await _provider_call(check_sanctions, name)) for name in company_names]
     evidence = [
         _evidence(
             name, "compliance", "制裁与黑名单筛查",
@@ -334,12 +334,12 @@ async def _run_sentiment(context: AgentTaskContext) -> AgentResult:
     from app.domains.risk.sentiment import _get_cached_sentiment, analyze_sentiment
 
     async def get_or_refresh(name: str) -> tuple[str, dict[str, Any] | None, bool]:
-        cached = await asyncio.to_thread(_get_cached_sentiment, name)
+        cached = await _provider_call(_get_cached_sentiment, name)
         if cached is not None and not cached.get("is_stale", False):
             return name, cached, False
         try:
             result = await asyncio.wait_for(
-                asyncio.to_thread(
+                _provider_call(
                     analyze_sentiment,
                     name,
                     force_refresh=cached is not None,
@@ -395,7 +395,7 @@ async def _run_esg(context: AgentTaskContext) -> AgentResult:
 
     from app.domains.risk.esg_service import assess_esg
 
-    results = [(name, await asyncio.to_thread(assess_esg, name)) for name in company_names]
+    results = [(name, await _provider_call(assess_esg, name)) for name in company_names]
     evidence = [
         _evidence(
             name, "esg", "ESG 风险指标",
@@ -501,6 +501,10 @@ async def run_agent_task(task: PlannerTask, state: AgentTaskState) -> AgentResul
                 )
             })
         except Exception as exc:
+            from app.domains.agent_run.coordinator import ExecutionLost
+
+            if isinstance(exc, ExecutionLost):
+                raise
             if attempts == 1 and _retryable_error(exc):
                 continue
             return _failed_result(task, exc, attempts, started_at)
@@ -535,7 +539,20 @@ async def run_ready_tasks(plan: TaskPlan, state: AgentTaskState) -> dict[str, Ag
     results: dict[str, AgentResult] = {}
     for task, outcome in zip(tasks, outcomes, strict=True):
         if isinstance(outcome, Exception):
+            from app.domains.agent_run.coordinator import ExecutionLost
+
+            if isinstance(outcome, ExecutionLost):
+                raise outcome
             results[task.task_id] = _failed_result(task, outcome, 1, time.monotonic())
         else:
             results[task.task_id] = outcome
     return results
+
+
+async def _provider_call(function, *args, **kwargs):
+    from app.domains.agent_run.coordinator import check_current_execution
+
+    await asyncio.to_thread(check_current_execution)
+    result = await asyncio.to_thread(function, *args, **kwargs)
+    await asyncio.to_thread(check_current_execution)
+    return result

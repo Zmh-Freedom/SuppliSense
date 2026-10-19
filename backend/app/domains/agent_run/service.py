@@ -397,6 +397,11 @@ def cancel_run(
 ) -> dict[str, Any]:
     run = _get_authorized_run(run_id, user_id, user_role)
     _require_version(run, expected_version)
+    if run.get("run_type") == "agent_harness" or (run.get("requirement") or {}).get("_managed_chat"):
+        from app.domains.agent_run.coordinator import run_coordinator
+
+        # Authorization above also covers administrators acting on owned Runs.
+        return run_coordinator.cancel(run_id, str(run.get("user_id") or ""), expected_version=expected_version)
     _require_transition(run, AgentRunStatus.CANCELLED)
     with get_cursor() as (_, cur):
         updated = update_run_status(run_id, expected_version, AgentRunStatus.CANCELLED.value, cur=cur)
@@ -502,10 +507,18 @@ def persist_supervisor_snapshot(
     durable/SSE boundary without introducing a second store or a business write.
     """
     durable_status = _SUPERVISOR_DURABLE_STATUSES.get(task_status)
+    from app.domains.agent_run.coordinator import current_execution, require_active
+
+    permit = current_execution.get()
     with get_cursor() as (_, cur):
         run = get_orchestration_run_for_update(run_id, cur)
         if run is None:
             return None
+        require_active(cur, run, permit)
+        if permit and durable_status in {"COMPLETED", "PARTIAL", "FAILED", "NEEDS_REVIEW"}:
+            durable_status = None
+        if permit and event_type == "done":
+            event_type = "supervisor_finalized"
         updated = run
         if durable_status and run["status"] != durable_status:
             updated = update_run_status(
@@ -715,7 +728,7 @@ def create_supervisor_action_proposals(
                 else None
             ),
             user_id=user_id,
-            user_role="purchaser",
+            user_role=_supervisor_actor_role(run),
             expected_version=int(run["version"]),
         )
         persisted.append({**approval, "approval_id": str(proposal["id"]), "expires_at": expires_at})
@@ -761,7 +774,7 @@ def approve_supervisor_action_proposal(run_id: str, approval_id: str) -> None:
         approval_id,
         ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
         str(run["user_id"]),
-        "purchaser",
+        _supervisor_actor_role(run),
     )
 
 
@@ -778,8 +791,32 @@ def approve_supervisor_action_proposals(run_id: str, approval_ids: list[str]) ->
         approval_ids,
         ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
         str(run["user_id"]),
-        "purchaser",
+        _supervisor_actor_role(run),
     )
+
+
+def reject_supervisor_action_proposals(run_id: str, approval_ids: list[str]) -> None:
+    from app.domains.sourcing_risk.action_service import decide_action_proposals
+
+    run = get_orchestration_run(run_id)
+    if run is None:
+        raise ValueError("Agent Run 不存在")
+    decide_action_proposals(run_id, approval_ids,
+        ApprovalDecisionRequest(expected_version=int(run["version"]), decision="rejected"),
+        str(run["user_id"]), _supervisor_actor_role(run))
+
+
+def _supervisor_actor_role(run: dict[str, Any]) -> str:
+    from app.domains.agent_run.coordinator import current_execution
+
+    if current_execution.get() is None:
+        return "purchaser"  # Historical directed graph compatibility only.
+    with get_cursor() as (_, cur):
+        cur.execute("SELECT role,is_active FROM users WHERE id=%s", (run["user_id"],))
+        actor = cur.fetchone()
+        if not actor or not actor[1] or actor[0] not in {"admin", "purchaser", "analyst"}:
+            raise PermissionError("当前用户没有操作权限")
+        return str(actor[0])
 
 
 def record_orchestration_state(

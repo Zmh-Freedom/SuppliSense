@@ -135,7 +135,7 @@ def get_latest_harness_run_for_session(
     session_id: str,
     user_id: str,
 ) -> dict[str, Any] | None:
-    """Return the newest Harness run owned by one user."""
+    """Return the newest managed chat run owned by one user."""
     with get_cursor() as (_, cur):
         cur.execute(
             """
@@ -143,9 +143,9 @@ def get_latest_harness_run_for_session(
             FROM agent_runs
             WHERE session_id = %s
               AND user_id = %s
-              AND run_type = 'agent_harness'
+              AND run_type IN ('agent_harness','sourcing_risk_v2')
             ORDER BY CASE
-                WHEN status = 'RUNNING' THEN 0
+                WHEN status NOT IN ('COMPLETED','PARTIAL','NEEDS_REVIEW','ACTION_FAILED','FAILED','CANCELLED','ROLLBACK_FROZEN') THEN 0
                 WHEN status = 'CANCELLED' THEN 1
                 WHEN status IN (
                     'COMPLETED', 'PARTIAL', 'NEEDS_REVIEW',

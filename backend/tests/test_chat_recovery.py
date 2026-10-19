@@ -55,3 +55,29 @@ def test_missing_durable_resume_is_a_structured_sse_terminal(monkeypatch) -> Non
     events = asyncio.run(collect())
     assert any('event: workflow_status\ndata: {"status": "needs_review"' in event for event in events)
     assert any('"status": "needs_review"' in event and "没有可恢复" in event for event in events)
+
+
+def test_authenticated_legacy_approval_without_frozen_input_is_not_replayed(monkeypatch):
+    from uuid import uuid4
+    monkeypatch.setattr(chat_api, "_rebuild_paused_graph", lambda *_: (_ for _ in ()).throw(AssertionError("must not rebuild unbound legacy execution")))
+    monkeypatch.setattr("app.domains.agent_run.chat_interrupt_repo.release_chat_interrupt", lambda *_: True)
+    paused = {"config": {"configurable": {"thread_id": "old-session"}}, "mode": "agent-supervisor", "user_message": "旧写请求"}
+    async def collect():
+        return [item async for item in chat_api._resume_chat_event_generator(chat_api.ResumeRequest(session_id="old-session"), SimpleNamespace(id=str(uuid4())), claimed=(paused, "claim"))]
+    events = asyncio.run(collect())
+    assert any("冻结输入" in item for item in events)
+    assert any('"status": "needs_review"' in item for item in events)
+
+
+def test_managed_resume_releases_claim_when_saver_initialization_fails(monkeypatch):
+    from uuid import uuid4
+    from unittest.mock import AsyncMock
+    released = []
+    monkeypatch.setattr("app.graphs.sourcing_risk_v2.checkpointer.get_sourcing_risk_checkpointer", AsyncMock(side_effect=RuntimeError("saver unavailable")))
+    monkeypatch.setattr("app.domains.agent_run.chat_interrupt_repo.release_chat_interrupt", lambda *args: released.append(args))
+    paused = {"config": {"managed_run_id": str(uuid4())}, "mode": "agent-supervisor", "user_message": "加入监控"}
+    async def collect():
+        return [item async for item in chat_api._resume_chat_event_generator(chat_api.ResumeRequest(session_id="session"), SimpleNamespace(id=str(uuid4())), claimed=(paused, "lease"))]
+    events = asyncio.run(collect())
+    assert released == [("session", "lease")]
+    assert any("event: error" in item for item in events)

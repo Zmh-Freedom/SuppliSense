@@ -124,6 +124,18 @@ async def _langgraph_agent_supervisor_stream(
     """Agent Supervisor 组合寻源与风险任务流式输出。"""
     del preference_context
 
+    control = (execution_context or {}).get("_control_plane") or {}
+    if control.get("run_id"):
+        from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
+        from app.graphs.agent_supervisor.runtime import stream_managed_supervisor
+        from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
+
+        saver = await get_sourcing_risk_checkpointer()
+        graph = build_agent_supervisor_graph(checkpointer=saver)
+        async for event in stream_managed_supervisor(graph, control["run_id"], execution_context["agent_user_id"]):
+            yield event
+        return
+
     from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
     from app.graphs.streaming import stream_agent_supervisor_graph
     from app.graphs.agent_core.adapter import (
@@ -325,6 +337,37 @@ async def _resume_chat_event_generator(
         return
 
     config = dict(paused.get("config") or {"configurable": {"thread_id": req.session_id}})
+    if not config.get("managed_run_id") and _is_uuid(str(getattr(current_user, "id", ""))):
+        if claim_token:
+            release_chat_interrupt(req.session_id, claim_token)
+        message = "历史任务缺少冻结输入与检查点绑定，请取消旧任务后重新发起。"
+        yield f"event: done\ndata: {json.dumps({'answer': message, 'status': 'needs_review'}, ensure_ascii=False)}\n\n"
+        return
+    if config.get("managed_run_id"):
+        from app.graphs.agent_supervisor.runtime import stream_managed_supervisor
+        from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
+        from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
+
+        try:
+            saver = await get_sourcing_risk_checkpointer()
+            if paused.get("mode") == "harness":
+                from app.graphs.harness.recovery import stream_harness_recovery
+
+                async for event in stream_harness_recovery(config["managed_run_id"], str(getattr(current_user, "id", "")), saver, approved=req.approved, claim=claim_token):
+                    yield event
+                return
+            managed_graph = build_agent_supervisor_graph(checkpointer=saver)
+            async for event in stream_managed_supervisor(
+                managed_graph, config["managed_run_id"], str(getattr(current_user, "id", "")),
+                approved=req.approved, interrupt_claim=claim_token,
+            ):
+                yield event
+            return
+        except Exception:
+            if claim_token:
+                await asyncio.to_thread(release_chat_interrupt, req.session_id, claim_token)
+            yield f"event: error\ndata: {json.dumps({'message': '恢复执行环境暂不可用，任务已保留，请稍后重试。'}, ensure_ascii=False)}\n\n"
+            return
     resume_value = config.pop("__resume_value", None)
     if not isinstance(resume_value, dict):
         resume_value = {"approved": req.approved}
@@ -711,7 +754,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             stream_fn = _select_chat_stream(mode, requested_action=requested_action)
 
             if (
-                stream_fn is _langgraph_harness_stream
+                stream_fn in (_langgraph_harness_stream, _langgraph_agent_supervisor_stream)
                 and _is_uuid(sid)
                 and _is_uuid(user_id)
             ):
@@ -725,6 +768,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                         req.message,
                         request={"mode": req.mode},
                         state={"execution_context": execution_context},
+                        run_type="agent_harness" if stream_fn is _langgraph_harness_stream else "sourcing_risk_v2",
                     )
                 except ValueError as exc:
                     yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
@@ -788,7 +832,7 @@ async def resume_endpoint(req: ResumeRequest, current_user: Any = Depends(get_cu
 
         raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")
     try:
-        graph = await _rebuild_paused_graph(paused)
+        graph = None if (paused.get("config") or {}).get("managed_run_id") or _is_uuid(str(authenticated_user_id or "")) else await _rebuild_paused_graph(paused)
     except Exception as exc:
         if claim_token:
             from app.domains.agent_run.chat_interrupt_repo import release_chat_interrupt

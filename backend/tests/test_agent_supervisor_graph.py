@@ -735,6 +735,8 @@ def test_composite_chat_auto_mode_invokes_harness_stream(
             },
         },
     )
+    monkeypatch.setattr("app.services.clarification.formal_supplier_identity_clarification", lambda *_args, **_kwargs: None)
+
     async def collect_events() -> list[str]:
         response = await chat_api.chat_stream_endpoint(
             chat_api.ChatRequest(

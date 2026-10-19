@@ -90,8 +90,11 @@ class SessionStateStore:
         *,
         request: dict[str, Any] | None = None,
         state: dict[str, Any] | None = None,
+        run_type: str = "agent_harness",
     ) -> dict[str, Any]:
         """Atomically create/update the control-plane records for one Chat turn."""
+        if run_type not in {"agent_harness", "sourcing_risk_v2"}:
+            raise ValueError("不支持的聊天执行类型")
         with get_cursor() as (_, cur):
             # Serialize even the first request for a previously unseen Session.
             cur.execute(
@@ -156,10 +159,11 @@ class SessionStateStore:
             run_payload = {
                 "session_id": session_id,
                 "turn_id": turn_id,
+                "_managed_chat": True,
                 "execution_context": (state or {}).get("execution_context", {}),
             }
             run = insert_run(
-                run_type="agent_harness",
+                run_type=run_type,
                 requirement=run_payload,
                 user_id=user_id,
                 status="RUNNING",
@@ -167,9 +171,13 @@ class SessionStateStore:
                 session_id=session_id,
             )
             cur.execute(
-                """INSERT INTO agent_run_executions (run_id,state,lease_until)
-                   VALUES (%s,'QUEUED',clock_timestamp() + INTERVAL '30 seconds')""",
-                (run["id"],),
+                """INSERT INTO agent_run_executions (run_id,state,lease_until,execution_input)
+                   VALUES (%s,'QUEUED',clock_timestamp() + INTERVAL '30 seconds',%s)""",
+                (run["id"], Json({
+                    **run_payload, "run_id": str(run["id"]), "user_id": user_id,
+                    "user_message": user_message,
+                    "runtime": "harness" if run_type == "agent_harness" else "agent-supervisor",
+                })),
             )
             cur.execute(
                 "UPDATE agent_turns SET run_id = %s WHERE id = %s RETURNING *",
@@ -257,6 +265,9 @@ class SessionStateStore:
             updated = _run_from_row(cur, cur.fetchone())
             if updated is None:
                 raise RuntimeError("Agent Harness run 版本提交失败")
+
+            if permit:
+                cur.execute("UPDATE agent_run_executions SET snapshot=%s WHERE run_id=%s", (Json(snapshot), run_id))
 
             session_id = str(snapshot.get("session_id") or run.session_id or "")
             turn_id = str(snapshot.get("turn_id") or "")

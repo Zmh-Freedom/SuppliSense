@@ -275,6 +275,9 @@ DDL_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_agent_execution_lease_expiry ON agent_run_executions (lease_until) WHERE state IN ('RUNNING','QUEUED')",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS execution_input JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS snapshot JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb",
     """
     DO $$ BEGIN
         IF NOT EXISTS (
@@ -495,6 +498,16 @@ DDL_STATEMENTS = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (run_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS agent_action_receipts (
+        proposal_id UUID PRIMARY KEY REFERENCES agent_action_proposals(id) ON DELETE CASCADE,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        status VARCHAR(16) NOT NULL CHECK (status IN ('started','succeeded','unknown')),
+        proposal_digest TEXT NOT NULL,
+        receipt JSONB,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
     """

@@ -1,6 +1,9 @@
 """Transactional ownership of execution, independent of graphs and transport."""
 
 from dataclasses import dataclass
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
@@ -45,6 +48,24 @@ class ExecutionPermit:
     run_id: str
     attempt_id: str
     fencing_token: int
+
+
+current_execution: ContextVar[ExecutionPermit | None] = ContextVar("agent_execution", default=None)
+
+
+@contextmanager
+def execution_scope(permit: ExecutionPermit) -> Iterator[None]:
+    token = current_execution.set(permit)
+    try:
+        yield
+    finally:
+        current_execution.reset(token)
+
+
+def check_current_execution() -> None:
+    permit = current_execution.get()
+    if permit is not None:
+        run_coordinator.check(permit)
 
 
 def can_transition(current: ExecutionState, target: ExecutionState) -> bool:
@@ -143,7 +164,87 @@ class RunCoordinator:
         except ExecutionLost:
             return False
 
-    def cancel(self, run_id: str, user_id: str) -> dict[str, Any]:
+    def recovery_record(self, run_id: str, user_id: str) -> dict[str, Any]:
+        with get_cursor() as (_, cur):
+            run = lock_run(cur, run_id)
+            if str(run.get("user_id") or "") != user_id:
+                raise PermissionError("Agent Run 不属于当前用户")
+            execution = lock_execution(cur, run_id)
+            if not execution or not execution.get("execution_input"):
+                raise ExecutionLost("历史任务缺少可核对的冻结输入，请取消后重新发起")
+            if execution["execution_input"].get("runtime") == "harness":
+                cur.execute("SELECT COUNT(*) FROM agent_run_events WHERE run_id=%s AND event_type='tool_call'", (run_id,))
+                execution["reserved_tool_calls"] = int(cur.fetchone()[0])
+            return {"run": run, **execution}
+
+    def save_snapshot(self, permit: ExecutionPermit, snapshot: dict[str, Any]) -> None:
+        with get_cursor() as (_, cur):
+            require_active(cur, lock_run(cur, permit.run_id), permit)
+            cur.execute("UPDATE agent_run_executions SET snapshot=%s,updated_at=clock_timestamp() WHERE run_id=%s",
+                        (Json(snapshot), permit.run_id))
+
+    def pause(
+        self, permit: ExecutionPermit, *, snapshot: dict[str, Any],
+        checkpoint: dict[str, Any], reason: str,
+        events: list[tuple[str, dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        """Release an attempt and atomically publish its resumable pause."""
+        with get_cursor() as (_, cur):
+            run = lock_run(cur, permit.run_id)
+            require_active(cur, run, permit)
+            execution = lock_execution(cur, permit.run_id)
+            cur.execute(
+                """UPDATE agent_run_executions SET state='PAUSED',snapshot=%s,checkpoint=%s,
+                   pause_reason=%s,owner_id=NULL,lease_until=NULL,updated_at=clock_timestamp()
+                   WHERE run_id=%s""",
+                (Json(snapshot), Json(checkpoint), reason, permit.run_id),
+            )
+            cur.execute(
+                "UPDATE agent_runs SET status=%s,version=version+1,updated_at=NOW() WHERE id=%s RETURNING version",
+                ("ACTION_PENDING" if reason == "waiting_approval" else "RUNNING", permit.run_id),
+            )
+            version = int(cur.fetchone()[0])
+            cur.execute("UPDATE agent_turns SET status=%s WHERE run_id=%s",
+                        ("waiting_approval" if reason == "waiting_approval" else "running", permit.run_id))
+            frozen = execution.get("execution_input") or {}
+            if frozen and run.get("session_id"):
+                metadata = {**dict(checkpoint.get("config") or {}), "managed_run_id": permit.run_id}
+                cur.execute(
+                    """INSERT INTO agent_chat_interrupts
+                       (session_id,user_id,config,mode,user_message,status,claim_token,claimed_at)
+                       VALUES (%s,%s,%s,%s,%s,'pending',NULL,NULL)
+                       ON CONFLICT (session_id) DO UPDATE SET user_id=EXCLUDED.user_id,
+                       config=EXCLUDED.config,mode=EXCLUDED.mode,user_message=EXCLUDED.user_message,
+                       status='pending',claim_token=NULL,claimed_at=NULL,updated_at=NOW()""",
+                    (run["session_id"], run["user_id"], Json(metadata), frozen["runtime"], frozen["user_message"]),
+                )
+            return [append_event_with_cursor(cur, permit.run_id, version, name, payload) for name, payload in events]
+
+    def resume(self, run_id: str, user_id: str, *, checkpoint: dict[str, Any]) -> ExecutionPermit:
+        """Grant one new attempt only for a verified paused checkpoint."""
+        with get_cursor() as (_, cur):
+            run = lock_run(cur, run_id)
+            if str(run.get("user_id") or "") != user_id:
+                raise PermissionError("Agent Run 不属于当前用户")
+            execution = lock_execution(cur, run_id)
+            if (run["status"] in PUBLIC_TERMINAL or not execution
+                    or execution["state"] != ExecutionState.PAUSED
+                    or execution["checkpoint"] != checkpoint):
+                raise ExecutionLost("恢复检查点已变化或任务已有执行者")
+            cur.execute("SELECT is_active FROM users WHERE id=%s", (user_id,))
+            actor = cur.fetchone()
+            if not actor or not actor[0]:
+                raise PermissionError("用户已停用，无法恢复任务")
+            attempt_id, token = str(uuid4()), int(execution["fencing_token"]) + 1
+            cur.execute(
+                """UPDATE agent_run_executions SET state='RUNNING',attempt_id=%s,fencing_token=%s,
+                   owner_id='chat-resume',lease_until=clock_timestamp()+%s*INTERVAL '1 second',
+                   updated_at=clock_timestamp() WHERE run_id=%s""",
+                (attempt_id, token, self.lease_seconds, run_id),
+            )
+        return ExecutionPermit(run_id, attempt_id, token)
+
+    def cancel(self, run_id: str, user_id: str, *, expected_version: int | None = None) -> dict[str, Any]:
         with get_cursor() as (_, cur):
             cur.execute("SELECT session_id FROM agent_runs WHERE id=%s", (run_id,))
             row = cur.fetchone()
@@ -152,6 +253,10 @@ class RunCoordinator:
             run = lock_run(cur, run_id)
             if str(run.get("user_id") or "") != user_id:
                 raise PermissionError("Agent Run 不属于当前用户")
+            if expected_version is not None and int(run["version"]) != expected_version:
+                from app.core.errors import DomainError
+
+                raise DomainError("AGENT_RUN_VERSION_CONFLICT", "任务版本已变更", 409)
             if run["status"] in PUBLIC_TERMINAL:
                 return run
             cur.execute(
@@ -165,6 +270,11 @@ class RunCoordinator:
                     (run_id,),
                 )
             # Logical cancellation never waits for an uninterruptible provider.
+            cur.execute(
+                """DELETE FROM agent_chat_interrupts WHERE config->>'managed_run_id'=%s
+                   OR (session_id=%s AND NOT config ? 'managed_run_id')""",
+                (run_id, run.get("session_id")),
+            )
             cur.execute(
                 """UPDATE agent_runs SET status='CANCELLED', version=version+1,
                    error_code='AGENT_RUN_CANCELLED_BY_USER', updated_at=NOW(),completed_at=NOW()
@@ -216,13 +326,23 @@ class RunCoordinator:
                     continue
                 cur.execute(
                     """UPDATE agent_run_executions SET state='PAUSED',pause_reason='interrupted',
-                       fencing_token=fencing_token+1,owner_id=NULL,lease_until=NULL,updated_at=clock_timestamp()
+                       fencing_token=fencing_token+1,owner_id=NULL,lease_until=NULL,checkpoint='{}'::jsonb,updated_at=clock_timestamp()
                        WHERE run_id=%s""", (run_id,),
                 )
                 append_event_with_cursor(cur, str(run_id), int(version), "workflow_status", {
                     "run_id": str(run_id), "status": "stopped", "stage": "decision",
                     "message": "执行进程中断，已保留结果，恢复前需要核对执行检查点",
                 })
+                frozen = execution.get("execution_input") or {}
+                if frozen:
+                    metadata = {"managed_run_id": str(run_id), "configurable": {"thread_id": str(run_id)}}
+                    cur.execute(
+                        """INSERT INTO agent_chat_interrupts(session_id,user_id,config,mode,user_message,status)
+                           VALUES(%s,%s,%s,%s,%s,'pending') ON CONFLICT(session_id) DO UPDATE SET
+                           config=EXCLUDED.config,mode=EXCLUDED.mode,user_message=EXCLUDED.user_message,
+                           status='pending',claim_token=NULL,claimed_at=NULL,updated_at=NOW()""",
+                        (frozen["session_id"], frozen["user_id"], Json(metadata), frozen["runtime"], frozen["user_message"]),
+                    )
                 paused.append(str(run_id))
         return paused
 
