@@ -761,9 +761,13 @@ INDEX_STATEMENTS = [
 
 
 def ensure_pg_schema() -> None:
+    from app.db.assessment_schema import ASSESSMENT_DDL
+
     try:
         with get_cursor() as (conn, cur):
             for stmt in DDL_STATEMENTS:
+                cur.execute(stmt)
+            for stmt in ASSESSMENT_DDL:
                 cur.execute(stmt)
             _ensure_verified_evidence_constraint(cur)
             _ensure_agent_run_constraints(cur)
