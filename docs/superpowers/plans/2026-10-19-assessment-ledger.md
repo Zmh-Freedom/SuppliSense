@@ -67,14 +67,16 @@
 
 ## Task 4：查询、趋势、复核、迁移及门禁（2D）
 
-- [ ] 测试：按 ID 当前授权、同名/范围隔离、跨政策分段、复核保留原分数、无歧义旧记录回退、旧响应结构；观察 RED。
-- [ ] 新增 `/api/v2/assessments` 身份/证据/政策/来源查询和追加复核；旧端点保持返回结构。
-- [ ] 监控历史只回退缺失稳定 ID 且无歧义记录；趋势默认同对象/范围/政策，v2 显式分段。
-- [ ] 生成服务器开发库只读历史迁移报告；仅可证实字段回填，不伪造历史证据与哈希。
-- [ ] CI 增加独立真实库门禁；离线 Agent E2E、后端定向、前端契约回归通过。
-- [ ] 按 executing-plans 要求完成一次 fresh-context 全分支审查，修复重要发现，记录部署/验证与提交。
+- [x] 测试：按 ID 当前授权、同名/范围隔离、跨政策分段、复核保留原分数、无歧义旧记录回退、旧响应结构；观察 RED。
+- [x] 新增 `/api/v2/assessments` 身份/证据/政策/来源查询和追加复核；旧端点保持返回结构。
+- [x] 监控历史只回退缺失稳定 ID 且无歧义记录；趋势默认同对象/范围/政策，v2 显式分段。
+- [x] 生成服务器开发库只读历史迁移报告；仅可证实字段回填，不伪造历史证据与哈希。
+- [x] CI 增加独立真实库门禁；离线 Agent E2E、后端定向、前端契约回归通过。
+- [x] 按 executing-plans 要求完成一次 fresh-context 全分支审查，修复重要发现，记录部署/验证与提交。
 
 ## 执行裁定与进度
+
+当前状态：第二阶段四项任务全部完成，自动化门禁与独立审查修复已通过，待用户验收后进入第三阶段。以下保留分批验证轨迹。
 
 - 沿用已验收总设计；本计划细化第二阶段的实现位置与验证，不改变既定产品范围。
 - Task 1 已完成身份/政策/冻结与事务基础。服务器隔离库首轮 12 passed（9 个真实 PG 用例）；追加结果/Outbox 原子性回归随本批验证。Task 2–4 持续推进，不将基础提交声明为第二阶段完成。
@@ -83,3 +85,36 @@
 - Task 2/3 已实现：冻结评分、真实数据状态、统一入口、任务业务回执和 Outbox、载荷补偿及财务独立证据。当前专用真实库 gate 39 passed（20 个 PG/Mongo 用例），追加缺失维度事实输出回归 20 passed（含既有算法）；最终全量门禁及一次 fresh-context 审查在执行中。
 - Ruling: 同名主体无法通过名称缓存证明证据归属时拒绝采集，不伪造 company_id 关联；代价是需补齐稳定来源身份。
 - Ruling: 未冻结且失联的采集保留原 ID 并转 needs_review，补偿登记载荷；新材料创建关联新评估。代价是一次显式重建，避免覆盖不可核对的中间状态。
+
+## 第二阶段交付与操作说明
+
+- 身份与政策基础提交 `c068bb41`；冻结计算、统一入口、查询/复核、补偿/投影及最终审查修复提交 `7986559d`。
+- 第一阶段方案保持：API 进程内执行现有 Harness；独立 worker/scheduler/delivery 与进程退出接管属于第三阶段。
+- 现有 `/api/v1/risk/assess` 成功模型及 SSE 事件不变；可传 `Idempotency-Key` 复用请求，缓存仅查当前 actor 的稳定对象/范围/政策。
+- `POST /api/v2/assessments`：必填 company_name、company_id、request_key；可指定 dimensions、monitor_target_id、purchase_scope；重试沿用原 request_key，新材料显式换 key，并用 linked_assessment_id 关联原评估。
+- `GET /api/v2/assessments/{id}`：身份、质量、原始结果、政策、清单、来源及复核；内部采集 token 和完整计算输入不对外返回。
+- `GET /api/v2/assessments/company/{company_id}`：按范围/政策显式分段，每条记录重验当前对象权限。
+- `POST /api/v2/assessments/{id}/reviews`：reason、decision（confirmed / needs_review / rejected）、request_key；追加复核及审计，不修改原始分数。
+- 旧历史/状态/变更接口通过当前请求 actor 读取 PG 兼容快照；Mongo 展示投影失败可重放现有 Outbox 的 `risk.assessment.committed`。
+- 财务自动检查保存 financial_evidence_snapshots 与独立告警回执；综合评估计算时间不随财务刷新推进。
+
+### 开发库与历史
+
+- 已通过约定服务器隧道向 sra 应用 37 条增量 DDL；未使用本地 Docker。自动化用 assessment_stage2_test、run_lifecycle_test 隔离验证。
+- 只读报告：`docs/reports/2026-10-19-assessment-ledger-migration.json`。PG 原有 167 条为 legacy_unverified；Mongo 172 条无 assessment_id。保留 UUID、分数与原时间；没有可证实的完整证据/政策，不伪造回填。
+- 重复生成只读报告：在 backend 运行 `.venv/bin/python -m app.domains.risk.assessment_migration`。
+
+### 最终验收记录
+
+| 门禁 | 结果 |
+| --- | --- |
+| 后端全量离线（not integration and not agent_e2e） | 994 passed，1 skipped |
+| 评估专用真实 PG/Mongo + 合约 | 44 passed（其中真实集成 21 项） |
+| 第一阶段取消/恢复/审批/终态回归 | 51 passed（服务器 run_lifecycle_test） |
+| 离线 Agent E2E | 100 passed |
+| 前端 | 143 passed，lint/build 通过 |
+| 独立审查 | 4 Important 均有 RED→GREEN 回归；无 Critical，未登记 Deferred minors |
+
+同库初始化和真实事务门禁必须串行。首次并行触发 DDL deadlock 的 setup error 已记录，串行全量重跑全部通过。
+
+- 最终阶段一真实门禁 51 passed（685.92s，使用服务器隔离库）；恢复、取消、审批与唯一终态保持通过。实现与验收文档均保留在当前开发分支。
