@@ -29,6 +29,7 @@ export function clearStoredUser(): void {
       localStorage.removeItem(`chat_sessions:${encodeURIComponent(username)}`);
       localStorage.removeItem(`chat_input:${encodeURIComponent(username)}`);
       localStorage.removeItem(`chat_active_session:${encodeURIComponent(username)}`);
+      localStorage.removeItem(`chat_runs:${encodeURIComponent(username)}`);
     }
   } catch {
     // Continue clearing the auth marker even if local storage is malformed.
@@ -37,6 +38,7 @@ export function clearStoredUser(): void {
   localStorage.removeItem('chat_sessions');
   localStorage.removeItem('chat_input');
   localStorage.removeItem('chat_active_session');
+  localStorage.removeItem('chat_runs');
   localStorage.removeItem(SESSION_KEY);
 }
 
@@ -270,6 +272,7 @@ export async function chatStream(
   sessionId: string,
   callbacks: StreamCallbacks,
   mode: string = 'auto',
+  signal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CHAT_STREAM_TIMEOUT_MS);
@@ -280,7 +283,7 @@ export async function chatStream(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, session_id: sessionId, mode }),
       credentials: 'same-origin',
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     });
 
     if (!res.ok) {
@@ -323,6 +326,7 @@ export async function resumeChat(
   sessionId: string,
   approved: boolean,
   callbacks: StreamCallbacks,
+  signal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -333,14 +337,24 @@ export async function resumeChat(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, approved }),
       credentials: 'same-origin',
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     });
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
 
-    return await _parseSSEStream(res, callbacks);
+    let receivedResult = false;
+    const terminal = () => { receivedResult = true; };
+    const answer = await _parseSSEStream(res, {
+      ...callbacks,
+      onDone: data => { terminal(); callbacks.onDone?.(data); },
+      onError: data => { terminal(); callbacks.onError?.(data); },
+      onApprovalRequired: data => { terminal(); callbacks.onApprovalRequired?.(data); },
+      onClarification: data => { terminal(); callbacks.onClarification?.(data); },
+    });
+    if (!receivedResult) throw new Error('SSE 流在收到最终结果前断开');
+    return answer;
   } finally {
     clearTimeout(timeout);
   }
@@ -364,7 +378,7 @@ export async function agentRunEventStream(
   if (lastEventId !== null) headers['Last-Event-ID'] = String(lastEventId);
 
   try {
-    const res = await fetch(`${API_BASE}${pathPrefix}/${encodeURIComponent(runId)}/events`, {
+    const res = await fetchWithAuthRetry(`${API_BASE}${pathPrefix}/${encodeURIComponent(runId)}/events`, {
       headers,
       credentials: 'same-origin',
       signal,
@@ -385,7 +399,7 @@ export async function agentRunEventStream(
       try {
         const event = { eventId, eventType, data: JSON.parse(dataLines.join('\n')) };
         callbacks.onEvent?.(event);
-        if (eventType === 'done') {
+        if (eventType === 'done' || eventType === 'error') {
           receivedTerminalEvent = true;
           callbacks.onDone?.(event);
         }

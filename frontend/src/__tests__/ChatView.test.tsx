@@ -75,6 +75,80 @@ describe('ChatView session lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  it('ignores late callbacks from A while B is still running', async () => {
+    const pending: Array<{ handlers: StreamCallbacks; resolve: (answer: string) => void }> = []
+    mocks.chatStream.mockImplementation((_message: string, _sid: string, handlers: StreamCallbacks) =>
+      new Promise<string>(resolve => pending.push({ handlers, resolve })),
+    )
+    const user = userEvent.setup()
+    renderChat()
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析甲公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析乙公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    expect(pending).toHaveLength(2)
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '下一条草稿')
+    await act(async () => {
+      pending[0].handlers.onAnswerChunk?.({ text: '甲公司的旧结果' })
+      pending[0].handlers.onDone?.({ answer: '甲公司的旧结果', status: 'completed' })
+      pending[0].resolve('甲公司的旧结果')
+    })
+    expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled()
+    await act(async () => {
+      pending[1].handlers.onAnswerChunk?.({ text: '乙公司的独立结果' })
+      pending[1].handlers.onDone?.({ answer: '乙公司的独立结果', status: 'completed' })
+      pending[1].resolve('乙公司的独立结果')
+    })
+    expect(await screen.findByText('乙公司的独立结果')).toBeInTheDocument()
+    expect(screen.queryByText('甲公司的旧结果')).not.toBeInTheDocument()
+  })
+
+  it('restores a saved run after remount without starting another analysis', async () => {
+    localStorage.setItem('chat_runs', JSON.stringify({ 'old-session': {
+      runId: 'saved-run', lastEventId: 5,
+      messages: [{ role: 'user', content: '分析甲公司' }],
+    } }))
+    mocks.chatRunEventStream.mockImplementation(async (_run: string, _cursor: number | null, handlers: { onEvent: (event: { eventType: string; data: unknown; eventId: number }) => void }) => {
+      handlers.onEvent({ eventType: 'answer_chunk', data: { text: '刷新后恢复的结果' }, eventId: 6 })
+      handlers.onEvent({ eventType: 'done', data: { answer: '刷新后恢复的结果', status: 'completed' }, eventId: 7 })
+    })
+    renderChat()
+    expect(await screen.findByText('刷新后恢复的结果')).toBeInTheDocument()
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('saved-run', null, expect.any(Object), expect.any(AbortSignal))
+    expect(JSON.parse(localStorage.getItem('chat_runs') || '{}')).toEqual({})
+  })
+
+  it('keeps B running when the aborted replay for A rejects', async () => {
+    let rejectReplay: (error: Error) => void = () => {};
+    let finishB: (answer: string) => void = () => {};
+    let callbacksB: StreamCallbacks = {};
+    mocks.chatStream.mockImplementationOnce(async (_text: string, _sid: string, handlers: StreamCallbacks) => {
+      handlers.onRun?.({ run_id: 'run-a' });
+      throw new Error('disconnected');
+    }).mockImplementationOnce((_text: string, _sid: string, handlers: StreamCallbacks) => {
+      callbacksB = handlers;
+      return new Promise<string>(resolve => { finishB = resolve; });
+    });
+    mocks.chatRunEventStream.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectReplay = reject; }));
+    const user = userEvent.setup();
+    renderChat();
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析甲公司');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(mocks.chatRunEventStream).toHaveBeenCalledOnce());
+    await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0]);
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析乙公司');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '下一条草稿');
+    await act(async () => { rejectReplay(new Error('aborted replay')); });
+    expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled();
+    await act(async () => {
+      callbacksB.onDone?.({ answer: '乙公司的完成结果', status: 'completed' });
+      finishB('乙公司的完成结果');
+    });
+  })
+
   it('uses the outer composer focus state without an inner input ring', () => {
     renderChat()
 
@@ -160,7 +234,7 @@ describe('ChatView session lifecycle', () => {
         content: '从事件回放恢复的回答',
       })
     })
-    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-replay', null, expect.any(Object))
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-replay', null, expect.any(Object), expect.any(AbortSignal))
   })
 
   it('offers a canonical supplier choice after a short-name clarification', async () => {
@@ -403,7 +477,7 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('已从持久化事件恢复结果。')).toBeInTheDocument()
-    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object))
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object), expect.any(AbortSignal))
   })
 
   it('persists a needs_review terminal result when external sourcing times out', async () => {
@@ -456,6 +530,7 @@ describe('ChatView session lifecycle', () => {
       expect.any(String),
       expect.any(Object),
       'auto',
+      expect.any(AbortSignal),
     )
     expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
   })

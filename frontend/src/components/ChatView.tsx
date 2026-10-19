@@ -31,6 +31,36 @@ interface Session {
 const STORAGE_KEY = 'chat_sessions';
 const ACTIVE_SESSION_KEY = 'chat_active_session';
 
+interface PendingRun {
+  runId: string;
+  lastEventId: number | null;
+  messages: ChatMessage[];
+}
+
+class StreamBuffer<T> {
+  current: T;
+  constructor(current: T) { this.current = current; }
+}
+
+function pendingRuns(): Record<string, PendingRun> {
+  try { return JSON.parse(localStorage.getItem(scopedKey('chat_runs')) || '{}'); } catch { return {}; }
+}
+
+function savePendingRun(sid: string, run: PendingRun | null): void {
+  try {
+    const runs = pendingRuns();
+    if (run) runs[sid] = run;
+    else delete runs[sid];
+    localStorage.setItem(scopedKey('chat_runs'), JSON.stringify(runs));
+  } catch { /* Conversation remains usable without local storage. */ }
+}
+
+function guardCallbacks(callbacks: StreamCallbacks, isCurrent: () => boolean): StreamCallbacks {
+  return Object.fromEntries(Object.entries(callbacks).map(([name, callback]) => [name, (...args: unknown[]) => {
+    if (isCurrent()) (callback as (...values: unknown[]) => void)(...args);
+  }])) as StreamCallbacks;
+}
+
 /** Scope browser-only chat state to the authenticated account. */
 function storageScope(): string {
   try {
@@ -198,13 +228,9 @@ export default function ChatView() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number | null>(null);
-  const answerAccRef = useRef<string>('');  // 累积流式答案，用于 onDone 回退
-  const approvalAccRef = useRef<ApprovalData | null>(null);
   const autoSubmittedQueryRef = useRef(false);
-  const referencesAccRef = useRef<SupplierReference[]>([]);
-  const agentAnswerAccRef = useRef<AgentAnswer | undefined>(undefined);
-  const evidenceAccRef = useRef<AgentEvidenceRecord[]>([]);
-  const workflowAccRef = useRef<AgentWorkflowSnapshot>(createWorkflowSnapshot());
+  const operationRef = useRef<{ sid: string; controller: AbortController; cancel?: () => Promise<void> } | null>(null);
+  useEffect(() => () => { operationRef.current?.controller.abort(); operationRef.current = null; }, []);
 
   // Debounced localStorage save for chat input
   useEffect(() => {
@@ -239,8 +265,8 @@ export default function ChatView() {
     setSessions(list);
   }, []);
 
-  const send = useCallback(async (msg?: string, forceNewSession = false) => {
-    const text = (msg ?? inputRef.current?.value ?? input).trim();
+  const send = useCallback(async (msg?: string, forceNewSession = false, recovery?: PendingRun) => {
+    const text = (recovery?.messages.filter(item => item.role === 'user').at(-1)?.content ?? msg ?? inputRef.current?.value ?? input).trim();
     if (!text || loading) return;
     setInput('');
 
@@ -249,7 +275,18 @@ export default function ChatView() {
     if (isNewSession) setActiveSid(sid);
     saveActiveSessionId(sid);
 
-    const newMsgs: ChatMessage[] = [...msgs, { role: 'user', content: text }];
+    operationRef.current?.controller.abort();
+    const operation = { sid, controller: new AbortController(), cancel: undefined as (() => Promise<void>) | undefined };
+    operationRef.current = operation;
+    const ownerScope = storageScope();
+    const isCurrent = () => operationRef.current === operation && !operation.controller.signal.aborted && storageScope() === ownerScope;
+    const answerAccRef = new StreamBuffer('');
+    const approvalAccRef = new StreamBuffer<ApprovalData | null>(null);
+    const referencesAccRef = new StreamBuffer<SupplierReference[]>([]);
+    const agentAnswerAccRef = new StreamBuffer<AgentAnswer | undefined>(undefined);
+    const evidenceAccRef = new StreamBuffer<AgentEvidenceRecord[]>([]);
+    const workflowAccRef = new StreamBuffer(createWorkflowSnapshot());
+    const newMsgs: ChatMessage[] = recovery?.messages ?? [...msgs, { role: 'user', content: text }];
     persist(sid, newMsgs, isNewSession);
     setLoading(true);
     const initialWorkflow = createWorkflowSnapshot();
@@ -261,15 +298,17 @@ export default function ChatView() {
     agentAnswerAccRef.current = undefined;
     evidenceAccRef.current = [];
 
-    let runId: string | null = null;
+    let runId: string | null = recovery?.runId ?? null;
     let lastEventId: number | null = null;
     let receivedTerminalEvent = false;
     const streamCallbacks: StreamCallbacks = {
         onRun: (data) => {
           runId = data.run_id;
+          savePendingRun(sid, { runId, lastEventId, messages: newMsgs });
         },
         onEventId: (eventId) => {
           lastEventId = eventId;
+          if (runId && !receivedTerminalEvent) savePendingRun(sid, { runId, lastEventId, messages: newMsgs });
         },
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
@@ -379,6 +418,7 @@ export default function ChatView() {
         },
         onDone: (data) => {
           receivedTerminalEvent = true;
+          savePendingRun(sid, null);
           const pendingApproval = approvalAccRef.current;
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
@@ -411,6 +451,7 @@ export default function ChatView() {
         },
         onError: (data) => {
           receivedTerminalEvent = true;
+          savePendingRun(sid, null);
           console.error('Stream error:', data.message);
           const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
           workflowAccRef.current = failedWorkflow;
@@ -478,21 +519,38 @@ export default function ChatView() {
         },
       };
 
+    const guarded = guardCallbacks(streamCallbacks, () => isCurrent() && !receivedTerminalEvent);
+    operation.cancel = async () => {
+      await chatStream('停止本轮分析', sid, guarded, 'auto', operation.controller.signal);
+    };
     try {
-      await chatStream(text, sid, streamCallbacks, 'auto');
+      if (recovery) {
+        // A fresh view has no accumulated chunks; rebuild from the beginning.
+        await chatRunEventStream(recovery.runId, null, {
+          onEvent: event => {
+            dispatchStreamEvent(event.eventType, event.data, guarded);
+            lastEventId = event.eventId;
+          },
+        }, operation.controller.signal);
+      } else {
+        await chatStream(text, sid, guarded, 'auto', operation.controller.signal);
+      }
+      if (!isCurrent()) return;
       if (!receivedTerminalEvent) {
         if (runId) {
           try {
             await chatRunEventStream(runId, lastEventId, {
               onEvent: (event) => {
-                dispatchStreamEvent(event.eventType, event.data, streamCallbacks);
+                if (lastEventId !== null && event.eventId <= lastEventId) return;
+                dispatchStreamEvent(event.eventType, event.data, guarded);
                 lastEventId = event.eventId;
               },
-            });
+            }, operation.controller.signal);
           } catch (replayError) {
             console.error('Chat event replay after stream close failed:', replayError);
           }
         }
+        if (!isCurrent()) return;
         if (!receivedTerminalEvent) {
           const message = '连接已结束，但服务端没有返回最终结果。请在执行详情中确认状态后重试。';
           const structuredAnswer = agentAnswerAccRef.current as AgentAnswer | undefined;
@@ -516,19 +574,23 @@ export default function ChatView() {
         }
       }
     } catch (err) {
+      if (!isCurrent()) return;
       if (runId && !receivedTerminalEvent) {
         try {
           await chatRunEventStream(runId, lastEventId, {
             onEvent: (event) => {
-              dispatchStreamEvent(event.eventType, event.data, streamCallbacks);
+              if (lastEventId !== null && event.eventId <= lastEventId) return;
+              dispatchStreamEvent(event.eventType, event.data, guarded);
               lastEventId = event.eventId;
             },
-          });
+          }, operation.controller.signal);
+          if (!isCurrent()) return;
           if (receivedTerminalEvent) return;
         } catch (replayError) {
           console.error('Chat event replay failed:', replayError);
         }
       }
+      if (!isCurrent()) return;
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       if (isTimeout) {
         const hasCandidateReferences = referencesAccRef.current.length > 0;
@@ -569,6 +631,16 @@ export default function ChatView() {
     }
   }, [input, loading, activeSid, msgs, persist]);
 
+  useEffect(() => {
+    if (!activeSid || loading || operationRef.current) return;
+    const recovery = pendingRuns()[activeSid];
+    if (!recovery) return;
+    const timer = window.setTimeout(() => {
+      if (!operationRef.current) void send(undefined, false, recovery);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeSid, loading, send]);
+
   // Deep links from the monitoring workbench represent an explicit Agent
   // review action. Start them in a fresh conversation and submit immediately
   // so the button is an executable workflow rather than a prefilled draft.
@@ -587,6 +659,17 @@ export default function ChatView() {
     const approval = streamState?.approval || persistedApproval;
     if (!approval || ['approved', 'rejected'].includes(approval.status || '')) return;
     const { session_id: approvalSid } = approval;
+    operationRef.current?.controller.abort();
+    const operation = { sid: approvalSid, controller: new AbortController() };
+    operationRef.current = operation;
+    const ownerScope = storageScope();
+    const isCurrent = () => operationRef.current === operation && !operation.controller.signal.aborted && storageScope() === ownerScope;
+    const answerAccRef = new StreamBuffer('');
+    const approvalAccRef = new StreamBuffer<ApprovalData | null>(approval);
+    const referencesAccRef = new StreamBuffer<SupplierReference[]>([]);
+    const agentAnswerAccRef = new StreamBuffer<AgentAnswer | undefined>(undefined);
+    const evidenceAccRef = new StreamBuffer<AgentEvidenceRecord[]>([]);
+    const workflowAccRef = new StreamBuffer(streamState?.workflowStatus ?? msgs.at(-1)?.workflow ?? createWorkflowSnapshot());
 
     // Persist the pending approval before resuming so a refresh does not lose
     // the only place where the user can confirm the write action.
@@ -623,7 +706,7 @@ export default function ChatView() {
     evidenceAccRef.current = [];
 
     try {
-      await resumeChat(approvalSid, approved, {
+      const callbacks: StreamCallbacks = {
         onWorkflowStatus: (data) => {
           const previous = workflowAccRef.current;
           const next = {
@@ -722,8 +805,10 @@ export default function ChatView() {
           setStreamState(prev => prev ? { ...prev, error: data.message, workflowStatus: failedWorkflow, approvalSubmitting: false } : null);
           setLoading(false);
         },
-      });
+      };
+      await resumeChat(approvalSid, approved, guardCallbacks(callbacks, isCurrent), operation.controller.signal);
     } catch (err) {
+      if (!isCurrent()) return;
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       const failedApproval: ApprovalData = { ...approval, status: 'failed' };
       const failedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => index === (persistedApprovalIndex ?? resumeMsgs.length - 1)
@@ -747,6 +832,8 @@ export default function ChatView() {
   };
 
   const newChat = () => {
+    operationRef.current?.controller.abort();
+    operationRef.current = null;
     setActiveSid('');
     saveActiveSessionId('');
     setStreamState(null);
@@ -754,6 +841,8 @@ export default function ChatView() {
   };
 
   const switchSession = (sid: string) => {
+    operationRef.current?.controller.abort();
+    operationRef.current = null;
     setActiveSid(sid);
     saveActiveSessionId(sid);
     setStreamState(null);
@@ -762,6 +851,13 @@ export default function ChatView() {
 
   const deleteSession = (sid: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    savePendingRun(sid, null);
+    if (activeSid === sid) {
+      operationRef.current?.controller.abort();
+      operationRef.current = null;
+      setStreamState(null);
+      setLoading(false);
+    }
     const list = sessions.filter(s => s.sid !== sid);
     saveSessions(list);
     setSessions(list);
@@ -892,6 +988,11 @@ export default function ChatView() {
       <div className="px-4 pb-6 pt-2">
         <label htmlFor="chat-input" className="sr-only">向 AI 采购助手提问</label>
         <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-1 shadow-sm transition-shadow focus-within:border-[var(--color-border-focus)] glass-surface">
+          {loading && streamState?.approvalSubmitting === false && (
+            <button type="button" onClick={() => { void operationRef.current?.cancel?.().catch(() => {
+              setStreamState(prev => prev ? { ...prev, error: '停止请求未能确认，请重试。' } : null);
+            }); }} className="rounded-xl px-3 py-2 text-sm text-[#555] hover:bg-[#f5f5f0]">停止</button>
+          )}
           <input
             id="chat-input"
             name="chat-input"
