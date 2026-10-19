@@ -8,7 +8,6 @@ from app.domains.risk.repo_company import (
 )
 from app.domains.risk.repo_financial import get_financial_metrics
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
-from app.domains.alert.service import save_snapshot
 from app.domains.risk.company_service import get_company_profile
 
 # ---- 评分版本 ----
@@ -74,80 +73,9 @@ def _get_industry_threshold(category: str, key: str, default: float) -> float:
 
 
 def assess_risk(request: RiskAssessRequest) -> RiskCalculateResponse:
-    try:
-        profile = get_company_profile(request.company_name)
-    except HTTPException as e:
-        raise e
+    from app.domains.risk.assessment_service import assess_company, legacy_response
 
-    name = profile.company_name
-
-    # 司法风险查询必须至少拥有一份立案信息快照；已有快照复用，避免
-    # 每次 Agent 读取风险时重复调用付费接口。
-    from app.services.tianyancha_client import ensure_court_register_evidence
-
-    ensure_court_register_evidence(name)
-
-    response = _calculate_company_risk(profile, include_soft_risk=True)
-    risk = get_risk_info(name)
-    indicators = get_risk_indicators(name)
-    financial = get_financial_metrics(name)
-    industry_category = _classify_industry(profile.industry)
-
-    # 数据质量检查：已知企业但风险指标全零 → 大概率短名数据缺失
-    _risk_indicators = ["dishonesty_count", "lawsuit_count", "executed_count",
-                        "court_announcement_count", "consumption_restriction_count",
-                        "abnormal_operation_count", "administrative_penalty_count",
-                        "guarantee_count", "pledge_count", "bankruptcy_count", "env_penalty_count"]
-    _all_zero = all(indicators.get(k, 0) == 0 for k in _risk_indicators)
-    if _all_zero and not indicators.get("major_lawsuit") and risk.lawsuit_count == 0:
-        from app.core.logging import get_logger
-        _logger = get_logger(__name__)
-        # A standalone maintenance script may invoke this service before the
-        # structlog configuration is installed. Keep the data-quality warning
-        # best-effort so it can never abort an otherwise valid assessment.
-        try:
-            _logger.warning(
-                "risk_data_suspiciously_empty",
-                company=name,
-                industry=industry_category,
-                hint="所有风险指标为零，可能是短名查询数据不完整",
-            )
-        except TypeError:
-            import logging
-            logging.getLogger(__name__).warning(
-                "risk_data_suspiciously_empty company=%s industry=%s hint=%s",
-                name,
-                industry_category,
-                "所有风险指标为零，可能是短名查询数据不完整",
-            )
-
-    # check if in watchlist
-    from app.domains.alert.service import get_watchlist
-    in_watchlist = name in get_watchlist()
-
-    # add watchlist status
-    if response.risk_detail is not None:
-        response.risk_detail["in_watchlist"] = in_watchlist
-
-    # MongoDB snapshot (实时查询用)
-    save_snapshot(name, response)
-
-    # PostgreSQL history (长期趋势分析用)
-    try:
-        from app.domains.risk.repo_assessment import save_assessment
-        save_assessment(
-            company_name=name,
-            risk_score=response.risk_score,
-            risk_level=response.risk_level,
-            score_breakdown=response.score_breakdown or {},
-            financial_data=financial.model_dump() if financial else None,
-            risk_detail=response.risk_detail or {},
-            scoring_version=SCORING_VERSION,
-        )
-    except Exception:
-        pass  # PG 不可用时不影响主流程
-
-    return response
+    return legacy_response(assess_company(request.company_name))
 
 
 def rebuild_all_supplier_scores(*, clear_history: bool = True) -> dict:
@@ -330,15 +258,21 @@ def _calc_score(
     industry: str = "制造业",
     *,
     include_soft_risk: bool = True,
+    frozen_inputs: dict | None = None,
+    policy_snapshot: dict | None = None,
 ) -> tuple[int, dict]:
     risk = req.risk
     fin = req.financial
 
     # 行业校准参数
-    debt_t = _get_industry_threshold(industry, "debt_ratio", 0.4)
-    ar_t = _get_industry_threshold(industry, "ar_turnover", 180.0)
-    cur_t = _get_industry_threshold(industry, "current_ratio", 1.0)
-    base_offset = _INDUSTRY_BASE_OFFSET.get(industry, 0)
+    policy = policy_snapshot or {}
+    thresholds = policy.get("thresholds", {})
+    industry_thresholds = policy.get("industry_thresholds", _INDUSTRY_THRESHOLDS).get(industry, {})
+    debt_t = thresholds.get("debt_ratio", 0.4) + industry_thresholds.get("debt_ratio", 0)
+    ar_t = thresholds.get("ar_turnover", 180.0) + industry_thresholds.get("ar_turnover", 0)
+    cur_t = thresholds.get("current_ratio", 1.0) + industry_thresholds.get("current_ratio", 0)
+    base_offset = policy.get("industry_offsets", _INDUSTRY_BASE_OFFSET).get(industry, 0)
+    normalizers = policy.get("normalizers", {})
 
     breakdown = {}
     breakdown["行业"] = industry
@@ -388,14 +322,14 @@ def _calc_score(
             fin_items["应收款周转慢"] = f"{pts:.1f}分 ({fin.ar_turnover_days:.0f}天, 行业阈值{ar_t:.0f}天)"
             fin_raw += pts
 
-    fin_norm = _clamp(_normalize(fin_raw, FIN_NORM) + base_offset, 0, 25)
+    fin_norm = _clamp(_normalize(fin_raw, normalizers.get("financial", FIN_NORM)) + base_offset, 0, 25)
     breakdown["财务风险"] = {"原始分": round(fin_raw, 1), "归一化": fin_norm, "行业偏移": base_offset, "明细": fin_items}
 
     # ==================== 司法风险 (0-25) ====================
     jud_items = {}
     jud_raw = 0
     # 诉讼：优先用 lawSuit_detail 近 3 年裁判文书（时间衰减），回退 riskInfo 汇总
-    recent = get_recent_lawsuits(req.company.company_name, years=3)
+    recent = frozen_inputs.get("recent_lawsuits", 0) if frozen_inputs is not None else get_recent_lawsuits(req.company.company_name, years=3)
     if recent > 0:
         lawsuit_pts = _clamp(recent * 0.5, 0, 10)
         jud_items["诉讼(近3年)"] = f"{lawsuit_pts:.1f}分 ({recent}起裁判文书)"
@@ -437,7 +371,7 @@ def _calc_score(
         jud_items["股权质押"] = f"{pledge_pts:.1f}分 ({req.pledge_count}次)"
         jud_raw += pledge_pts
 
-    jud_norm = _normalize(jud_raw, JUD_NORM)
+    jud_norm = _normalize(jud_raw, normalizers.get("judicial", JUD_NORM))
     breakdown["司法风险"] = {"原始分": round(jud_raw, 1), "归一化": jud_norm, "明细": jud_items}
 
     # ==================== 经营风险 (0-25) ====================
@@ -463,11 +397,13 @@ def _calc_score(
         op_items["环保处罚"] = f"{env_pts:.1f}分 ({req.env_penalty_count}条)"
         op_raw += env_pts
 
-    op_norm = _normalize(op_raw, OP_NORM)
+    op_norm = _normalize(op_raw, normalizers.get("operational", OP_NORM))
     breakdown["经营风险"] = {"原始分": round(op_raw, 1), "归一化": op_norm, "明细": op_items}
 
     # ==================== 软指标 (0-25) ====================
-    if include_soft_risk:
+    if frozen_inputs is not None:
+        soft = frozen_inputs.get("soft") or {}
+    elif include_soft_risk:
         from app.domains.risk.soft_risk import score_soft_risks
 
         soft = score_soft_risks(req.company.company_name)
@@ -484,12 +420,12 @@ def _calc_score(
     if soft.get("summary"):
         soft_items["总结"] = soft["summary"]
 
-    soft_norm = _normalize(soft_raw, SOFT_NORM)
+    soft_norm = _normalize(soft_raw, normalizers.get("soft", SOFT_NORM))
     breakdown["软指标"] = {
         "原始分": soft_raw,
         "归一化": soft_norm,
         "明细": soft_items,
-        "数据状态": "已纳入" if include_soft_risk else "未纳入只读预览",
+        "数据状态": soft.get("status", "available") if include_soft_risk else "not_requested",
     }
 
     # ==================== 总分 ====================
@@ -497,10 +433,30 @@ def _calc_score(
     # public score is deliberately the inverse safety score so that a higher
     # value always means lower risk.  Keep the deduction in the breakdown for
     # auditability and expose the dimension safety points in ``归一化``.
-    risk_points = round(fin_norm + jud_norm + op_norm + soft_norm)
+    from app.domains.risk.assessment_policy import DIMENSIONS
+
+    available = (frozen_inputs or {}).get("availability")
+    if available is None:
+        available = {"financial": fin is not None, "judicial": True, "operational": True,
+                     "soft": include_soft_risk and soft.get("status") != "unavailable" and all(
+                         "score" in soft.get("dimensions", {}).get(dim, {})
+                         for dim in ("舆情风险", "ESG风险", "宏观风险", "管理风险"))}
+    requested = policy.get("required_dimensions", list(DIMENSIONS))
+    eligible = [dimension for dimension in requested if available.get(dimension)]
+    if not eligible:
+        raise ValueError("缺少可用于评分的有效证据")
+    deductions = dict(zip(DIMENSIONS, (fin_norm, jud_norm, op_norm, soft_norm)))
+    weights = policy.get("weights", {dimension: 25 for dimension in DIMENSIONS})
+    weight_total = sum(weights[dimension] for dimension in eligible)
+    risk_points = round(sum(deductions[dimension] / 25 * weights[dimension] for dimension in eligible) / weight_total * 100)
     total = max(0, min(100, 100 - risk_points))
-    for dimension in ("财务风险", "司法风险", "经营风险", "软指标"):
+    for key, dimension in zip(DIMENSIONS, ("财务风险", "司法风险", "经营风险", "软指标")):
         item = breakdown.get(dimension)
+        if not available.get(key) or key not in requested:
+            item["归一化"] = None
+            item["风险扣分"] = None
+            item["数据状态"] = "unavailable" if key in requested else "not_requested"
+            continue
         if isinstance(item, dict) and isinstance(item.get("归一化"), (int, float)):
             deduction = item["归一化"]
             item["风险扣分"] = deduction
@@ -508,7 +464,8 @@ def _calc_score(
     breakdown["风险扣分总计"] = risk_points
     breakdown["总计"] = total
     breakdown["评分口径"] = "安全分（0-100，分数越高风险越低）"
-    breakdown["权重"] = "财务 25% + 司法 25% + 经营 25% + 软指标 25%"
+    labels = dict(zip(DIMENSIONS, ("财务", "司法", "经营", "软指标")))
+    breakdown["权重"] = " + ".join(f"{labels[dimension]} {weights[dimension] / weight_total * 100:.1f}%" for dimension in eligible)
 
     return total, breakdown
 

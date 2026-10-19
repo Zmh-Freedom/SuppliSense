@@ -325,7 +325,11 @@ async def _produce_harness_events(
                 ),
             )
 
-        runner = asyncio.create_task(run_graph())
+        from app.domains.agent_run.coordinator import execution_scope
+        from contextlib import nullcontext
+
+        with execution_scope(permit) if permit else nullcontext():
+            runner = asyncio.create_task(run_graph())
         last_heartbeat = time.monotonic()
         try:
             while not runner.done() or not queue.empty():

@@ -183,7 +183,9 @@ async def get_supplier_profile(
         raise HTTPException(status_code=403, detail="无权查看该供应商")
 
     try:
-        profile = await asyncio.to_thread(build_supplier_profile, supplier_id)
+        from app.domains.risk.assessment_contracts import assessment_scope
+        with assessment_scope(actor_id=current_user.id,actor_role=current_user.role.value):
+            profile = await asyncio.to_thread(build_supplier_profile, supplier_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

@@ -79,6 +79,7 @@ def test_save_snapshot_appends_a_version_linked_to_previous_snapshot(monkeypatch
 
 def test_snapshot_history_limits_and_orders_by_version(monkeypatch):
     db = MagicMock()
+    db["watchlist"].count_documents.return_value = 1
     cursor = db["alert_snapshots"].find.return_value
     cursor.sort.return_value = cursor
     cursor.limit.return_value = [{"snapshot_id": "snapshot-1", "snapshot_version": 1}]
@@ -87,8 +88,8 @@ def test_snapshot_history_limits_and_orders_by_version(monkeypatch):
     result = alert_service.get_snapshot_history("供应商有限公司", limit=1000)
 
     assert result == [{"snapshot_id": "snapshot-1", "snapshot_version": 1}]
-    db["alert_snapshots"].find.assert_called_once_with({"company_name": "供应商有限公司"})
-    cursor.sort.assert_called_once_with([("snapshot_version", -1), ("checked_at", -1)])
+    db["alert_snapshots"].find.assert_called_once_with({"company_name": "供应商有限公司", "monitor_target_id": None, "company_id": None, "assessment_id": None})
+    cursor.sort.assert_called_once_with([("checked_at", -1), ("snapshot_version", -1)])
     cursor.limit.assert_called_once_with(100)
 
 

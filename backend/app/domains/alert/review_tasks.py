@@ -318,20 +318,13 @@ def _evidence(
 
 
 def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-    from app.domains.risk.service import calculate_company_risk_preview
-    from app.domains.alert.service import save_snapshot
+    from app.domains.risk.assessment_service import monitor_assessment
 
     task_type = task["task_type"]
     name = str(target.get("display_name") or target.get("company_name") or "").strip()
-    common = {
-        "monitor_target_id": task["monitor_target_id"],
-        "target_type": target.get("target_type"),
-        "supplier_id": target.get("supplier_id"),
-        "candidate_id": target.get("candidate_id"),
-        "company_id": target.get("company_id"),
-    }
     if task_type in {"assess", "review"}:
-        preview = calculate_company_risk_preview(name)
+        preview = monitor_assessment(name, monitor_target_id=task["monitor_target_id"],
+            company_id=target.get("company_id"),actor_id=task.get("requested_by"),request_key="review-task:"+str(task["id"]))
         if preview is None:
             evidence = _evidence(
                 task, dimension="risk_monitoring", provider="monitoring_workbench",
@@ -340,7 +333,6 @@ def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, 
             )
             return "needs_review", {"summary": "风险评估未形成结论，主体或风险数据当前未覆盖", "status": "needs_review"}, [evidence]
         result = preview.model_dump(mode="json") if hasattr(preview, "model_dump") else dict(preview)
-        save_snapshot(name, preview, **common)
         evidence = _evidence(
             task, dimension="risk_monitoring", provider="cached_risk_evidence",
             source_type="risk_snapshot", status="supported", data_mode="formal",

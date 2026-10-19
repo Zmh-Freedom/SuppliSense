@@ -51,8 +51,8 @@ def test_assess_task_persists_snapshot_and_returns_supported_evidence(monkeypatc
     )
     saved = []
     monkeypatch.setattr(
-        "app.domains.risk.service.calculate_company_risk_preview",
-        lambda company_name: assessment,
+        "app.domains.risk.assessment_service.monitor_assessment",
+        lambda *args, **kwargs: (saved.append((args,kwargs)) or assessment),
     )
     monkeypatch.setattr(
         "app.domains.alert.service.save_snapshot",

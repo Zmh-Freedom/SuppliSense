@@ -344,6 +344,7 @@ def test_alert_change_keeps_monitor_target_identity(monkeypatch):
         {
             "company_name": "正式供应商有限公司",
             "monitor_target_id": "monitor-1",
+            "company_id": "company-1",
             "risk_score": 40,
             "risk_level": "低风险",
             "risk_detail": {},
@@ -381,6 +382,7 @@ def test_risk_change_does_not_treat_missing_history_as_stable():
 def test_check_alert_read_does_not_create_alert_or_notify(monkeypatch):
     """A read-only tool invocation must not emit business side effects."""
     db = {name: MagicMock() for name in ("alert_snapshots", "alerts", "watchlist")}
+    db["watchlist"].count_documents.return_value = 1
     db["alert_snapshots"].find.return_value.sort.return_value.limit.return_value = [
         {"company_name": "甲公司", "risk_score": 60, "risk_level": "低风险", "risk_detail": {}},
         {"company_name": "甲公司", "risk_score": 50, "risk_level": "中风险", "risk_detail": {}},
@@ -406,6 +408,7 @@ def test_check_alert_read_does_not_create_alert_or_notify(monkeypatch):
 def test_alert_delivery_failure_preserves_original_change_result(monkeypatch):
     """A notifier failure must not be replaced by a logger TypeError."""
     db = {name: MagicMock() for name in ("alert_snapshots", "alerts", "watchlist")}
+    db["watchlist"].count_documents.return_value = 1
     db["alert_snapshots"].find.return_value.sort.return_value.limit.return_value = [
         {"company_name": "甲公司", "risk_score": 60, "risk_level": "低风险", "risk_detail": {}},
         {"company_name": "甲公司", "risk_score": 50, "risk_level": "中风险", "risk_detail": {}},

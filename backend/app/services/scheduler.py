@@ -14,7 +14,6 @@ from app.domains.alert.service import (
     detect_changes,
     get_latest_snapshot,
     get_watchlist_targets,
-    save_snapshot,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,47 +40,115 @@ def run_financial_check() -> dict:
 
             financial = get_financial_metrics(name)
             if financial is None:
-                results.append({"company": name, "changed": False, "reason": "无财报数据"})
+                results.append(
+                    {"company": name, "changed": False, "reason": "无财报数据"}
+                )
                 continue
 
             prev = get_latest_snapshot(name, monitor_target_id=monitor_target_id)
             prev_fin = (prev.get("financial") or {}) if prev else {}
-            changed = (
-                prev_fin.get("revenue_growth") != financial.revenue_growth
-                or prev_fin.get("net_profit_growth") != financial.net_profit_growth
-                or prev_fin.get("debt_ratio") != financial.debt_ratio
-                or prev_fin.get("cash_flow") != financial.cash_flow
+            from app.db.mongo import get_db
+            from app.domains.risk.assessment_contracts import canonical_hash
+            from datetime import datetime, timezone
+
+            values = financial.model_dump(mode="json")
+            collection = get_db()["financial_evidence_snapshots"]
+            key = {
+                "monitor_target_id": monitor_target_id,
+                "company_id": target.get("company_id"),
+            }
+            previous = collection.find_one(key, sort=[("collected_at", -1)])
+            previous_values = (previous or {}).get("financial") or prev_fin
+            changes_list = [
+                {
+                    "field": field,
+                    "old": previous_values.get(field),
+                    "new": values.get(field),
+                }
+                for field in (
+                    "revenue_growth",
+                    "net_profit_growth",
+                    "debt_ratio",
+                    "cash_flow",
+                )
+                if previous_values.get(field) != values.get(field)
+            ]
+            digest = canonical_hash(values)
+            evidence_id = canonical_hash(
+                {
+                    **key,
+                    "content_hash": digest,
+                    "previous_evidence_id": (previous or {}).get("_id"),
+                }
             )
-
-            if changed or not prev:
-                # Save updated snapshot with new financial data
-                from app.schemas import RiskCalculateResponse
-
-                old_detail = (prev.get("risk_detail") or {}) if prev else {}
-                response = RiskCalculateResponse(
-                    risk_score=prev.get("risk_score", 0) if prev else 0,
-                    risk_level=prev.get("risk_level", "未知") if prev else "未知",
-                    financial=financial,
-                    risk_detail=old_detail,
+            if changes_list or not previous:
+                collection.update_one(
+                    {"_id": evidence_id},
+                    {
+                        "$setOnInsert": {
+                            **key,
+                            "company_name": name,
+                            "financial": values,
+                            "content_hash": digest,
+                            "collected_at": datetime.now(timezone.utc),
+                            "source": "financial_refresh",
+                            "previous_evidence_id": (previous or {}).get("_id"),
+                            "previous_assessment_id": (prev or {}).get("assessment_id"),
+                        }
+                    },
+                    upsert=True,
                 )
-                save_snapshot(
-                    name,
-                    response,
-                    monitor_target_id=monitor_target_id,
-                    target_type=target.get("target_type"),
-                    supplier_id=target.get("supplier_id"),
-                    candidate_id=target.get("candidate_id"),
-                    company_id=target.get("company_id"),
-                )
+            if changes_list:
+                from app.domains.alert.rules import get_rules, evaluate_changes
 
-            changes = detect_changes(name, monitor_target_id=monitor_target_id)
+                labels = {
+                    "revenue_growth": "营收增长",
+                    "net_profit_growth": "净利润",
+                    "debt_ratio": "资产负债率",
+                    "cash_flow": "现金流",
+                }
+                rule_changes = [
+                    {**item, "field": labels[item["field"]]} for item in changes_list
+                ]
+                triggered = evaluate_changes(get_rules(name), rule_changes)
+                if triggered:
+                    severity = (
+                        "critical"
+                        if any(item["severity"] == "critical" for item in triggered)
+                        else "warning"
+                    )
+                    alert_id = "financial:" + evidence_id
+                    created = get_db()["alerts"].update_one(
+                        {"_id": alert_id},
+                        {
+                            "$setOnInsert": {
+                                **key,
+                                "company_name": name,
+                                "supplier_id": target.get("supplier_id"),
+                                "target_type": target.get("target_type"),
+                                "financial_evidence_id": evidence_id,
+                                "created_at": datetime.now(timezone.utc),
+                                "changes": triggered,
+                                "severity": severity,
+                                "read": False,
+                            }
+                        },
+                        upsert=True,
+                    )
+                    if created.upserted_id is not None:
+                        from app.domains.alert.notifier import notify_target_change
+
+                        notify_target_change(target, triggered, severity)
+            changes = {"changed": bool(changes_list), "changes": changes_list}
             if changes["changed"]:
                 logger.warning("Financial alert for %s: %s", name, changes["changes"])
-            results.append({
-                "company": name,
-                "changed": changes["changed"],
-                "changes": changes["changes"],
-            })
+            results.append(
+                {
+                    "company": name,
+                    "changed": changes["changed"],
+                    "changes": changes["changes"],
+                }
+            )
         except Exception as e:
             logger.error("Financial check failed for %s: %s", name, e)
             results.append({"company": name, "error": str(e)})
@@ -105,15 +172,27 @@ def run_refresh_all() -> dict:
         monitor_target_id = target.get("monitor_target_id")
         try:
             fetch_company(name)
-            assess_risk(RiskAssessRequest(company_name=name))
+            from app.domains.risk.assessment_contracts import assessment_scope
+
+            with assessment_scope(
+                actor_id=target.get("owner_user_id") or "system:scheduler",
+                monitor_target_id=monitor_target_id,
+                company_id=target.get("company_id"),
+                source="scheduler",
+            ):
+                assess_risk(RiskAssessRequest(company_name=name))
             changes = detect_changes(name, monitor_target_id=monitor_target_id)
             if changes["changed"]:
-                logger.warning("Full refresh alert for %s: %s", name, changes["changes"])
-            results.append({
-                "company": name,
-                "changed": changes["changed"],
-                "changes": changes["changes"],
-            })
+                logger.warning(
+                    "Full refresh alert for %s: %s", name, changes["changes"]
+                )
+            results.append(
+                {
+                    "company": name,
+                    "changed": changes["changed"],
+                    "changes": changes["changes"],
+                }
+            )
         except Exception as e:
             logger.error("Full refresh failed for %s: %s", name, e)
             results.append({"company": name, "error": str(e)})
@@ -131,21 +210,25 @@ def _scheduled_refresh() -> None:
 
 def _scheduled_digest() -> None:
     from app.services.feishu import send_daily_digest
+
     send_daily_digest()
 
 
 def _scheduled_notify() -> None:
     from app.domains.alert.notifier import check_and_notify
+
     check_and_notify()
 
 
 def _scheduled_sentiment() -> None:
     from app.domains.risk.sentiment import analyze_all_sentiment
+
     analyze_all_sentiment()
 
 
 def _scheduled_proactive() -> None:
     from app.services.proactive_agent import run_proactive_analysis
+
     run_proactive_analysis()
 
 
@@ -156,7 +239,9 @@ def _scheduled_outbox() -> None:
 def _scheduled_feishu_supplier_sync() -> None:
     try:
         from app.services.feishu_bitable import sync_supplier_tables
-        from app.services.feishu_supplier_responsibility import sync_supplier_responsibilities
+        from app.services.feishu_supplier_responsibility import (
+            sync_supplier_responsibilities,
+        )
 
         result = sync_supplier_tables()
         if result.get("tables", {}).get("supplier_master", {}).get("status") == "ok":
@@ -185,7 +270,11 @@ def start_scheduler() -> None:
     _add_job(_scheduled_notify, notify_cron, "alert_notify")
     _add_job(_scheduled_proactive, proactive_cron, "proactive_agent")
     if settings.FEISHU_BITABLE_ENABLED and not settings.DEMO_DATA_FREEZE:
-        _add_job(_scheduled_feishu_supplier_sync, settings.FEISHU_SUPPLIER_SYNC_CRON, "feishu_supplier_sync")
+        _add_job(
+            _scheduled_feishu_supplier_sync,
+            settings.FEISHU_SUPPLIER_SYNC_CRON,
+            "feishu_supplier_sync",
+        )
     _add_outbox_job()
 
     try:
@@ -195,7 +284,12 @@ def start_scheduler() -> None:
         raise
     logger.info(
         "Scheduler started: financial[%s] digest[%s] refresh[%s] sentiment[%s] notify[%s] proactive[%s]",
-        free_cron, digest_cron, paid_cron, sentiment_cron, notify_cron, proactive_cron,
+        free_cron,
+        digest_cron,
+        paid_cron,
+        sentiment_cron,
+        notify_cron,
+        proactive_cron,
     )
 
 

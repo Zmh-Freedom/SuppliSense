@@ -17,63 +17,22 @@ router = APIRouter(prefix="/trend", tags=["trend"], dependencies=[Depends(get_cu
 @router.get(
     "/risk/{company_name}",
     summary="企业风险评分趋势",
-    description="获取指定企业风险评分时间序列。优先从 PG 读取并按 scoring_version 过滤，确保新旧评分体系不混淆。",
+    description="获取指定企业风险评分时间序列。从 PG 读取当前操作者、企业主体、范围和最新政策的可比结果。",
     responses={500: {"description": "服务器内部错误"}},
 )
 async def risk_trend(
     company_name: str,
-    days: int = Query(90, description="查询天数（默认 90 天）"),
+    days: int = Query(90, ge=1, le=3650, description="查询天数"),
+    current_user=Depends(get_current_user),
 ):
-    """
-    风险评分趋势。
+    import asyncio
+    from app.domains.risk.assessment_service import comparable_trend
+    from app.domains.risk.assessment_policy import SCORING_VERSION
 
-    优先从 PG assessment_history 读取，按最新 scoring_version 过滤。
-    PG 不可用时回退到 MongoDB alert_snapshots。
-    """
-    from app.domains.risk.service import SCORING_VERSION
-
-    # 优先 PG
-    try:
-        from app.domains.risk.repo_assessment import get_trend as pg_get_trend
-
-        data = pg_get_trend(company_name, days=days, scoring_version=SCORING_VERSION)
-        if data:
-            return {
-                "company_name": company_name,
-                "days": days,
-                "scoring_version": SCORING_VERSION,
-                "source": "postgresql",
-                "data": data,
-            }
-    except Exception as e:
-        logger.warning("trend_pg_fallback", company=company_name, error=str(e))
-
-    # 回退 MongoDB
-    db = get_db()
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(
-            {"company_name": company_name, "checked_at": {"$gte": since}},
-            {"checked_at": 1, "risk_score": 1, "risk_level": 1, "_id": 0},
-        )
-        .sort("checked_at", 1)
-    )
-
-    return {
-        "company_name": company_name,
-        "days": days,
-        "scoring_version": "unknown",
-        "source": "mongodb",
-        "data": [
-            {
-                "date": s["checked_at"].strftime("%Y-%m-%d"),
-                "risk_score": s.get("risk_score", 0),
-                "risk_level": s.get("risk_level", ""),
-            }
-            for s in snapshots
-        ],
-    }
+    data = await asyncio.to_thread(comparable_trend, company_name, actor_id=current_user.id,
+        actor_role=current_user.role.value, days=days)
+    return {"company_name":company_name,"days":days,"scoring_version":SCORING_VERSION,
+        "source":"postgresql","data":data}
 
 
 @router.get(

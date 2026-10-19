@@ -249,47 +249,19 @@ def _to_iso(value: object) -> str | None:
 # ---- Risk ----
 
 def _build_risk_summary(company_name: str) -> dict | None:
-    """Build risk summary from assessment_history (PG) or alert_snapshots (Mongo)."""
-    from app.domains.risk.service import SCORING_VERSION
+    """Build a comparable PG trend within the authenticated actor's current scope."""
+    from app.domains.risk.assessment_contracts import get_assessment_context
+    from app.domains.risk.assessment_service import comparable_trend
 
-    trend_data: list[dict] = []
-    risk_score = 0
-    risk_level = "未知"
-    last_checked = None
-
-    # Prefer PostgreSQL
-    try:
-        from app.domains.risk.repo_assessment import get_trend as pg_get_trend
-
-        data = pg_get_trend(company_name, days=90, scoring_version=SCORING_VERSION)
-        if data:
-            trend_data = data
-    except Exception:
-        pass
-
-    # Fallback to MongoDB alert_snapshots
+    context=get_assessment_context()
+    if not context.get('actor_id'):
+        return None
+    trend_data=comparable_trend(company_name,actor_id=context['actor_id'],actor_role=context.get('actor_role',''))
     if not trend_data:
-        from app.db.mongo import get_db
-
-        db = get_db()
-        since = datetime.now(timezone.utc) - timedelta(days=90)
-        snapshots = list(
-            db["alert_snapshots"]
-            .find(
-                {"company_name": company_name, "checked_at": {"$gte": since}},
-                {"checked_at": 1, "risk_score": 1, "risk_level": 1, "_id": 0},
-            )
-            .sort("checked_at", 1)
-        )
-        trend_data = [
-            {
-                "date": s["checked_at"].strftime("%Y-%m-%d"),
-                "risk_score": s.get("risk_score", 0),
-                "risk_level": s.get("risk_level", ""),
-            }
-            for s in snapshots
-        ]
-
+        return None
+    risk_score=0
+    risk_level="未知"
+    last_checked=None
     if trend_data:
         latest = trend_data[-1]
         risk_score = latest.get("risk_score", 0)

@@ -70,6 +70,7 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
 
     monkeypatch.setattr(run_coordinator, "claim", lambda run_id, owner: ExecutionPermit(run_id, "attempt", 1))
     monkeypatch.setattr(run_coordinator, "check", lambda permit: None)
+    monkeypatch.setattr(run_coordinator, "recovery_record", lambda *_: {"execution_input": {}})
 
     def finish(permit, **kwargs):
         assert kwargs["snapshot"]["run_id"] == expected_run_id

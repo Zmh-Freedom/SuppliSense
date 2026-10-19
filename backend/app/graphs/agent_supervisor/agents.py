@@ -239,10 +239,19 @@ async def _run_risk(context: AgentTaskContext) -> AgentResult:
     company_names = _company_names(context)
     if not company_names:
         return AgentResult(agent="risk", status="needs_review", summary="缺少待评估供应商名称。")
-    risk_records = [
-        (name, await _provider_call(calculate_company_risk_preview, name))
-        for name in company_names
-    ]
+    from app.domains.risk.assessment_contracts import get_assessment_context
+    assessment_context = get_assessment_context()
+    if assessment_context.get("actor_id"):
+        from app.domains.risk.assessment_service import monitor_assessment
+        risk_records = [
+            (name, await _provider_call(monitor_assessment, name))
+            for name in company_names
+        ]
+    else:
+        risk_records = [
+            (name, await _provider_call(calculate_company_risk_preview, name))
+            for name in company_names
+        ]
     evidence = [
         item for name, risk_info in risk_records
         for item in _risk_evidence(name, risk_info, target_fields=_target_fields(context, name))
@@ -492,7 +501,10 @@ async def run_agent_task(task: PlannerTask, state: AgentTaskState) -> AgentResul
 
     for attempts in (1, 2):
         try:
-            result = await handler(context)
+            from app.domains.risk.assessment_contracts import assessment_scope
+            with assessment_scope(actor_id=state.get("user_id"),run_id=state.get("run_id"),
+                    task_id=task.task_id,source="managed_supervisor"):
+                result = await handler(context)
             return result.model_copy(update={
                 "metrics": AgentMetrics(
                     duration_ms=round((time.monotonic() - started_at) * 1000),

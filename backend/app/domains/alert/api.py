@@ -43,7 +43,13 @@ from app.domains.alert.service import (
 )
 from app.services.scheduler import run_financial_check, run_refresh_all
 
-router = APIRouter(dependencies=[Depends(get_current_user)])
+async def _assessment_request_scope(user: UserInDB = Depends(get_current_user)):
+    from app.domains.risk.assessment_contracts import assessment_scope
+    with assessment_scope(actor_id=user.id,actor_role=user.role.value):
+        yield
+
+
+router = APIRouter(dependencies=[Depends(_assessment_request_scope)])
 
 
 async def _require_alert_audit(
@@ -206,7 +212,7 @@ async def alert_snapshots(
     company_name: str = Query(..., min_length=1, description="企业名称"),
     limit: int = Query(20, ge=1, le=100, description="最大返回数"),
 ):
-    snapshots = get_snapshot_history(company_name.strip(), limit=limit)
+    snapshots = await asyncio.to_thread(get_snapshot_history, company_name.strip(), limit=limit)
     serialized = []
     for snapshot in snapshots:
         item = dict(snapshot)

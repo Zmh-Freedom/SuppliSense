@@ -201,26 +201,37 @@ def _find_watchlist_target(
     return target
 
 
+def _legacy_snapshot_query(db, company_name: str) -> dict | None:
+    count = db["watchlist"].count_documents({"company_name": company_name})
+    if not isinstance(count, int) or count > 1:
+        return None
+    return {"company_name": company_name, "monitor_target_id": None, "company_id": None, "assessment_id": None}
+
+
+def _comparable_snapshots(first: dict, second: dict) -> bool:
+    return all(first.get(key) == second.get(key) for key in
+        ("company_id", "monitor_target_id", "actor_id", "assessment_scope_key", "policy_hash", "scoring_version"))
+
+
 def _target_snapshots(db: object, target: dict, limit: int = 2) -> list[dict]:
-    """Load the latest snapshots for one monitor target without mixing identities."""
+    """Latest comparable observations; legacy names are only used without ambiguity."""
     target_id = target.get("monitor_target_id")
     company_name = target.get("company_name")
-    query = {"monitor_target_id": target_id} if target_id else {"company_name": company_name}
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(query)
-        .sort([("checked_at", -1), ("snapshot_version", -1)])
-        .limit(limit)
-    )
-    if not snapshots and target_id and company_name:
-        # Compatibility only for snapshots written before monitor_target_id existed.
-        snapshots = list(
-            db["alert_snapshots"]
-            .find({"company_name": company_name})
-            .sort([("checked_at", -1), ("snapshot_version", -1)])
-            .limit(limit)
-        )
-    return [snapshot for snapshot in snapshots if isinstance(snapshot, dict)]
+    from app.domains.risk.assessment_contracts import get_assessment_context
+    context = get_assessment_context()
+    if context.get('actor_id'):
+        snapshots = get_snapshot_history(company_name,100,monitor_target_id=target_id)
+        return [item for item in snapshots if _comparable_snapshots(snapshots[0],item)][:limit] if snapshots else []
+    query = {"monitor_target_id": target_id} if target_id else _legacy_snapshot_query(db, company_name)
+    if query is None:
+        return []
+    snapshots = list(db["alert_snapshots"].find(query).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(100))
+    if not snapshots and target_id:
+        legacy = _legacy_snapshot_query(db, company_name)
+        if legacy:
+            snapshots = list(db["alert_snapshots"].find(legacy).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(100))
+    snapshots = [item for item in snapshots if isinstance(item, dict)]
+    return [item for item in snapshots if _comparable_snapshots(snapshots[0], item)][:limit] if snapshots else []
 
 
 def _has_transaction_data(db: object, target: dict) -> bool:
@@ -467,7 +478,8 @@ def save_snapshot(
     candidate_id: str | None = None,
     company_id: str | None = None,
 ) -> None:
-    from app.domains.risk.service import SCORING_VERSION
+    # Historical import compatibility only; active assessment entries use the PG ledger.
+    SCORING_VERSION = "v3_safety_score"
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
@@ -505,6 +517,8 @@ def save_snapshot(
     snapshot_version = previous_version + 1 if isinstance(previous_version, int) else 1
     snapshot_id = str(uuid.uuid4())
     doc = {
+        "verification_status": "legacy_unverified",
+        "quality": "legacy_unverified",
         "snapshot_id": snapshot_id,
         "snapshot_version": snapshot_version,
         "previous_snapshot_id": previous_snapshot_id,
@@ -534,40 +548,29 @@ def get_snapshot_history(
 ) -> list[dict]:
     """Return append-only risk assessment snapshots for audit and monitoring review."""
     bounded_limit = max(1, min(limit, 100))
+    from app.domains.risk.assessment_contracts import get_assessment_context
+    from app.domains.risk.assessment_service import legacy_snapshot_history
+    context = get_assessment_context()
+    if context.get('actor_id'):
+        rows = legacy_snapshot_history(company_name,actor_id=context['actor_id'],actor_role=context.get('actor_role',''),
+            monitor_target_id=monitor_target_id,limit=bounded_limit)
+        if rows:
+            return rows
     db = get_db()
-    query = _target_query(monitor_target_id=monitor_target_id, company_name=company_name)
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(query)
-        .sort([("snapshot_version", -1), ("checked_at", -1)])
-        .limit(bounded_limit)
-    )
+    query = {"monitor_target_id": monitor_target_id} if monitor_target_id else _legacy_snapshot_query(db, company_name)
+    if query is None:
+        return []
+    snapshots = list(db["alert_snapshots"].find(query).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(bounded_limit))
     if not snapshots and monitor_target_id:
-        return list(
-            db["alert_snapshots"]
-            .find({"company_name": company_name})
-            .sort([("snapshot_version", -1), ("checked_at", -1)])
-            .limit(bounded_limit)
-        )
+        legacy = _legacy_snapshot_query(db, company_name)
+        if legacy:
+            return list(db["alert_snapshots"].find(legacy).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(bounded_limit))
     return snapshots
 
 
-def get_latest_snapshot(
-    company_name: str,
-    *,
-    monitor_target_id: str | None = None,
-) -> dict | None:
-    db = get_db()
-    snapshot = db["alert_snapshots"].find_one(
-        _target_query(monitor_target_id=monitor_target_id, company_name=company_name),
-        sort=[("checked_at", -1)],
-    )
-    if snapshot is None and monitor_target_id and company_name:
-        # Legacy snapshots predate monitor_target_id; keep them readable during migration.
-        return db["alert_snapshots"].find_one(
-            {"company_name": company_name}, sort=[("checked_at", -1)]
-        )
-    return snapshot
+def get_latest_snapshot(company_name: str, *, monitor_target_id: str | None = None) -> dict | None:
+    snapshots = _target_snapshots(get_db(), {"monitor_target_id": monitor_target_id, "company_name": company_name}, 1)
+    return snapshots[0] if snapshots else None
 
 
 def detect_changes(
@@ -578,19 +581,7 @@ def detect_changes(
 ) -> dict:
     """Compare latest snapshot with second-latest, return changes."""
     db = get_db()
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(_target_query(monitor_target_id=monitor_target_id, company_name=company_name))
-        .sort("checked_at", -1)
-        .limit(2)
-    )
-    if len(snapshots) < 2 and monitor_target_id:
-        snapshots = list(
-            db["alert_snapshots"]
-            .find({"company_name": company_name})
-            .sort("checked_at", -1)
-            .limit(2)
-        )
+    snapshots = _target_snapshots(db, {"company_name": company_name, "monitor_target_id": monitor_target_id}, 2)
     if len(snapshots) < 2:
         return {
             "company_name": company_name,

@@ -300,6 +300,9 @@ api_v1.include_router(notifications_router)
 api_v1.include_router(agent_run_router)
 api_v1.include_router(agent_rollout_router)
 
+from app.domains.risk.assessment_api import router as assessment_router
+
+app.include_router(assessment_router)
 app.include_router(api_v1)
 app.include_router(health_router)
 

@@ -10,8 +10,12 @@ from typing import Any, Iterator
 from uuid import UUID
 
 
-EVIDENCE_STATES = frozenset({"available", "empty", "unavailable", "stale", "conflicting", "not_requested"})
-_assessment_context: ContextVar[dict[str, Any] | None] = ContextVar("assessment_context", default=None)
+EVIDENCE_STATES = frozenset(
+    {"available", "empty", "unavailable", "stale", "conflicting", "not_requested"}
+)
+_assessment_context: ContextVar[dict[str, Any] | None] = ContextVar(
+    "assessment_context", default=None
+)
 
 
 def _json_default(value: Any) -> str:
@@ -25,7 +29,14 @@ def _json_default(value: Any) -> str:
 
 
 def canonical_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False, default=_json_default)
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=_json_default,
+    )
 
 
 def canonical_hash(value: Any) -> str:
@@ -56,13 +67,28 @@ def validate_manifest(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not entry.get("evidence_id") or entry["evidence_id"] in seen:
             raise ValueError("证据 ID 缺失或重复")
         seen.add(entry["evidence_id"])
-        if entry.get("status") not in EVIDENCE_STATES or not entry.get("dimension") or not entry.get("source"):
+        if (
+            entry.get("status") not in EVIDENCE_STATES
+            or not entry.get("dimension")
+            or not entry.get("source")
+        ):
             raise ValueError("证据来源、维度或状态无效")
         if entry["status"] == "empty":
             receipt = entry.get("query_receipt") or {}
             if receipt.get("status") != "success" or receipt.get("record_count") != 0:
                 raise ValueError("空结果必须具备成功查询回执")
         if entry["status"] in {"available", "empty"}:
-            if not entry.get("raw_payload_ref") or len(str(entry.get("content_hash") or "")) != 64 or not entry.get("collected_at"):
+            if (
+                not entry.get("raw_payload_ref")
+                or len(str(entry.get("content_hash") or "")) != 64
+                or not entry.get("collected_at")
+            ):
                 raise ValueError("可用证据必须绑定原文引用、哈希与采集时间")
     return result
+
+
+def identity_hash(identity: dict) -> str:
+    """Display labels are frozen metadata, never business identity."""
+    return canonical_hash(
+        {key: value for key, value in identity.items() if key != "company_name"}
+    )

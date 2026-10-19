@@ -171,35 +171,19 @@ def analyze_trend(company_name: str, period_months: int = 6) -> dict:
         company_name: 企业全称
         period_months: 分析周期（月），默认 6
     """
-    from datetime import datetime, timedelta, timezone
-    from app.db.mongo import get_db
+    from app.tools.executor import get_active_tool_context
+    from app.domains.risk.assessment_service import comparable_trend, _actor
 
-    db = get_db()
-    days = period_months * 30
-    since = datetime.now(timezone.utc) - timedelta(days=days)
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(
-            {"company_name": company_name, "checked_at": {"$gte": since}},
-            {"checked_at": 1, "risk_score": 1, "risk_level": 1, "_id": 0},
-        )
-        .sort("checked_at", 1)
-    )
+    context = get_active_tool_context()
+    if not context or not context.user_id:
+        return {"status":"unavailable","error":"缺少当前操作者，无法查询范围内趋势"}
+    actor,role = _actor(context.user_id,None)
+    data = comparable_trend(company_name,actor_id=actor,actor_role=role,days=period_months*30)
 
-    data = [
-        {"date": s["checked_at"].strftime("%Y-%m-%d"), "risk_score": s.get("risk_score", 0), "risk_level": s.get("risk_level", "")}
-        for s in snapshots
-    ]
-
-    trend = "稳定"
+    trend = "数据不足"
     if len(data) >= 2:
-        first_score = data[0]["risk_score"]
-        last_score = data[-1]["risk_score"]
-        delta = last_score - first_score
-        if delta > 10:
-            trend = "恶化"
-        elif delta < -10:
-            trend = "改善"
+        delta = data[-1]["risk_score"] - data[0]["risk_score"]
+        trend = "改善" if delta > 10 else "恶化" if delta < -10 else "稳定"
 
     from app.tools.evidence import attach_tool_evidence
 

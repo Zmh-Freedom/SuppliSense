@@ -1,4 +1,5 @@
 """Immutable assessment identity, policy and evidence contracts."""
+
 from copy import deepcopy
 from uuid import uuid4
 
@@ -24,7 +25,18 @@ def test_policy_hash_changes_when_missing_policy_or_thresholds_change():
 
 
 def test_empty_evidence_requires_a_successful_query_receipt():
-    entry = {"evidence_id": "empty", "dimension": "judicial", "status": "empty", "source": "provider", "content_hash": "a" * 64, "raw_payload_ref": "payload:empty", "collected_at": "2026-10-19T00:00:00+00:00", "observed_at": None}
+    entry = {
+        "evidence_id": "empty",
+        "dimension": "judicial",
+        "status": "empty",
+        "source": "provider",
+        "content_hash": "a" * 64,
+        "raw_payload_ref": "payload:empty",
+        "collected_at": "2026-10-19T00:00:00+00:00",
+        "observed_at": None,
+    }
     with pytest.raises(ValueError, match="回执"):
         validate_manifest([entry])
-    assert validate_manifest([{**entry, "query_receipt": {"status": "success", "record_count": 0}}])
+    assert validate_manifest(
+        [{**entry, "query_receipt": {"status": "success", "record_count": 0}}]
+    )

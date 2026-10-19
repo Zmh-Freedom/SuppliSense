@@ -9,13 +9,22 @@ def assess_risk(company_name: str) -> dict:
     Args:
         company_name: 企业全称
     """
-    from app.schemas import RiskAssessRequest
-    from app.domains.risk.service import assess_risk as _assess
-    result = _assess(RiskAssessRequest(company_name=company_name))
+    from app.domains.risk.assessment_contracts import assessment_scope
+    from app.domains.risk.assessment_service import assess_company, legacy_response
+    from app.tools.executor import get_active_tool_context
+
+    context = get_active_tool_context()
+    with assessment_scope(actor_id=context.user_id if context else None,
+            run_id=context.run_id if context else None,
+            task_id=context.task_id if context else None,
+            monitor_target_id=context.monitor_target_id if context else None,
+            source="harness_tool", tool_version="2"):
+        assessment = assess_company(company_name)
+    result = legacy_response(assessment)
     from app.tools.evidence import attach_tool_evidence
 
     return attach_tool_evidence(
-        result.model_dump(),
+        {**result.model_dump(), "status": "partial" if assessment["quality"] == "partial" else "success", "assessment_id": assessment["id"], "policy_hash": assessment["policy_hash"]},
         tool_name="assess_risk",
         entity_id=f"entity:{company_name}",
         dimension="risk",

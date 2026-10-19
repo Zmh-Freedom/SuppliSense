@@ -30,6 +30,7 @@ class ToolContext(BaseModel):
     call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str | None = None
     run_id: str | None = None
+    task_id: str | None = None
     user_id: str | None = None
     approval_token: str | None = None
     approval_proposal_id: str | None = None

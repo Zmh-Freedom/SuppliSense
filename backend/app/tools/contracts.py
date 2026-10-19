@@ -81,6 +81,8 @@ class TianyanchaProfileOutput(StrictToolOutput):
 
 
 class RiskAssessmentOutput(StrictToolOutput):
+    assessment_id: str | None = None
+    policy_hash: str | None = None
     risk_score: int | float | None = None
     risk_level: str | None = None
     financial: dict[str, Any] | None = None

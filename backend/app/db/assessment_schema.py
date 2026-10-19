@@ -54,4 +54,8 @@ ASSESSMENT_DDL = [
         actor_id TEXT NOT NULL, reason TEXT NOT NULL, decision TEXT NOT NULL,
         idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, receipt JSONB,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(assessment_id,actor_id,idempotency_key))""",
+    """CREATE TABLE IF NOT EXISTS assessment_task_results (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        logical_key TEXT NOT NULL, assessment_id UUID NOT NULL REFERENCES assessment_history(id) ON DELETE CASCADE,
+        receipt JSONB NOT NULL, PRIMARY KEY(run_id,logical_key))""",
 ]

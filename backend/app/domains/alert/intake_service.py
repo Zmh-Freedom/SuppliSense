@@ -329,8 +329,8 @@ def confirm_monitor_intake(intake_id: str, user_id: str, user_role: str | None =
     if not candidate.get("company_id") and candidate.get("candidate_type") == "external_identity":
         raise ValueError("天眼查外部资料尚未绑定本地主体，请先完成主体核验")
 
-    from app.domains.alert.service import add_to_watchlist, get_watchlist_target_summaries, save_snapshot
-    from app.domains.risk.service import calculate_company_risk_preview
+    from app.domains.alert.service import add_to_watchlist, get_watchlist_target_summaries
+    from app.domains.risk.assessment_service import monitor_assessment
 
     target = add_to_watchlist(
         candidate.get("legal_name"),
@@ -344,10 +344,9 @@ def confirm_monitor_intake(intake_id: str, user_id: str, user_role: str | None =
     )
     baseline_status = "not_available"
     try:
-        preview = calculate_company_risk_preview(target["company_name"])
-        if preview is not None:
-            save_snapshot(target["company_name"], preview, monitor_target_id=target["monitor_target_id"], target_type=target.get("target_type"), supplier_id=target.get("supplier_id"), company_id=target.get("company_id"))
-            baseline_status = "created"
+        monitor_assessment(target["company_name"], monitor_target_id=target["monitor_target_id"],
+            company_id=target.get("company_id"),actor_id=user_id,request_key="intake:"+intake_id)
+        baseline_status = "created"
     except Exception:
         baseline_status = "partial"
     summary = next((item for item in get_watchlist_target_summaries(user_id, "purchaser") if item.get("monitor_target_id") == target["monitor_target_id"]), target)

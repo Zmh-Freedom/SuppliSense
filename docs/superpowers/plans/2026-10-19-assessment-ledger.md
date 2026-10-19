@@ -50,20 +50,20 @@
 
 ## Task 2：冻结证据与真实可用性计算（2B）
 
-- [ ] 测试：soft LLM 失败/缺失维度、查询失败不能当 empty、单项覆盖率、冻结后来源/政策变化、完全无证据时旧端点明确失败；观察 RED。
-- [ ] 收集请求范围内的原始材料、读取回执与来源时间，内容寻址且带 assessment 所有权；复用 staging/compensation。
-- [ ] v3 风险扣分算法消费冻结 request、recent_lawsuits 和 soft 结果，政策控制权重/归一化/阈值/缺失与等级，不在计算中再次查询外部数据。
-- [ ] 缺失维度不计作安全满分；有效硬证据不足为 unavailable，其他结果明确 complete/partial。
-- [ ] 新政策版本隔离旧评分；完成纯离线回归，提交。
+- [x] 测试：soft LLM 失败/缺失维度、查询失败不能当 empty、单项覆盖率、冻结后来源/政策变化、完全无证据时旧端点明确失败；观察 RED。
+- [x] 收集请求范围内的原始材料、读取回执与来源时间，内容寻址且带 assessment 所有权；复用 staging/compensation。
+- [x] v3 风险扣分算法消费冻结 request、recent_lawsuits 和 soft 结果，政策控制权重/归一化/阈值/缺失与等级，不在计算中再次查询外部数据。
+- [x] 缺失维度不计作安全满分；有效硬证据不足为 unavailable，其他结果明确 complete/partial。
+- [x] 新政策版本隔离旧评分；完成纯离线回归，提交。
 
 ## Task 3：跨入口结果与 Outbox（2C）
 
-- [ ] 测试：PG 回滚无结果/Outbox；PG 成功 Mongo 失败可重放；同 ID 一条快照、版本/前驱唯一、已完成 Run 工具恢复复用业务回执；观察 RED。
-- [ ] API/工具/监控写入口建立同一操作者和逻辑评估键，开始后再采集；Harness 透传稳定 task_id，并将实际 permit 传播到同步工具事务。
-- [ ] freeze 后计算结果、任务业务关联、Outbox 在同一 PG 事务；Run 最终事件继续通过阶段 1 的 Coordinator 统一提交。
-- [ ] Mongo 按 assessment ID upsert；PG 结果与展示同步状态分开，原始载荷生命周期可重放/补偿。
-- [ ] 财务更新只保存独立财务证据，保留原综合评估 ID、分数和计算时间。
-- [ ] 真实 PG/Mongo 故障窗口与当前 Harness/审批回归通过，提交。
+- [x] 测试：PG 回滚无结果/Outbox；PG 成功 Mongo 失败可重放；同 ID 一条快照、版本/前驱唯一、已完成 Run 工具恢复复用业务回执；观察 RED。
+- [x] API/工具/监控写入口建立同一操作者和逻辑评估键，开始后再采集；Harness 透传稳定 task_id，并将实际 permit 传播到同步工具事务。
+- [x] freeze 后计算结果、任务业务关联、Outbox 在同一 PG 事务；Run 最终事件继续通过阶段 1 的 Coordinator 统一提交。
+- [x] Mongo 按 assessment ID upsert；PG 结果与展示同步状态分开，原始载荷生命周期可重放/补偿。
+- [x] 财务更新只保存独立财务证据，保留原综合评估 ID、分数和计算时间。
+- [x] 真实 PG/Mongo 故障窗口与当前 Harness/审批回归通过，提交。
 
 ## Task 4：查询、趋势、复核、迁移及门禁（2D）
 
@@ -79,3 +79,7 @@
 - 沿用已验收总设计；本计划细化第二阶段的实现位置与验证，不改变既定产品范围。
 - Task 1 已完成身份/政策/冻结与事务基础。服务器隔离库首轮 12 passed（9 个真实 PG 用例）；追加结果/Outbox 原子性回归随本批验证。Task 2–4 持续推进，不将基础提交声明为第二阶段完成。
 - Task 1 最终基础门禁：`PG_DB=assessment_stage2_test MONGO_DB=assessment_stage2_test ... pytest tests/test_assessment_ledger.py tests/test_assessment_ledger_integration.py`，14 passed；包含结果/Outbox 原子提交、回滚及不可覆盖。测试库位于已约定服务器。
+
+- Task 2/3 已实现：冻结评分、真实数据状态、统一入口、任务业务回执和 Outbox、载荷补偿及财务独立证据。当前专用真实库 gate 39 passed（20 个 PG/Mongo 用例），追加缺失维度事实输出回归 20 passed（含既有算法）；最终全量门禁及一次 fresh-context 审查在执行中。
+- Ruling: 同名主体无法通过名称缓存证明证据归属时拒绝采集，不伪造 company_id 关联；代价是需补齐稳定来源身份。
+- Ruling: 未冻结且失联的采集保留原 ID 并转 needs_review，补偿登记载荷；新材料创建关联新评估。代价是一次显式重建，避免覆盖不可核对的中间状态。

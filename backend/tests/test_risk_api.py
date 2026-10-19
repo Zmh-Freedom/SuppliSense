@@ -12,6 +12,7 @@ from app.schemas import RiskAssessRequest, RiskCalculateResponse
 
 
 def test_uncached_risk_assessment_audits_pydantic_response(monkeypatch):
+    monkeypatch.setattr(api_risk, "cached_assessment", lambda *_args, **_kwargs: None)
     db = MagicMock()
     db["alert_snapshots"].find_one.return_value = None
     monkeypatch.setattr("app.db.mongo.get_db", lambda: db)
@@ -57,6 +58,7 @@ def test_uncached_risk_assessment_audits_pydantic_response(monkeypatch):
 def test_uncached_risk_assessment_stops_when_required_audit_fails(monkeypatch):
     from app.domains.auth.audit import AuditUnavailable
 
+    monkeypatch.setattr(api_risk, "cached_assessment", lambda *_args, **_kwargs: None)
     db = MagicMock()
     db["alert_snapshots"].find_one.return_value = None
     monkeypatch.setattr("app.db.mongo.get_db", lambda: db)

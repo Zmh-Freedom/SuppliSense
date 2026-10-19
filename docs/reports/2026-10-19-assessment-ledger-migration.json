@@ -1,0 +1,26 @@
+{
+  "generated_at": "2026-10-19T08:44:46.742812+00:00",
+  "postgres": {
+    "total": 167,
+    "legacy_unverified": 167,
+    "committed": 0,
+    "missing_company_id": 167,
+    "missing_policy": 167,
+    "missing_input_digest": 167,
+    "ambiguous_company_name_groups": 0
+  },
+  "mongo": {
+    "total": 172,
+    "without_assessment_id": 172,
+    "without_company_id": 167
+  },
+  "writes_performed": 0,
+  "historical_uuid_preserved": true,
+  "backfill_policy": "Only source-proven identities may be backfilled separately; unknown historical evidence remains legacy_unverified.",
+  "schema_migration": {
+    "kind": "additive_only",
+    "statements": 37,
+    "development_database": "sra",
+    "business_backfill_rows": 0
+  }
+}

@@ -1640,6 +1640,7 @@ def build_harness_graph(
                 if control:
                     await control()
                 context = ToolContext(
+                    task_id=task.task_id,
                     session_id=state["session_id"],
                     run_id=state["run_id"],
                     user_id=state.get("user_id"),

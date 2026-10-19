@@ -8,6 +8,8 @@ from app.domains.auth.audit import AuditUnavailable, log_action
 from app.schemas.user import UserInDB
 from app.schemas import RiskCalculateRequest, RiskCalculateResponse, RiskAssessRequest
 from app.domains.risk.service import assess_risk, calculate_risk
+from app.domains.risk.assessment_contracts import assessment_scope
+from app.domains.risk.assessment_service import cached_assessment, legacy_response
 
 logger = get_logger(__name__)
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -43,11 +45,12 @@ async def rebuild_scores(http_request: Request, current_user=Depends(get_current
     return await asyncio.to_thread(rebuild_all_supplier_scores)
 
 
-def _refresh_assessment(company_name: str) -> None:
+def _refresh_assessment(company_name: str, actor_id: str | None = None, request_key: str | None = None) -> None:
     """Background task: re-assess risk and save snapshot."""
     try:
         from app.schemas import RiskAssessRequest
-        assess_risk(RiskAssessRequest(company_name=company_name))
+        with assessment_scope(actor_id=actor_id, source="risk_api_refresh", request_key=request_key):
+            assess_risk(RiskAssessRequest(company_name=company_name))
     except Exception as e:
         logger.warning("background_refresh_failed", company=company_name, error=str(e))
 
@@ -96,60 +99,32 @@ async def risk_assess(
     current_user: UserInDB = Depends(get_current_user),
 ):
     from datetime import datetime, timedelta, timezone
-    from app.db.mongo import get_db
-
-    db = get_db()
-    recent = db["alert_snapshots"].find_one(
-        {"company_name": request.company_name},
-        sort=[("checked_at", -1)],
-    )
-
-    if recent and recent.get("checked_at"):
-        checked = recent["checked_at"]
-        if isinstance(checked, str):
-            checked = datetime.fromisoformat(checked.replace("Z", "+00:00"))
-        age = datetime.now(timezone.utc) - checked.replace(tzinfo=timezone.utc) if checked.tzinfo is None else datetime.now(timezone.utc) - checked
-        age_hours = round(age.total_seconds() / 3600, 1)
-
-        is_listed = False
-        base = db["baseinfo"].find_one({"name": request.company_name}, {"items.result.bondNum": 1, "items.result.bondName": 1})
-        if base:
-            r = base.get("items", {}).get("result", {})
-            is_listed = bool(r.get("bondNum") or r.get("bondName"))
-
-        resp = {
-            "risk_score": recent.get("risk_score", 0),
-            "risk_level": recent.get("risk_level", "未知"),
-            "financial": recent.get("financial"),
-            "risk_detail": recent.get("risk_detail"),
-            "cached_at": checked.isoformat(),
-            "cache_age_hours": age_hours,
-            "is_stale": age_hours >= 2,
-            "is_listed": is_listed,
-        }
-
-        # Fresh cache, no force: return immediately
-        if age < timedelta(hours=2) and not request.force_refresh:
-            return resp
-
-        # Stale or force_refresh: return cached data, refresh in background
-        if request.force_refresh or age >= timedelta(hours=2):
-            await _require_risk_audit(
-                "assess_risk_refresh_requested", http_request, current_user.id, request.company_name
-            )
-            background_tasks.add_task(_refresh_assessment, request.company_name)
-            return resp
+    role = str(getattr(getattr(current_user, "role", ""), "value", getattr(current_user, "role", "")))
+    recent = await asyncio.to_thread(cached_assessment, request.company_name,
+        actor_id=current_user.id, actor_role=role)
+    if recent:
+        response = legacy_response(recent)
+        checked = datetime.fromisoformat(response.cached_at)
+        age = datetime.now(timezone.utc) - checked
+        response.cache_age_hours = round(age.total_seconds() / 3600, 1)
+        response.is_stale = age >= timedelta(hours=2)
+        if request.force_refresh or response.is_stale:
+            await _require_risk_audit("assess_risk_refresh_requested", http_request, current_user.id, request.company_name)
+            background_tasks.add_task(_refresh_assessment, request.company_name, current_user.id, http_request.headers.get("idempotency-key"))
+        return response
 
     # No cache at all — must compute synchronously
     await _require_risk_audit(
         "assess_risk_requested", http_request, current_user.id, request.company_name
     )
     try:
-        fresh = await asyncio.wait_for(
-            asyncio.to_thread(assess_risk, request),
-            timeout=RISK_TIMEOUT_SECONDS,
-        )
-        fresh.cached_at = datetime.now(timezone.utc).isoformat()
+        with assessment_scope(actor_id=current_user.id, source="risk_api",
+                request_key=http_request.headers.get("idempotency-key")):
+            fresh = await asyncio.wait_for(
+                asyncio.to_thread(assess_risk, request),
+                timeout=RISK_TIMEOUT_SECONDS,
+            )
+        fresh.cached_at = fresh.cached_at or datetime.now(timezone.utc).isoformat()
         fresh.cache_age_hours = 0
         fresh.is_stale = False
 

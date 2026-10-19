@@ -269,3 +269,8 @@ register_consumer(V2_ACTION_EVENT_TYPE, V2_ACTION_CONSUMER_NAME, execute_sourcin
 from app.domains.agent_run.projection import project_chat_completion
 
 register_consumer("agent.chat.completed", "chat_display", project_chat_completion)
+
+from app.domains.risk.assessment_projection import project_assessment, reconcile_assessment_payloads
+
+register_consumer("risk.assessment.committed", "assessment_display", project_assessment)
+register_consumer("risk.assessment.reconcile", "assessment_payload_reconcile", reconcile_assessment_payloads)

@@ -129,9 +129,17 @@ jobs:
           connection.autocommit = True
           with connection.cursor() as cursor:
               cursor.execute('CREATE DATABASE run_lifecycle_test')
+              cursor.execute('CREATE DATABASE assessment_stage2_test')
           connection.close()
           PY
           PG_DB=run_lifecycle_test MONGO_DB=run_lifecycle_test python -m pytest -q tests/test_run_coordinator.py tests/test_run_coordinator_integration.py tests/test_harness_execution_control.py tests/test_harness_managed_runner.py tests/test_checkpoint_recovery.py tests/test_supervisor_lifecycle_integration.py
+
+      - name: Run isolated frozen assessment and projection gate
+        run: >-
+          PG_DB=assessment_stage2_test MONGO_DB=assessment_stage2_test
+          python -m pytest -q tests/test_assessment_ledger.py tests/test_assessment_scoring.py
+          tests/test_assessment_evidence.py tests/test_assessment_boundaries.py
+          tests/test_assessment_ledger_integration.py tests/test_assessment_api.py
 
       - name: Upload backend coverage
         uses: actions/upload-artifact@v4
