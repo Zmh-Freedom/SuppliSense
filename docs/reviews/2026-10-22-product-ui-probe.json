@@ -1,0 +1,23 @@
+{
+  "mode": "isolated production display function; not browser E2E",
+  "rows": [
+    {
+      "dimension": "quality",
+      "score": 4.8,
+      "serviceLevel": "low",
+      "displayed": {
+        "label": "高风险信号",
+        "className": "border-red-200 bg-red-50 text-red-700"
+      }
+    },
+    {
+      "dimension": "delivery",
+      "score": 90,
+      "serviceLevel": "high",
+      "displayed": {
+        "label": "风险较低",
+        "className": "border-emerald-200 bg-emerald-50 text-emerald-700"
+      }
+    }
+  ]
+}
