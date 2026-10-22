@@ -213,6 +213,11 @@ def test_watchlist_delivery_accepts_full_domain_target_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The production tool contract must preserve the complete monitor target receipt."""
+    # The receipt test replaces the write service; isolate the upstream membership
+    # query as well so ToolExecutor never contacts shared supplier data.
+    monkeypatch.setattr("app.domains.supplier.access.formal_supplier_id_by_name", lambda _name: None)
+    monkeypatch.setattr("app.domains.alert.service._find_watchlist_target", lambda **_kwargs: None)
+    monkeypatch.setattr("app.domains.risk.assessment_service.monitor_assessment", lambda *_args, **_kwargs: None)
     from app.tools import TOOL_REGISTRY
 
     monkeypatch.setattr(action_service.settings, "SECRET_KEY", "test-secret")

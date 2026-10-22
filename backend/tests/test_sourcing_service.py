@@ -16,6 +16,12 @@ from app.domains.sourcing.service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def gaishi_source_boundary(monkeypatch):
+    """Tests opt into Gaishi candidates explicitly; default is no external source."""
+    monkeypatch.setattr("app.domains.sourcing.service._stage_gaishi_candidates", lambda _request, _id: [])
+
+
 def test_batch_assess_risk_does_not_rank_when_snapshot_query_fails(monkeypatch) -> None:
     db = {"alert_snapshots": MagicMock()}
     db["alert_snapshots"].aggregate.side_effect = RuntimeError("mongo unavailable")
@@ -272,6 +278,7 @@ def test_search_internal_history_candidates_groups_multiple_bases_by_supplier(mo
 
 
 def test_search_suppliers_uses_feishu_snapshot_candidate_details(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing.service._search_internal_history_candidates", lambda _request: [])
     monkeypatch.setattr(
         "app.domains.sourcing.service.get_request",
         lambda _request_id: {"category": "工业相机", "spec": "4K"},

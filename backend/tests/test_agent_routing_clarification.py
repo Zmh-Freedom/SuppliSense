@@ -7,9 +7,17 @@ import json
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from app.api import chat as chat_api
 from app.graphs.router import Intent, IntentRouter
 from app.services.clarification import detect_clarification_needed
+
+
+@pytest.fixture(autouse=True)
+def formal_membership_boundary(monkeypatch):
+    """These routing fixtures are formal targets; identity lookup is not under test."""
+    monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _name: True)
 
 
 def _collect_events(response) -> list[str]:

@@ -49,7 +49,7 @@ const SUMMARY_ROUTES: Array<{ capability: AnswerCapability; phrases: string[] }>
   { capability: 'identity', phrases: ['主体核验', '主体身份', '统一社会信用代码', '登记状态'] },
   { capability: 'profile', phrases: ['工商资料', '企业基本资料', '注册地址', '法定代表人'] },
   { capability: 'comparison', phrases: ['供应商对比', '企业对比', '横向对比', '对比分析'] },
-  { capability: 'quality', phrases: ['质量风险', '质量评估', '质量分析'] },
+  { capability: 'quality', phrases: ['质量风险', '质量评估', '质量分析', '质量/交付查询', '质量/交付指标'] },
   { capability: 'delivery', phrases: ['交付风险', '交付评估', '交付分析', '履约分析'] },
   { capability: 'report', phrases: ['风险报告', '生成报告', '评估报告'] },
   { capability: 'business', phrases: ['经营风险', '经营分析', '商务风险', '商务分析', '交易分析'] },

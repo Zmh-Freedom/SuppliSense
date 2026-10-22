@@ -446,6 +446,7 @@ function trendStatusMeta(trend: string): { label: string; className: string } {
 }
 
 function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
+  if (answer.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension)) && answer.summary) return answer.summary;
   if (answer.summary.includes('监控清单') && answer.claims.length === 0) return answer.summary;
   if (answer.summary.includes('风险变化') && answer.claims.length === 0) return answer.summary;
   if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：'))) {
@@ -761,6 +762,7 @@ function answerStatusMeta(answer: AgentAnswer, limitations: string[]) {
   if (text.includes('主体')) return { label: '主体待确认', className: 'border-violet-200 bg-violet-50 text-violet-700', icon: '?' };
   if (text.includes('权限')) return { label: '权限不足', className: 'border-red-200 bg-red-50 text-red-700', icon: '×' };
   if (text.includes('资料') || text.includes('财务')) return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
+  if (answer.claims.length === 0 && ['quality', 'delivery'].includes(getAnswerCapability(answer))) return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   if (answer.status === 'needs_review') return { label: '发现信号，需人工复核', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   return ANSWER_STATUS_META[answer.status] || { label: answer.status, className: 'border-gray-200 bg-gray-50 text-gray-600', icon: '·' };
 }
@@ -782,6 +784,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const isWatchlist = Boolean(watchlistClaims.length > 0 || (answer?.summary.includes('监控清单') && !isTrend));
   const scopeQuery = isWatchlist || isTrend;
   const financialMissing = limitations.some(item => item.includes('财务'));
+  const operationalReview = Boolean(answer?.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension)));
   const hasRiskSignals = Boolean(answer?.claims.some(claim => claimGroup(claim) === 'risk' && claim.fact_path?.startsWith('risk_detail.')));
   const capability = getAnswerCapability(answer);
   const capabilityMeta = getAnswerCapabilityMeta(capability);
@@ -835,7 +838,9 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
       </div></EvidenceTable>}
       {answer.claims.length > 0 && !scopeQuery && <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-sm leading-6 text-violet-950" aria-label={capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}>
         <h4 className="font-semibold">{capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}</h4>
-        <p className="mt-1">{capability !== 'generic'
+        <p className="mt-1">{operationalReview
+          ? '质量/交付指标仅用于核对来源事实；评级政策尚未确认，当前无法据此判断风险等级或形成采购放行建议。'
+          : capability !== 'generic'
           ? capabilityMeta.suggestion
           : answer.status === 'needs_review' || financialMissing
           ? `当前结论仅代表已取得资料范围${hasRiskSignals ? '，请先核实上方风险信号' : ''}；涉及关键零件或大额订单时，建议完成采购复核后再决定。`

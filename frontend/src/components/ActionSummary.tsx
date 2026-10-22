@@ -10,7 +10,8 @@ export default function ActionSummary({ answer, limitations }: { answer: AgentAn
   const capabilityMeta = getAnswerCapabilityMeta(capability);
   const isSpecialized = capability !== 'generic';
   const conclusion = isSpecialized ? capabilityMeta.label : needsReview ? '建议复核' : hasClaims ? '已形成初步结论' : '暂未形成结论';
-  const explanation = isSpecialized
+  const operationalReview = answer.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension));
+  const explanation = operationalReview ? answer.summary : isSpecialized
     ? answer.summary
     : hasClaims && answer.summary?.includes('\n\n')
     ? answer.summary

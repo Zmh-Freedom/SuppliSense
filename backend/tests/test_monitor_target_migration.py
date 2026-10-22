@@ -12,6 +12,13 @@ from app.schemas import RiskCalculateResponse
 from app.tools.contracts import WatchlistOutput
 
 
+@pytest.fixture(autouse=True)
+def identity_source_boundaries(monkeypatch):
+    """Identity assembly tests provide each source explicitly, never query dev data."""
+    monkeypatch.setattr("app.domains.alert.intake_service._load_local_candidates", lambda _query: [])
+    monkeypatch.setattr("app.domains.alert.intake_service._load_external_profile", lambda _query: (None, {}))
+
+
 def test_watchlist_output_accepts_owner_user_id_from_responsibility_scope():
     result = WatchlistOutput.model_validate({
         "company_name": "责任范围供应商有限公司",

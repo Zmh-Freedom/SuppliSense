@@ -85,3 +85,37 @@ it('renders operational facts without a formal risk classification', () => {
   expect(screen.getByText('已取得指标，风险等级待确认')).toBeInTheDocument();
   expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
 });
+
+it('consumes the actual Harness answer contract used by backend E2E', async () => {
+  const fixture = (await import('./fixtures/operationalMetricAnswer.json')).default;
+  render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={fixture.evidence as AgentEvidenceRecord[]} />);
+  expect(screen.getAllByText('95.2%').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('70.0%').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('已取得指标，风险等级待确认')).toHaveLength(2);
+  expect(screen.queryByText(/可按正常流程推进/)).not.toBeInTheDocument();
+  expect(screen.getAllByText(fixture.answer.summary).length).toBeGreaterThan(0);
+  expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
+});
+
+it('retains neutral historical scores for both subjects and dimensions', () => {
+  const historical: AgentAnswer = {...answer, summary:'历史运营分析', limitations:[], claims:[
+    {...answer.claims[0],claim_id:'old-quality',entity_id:'company:1',dimension:'quality',fact_path:'risk_score',value:4.8,statement:'原质量风险分4.8'},
+    {...answer.claims[0],claim_id:'old-delivery',entity_id:'company:2',dimension:'delivery',fact_path:'risk_score',value:90,statement:'原交付风险分90'},
+  ]};
+  const before = JSON.stringify(historical);
+  render(<StructuredAgentResult answer={historical} evidence={[]} />);
+  expect(screen.getAllByText('历史规则待核验')).toHaveLength(2);
+  expect(screen.getByText('4.8/100')).toBeInTheDocument();
+  expect(screen.getByText('90/100')).toBeInTheDocument();
+  expect(JSON.stringify(historical)).toBe(before);
+});
+
+it('shows the operational source gap instead of implying a detected risk signal', () => {
+  const gap: AgentAnswer = {...answer,status:'needs_review',claims:[],evidence_refs:[],
+    summary:'已完成甲公司的质量/交付查询，但当前没有可验证的指标数据，当前未覆盖，暂不评级。',
+    limitations:['来源指标单位、分母和范围契约尚未确认']};
+  render(<StructuredAgentResult answer={gap} evidence={[]} />);
+  expect(screen.getAllByText(gap.summary).length).toBeGreaterThan(0);
+  expect(screen.getByText('当前未覆盖')).toBeInTheDocument();
+  expect(screen.queryByText('发现信号，需人工复核')).not.toBeInTheDocument();
+});

@@ -62,7 +62,17 @@ def analyze_operational_metrics(company_name: str, dimension: OperationalDimensi
     if unconfigured:
         result = result.model_copy(update={'value': None, 'numerator': None, 'denominator': None,
                                           'status': 'partial', 'reasons': (*result.reasons, 'unconfigured_source')})
-    limitations.extend(result.reasons)
+    reason_labels = {
+        'missing_aggregation_weights': '来源缺少可验证的统计分母，保留各项指标，不计算汇总比例。',
+        'unproven_disjointness': '无法确认来源记录互不重叠，暂不合并。',
+        'overlapping_partition': '来源统计范围重叠，暂不合并。',
+        'incomparable_scope_or_basis': '来源范围、单位或统计口径不同，暂不合并。',
+        'conflicting_source_record': '同一来源记录内容冲突，需要核验。',
+        'conflicting_aliases': '来源中同一指标的多个字段相互冲突，需要核验。',
+        'rate_count_conflict': '来源比例与数量计算不一致，需要核验。',
+        'unconfigured_source': '部分来源的指标口径尚未确认，不能形成整体结论。',
+    }
+    limitations.extend(reason_labels.get(reason, '部分来源指标无法核实，详见数据说明。') for reason in result.reasons)
     if not any(item.status == 'available' and item.value is not None for item in observations):
         missing = _missing(company_name, dimension,
             '来源未配置或当前快照缺少合法且口径明确的质量/交付指标，不能推断低风险。', period)
