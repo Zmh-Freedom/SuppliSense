@@ -52,4 +52,3 @@ worker.main()
         if process.poll() is None:
             process.kill()
         process.communicate(timeout=3)
-
