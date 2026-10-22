@@ -8,7 +8,7 @@
 
 **Tech Stack:** 现有 APScheduler CronTrigger、zoneinfo、psycopg2、pytest；不新增依赖。
 
-**Commits:** `c0f02777`（持久计划首包）、`46cd6b2b`（执行门禁与角色）。
+**Commits:** `c0f02777`（持久计划首包）、`46cd6b2b`（执行门禁与角色）、`b2fe8c90`（watchlist 迁移）。
 
 **Spec:** docs/superpowers/specs/2026-10-19-durable-harness-evolution-design.md §6.1、6.3、6.4；3A 基线 `6f51036b`。
 
