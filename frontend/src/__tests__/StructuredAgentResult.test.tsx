@@ -71,3 +71,17 @@ describe('StructuredAgentResult', () => {
     expect(screen.queryByText(/可直接打开详情/)).not.toBeInTheDocument();
   });
 });
+
+it('renders operational facts without a formal risk classification', () => {
+  const operational: AgentAnswer = {...answer, summary:'已取得质量指标。', limitations:['质量评级政策尚未确认'],
+    claims: [{...answer.claims[0], claim_id:'quality-1',entity_id:'company:1',dimension:'quality',
+      statement:'甲公司 合格率：95.2%',fact_path:'quality_rate',value:0.952,unit:'ratio',evidence_refs:['quality-e1']}],
+    evidence_refs:['quality-e1']};
+  const records: AgentEvidenceRecord[] = [{...evidence[0],evidence_id:'quality-e1',entity_id:'company:1',dimension:'quality',
+    provider:'assess_operational_risk',facts:{quality_rate:0.952,quality_rate_unit:'ratio'}}];
+  render(<StructuredAgentResult answer={operational} evidence={records} />);
+  expect(screen.getAllByText('合格率').length).toBeGreaterThan(0);
+  expect(screen.getByText('95.2%')).toBeInTheDocument();
+  expect(screen.getByText('已取得指标，风险等级待确认')).toBeInTheDocument();
+  expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
+});

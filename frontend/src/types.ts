@@ -318,6 +318,13 @@ export interface AgentAnswer {
   evidence_refs: string[];
 }
 
+export interface ClaimPresentation {
+  metric: string;
+  value: string;
+  label: string;
+  tone: 'neutral' | 'positive' | 'warning' | 'danger';
+}
+
 export interface AgentEvidenceRecord {
   evidence_id: string;
   entity_id: string;
@@ -328,6 +335,7 @@ export interface AgentEvidenceRecord {
   status: string;
   data_mode: 'formal' | 'synthetic';
   collected_at: string;
+  valid_until?: string | null;
   facts?: Record<string, unknown>;
 }
 

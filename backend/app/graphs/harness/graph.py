@@ -1312,17 +1312,15 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         count_text = f"共 {int(count)} 家企业" if isinstance(count, (int, float)) else "已完成企业横向比较"
         return _summary_with_boundary(answer, f"已完成企业风险对比；{count_text}。", "可结合下方指标比较各企业差异。")
     if primary_capability in {"quality", "delivery"}:
-        operational_claims = [claim for claim in answer.claims if claim.dimension == primary_capability]
-        values = _claim_values(operational_claims)
-        label = "质量" if primary_capability == "quality" else "交付"
+        requested = dimensions.intersection({"quality", "delivery"}) or {primary_capability}
+        operational_claims = [claim for claim in answer.claims
+                              if claim.dimension in requested and claim.validation_status == "supported"
+                              and claim.fact_path in {"quality_rate", "on_time_rate"}]
         if not operational_claims:
-            return f"已完成 {subject} 的{label}风险查询，但当前没有可验证的{label}数据。"
-        detail = []
-        if values.get("risk_score") is not None:
-            detail.append(f"评分 {values['risk_score']}/100")
-        if values.get("risk_level") is not None:
-            detail.append(f"等级：{values['risk_level']}")
-        return _summary_with_boundary(answer, f"已完成 {subject} 的{label}风险分析；" + "，".join(detail) + "。", f"可结合{label}明细和时间趋势继续核查。")
+            return f"已完成 {subject} 的质量/交付查询，但当前没有可验证的指标数据，当前未覆盖，暂不评级。"
+        # Claim statements already bind the subject, source-specific rate and unit.
+        detail = "；".join(dict.fromkeys(claim.statement for claim in operational_claims))
+        return f"已取得质量/交付指标：{detail}。评级政策尚未确认，暂不提供正式风险分与等级。"
     if {"lookup_company_news", "sentiment_analysis"}.intersection(tool_names):
         sentiment_claims = [claim for claim in answer.claims if claim.dimension in {"sentiment", "news"}]
         if not sentiment_claims:
@@ -1860,6 +1858,21 @@ def build_harness_graph(
             required_dimensions=_required_dimensions(tasks),
             required_evidence=_required_evidence_items(tasks),
         )
+        operational_limits = []
+        for record in state.get("evidence_records", []):
+            if record.get("dimension") in {"quality", "delivery"}:
+                values = (record.get("facts") or {}).get("limitations", [])
+                if isinstance(values, list):
+                    operational_limits.extend(value for value in values if isinstance(value, str))
+        for outcome in state.get("tool_outcomes", []):
+            data = outcome.get("data") or {}
+            if data.get("dimension") in {"quality", "delivery"} and data.get("reason"):
+                operational_limits.append(str(data["reason"]))
+        if operational_limits:
+            answer = answer.model_copy(update={
+                "status": "partial" if answer.status == "completed" else answer.status,
+                "limitations": list(dict.fromkeys([*answer.limitations, *operational_limits])),
+            })
         if _requests_procurement_action(state):
             answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
         no_plan_llm_attempted = False
