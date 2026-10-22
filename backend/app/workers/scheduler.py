@@ -96,11 +96,15 @@ async def _run_forever(poll_seconds: float = 5.0) -> None:
 
 
 def _assert_role_available() -> None:
-    """Refuse a second business-cron owner."""
-    if settings.SCHEDULER_ROLE_ENABLED:
+    """Refuse overlapping ownership of the same business cron."""
+    migrated = {
+        item.strip() for item in settings.SCHEDULER_MIGRATED_KINDS.split(",")
+        if item.strip()
+    }
+    if settings.SCHEDULER_ROLE_ENABLED and not migrated:
         raise RuntimeError(
-            "API 内业务 scheduler 仍启用；部署独立 scheduler 前请设置 "
-            "SCHEDULER_ROLE_ENABLED=false"
+            "API 内业务 scheduler 仍启用；请把已迁移任务写入 "
+            "SCHEDULER_MIGRATED_KINDS，或设置 SCHEDULER_ROLE_ENABLED=false"
         )
 
 

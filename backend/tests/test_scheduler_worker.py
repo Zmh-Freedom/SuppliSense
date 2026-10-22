@@ -129,6 +129,7 @@ def test_transient_batch_failure_does_not_kill_the_loop(monkeypatch):
 
 def test_dedicated_scheduler_refuses_to_run_while_api_cron_is_enabled(monkeypatch):
     monkeypatch.setattr(scheduler_worker.settings, "SCHEDULER_ROLE_ENABLED", True)
+    monkeypatch.setattr(scheduler_worker.settings, "SCHEDULER_MIGRATED_KINDS", "")
     with pytest.raises(RuntimeError, match="SCHEDULER_ROLE_ENABLED=false"):
         scheduler_worker._assert_role_available()
     monkeypatch.setattr(scheduler_worker.settings, "SCHEDULER_ROLE_ENABLED", False)

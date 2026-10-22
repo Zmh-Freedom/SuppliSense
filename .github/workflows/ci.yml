@@ -144,6 +144,7 @@ jobs:
           PG_DB=scheduler_stage3_test MONGO_DB=scheduler_stage3_test
           python -m pytest -q tests/test_scheduler_periods.py
           tests/test_scheduler_worker.py tests/test_scheduler_role_switch.py
+          tests/test_scheduler_migration.py
           tests/test_scheduled_execution_gate.py
           tests/test_durable_scheduler_integration.py
           tests/test_scheduled_job_integration.py

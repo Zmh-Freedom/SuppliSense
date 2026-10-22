@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     # The API keeps this True for backward compatibility. Deployments that run
     # the dedicated scheduler entry must set it False to avoid double triggers.
     SCHEDULER_ROLE_ENABLED: bool = True
+    # Comma-separated legacy job ids already moved to durable plans. The API
+    # skips these while it still owns the remaining in-process cron jobs.
+    SCHEDULER_MIGRATED_KINDS: str = ""
     SCHEDULER_POLL_SECONDS: float = Field(default=5.0, gt=0)
     SCHEDULER_WORKER_HEARTBEAT_SECONDS: int = Field(default=5, ge=1)
     SCHEDULER_WORKER_LEASE_SECONDS: int = Field(default=30, ge=3)

@@ -211,3 +211,39 @@ def test_operator_cli_registers_and_lists_a_schedule():
     )
     assert listing.returncode == 0, listing.stderr
     assert schedule_id in listing.stdout
+
+
+def test_watchlist_migration_writes_once_then_reports_noop(monkeypatch):
+    from app.domains.scheduling import migration
+
+    monkeypatch.setattr(
+        migration.settings, "SCHEDULER_SERVICE_PRINCIPALS", "scheduler:watchlist-monitor"
+    )
+    target_id = f"migration-target-{uuid4()}"
+    target = {
+        "monitor_target_id": target_id,
+        "supplier_id": "supplier-1",
+        "target_type": "formal_supplier",
+    }
+    monkeypatch.setattr(
+        "app.domains.alert.service.get_watchlist_targets",
+        lambda user_id=None, role=None: [target],
+    )
+    monkeypatch.setattr(migration, "_active_users", lambda ids: {})
+    plan = migration.build_watchlist_migration(
+        service_principal="scheduler:watchlist-monitor", now=NOW
+    )
+    assert plan["counts"]["create"] == 1
+    result = migration.apply_watchlist_migration(plan)
+    assert result["count"] == 1
+    from app.domains.scheduling import repo as scheduling_repo
+    rows = scheduling_repo.list_schedules(schedule_id="watchlist-financial:migration-target-1")
+    assert rows[0]["actor_kind"] == "service"
+    assert rows[0]["actor_id"] == "scheduler:watchlist-monitor"
+    assert rows[0]["scope"]["supplier_id"] == "supplier-1"
+
+    second = migration.build_watchlist_migration(
+        service_principal="scheduler:watchlist-monitor", now=NOW + timedelta(days=1)
+    )
+    assert second["counts"]["noop"] == 1
+    assert second["counts"]["create"] == 0

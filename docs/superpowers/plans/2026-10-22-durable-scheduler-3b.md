@@ -102,9 +102,9 @@
 
 ### 门禁结果
 
-- 调度专项（周期、worker、角色开关、执行门禁、真实 PG 计划/任务、CLI）：59 passed。
+- 调度专项（周期、worker、角色开关、watchlist 迁移、执行门禁、真实 PG 计划/任务、CLI）：67 passed。
 - 既有 scheduler 生命周期回归：5 passed。
-- 全量离线：1148 passed、1 skipped、87 deselected（最后代码变更后复跑）。
+- 全量离线：1155 passed、1 skipped、88 deselected（最后代码变更后复跑）。
 - 真实进程验收（scheduler_stage3_test）：
   - 两个 `scheduler --once` 并发：一个 created=1，一个 existing=1，数据库仅 1 条同周期任务。
   - 两个 claim 进程并发：一个取得 job，另一个 NONE。
@@ -119,3 +119,23 @@
 - 计划管理目前是 CLI，无 REST 管理端点。
 - 生产 API 角色开关未切换；Compose profile 默认不启动。
 - 3C delivery、3D 迁移/发布门禁仍未开始。
+
+## 开发库迁移与角色切换记录（2026-10-22）
+
+- 盘点：watchlist 24 个目标，22 个有 owner，2 个无 owner；4 个 owner 均为活跃用户。
+- 映射规则：owner 存在、活跃且经 `get_watchlist_targets(owner, role)` 确认可访问 → user actor；否则使用显式配置的 `scheduler:watchlist-monitor`；两者都没有则 skip 并报告。
+- dry-run：24 create、0 update、0 noop、0 skip；mapping 为 22 target_owner + 2 service_principal_no_owner。
+- apply：写入 24 条 financial_check 计划（22 user + 2 service），全部 revision=1、enabled。再次 dry-run 为 24 noop，证明幂等。
+- 开发 `.env`：`SCHEDULER_ROLE_ENABLED=false`、`SCHEDULER_MIGRATED_KINDS=financial_check`、`SCHEDULER_SERVICE_PRINCIPALS=scheduler:watchlist-monitor`、付费开关保持 false。
+- API 启动：健康 200；日志只有 `business_role=False outbox=True` 和 Outbox polling，没有业务 cron；SIGINT 正常退出。
+- 独立 scheduler：`--once --batch-size 100` 扫描 24 条计划，created=0；因为计划 effective_at 是迁移时刻，晚于当天 9:00，下一周期为 2026-10-23T09:00。未回填当天，符合“新计划不追溯已过周期”的边界。
+- 受控执行：隔离 `ops-drill:45add5f1` 计划产生 job `8b244ba7…`，使用本地 handler 替身，经真实 PG 权限/审计路径 SUCCEEDED；演练后该计划已 disabled，不参与后续扫描。
+- 报告：`docs/reports/2026-10-22-scheduler-migration.json`。
+
+### 切换后仍需注意
+
+- 开发库的全局业务 cron（digest/notify/sentiment/proactive/Feishu sync）在 API 角色关闭后暂停；这是本阶段只迁移 watchlist financial_check 的明确边界。
+- `full_refresh` 未迁移且付费开关关闭；生产切换前必须先迁移全局任务或明确接受暂停窗口。
+- `ops-drill` 计划保留为 disabled 审计证据，不参与调度。
+
+- 测试隔离：`tests/test_scheduler.py` 增加 autouse fixture，显式重置 `SCHEDULER_ROLE_ENABLED/SCHEDULER_MIGRATED_KINDS`，避免开发者 `.env` 改变既有契约测试。

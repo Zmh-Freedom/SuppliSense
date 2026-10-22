@@ -6,7 +6,7 @@ import argparse
 import json
 from datetime import datetime
 
-from app.domains.scheduling import repo
+from app.domains.scheduling import migration, repo
 from app.domains.scheduling.periods import ScheduleDefinition
 
 
@@ -46,9 +46,24 @@ def main(argv: list[str] | None = None) -> int:
     listing = sub.add_parser("list", help="list persisted schedule revisions")
     listing.add_argument("--schedule-id", default="")
 
+    migrate = sub.add_parser(
+        "migrate-watchlist", help="map watchlist targets to durable financial schedules"
+    )
+    migrate.add_argument("--service-principal", default="")
+    migrate.add_argument("--include-paid", action="store_true")
+    migrate.add_argument("--timezone", default="Asia/Shanghai")
+    migrate.add_argument("--apply", action="store_true", help="write; default is dry-run")
+
     args = parser.parse_args(argv)
     if args.command == "register":
         payload = _register(args)
+    elif args.command == "migrate-watchlist":
+        plan = migration.build_watchlist_migration(
+            service_principal=args.service_principal or None,
+            include_paid=args.include_paid,
+            timezone=args.timezone,
+        )
+        payload = {**plan, "apply": migration.apply_watchlist_migration(plan)} if args.apply else plan
     else:
         payload = repo.list_schedules(schedule_id=args.schedule_id or None)
     print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)

@@ -72,3 +72,22 @@ def test_leader_starts_business_jobs_and_outbox(monkeypatch):
     assert business == [1]
     assert fake.jobs == ["financial_check", "outbox_worker"]
     assert fake.started is True
+
+
+def test_migrated_kind_is_skipped_by_the_legacy_api_cron(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler_service, "_add_job", lambda func, cron, job_id: calls.append(job_id))
+    monkeypatch.setattr(scheduler_service.settings, "SCHEDULER_MIGRATED_KINDS", "financial_check")
+    monkeypatch.setattr(scheduler_service.settings, "FEISHU_BITABLE_ENABLED", False)
+    scheduler_service._add_business_jobs()
+    assert "financial_check" not in calls
+    assert "daily_digest" in calls
+    assert "full_refresh" in calls
+
+
+def test_dedicated_scheduler_allows_a_partial_migration(monkeypatch):
+    from app.workers import scheduler as worker
+
+    monkeypatch.setattr(worker.settings, "SCHEDULER_ROLE_ENABLED", True)
+    monkeypatch.setattr(worker.settings, "SCHEDULER_MIGRATED_KINDS", "financial_check")
+    worker._assert_role_available()

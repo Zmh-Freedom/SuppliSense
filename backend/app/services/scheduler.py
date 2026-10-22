@@ -265,13 +265,23 @@ def _add_business_jobs() -> None:
     notify_cron = os.getenv("ALERT_NOTIFY_CRON", "*/30 * * * *")
     proactive_cron = os.getenv("PROACTIVE_AGENT_CRON", "0 */2 * * *")
 
-    _add_job(_scheduled_financial, free_cron, "financial_check")
-    _add_job(_scheduled_digest, digest_cron, "daily_digest")
-    _add_job(_scheduled_refresh, paid_cron, "full_refresh")
-    _add_job(_scheduled_sentiment, sentiment_cron, "sentiment_check")
-    _add_job(_scheduled_notify, notify_cron, "alert_notify")
-    _add_job(_scheduled_proactive, proactive_cron, "proactive_agent")
-    if settings.FEISHU_BITABLE_ENABLED and not settings.DEMO_DATA_FREEZE:
+    migrated = {
+        item.strip() for item in settings.SCHEDULER_MIGRATED_KINDS.split(",")
+        if item.strip()
+    }
+    jobs = [
+        (_scheduled_financial, free_cron, "financial_check"),
+        (_scheduled_digest, digest_cron, "daily_digest"),
+        (_scheduled_refresh, paid_cron, "full_refresh"),
+        (_scheduled_sentiment, sentiment_cron, "sentiment_check"),
+        (_scheduled_notify, notify_cron, "alert_notify"),
+        (_scheduled_proactive, proactive_cron, "proactive_agent"),
+    ]
+    for func, cron, job_id in jobs:
+        if job_id not in migrated:
+            _add_job(func, cron, job_id)
+    if (settings.FEISHU_BITABLE_ENABLED and not settings.DEMO_DATA_FREEZE
+            and "feishu_supplier_sync" not in migrated):
         _add_job(
             _scheduled_feishu_supplier_sync,
             settings.FEISHU_SUPPLIER_SYNC_CRON,
