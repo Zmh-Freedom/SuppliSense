@@ -5731,7 +5731,7 @@
 - 根因：DDL 只声明 `status` 的 CHECK 约束，未给 `NOT NULL` 列提供默认值；测试直接插入也未显式赋值。
 - 修复方案：DDL 增加 `DEFAULT 'QUEUED'`，并为已存在的开发/测试库追加幂等 `ALTER COLUMN ... SET DEFAULT`；入队逻辑仍使用 `ON CONFLICT` 保持一 Run 一任务。
 - 验证结果：`tests/test_agent_worker_integration.py` 并发领取用例由 RED 转 GREEN；默认值在全新库与既有库均可生效。
-- 关联提交：3A 工作分支（待提交）。
+- 关联提交：`6f51036b`。
 
 ## ISS-20261020-002 竞争失败的 worker 把已领取任务回退为 QUEUED
 
@@ -5741,7 +5741,7 @@
 - 根因：竞争失败方在发现 execution 已被有效租约占用时，无条件把 job 状态更新回 `QUEUED`；该 worker 并不持有 job 租约。
 - 修复方案：竞争失败方只读取状态并返回，不修改 job；job 租约只在 `claim_job` 的条件更新或心跳持有者路径中变化，execution 的 fencing token 仍是最终提交边界。
 - 验证结果：并发领取与接管用例 GREEN；job 在获胜 attempt 期间保持 `LEASED`，终态唯一。
-- 关联提交：3A 工作分支（待提交）。
+- 关联提交：`6f51036b`。
 
 ## 3A 对既有问题的进度（2026-10-21）
 
@@ -5757,7 +5757,7 @@
 - 根因：`require_active` 是 `coordinator.py` 的模块级辅助函数，签名需要 `cur/run/permit`；worker 误把它当作 `RunCoordinator` 方法调用。
 - 修复方案：改用公开的 `RunCoordinator.check(permit)`；它在事务内重新加锁并校验 attempt/fencing token 与租约。
 - 验证结果：修复后实机 worker 完成 `e79e9caf…`（API 已停止时领取）；新增启动失败回归通过。
-- 关联提交：3A 工作分支（待提交）。
+- 关联提交：`6f51036b`。
 
 ## ISS-20261020-004 worker 初始化异常只失败 job，Run 残留 RUNNING
 
@@ -5767,7 +5767,7 @@
 - 根因：外层异常分支没有走 `run_coordinator.finish`，只更新了队列行。
 - 修复方案：外层捕获异常后仅通过 `_finish_failed` 以同一 permit 原子提交 Run/execution/job 与 `error`/`done` 终态；提交被 fencing 拒绝或不确定时保留 job 租约供接管（2026-10-22 复核修正，关联 ISS-20261022-003）。
 - 验证结果：新增 `test_worker_setup_failure_commits_a_terminal_run`，断言 Run=FAILED、execution=FAILED、job=FAILED 且错误可见。
-- 关联提交：3A 工作分支（待提交）。
+- 关联提交：`6f51036b`。
 
 ## ISS-20261020-005 worker 集成测试残留 Outbox 事件污染其他用例
 
@@ -5777,7 +5777,7 @@
 - 根因：新增 worker 集成用例通过 `RunCoordinator.finish` 生成 `agent.chat.completed` Outbox 事件，fixture 只删除 session/user，没有删除按 run 关联的 Outbox 行。
 - 修复方案：`job_factory` teardown 先按 session 下的 run 删除 `outbox_events`，再删除 session/user；不修改生产逻辑。
 - 验证结果：清空 `run_lifecycle_test` 后先跑 13 个 worker 用例，再跑 `test_outbox_service.py`，26 passed；污染路径不再出现。
-- 关联提交：3A 工作分支（待提交）。
+- 关联提交：`6f51036b`。
 
 ## ISS-20261020-006 全量回归中 Outbox 批量用例被其他 Agent 事件污染
 
@@ -5787,7 +5787,7 @@
 - 根因：`process_outbox_batch` 没有事件类型过滤，测试却假设队列中只有本用例事件；模块只清理自身命名的残留。
 - 修复方案：在 `tests/test_outbox_service.py` 增加模块级 autouse fixture，在模块开始前清空 `outbox_consumptions/outbox_events`；该库为独立测试库，不影响开发库。
 - 验证结果：先人为插入 1 条 `agent.action.approved` 残留，再运行批量用例，结果 passed；单独运行 Outbox 模块 26 passed。
-- 关联提交：3A 工作分支（待提交）。
+- 关联提交：`6f51036b`。
 
 
 ## ISS-20261022-001 Outbox 集成测试缺少共享开发库清理保护
@@ -5800,7 +5800,7 @@
 - 根因：解决测试事件相互污染时使用全表清理，但未把隔离测试库约束固化到执行前置条件。
 - 修复方案：测试使用独立数据库，并在任何 schema 初始化/清理前验证库名；添加拒绝 sra 等共享库的离线保护回归。
 - 验证结果：保护回归 4 passed，先见 3 项 RED 再 GREEN；sra、postgres、run_lifecycle_test 在任何连接前被拒。服务器 outbox_service_test 专库 26 passed，未清理共享开发库。
-- 关联提交：当前 3A 未提交工作区；待修复提交。
+- 关联提交：`6f51036b`。
 
 ## ISS-20261022-002 Agent worker 优雅退出未实现 30 秒排空上限
 
@@ -5812,7 +5812,7 @@
 - 根因：停止领取标志与在途工作排空期限没有联动。
 - 修复方案：SIGTERM 后立即停止领取，为当前工作设置至多 30 秒排空；超时后安全失效/放弃租约并保持可恢复边界，添加真实进程退出时限测试。
 - 验证结果：真实子进程 SIGTERM/SIGINT × 正常完成/阻塞同步调用共 4 passed（测试把截止值缩至 0.5 秒，进程均在 3 秒门限内退出）；生产默认 30 秒。包含租约一致性的退出模块最终 5 passed。
-- 关联提交：当前 3A 未提交工作区；待修复提交。
+- 关联提交：`6f51036b`。
 
 - 2026-10-22（001/002）：用户授权修复并提交 3A 后开始 3B。保护回归首次 3 项失败（在库名检查前触碰 schema）；信号用例修正 stdout 缓冲夹具后，SIGTERM/SIGINT 两项均复现退出超时 RED。实现专用 outbox_service_test 前置保护及最长 30 秒排空；CLI 保留截止计时器，防止 asyncio 的同步线程池等待无限延长进程退出。取消 producer 不提交伪失败，原租约到期后按既有检查点接管。
 - 验证编排：新增 worker 专项与退出/数据库保护 CI 门禁，Outbox 独立库单独执行；worker 模块 schema fixture 改为模块级，避免每个场景重复远程 DDL。历史测试保留。
@@ -5826,7 +5826,7 @@
 - 根因：事件查询与状态检查非原子；复用 Supervisor 的暂停前置条件；队列终态更新绕过 Coordinator 原子边界。
 - 修复方案：退出订阅前排空已提交尾部；自动接管校验冻结输入和账本，显式暂停证明仅以当前 permit 原子消费一次；失败提交未成功时保留租约供恢复，终态仅由 Coordinator 提交。
 - 验证结果：SSE 2 项、真实 PG 接管和失权失败 2 项均 RED→GREEN；另验证真实 LangGraph saver 的暂停证明消费、checkpoint 前进后再次接管与旧 permit 拒绝。worker/退出/事件/保护联合专项 26 passed。
-- 关联提交：随本次 3A 收尾补齐。
+- 关联提交：`6f51036b`。
 
 
 ## ISS-20261022-004 worker 自定义租约未用于 execution 心跳
@@ -5837,8 +5837,30 @@
 - 根因：worker 与 inline 共用默认 Coordinator 的续租时长。
 - 修复方案：worker 心跳使用按同一 lease_seconds 构造的 Coordinator，保留 inline 默认规则。
 - 验证结果：离线回归先复现 job=6s/execution=30s 的 RED，统一后 GREEN；退出模块 5 passed。
-- 关联提交：随本次 3A 收尾提交。
+- 关联提交：`6f51036b`。
 
 - 2026-10-22 3A 最终离线全量：1105 passed、1 skipped、71 deselected；worker 联合专项 26 passed，租约修复后退出模块 5 passed，Outbox 专库 26 passed。静态编译与 diff whitespace 检查通过。
 
 - 既有 RunCoordinator 真实并发/取消/回放/投影及控制面回归：17 passed（服务器 run_lifecycle_test；Mongo 独立测试范围），保留原有测试。
+
+
+## ISS-20261022-005 scheduler 尚无可持久恢复的周期任务与去重键
+
+- 发现日期：2026-10-22；状态：实施中（3B 首包）；优先级：P1；关联 ISS-20261018-007、ISS-20261018-001。
+- 现象：现有 API 内 APScheduler 直接运行抓取、评分和通知；仅启动时 advisory lock 选主，没有 schedule revision/目标/逻辑周期的任务唯一约束。
+- 影响：多 scheduler、重启与漏跑后的业务任务无法按已验收周期键核对，付费任务尚不能安全迁入独立执行进程。
+- 根因：计划触发与实际业务执行耦合，缺少持久计划和周期任务账本。
+- 修复方案：3B 先建立不可变 revision 定义、按时区计算的周期及 UTC 边界、独立只入队 scheduler 和唯一约束。默认漏跑只补最近一次，DST 重复小时同一逻辑键；付费任务暂记 BLOCKED_POLICY。后续接入执行前权限/预算/审计及业务消费者，再切换部署入口。
+- 验证结果：将覆盖双 scheduler 同周期同任务、时区/DST/漏跑、revision 冲突、进程重启不丢队列及付费不外呼；所有写测试仅在服务器 scheduler_stage3_test。
+- 关联提交：3A 基线 `6f51036b`；3B 首包待提交。
+- 首包验证：周期 15、scheduler worker 7、真实 PG 8，共 30 passed；双 scheduler 并发同周期返回同一 job_id；同一 revision 改写被拒；失败扫描回滚且 cursor 单独推进。
+
+## ISS-20261022-006 坏计划可使轮转游标停住并饿死后续计划
+
+- 发现日期：2026-10-22；状态：已修复（3B 首包）；优先级：P2。
+- 现象：首版入队把 last_checked_at 与周期任务写入同一事务；计划解析抛错时游标随事务回滚，坏计划仍排在队首。
+- 影响：一条永久格式错误的计划会反复占用批次名额，后面有效计划可能长期不被扫描。
+- 根因：失败路径没有独立的游标推进。
+- 修复方案：worker 捕获单计划异常后调用 mark_schedule_checked 独立事务推进游标；批次继续处理其余计划。
+- 验证结果：`test_one_broken_schedule_does_not_block_the_batch` 通过；坏计划记录 errors=1、后续计划 created=1、游标已推进。
+- 关联提交：3B 首包待提交。

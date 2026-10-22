@@ -303,6 +303,55 @@ DDL_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_agent_execution_jobs_claim ON agent_execution_jobs (queue,status,available_at)",
     "CREATE INDEX IF NOT EXISTS idx_agent_execution_jobs_lease ON agent_execution_jobs (lease_until) WHERE status='LEASED'",
     "ALTER TABLE agent_execution_jobs ALTER COLUMN status SET DEFAULT 'QUEUED'",
+    # Durable schedules: definitions are immutable per revision; only the
+    # operational cursor and enabled flag may change.
+    """
+    CREATE TABLE IF NOT EXISTS durable_schedules (
+        schedule_id TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        target_id TEXT NOT NULL,
+        cron TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        actor_kind VARCHAR(16) NOT NULL CHECK (actor_kind IN ('user','service')),
+        actor_id TEXT NOT NULL,
+        kind VARCHAR(48) NOT NULL,
+        scope JSONB NOT NULL,
+        effective_at TIMESTAMPTZ NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        last_checked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (schedule_id, revision, target_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_durable_schedules_due ON durable_schedules (enabled, last_checked_at NULLS FIRST, schedule_id)",
+    # One row per logical period. The unique key is the only deduplication
+    # mechanism; a scheduler crash between INSERT and UPDATE cannot duplicate.
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_execution_jobs (
+        id UUID PRIMARY KEY,
+        schedule_id TEXT NOT NULL,
+        schedule_revision INTEGER NOT NULL,
+        target_id TEXT NOT NULL,
+        logical_period TEXT NOT NULL,
+        period_start_at TIMESTAMPTZ NOT NULL,
+        period_end_at TIMESTAMPTZ,
+        fire_at TIMESTAMPTZ NOT NULL,
+        kind VARCHAR(48) NOT NULL,
+        actor_kind VARCHAR(16) NOT NULL,
+        actor_id TEXT NOT NULL,
+        scope JSONB NOT NULL,
+        definition JSONB NOT NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'QUEUED' CHECK (status IN
+            ('QUEUED','BLOCKED_POLICY','LEASED','SUCCEEDED','FAILED','CANCELLED')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT scheduled_execution_jobs_period_key UNIQUE
+            (schedule_id, schedule_revision, target_id, logical_period),
+        CONSTRAINT scheduled_execution_jobs_schedule_fkey FOREIGN KEY
+            (schedule_id, schedule_revision, target_id)
+            REFERENCES durable_schedules (schedule_id, revision, target_id)
+    )
+    """,
     """
     DO $$ BEGIN
         IF NOT EXISTS (
