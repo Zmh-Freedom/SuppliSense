@@ -16,7 +16,7 @@ def definition(**changes) -> ScheduleDefinition:
     values = {
         "schedule_id": "risk-daily", "revision": 1, "target_id": "target-1",
         "cron": "0 9 * * *", "timezone": "Asia/Shanghai", "actor_kind": "user",
-        "actor_id": "actor-1", "kind": "financial_check", "scope": {"target_id": "target-1"},
+        "actor_id": "00000000-0000-4000-8000-000000000001", "kind": "financial_check", "scope": {"target_id": "target-1"},
         "effective_at": instant("2026-10-20T00:00:00+00:00"),
     }
     return ScheduleDefinition(**{**values, **changes})
@@ -79,6 +79,7 @@ def test_long_downtime_with_minute_cron_does_not_replay_every_period(monkeypatch
     {"revision": 0}, {"timezone": "Missing/Zone"}, {"cron": "not cron"},
     {"actor_kind": "implicit-admin"}, {"actor_id": ""}, {"kind": "unknown"},
     {"scope": {"target_id": "another"}}, {"effective_at": datetime(2026, 10, 22)},
+    {"actor_kind": "user", "actor_id": "not-a-uuid"},
 ])
 def test_invalid_schedule_definition_is_rejected(changes):
     with pytest.raises(ValueError):

@@ -342,7 +342,17 @@ DDL_STATEMENTS = [
         scope JSONB NOT NULL,
         definition JSONB NOT NULL,
         status VARCHAR(24) NOT NULL DEFAULT 'QUEUED' CHECK (status IN
-            ('QUEUED','BLOCKED_POLICY','LEASED','SUCCEEDED','FAILED','CANCELLED')),
+            ('QUEUED','BLOCKED_POLICY','LEASED','NEEDS_REVIEW','SUCCEEDED','FAILED','CANCELLED')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+        lease_owner TEXT,
+        lease_until TIMESTAMPTZ,
+        fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+        last_error TEXT,
+        result JSONB NOT NULL DEFAULT '{}'::jsonb,
+        started_at TIMESTAMPTZ,
+        provider_started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CONSTRAINT scheduled_execution_jobs_period_key UNIQUE
@@ -352,6 +362,24 @@ DDL_STATEMENTS = [
             REFERENCES durable_schedules (schedule_id, revision, target_id)
     )
     """,
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS lease_owner TEXT",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS last_error TEXT",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS result JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs DROP CONSTRAINT IF EXISTS scheduled_execution_jobs_status_check",
+    """
+    ALTER TABLE scheduled_execution_jobs ADD CONSTRAINT scheduled_execution_jobs_status_check
+        CHECK (status IN ('QUEUED','BLOCKED_POLICY','LEASED','NEEDS_REVIEW',
+                          'SUCCEEDED','FAILED','CANCELLED'))
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_execution_jobs_claim ON scheduled_execution_jobs (status, fire_at, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_execution_jobs_lease ON scheduled_execution_jobs (lease_until) WHERE status='LEASED'",
     """
     DO $$ BEGIN
         IF NOT EXISTS (
@@ -617,6 +645,7 @@ DDL_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         approved_at TIMESTAMPTZ,
         started_at TIMESTAMPTZ,
+        provider_started_at TIMESTAMPTZ,
         completed_at TIMESTAMPTZ,
         CHECK (status IN ('pending_approval', 'approved', 'rejected', 'executing', 'completed', 'needs_review', 'failed', 'cancelled'))
     )

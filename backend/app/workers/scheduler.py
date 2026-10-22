@@ -6,9 +6,9 @@ import argparse
 import asyncio
 import signal
 import threading
-import time
 from typing import Any
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.domains.scheduling import repo
 
@@ -95,7 +95,17 @@ async def _run_forever(poll_seconds: float = 5.0) -> None:
     logger.info("scheduler_worker_stopped")
 
 
+def _assert_role_available() -> None:
+    """Refuse a second business-cron owner."""
+    if settings.SCHEDULER_ROLE_ENABLED:
+        raise RuntimeError(
+            "API 内业务 scheduler 仍启用；部署独立 scheduler 前请设置 "
+            "SCHEDULER_ROLE_ENABLED=false"
+        )
+
+
 def main() -> None:
+    _assert_role_available()
     parser = argparse.ArgumentParser(description="Durable schedule enqueue worker")
     parser.add_argument("--once", action="store_true", help="scan one batch and exit")
     parser.add_argument("--poll-seconds", type=float, default=5.0)

@@ -127,6 +127,16 @@ class Settings(BaseSettings):
     AGENT_WORKER_LEASE_SECONDS: int = Field(default=30, ge=3)
     AGENT_WORKER_POLL_SECONDS: float = Field(default=1.0, gt=0)
     AGENT_WORKER_MAX_RECOVERIES: int = Field(default=3, ge=0)
+    # Durable scheduler role. Paid/external jobs stay blocked until the
+    # operator explicitly enables execution; service actors must be named.
+    # The API keeps this True for backward compatibility. Deployments that run
+    # the dedicated scheduler entry must set it False to avoid double triggers.
+    SCHEDULER_ROLE_ENABLED: bool = True
+    SCHEDULER_POLL_SECONDS: float = Field(default=5.0, gt=0)
+    SCHEDULER_WORKER_HEARTBEAT_SECONDS: int = Field(default=5, ge=1)
+    SCHEDULER_WORKER_LEASE_SECONDS: int = Field(default=30, ge=3)
+    SCHEDULER_PAID_EXECUTION_ENABLED: bool = False
+    SCHEDULER_SERVICE_PRINCIPALS: str = ""
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)

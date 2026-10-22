@@ -6,7 +6,9 @@ from uuid import uuid4
 
 from psycopg2.extras import Json
 
+from app.core.config import settings
 from app.db.postgres import PgCursor, get_cursor
+from app.domains.scheduling.errors import ExecutionDenied
 from app.domains.scheduling.periods import (
     POLICY_GATED_KINDS,
     ScheduleDefinition,
@@ -118,7 +120,13 @@ def enqueue_due_schedule(
         )
         if period is None:
             return None
-        status = "BLOCKED_POLICY" if definition.kind in POLICY_GATED_KINDS else "QUEUED"
+        from app.domains.scheduling.executor import EXECUTABLE_KINDS
+
+        runnable = definition.kind in EXECUTABLE_KINDS and (
+            definition.kind not in POLICY_GATED_KINDS
+            or settings.SCHEDULER_PAID_EXECUTION_ENABLED
+        )
+        status = "QUEUED" if runnable else "BLOCKED_POLICY"
         job_id = str(uuid4())
         cur.execute(
             """INSERT INTO scheduled_execution_jobs
@@ -163,7 +171,11 @@ def enqueue_due_schedule(
     }
 
 
-__all__ = ["enqueue_due_schedule", "list_due_schedules", "register_schedule"]
+__all__ = [
+    "assert_scheduled_lease", "claim_scheduled_job", "enqueue_due_schedule", "finish_scheduled_job",
+    "heartbeat_scheduled_job", "list_due_schedules", "mark_schedule_checked",
+    "register_schedule",
+]
 
 
 def mark_schedule_checked(
@@ -180,3 +192,203 @@ def mark_schedule_checked(
                WHERE schedule_id=%s AND target_id=%s AND enabled""",
             (now or datetime.now(UTC), schedule_id, target_id),
         )
+
+
+def _row_dict(cur: PgCursor, row) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    return {column[0]: value for column, value in zip(cur.description, row, strict=True)}
+
+
+def claim_scheduled_job(worker_id: str, *, lease_seconds: int = 30) -> dict[str, Any] | None:
+    """Lease one due job; expired leases are recoverable by another owner."""
+    if lease_seconds < 3:
+        raise ValueError("执行租约必须至少为 3 秒")
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """SELECT id FROM scheduled_execution_jobs
+               WHERE status='QUEUED'
+                  OR (status='LEASED' AND lease_until <= clock_timestamp())
+               ORDER BY fire_at, created_at
+               LIMIT 1
+               FOR UPDATE SKIP LOCKED"""
+        )
+        candidate = cur.fetchone()
+        if candidate is None:
+            return None
+        job_id = str(candidate[0])
+        cur.execute(
+            "SELECT * FROM scheduled_execution_jobs WHERE id=%s FOR UPDATE", (job_id,)
+        )
+        row = _row_dict(cur, cur.fetchone())
+        if row is None:
+            return None
+        if (row["status"] == "LEASED" and row["kind"] in POLICY_GATED_KINDS
+                and row.get("provider_started_at") is not None):
+            cur.execute(
+                """UPDATE scheduled_execution_jobs
+                   SET status='NEEDS_REVIEW', last_error='external_result_unknown',
+                       lease_owner=NULL, lease_until=NULL, completed_at=clock_timestamp(),
+                       updated_at=clock_timestamp()
+                   WHERE id=%s""",
+                (job_id,),
+            )
+            return None
+        if int(row["attempts"]) >= int(row["max_attempts"]):
+            cur.execute(
+                """UPDATE scheduled_execution_jobs
+                   SET status='NEEDS_REVIEW', last_error='attempt_limit_exceeded',
+                       lease_owner=NULL, lease_until=NULL, completed_at=clock_timestamp(),
+                       updated_at=clock_timestamp()
+                   WHERE id=%s""",
+                (job_id,),
+            )
+            return None
+        cur.execute(
+            """UPDATE scheduled_execution_jobs
+               SET status='LEASED', lease_owner=%s,
+                   lease_until=clock_timestamp() + %s * INTERVAL '1 second',
+                   attempts=attempts+1, fencing_token=fencing_token+1,
+                   started_at=COALESCE(started_at, clock_timestamp()),
+                   last_error=NULL, updated_at=clock_timestamp()
+               WHERE id=%s
+               RETURNING *""",
+            (worker_id, lease_seconds, job_id),
+        )
+        job = _row_dict(cur, cur.fetchone())
+        if job is None:
+            return None
+    job["id"] = str(job["id"])
+    return job
+
+
+def heartbeat_scheduled_job(
+    job_id: str, worker_id: str, fencing_token: int, *, lease_seconds: int = 30
+) -> bool:
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """UPDATE scheduled_execution_jobs
+               SET lease_until=clock_timestamp() + %s * INTERVAL '1 second',
+                   updated_at=clock_timestamp()
+               WHERE id=%s AND status='LEASED' AND lease_owner=%s
+                 AND fencing_token=%s AND lease_until > clock_timestamp()""",
+            (lease_seconds, job_id, worker_id, fencing_token),
+        )
+        return cur.rowcount == 1
+
+
+def finish_scheduled_job(
+    job: dict[str, Any],
+    worker_id: str,
+    status: str,
+    *,
+    result: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> bool:
+    """Commit a terminal state and its audit record under the current fence."""
+    if status not in {"SUCCEEDED", "FAILED", "NEEDS_REVIEW", "CANCELLED", "BLOCKED_POLICY"}:
+        raise ValueError("无效的周期任务终态")
+    from app.domains.auth.audit_repo import create_log_with_cursor
+
+    details = {
+        "job_id": job["id"],
+        "schedule_id": job["schedule_id"],
+        "schedule_revision": job["schedule_revision"],
+        "target_id": job["target_id"],
+        "logical_period": job["logical_period"],
+        "kind": job["kind"],
+        "actor_kind": job["actor_kind"],
+        "actor_id": job["actor_id"],
+        "status": status,
+    }
+    if error:
+        details["error"] = error[:500]
+    user_id = None
+    if job["actor_kind"] == "user":
+        from uuid import UUID
+
+        try:
+            user_id = str(UUID(str(job["actor_id"])))
+        except (TypeError, ValueError):
+            user_id = None
+    with get_cursor() as (_, cur):
+        if user_id is not None:
+            # Audit must survive user deletion; an absent FK target is kept
+            # in details instead of aborting the terminal transition.
+            cur.execute("SELECT 1 FROM users WHERE id=%s", (user_id,))
+            if cur.fetchone() is None:
+                user_id = None
+        cur.execute(
+            """UPDATE scheduled_execution_jobs
+               SET status=%s, result=%s, last_error=%s, lease_owner=NULL,
+                   lease_until=NULL, completed_at=clock_timestamp(), updated_at=clock_timestamp()
+               WHERE id=%s AND status='LEASED' AND lease_owner=%s AND fencing_token=%s""",
+            (
+                status, Json(result or {}), error[:4000] if error else None,
+                job["id"], worker_id, job["fencing_token"],
+            ),
+        )
+        if cur.rowcount != 1:
+            return False
+        create_log_with_cursor(
+            cur,
+            "scheduled.execution.finished",
+            user_id=user_id,
+            resource_type="scheduled_execution_job",
+            resource_id=job["id"],
+            details=details,
+        )
+    return True
+
+
+def mark_provider_started(job: dict[str, Any], worker_id: str) -> None:
+    """Persist the external-call boundary before the provider is invoked."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """UPDATE scheduled_execution_jobs
+               SET provider_started_at=COALESCE(provider_started_at, clock_timestamp()),
+                   updated_at=clock_timestamp()
+               WHERE id=%s AND status='LEASED' AND lease_owner=%s
+                 AND fencing_token=%s AND lease_until > clock_timestamp()""",
+            (job["id"], worker_id, job["fencing_token"]),
+        )
+        if cur.rowcount != 1:
+            raise ExecutionDenied("lease_lost")
+
+
+def assert_scheduled_lease(job: dict[str, Any], worker_id: str) -> None:
+    """Fail closed if another owner has taken over before an external call."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """SELECT 1 FROM scheduled_execution_jobs
+               WHERE id=%s AND status='LEASED' AND lease_owner=%s
+                 AND fencing_token=%s AND lease_until > clock_timestamp()""",
+            (job["id"], worker_id, job["fencing_token"]),
+        )
+        if cur.fetchone() is None:
+            raise ExecutionDenied("lease_lost")
+
+
+def list_schedules(*, schedule_id: str | None = None) -> list[dict[str, Any]]:
+    """Inspect persisted definitions without executing them."""
+    with get_cursor() as (_, cur):
+        if schedule_id:
+            cur.execute(
+                """SELECT schedule_id,revision,target_id,cron,timezone,actor_kind,
+                          actor_id,kind,scope,effective_at,enabled,last_checked_at
+                   FROM durable_schedules WHERE schedule_id=%s
+                   ORDER BY revision DESC, target_id""",
+                (schedule_id,),
+            )
+        else:
+            cur.execute(
+                """SELECT schedule_id,revision,target_id,cron,timezone,actor_kind,
+                          actor_id,kind,scope,effective_at,enabled,last_checked_at
+                   FROM durable_schedules ORDER BY schedule_id,revision DESC, target_id"""
+            )
+        rows = cur.fetchall()
+    keys = (
+        "schedule_id", "revision", "target_id", "cron", "timezone", "actor_kind",
+        "actor_id", "kind", "scope", "effective_at", "enabled", "last_checked_at",
+    )
+    return [dict(zip(keys, row, strict=True)) for row in rows]

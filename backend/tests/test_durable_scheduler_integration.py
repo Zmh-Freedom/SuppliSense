@@ -179,3 +179,35 @@ def test_failed_enqueue_rolls_back_job_and_cursor(schedule_factory, monkeypatch)
     with get_cursor() as (_, cur):
         cur.execute("SELECT last_checked_at FROM durable_schedules WHERE schedule_id=%s", (schedule.schedule_id,))
         assert cur.fetchone()[0] is None
+
+
+def test_operator_cli_registers_and_lists_a_schedule():
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    schedule_id = f"cli-{uuid4()}"
+    env = {**os.environ, "PG_DB": settings.PG_DB, "MONGO_DB": settings.MONGO_DB}
+    base = [sys.executable, "-m", "app.domains.scheduling.cli"]
+    registered = subprocess.run(
+        base + [
+            "register", "--schedule-id", schedule_id, "--revision", "1",
+            "--target-id", "target-cli", "--cron", "0 9 * * *",
+            "--timezone", "Asia/Shanghai", "--actor-kind", "user",
+            "--actor-id", str(uuid4()), "--kind", "financial_check",
+            "--effective-at", "2026-10-20T00:00:00+00:00",
+        ],
+        cwd=Path(__file__).resolve().parents[1], env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert registered.returncode == 0, registered.stderr
+    assert json.loads(registered.stdout)["created"] is True
+    listing = subprocess.run(
+        base + ["list", "--schedule-id", schedule_id],
+        cwd=Path(__file__).resolve().parents[1], env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert listing.returncode == 0, listing.stderr
+    assert schedule_id in listing.stdout

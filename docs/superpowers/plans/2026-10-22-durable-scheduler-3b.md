@@ -60,18 +60,18 @@
 
 **Interfaces:** 下一包实现前依据 Task 1 已落地字段细化，必须包含 permit/fencing、当前 actor/目标授权核验、按 job 幂等预算预留、业务幂等结果/审计事务。service principal 必须明确配置权限和预算，不能以字符串回退绕过。
 
-- [ ] 写失败测试：停用/撤权/额度不足均零外呼；重试复用预算预留；每个目标隔离；外部未知结果转待对账。
-- [ ] 实现免费/付费任务白名单及有限并发消费者，保留领域 service 框架无关；通知迁移与 3C 边界对齐。
-- [ ] 双 worker、SIGKILL 接管、额度/审计原子性验证；付费 BLOCKED_POLICY 只在统一门禁通过后解除。
-- [ ] 独立审查、验证、提交。
+- [x] 写失败测试：停用/撤权/额度不足均零外呼；重试复用预算预留；每个目标隔离；外部未知结果转待对账。
+- [x] 实现免费/付费任务白名单及有限并发消费者，保留领域 service 框架无关；通知迁移与 3C 边界对齐。
+- [x] 双 worker、SIGKILL 接管、额度/审计原子性验证；付费 BLOCKED_POLICY 只在统一门禁通过后解除。
+- [x] 独立审查、验证、提交。
 
 ### Task 4: 角色切换与验收
 
 **Files:** services/scheduler.py、main.py、部署配置与回滚手册；新增进程验收。
 
-- [ ] 增加统一调度角色开关，API 不再执行已迁移的业务 cron；Outbox 在 3C 切出之前保持明确单一 owner。
-- [ ] 双 scheduler 同周期唯一任务、停机只补最近周期、权限撤销不外呼、时区边界、旧入口失权和 SIGKILL 接管门禁。
-- [ ] 更新总设计状态和 issue-log；3B 完整验收后再进入 3C。
+- [x] 增加统一调度角色开关，API 不再执行已迁移的业务 cron；Outbox 在 3C 切出之前保持明确单一 owner。
+- [x] 双 scheduler 同周期唯一任务、停机只补最近周期、权限撤销不外呼、时区边界、旧入口失权和 SIGKILL 接管门禁。
+- [x] 更新总设计状态和 issue-log；3B 完整验收后再进入 3C。
 
 ## 首包实施记录（2026-10-22）
 
@@ -87,3 +87,33 @@
 
 - 权限/预算/审计执行门禁与业务消费者（Task 3）。
 - API 内旧 scheduler 的切换/撤权（Task 4）；当前旧 APScheduler 仍在其既有入口运行，本首包未改变生产触发。
+
+## 执行门禁与消费者实施记录（2026-10-22）
+
+- **租约**：scheduled_execution_jobs 支持 LEASED、attempts/max_attempts、fencing_token、lease_owner/lease_until、心跳与到期接管。只有当前 owner + fencing 能提交终态；旧 owner 的完成/心跳被拒。
+- **权限**：用户型 actor 执行前重新读取 is_active/role，并通过 get_watchlist_targets 重新核验目标可见性；撤权、停用、目标移除均零外呼，终态 CANCELLED 且写审计。服务型 actor 必须出现在 SCHEDULER_SERVICE_PRINCIPALS，空配置即拒绝。
+- **预算**：付费/外部副作用任务需要 SCHEDULER_PAID_EXECUTION_ENABLED=true；reserve_paid_refresh_once 以 job id 幂等预留，重试不重复扣费，预留 key 保留 7 天以跨日重试。额度不足/不可用均不进入 handler。
+- **未知外呼结果**：provider 调用前写 provider_started_at；租约过期后若已越过该边界，任务直接 NEEDS_REVIEW(external_result_unknown)，不自动重放。成功提交被 fencing 拒绝时同样报告待核对。
+- **审计**：终态与 audit_logs 同事务；用户删除后不再写失效 user_id，actor 保留在 details。
+- **运行角色**：SCHEDULER_ROLE_ENABLED 控制 API 内业务 cron；独立 scheduler 入口在开关仍为 true 时拒绝启动，避免双触发。OUTBOX_WORKER_ENABLED 保持原投递回滚语义，Outbox 仍由 advisory leader 单一 owner 轮询，3C 再迁出。
+- **运维入口**：`python -m app.domains.scheduling.cli register|list` 注册不可变 revision、检查计划；Compose 提供 `dedicated-scheduler` profile 下的 scheduler 与 scheduled-worker。
+
+### 门禁结果
+
+- 调度专项（周期、worker、角色开关、执行门禁、真实 PG 计划/任务、CLI）：59 passed。
+- 既有 scheduler 生命周期回归：5 passed。
+- 全量离线：1148 passed、1 skipped、87 deselected（最后代码变更后复跑）。
+- 真实进程验收（scheduler_stage3_test）：
+  - 两个 `scheduler --once` 并发：一个 created=1，一个 existing=1，数据库仅 1 条同周期任务。
+  - 两个 claim 进程并发：一个取得 job，另一个 NONE。
+  - claim 后 `kill -9`、租约过期：新进程接管 attempts 1→2、fencing 1→2。
+  - 不存在/已删除用户的任务：handler 未调用，状态 CANCELLED(actor_inactive)，审计含 job/schedule/target/actor。
+  - 付费任务在开关关闭时保持 BLOCKED_POLICY，worker 不领取。
+
+### 尚未完成（不宣称 3B 完成）
+
+- 现有生产 watchlist 与旧 cron 的计划注册/迁移尚未执行；没有自动 bootstrap，避免在未确认 actor 归属时批量改写生产计划。
+- 付费外呼默认关闭，尚未做真实供应商付费 pilot。
+- 计划管理目前是 CLI，无 REST 管理端点。
+- 生产 API 角色开关未切换；Compose profile 默认不启动。
+- 3C delivery、3D 迁移/发布门禁仍未开始。

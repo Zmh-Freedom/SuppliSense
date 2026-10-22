@@ -46,6 +46,13 @@ class ScheduleDefinition:
             raise ValueError("计划版本必须为正整数")
         if self.actor_kind not in {"user", "service"} or self.kind not in TASK_KINDS:
             raise ValueError("无效的操作者或调度任务种类")
+        if self.actor_kind == "user":
+            from uuid import UUID
+
+            try:
+                UUID(self.actor_id)
+            except ValueError as exc:
+                raise ValueError("用户型操作者必须是有效 UUID") from exc
         if not isinstance(self.scope, dict) or self.scope.get("target_id") != self.target_id:
             raise ValueError("任务范围必须明确绑定目标")
         _utc(self.effective_at)

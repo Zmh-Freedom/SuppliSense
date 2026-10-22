@@ -80,6 +80,7 @@ from app.workers import scheduler
 def batch(batch_size=20):
     print('READY', flush=True)
     return {'scanned': 0, 'created': 0, 'existing': 0, 'blocked': 0, 'errors': 0}
+scheduler.settings.SCHEDULER_ROLE_ENABLED = False
 scheduler.run_scheduler_once = batch
 scheduler.main()
 """
@@ -124,3 +125,55 @@ def test_transient_batch_failure_does_not_kill_the_loop(monkeypatch):
     asyncio.run(scheduler_worker._run_forever(poll_seconds=0.01))
     scheduler_worker._STOP = False
     assert len(calls) == 2
+
+
+def test_dedicated_scheduler_refuses_to_run_while_api_cron_is_enabled(monkeypatch):
+    monkeypatch.setattr(scheduler_worker.settings, "SCHEDULER_ROLE_ENABLED", True)
+    with pytest.raises(RuntimeError, match="SCHEDULER_ROLE_ENABLED=false"):
+        scheduler_worker._assert_role_available()
+    monkeypatch.setattr(scheduler_worker.settings, "SCHEDULER_ROLE_ENABLED", False)
+    scheduler_worker._assert_role_available()
+
+
+@pytest.mark.parametrize("signal_number", [signal.SIGTERM, signal.SIGINT])
+def test_scheduled_worker_cli_exits_within_deadline(signal_number):
+    import os
+    import select
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    source = """
+import asyncio
+from app.workers import scheduled_worker
+scheduled_worker.DRAIN_TIMEOUT_SECONDS = .5
+async def stuck(worker_id=None):
+    print('READY', flush=True)
+    await asyncio.sleep(60)
+    return {'executed': 0}
+scheduled_worker.run_scheduled_worker_once_async = stuck
+scheduled_worker.main()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-u", "-c", source],
+        cwd=Path(__file__).resolve().parents[1],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if select.select([process.stdout], [], [], 0.1)[0]:
+                if process.stdout.readline().strip() == b"READY":
+                    break
+            if process.poll() is not None:
+                pytest.fail("scheduled worker exited before its first poll")
+        else:
+            pytest.fail("scheduled worker did not start within ten seconds")
+        process.send_signal(signal_number)
+        assert process.wait(timeout=3) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate(timeout=3)
