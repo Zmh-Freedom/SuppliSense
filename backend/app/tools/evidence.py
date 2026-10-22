@@ -333,6 +333,7 @@ __all__ = ["attach_tool_evidence"]
 def attach_operational_metric_evidence(analysis: dict, *, entity_id: str, dimension: str) -> dict:
     """Bind each operational observation without altering domain/API payloads."""
     from app.domains.risk.assessment_contracts import canonical_hash
+    from app.domains.risk.operational_metrics import operational_observation_status
     from app.graphs.agent_core.evidence_ledger import EvidenceStatus, build_evidence_record
 
     result = dict(analysis['payload'])
@@ -344,29 +345,31 @@ def attach_operational_metric_evidence(analysis: dict, *, entity_id: str, dimens
     now = datetime.now(timezone.utc)
     observations = metric_result.observations
     aggregate = metric_result.status == 'available' and metric_result.value is not None and len(observations) > 1
-    groups = [list(observations)] if aggregate else [[item] for item in observations]
+    groups = ([(list(observations), True)] if aggregate else []) + [([item], False) for item in observations]
     records = []
-    for group in groups:
+    for group, is_aggregate in groups:
         item = group[0]
         raw = [observation.model_dump(mode='json') for observation in group]
         digest = canonical_hash(raw)
         facts = {
+            'company_name': result.get('company_name'),
             'period': item.period, 'scope': item.scope, 'source_version': item.source_version,
             'observed_at': min((observation.observed_at.isoformat() for observation in group if observation.observed_at), default=None),
             'source_observations': raw, 'limitations': analysis['limitations'],
         }
-        value = metric_result.value if aggregate else item.value
+        value = metric_result.value if is_aggregate else item.value
         if value is not None:
             facts[item.metric] = value
             facts[f'{item.metric}_unit'] = 'ratio'
-        status = EvidenceStatus.AVAILABLE
-        if any(observation.status == 'conflicting' for observation in group) or metric_result.status == 'conflicting':
+        states = [operational_observation_status(observation, now) for observation in group]
+        if 'conflicting' in states or metric_result.status == 'conflicting':
             status = EvidenceStatus.CONFLICTING
-        elif any(observation.status != 'available' or not observation.observed_at or not observation.valid_until
-                 or observation.observed_at > now or observation.valid_until <= observation.observed_at for observation in group):
+        elif 'unavailable' in states:
             status = EvidenceStatus.UNAVAILABLE
-        elif any(observation.valid_until < now for observation in group):
+        elif 'stale' in states:
             status = EvidenceStatus.STALE
+        else:
+            status = EvidenceStatus.AVAILABLE
         valid_until = min((observation.valid_until for observation in group if observation.valid_until), default=None)
         record = build_evidence_record(
             evidence_id=f'operational:{entity_id}:{dimension}:{digest}', entity_id=entity_id, dimension=dimension,
@@ -376,6 +379,10 @@ def attach_operational_metric_evidence(analysis: dict, *, entity_id: str, dimens
             raw_payload_ref=f'operational-source:{item.source}:{digest}',
         ).model_dump(mode='json')
         records.append(record)
-        _append_claims(result, [item.metric], [record], result.get('company_name'))
+        scope_labels = {'supplier_code': '供应商代码', 'material_code': '物料', 'base': '基地', 'purchasing_org_code': '采购组织'}
+        scope_text = '；'.join(f"{scope_labels.get(key, '范围')} {value}" for key, value in item.scope.items())
+        kind = f"汇总{len(group)}条来源" if is_aggregate else f"来源记录 {item.source_record_id or '待核验'}"
+        subject = f"{result.get('company_name') or '企业'}（{item.period}；{scope_text}；{kind}）"
+        _append_claims(result, [item.metric], [record], subject)
     result['evidence_records'] = records
     return attach_tool_evidence(result, tool_name='assess_operational_risk', entity_id=entity_id, dimension=dimension)

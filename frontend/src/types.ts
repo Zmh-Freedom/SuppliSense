@@ -323,6 +323,7 @@ export interface ClaimPresentation {
   value: string;
   label: string;
   tone: 'neutral' | 'positive' | 'warning' | 'danger';
+  context?: string;
 }
 
 export interface AgentEvidenceRecord {

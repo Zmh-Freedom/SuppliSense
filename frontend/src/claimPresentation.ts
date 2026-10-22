@@ -1,3 +1,4 @@
+import { canonicalFactPath } from './factPaths';
 import type { AgentAnswer, AgentEvidenceRecord, ClaimPresentation } from './types';
 
 /** Interpret only known metric contracts, after checking the exact evidence binding. */
@@ -7,7 +8,7 @@ export function presentRiskClaim(
   peerClaims: AgentAnswer['claims'],
   coverageLimited: boolean,
 ): ClaimPresentation | null {
-  const path = claim.fact_path || '';
+  const path = canonicalFactPath(claim.fact_path || '').split('.').pop() || '';
   const rate = ['quality_rate', 'on_time_rate'].includes(path) && ['quality', 'delivery'].includes(claim.dimension);
   const score = path === 'risk_score';
   const level = path === 'risk_level';
@@ -18,7 +19,16 @@ export function presentRiskClaim(
   const value = rate && typeof claim.value === 'number' && claim.unit === 'ratio' && Number.isFinite(claim.value)
     && claim.value >= 0 && claim.value <= 1 ? `${(claim.value * 100).toFixed(1)}%`
     : `${claim.value ?? '—'}${score && typeof claim.value === 'number' ? '/100' : ''}`;
-  const result = (label: string, tone: ClaimPresentation['tone'] = 'neutral'): ClaimPresentation => ({ metric, value, label, tone });
+  const context = [...new Set(evidence.filter(record => claim.evidence_refs.includes(record.evidence_id)
+    && record.entity_id === claim.entity_id && record.dimension === claim.dimension).map(record => {
+      const facts = record.facts || {};
+      const scope = facts.scope && typeof facts.scope === 'object' && !Array.isArray(facts.scope) ? facts.scope as Record<string, unknown> : {};
+      const labels: Record<string,string> = { supplier_code:'供应商代码', material_code:'物料', base:'基地', purchasing_org_code:'采购组织' };
+      return [typeof facts.company_name === 'string' ? facts.company_name : '主体待核验',
+        typeof facts.period === 'string' ? facts.period : '周期未知',
+        ...Object.entries(scope).map(([key,value]) => `${labels[key] || '范围'} ${String(value)}`)].join(' · ');
+    }))].join('；');
+  const result = (label: string, tone: ClaimPresentation['tone'] = 'neutral'): ClaimPresentation => ({ metric, value, label, tone, ...(context ? {context} : {}) });
   if (claim.validation_status === 'conflicting') return result('数据有冲突', 'danger');
   if (claim.validation_status !== 'supported') return result('当前未覆盖', 'warning');
   if (operational && (score || level)) return result('历史规则待核验');
@@ -50,7 +60,7 @@ export function presentRiskClaim(
   };
   const grade = classify(claim.value);
   const peers = peerClaims.filter(peer => peer.entity_id === claim.entity_id && peer.dimension === claim.dimension
-    && peer.validation_status === 'supported' && peer.fact_path === (score ? 'risk_level' : 'risk_score')
+    && peer.validation_status === 'supported' && canonicalFactPath(peer.fact_path || '').split('.').pop() === (score ? 'risk_level' : 'risk_score')
     && peer.evidence_refs.some(ref => claim.evidence_refs.includes(ref)));
   if (peers.some(peer => classify(peer.value) && classify(peer.value) !== grade)) return result('评分与等级有冲突', 'warning');
   if (grade === 'high') return result('高风险信号', 'danger');

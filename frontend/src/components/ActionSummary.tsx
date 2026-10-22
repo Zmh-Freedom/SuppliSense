@@ -4,13 +4,13 @@ import { getAnswerCapability, getAnswerCapabilityMeta } from './answerCapabiliti
 
 export default function ActionSummary({ answer, limitations }: { answer: AgentAnswer; limitations: string[] }) {
   const supportedCount = answer.claims.filter(claim => claim.validation_status === 'supported').length;
-  const needsReview = answer.status === 'needs_review' || limitations.length > 0;
+  const operationalReview = answer.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension));
+  const needsReview = answer.status === 'needs_review' || limitations.length > 0 || operationalReview;
   const hasClaims = answer.claims.length > 0;
   const capability = getAnswerCapability(answer);
   const capabilityMeta = getAnswerCapabilityMeta(capability);
   const isSpecialized = capability !== 'generic';
   const conclusion = isSpecialized ? capabilityMeta.label : needsReview ? '建议复核' : hasClaims ? '已形成初步结论' : '暂未形成结论';
-  const operationalReview = answer.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension));
   const explanation = operationalReview ? answer.summary : isSpecialized
     ? answer.summary
     : hasClaims && answer.summary?.includes('\n\n')

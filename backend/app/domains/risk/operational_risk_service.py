@@ -1,11 +1,12 @@
 """Quality/delivery facts from explicitly contracted, validated source snapshots."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import re
 from typing import Any
 
 from app.db.mongo import get_db
-from app.domains.risk.operational_metrics import aggregate_operational_observations, normalize_operational_row
+from app.domains.risk.operational_metrics import aggregate_operational_observations, normalize_operational_row, operational_observation_status
 from app.domains.risk.risk_contract import OperationalDimension, OperationalSourceContract
 
 POLICY_LIMITATION = '已取得指标，风险等级待确认：质量/交付评级政策尚未确认。'
@@ -59,10 +60,15 @@ def analyze_operational_metrics(company_name: str, dimension: OperationalDimensi
             continue
         observations.append(normalize_operational_row(row, contract))
     result = aggregate_operational_observations(observations)
+    if any(operational_observation_status(item, datetime.now(timezone.utc)) != 'available' for item in observations):
+        result = result.model_copy(update={'value': None, 'numerator': None, 'denominator': None,
+                                          'status': 'partial' if result.status != 'conflicting' else 'conflicting',
+                                          'reasons': (*result.reasons, 'source_time_limited')})
     if unconfigured:
         result = result.model_copy(update={'value': None, 'numerator': None, 'denominator': None,
                                           'status': 'partial', 'reasons': (*result.reasons, 'unconfigured_source')})
     reason_labels = {
+        'source_time_limited': '部分来源时间未知、已过期或存在冲突，保留各条事实，不能形成当前整体比例。',
         'missing_aggregation_weights': '来源缺少可验证的统计分母，保留各项指标，不计算汇总比例。',
         'unproven_disjointness': '无法确认来源记录互不重叠，暂不合并。',
         'overlapping_partition': '来源统计范围重叠，暂不合并。',

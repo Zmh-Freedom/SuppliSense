@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import { presentRiskClaim } from '../claimPresentation';
+import { canonicalFactPath as canonicalizeFactPath } from '../factPaths';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import { EvidenceTable } from './ChatResultSections';
 import AgentTrendCharts from './AgentTrendCharts';
@@ -121,33 +122,8 @@ const FACT_LABELS: Record<string, string> = {
   high_risk_related_count: '高风险关联主体数量',
 };
 
-const FACT_PATH_ALIASES: Record<string, string> = {
-  'revenue_growth': 'revenue_growth',
-  'net_profit_growth': 'net_profit_growth',
-  'debt_ratio': 'debt_ratio',
-  'cash_flow': 'cash_flow',
-  'net_profit_margin': 'net_profit_margin',
-  'current_ratio': 'current_ratio',
-  'quick_ratio': 'quick_ratio',
-  'return_on_equity': 'roe',
-  'roe': 'roe',
-  'revenue': 'revenue',
-  'net_profit': 'net_profit',
-};
-
 function canonicalFactPath(path: string): string {
-  const normalized = path
-    .trim()
-    .replace(/([a-z])([A-Z])/g, '$1_$2')
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-    .replace(/\.{2,}/g, '.')
-    .replace(/^\.+|\.+$/g, '');
-  if (FACT_PATH_ALIASES[normalized]) return FACT_PATH_ALIASES[normalized];
-  const knownPaths = [...Object.keys(FACT_LABELS), ...Object.keys(RISK_FACT_LABELS)];
-  const compact = normalized.replace(/[._]/g, '');
-  const matched = knownPaths.find(item => item.replace(/[._]/g, '').toLowerCase() === compact);
-  return matched || normalized;
+  return canonicalizeFactPath(path, [...Object.keys(FACT_LABELS), ...Object.keys(RISK_FACT_LABELS)]);
 }
 
 const RISK_FACT_LABELS: Record<string, string> = {
@@ -832,7 +808,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {
             const claims = answer.claims.filter(claim => claimGroup(claim) === group && shouldShowClaim(claim));
             if (claims.length === 0) return null;
-            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => { const presentation = presentRiskClaim(claim, evidence || [], answer.claims, answer.status !== 'completed' || limitations.length > 0); const assessment = presentation ? { label: presentation.label, className: ({ neutral: 'border-stone-200 bg-stone-50 text-stone-700', positive: 'border-emerald-200 bg-emerald-50 text-emerald-700', warning: 'border-amber-200 bg-amber-50 text-amber-700', danger: 'border-red-200 bg-red-50 text-red-700' })[presentation.tone] } : claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0); return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{presentation?.value ?? readableClaimDetail(claim)}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>; })}</Fragment>;
+            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => { const presentation = presentRiskClaim(claim, evidence || [], answer.claims, answer.status !== 'completed' || limitations.length > 0); const assessment = presentation ? { label: presentation.label, className: ({ neutral: 'border-stone-200 bg-stone-50 text-stone-700', positive: 'border-emerald-200 bg-emerald-50 text-emerald-700', warning: 'border-amber-200 bg-amber-50 text-amber-700', danger: 'border-red-200 bg-red-50 text-red-700' })[presentation.tone] } : claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0); return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{presentation?.value ?? readableClaimDetail(claim)}{presentation?.context && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{presentation.context}</p>}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>; })}</Fragment>;
           })}</tbody>
         </table>
       </div></EvidenceTable>}
@@ -878,7 +854,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <p className="font-medium text-[var(--color-text)]">数据来源</p>
           {evidence.map(record => <div key={record.evidence_id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-[var(--color-text)]"><span className="font-medium">{readableProvider(record.provider, record.source_type)}</span><span className="text-[var(--color-text-secondary)]">{readableEvidenceStatus(record.status)}</span></div>
-            <p className="mt-1 leading-5 text-[var(--color-text-secondary)]">{record.data_mode === 'synthetic' ? '演示数据' : '正式数据'} · 更新于 {formatEvidenceDate(record.collected_at)}</p>
+            <p className="mt-1 leading-5 text-[var(--color-text-secondary)]">{record.data_mode === 'synthetic' ? '演示数据' : '正式数据'} · 本次采集时间：{formatEvidenceDate(record.collected_at)} · 来源观察时间：{typeof record.facts?.observed_at === 'string' ? formatEvidenceDate(record.facts.observed_at) : '未知'}</p>
             <details className="mt-2 rounded-lg bg-[var(--color-code-bg)] px-2.5 py-2">
               <summary className="cursor-pointer text-[11px] text-[var(--color-text-secondary)]">查看审计原始数据（含系统字段）</summary>
               <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--color-text-secondary)]">{JSON.stringify({ evidence_id: record.evidence_id, entity_id: record.entity_id, facts: record.facts || {} }, null, 2)}</pre>

@@ -57,3 +57,11 @@ def test_missing_fields_keep_original_missing_branch(monkeypatch):
     result = assess_operational_risk('甲公司', 'quality')
     assert result['assessment_status'] == 'missing_data'
     assert set(result) == {'assessment_status','dimension','company_name','period','risk_level','risk_score','data_coverage','reason'}
+
+
+def test_mixed_source_times_do_not_publish_a_current_aggregate(monkeypatch):
+    install(monkeypatch,[transaction(inspected=100,quality_rate=0.5),
+        transaction(source_record_id='r2',batch='B2',inspected=9900,quality_rate=1,observed_at=None)])
+    result = assess_operational_risk('甲公司','quality')
+    assert result['metrics'] == {}
+    assert len(result['evidence']) == 2

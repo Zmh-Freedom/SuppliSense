@@ -148,3 +148,13 @@ def aggregate_operational_observations(observations: list[OperationalObservation
         return OperationalMetricResult(**common, status='unavailable', reasons=('invalid_aggregate',))
     return OperationalMetricResult(**common, status='available', value=numerator / denominator,
                                    numerator=numerator, denominator=denominator)
+
+
+def operational_observation_status(observation: OperationalObservation, now: datetime) -> str:
+    """Source validity at a supplied instant, independent of collection time."""
+    if observation.status != 'available':
+        return observation.status
+    if (not observation.observed_at or not observation.valid_until
+            or observation.observed_at > now or observation.valid_until <= observation.observed_at):
+        return 'unavailable'
+    return 'stale' if observation.valid_until <= now else 'available'

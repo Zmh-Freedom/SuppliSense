@@ -57,3 +57,8 @@ describe('risk claim semantics', () => {
       .toMatchObject({tone:'neutral',label:'历史规则待核验'});
   });
 });
+
+it.each(['riskScore','risk.score','risk-score','risk.level'])('protects historical alias %s', fact_path => {
+  const c = {...claim,dimension:'delivery',fact_path,value:90};
+  expect(presentRiskClaim(c,[],[c],false)).toMatchObject({tone:'neutral',label:'历史规则待核验'});
+});

@@ -119,3 +119,23 @@ it('shows the operational source gap instead of implying a detected risk signal'
   expect(screen.getByText('当前未覆盖')).toBeInTheDocument();
   expect(screen.queryByText('发现信号，需人工复核')).not.toBeInTheDocument();
 });
+
+it('does not create a green action signal from a completed historical score', () => {
+  const historical: AgentAnswer = {...answer,status:'completed',summary:'历史运营分析',limitations:[],
+    claims:[{...answer.claims[0],dimension:'delivery',fact_path:'riskScore',value:90,statement:'历史90分',evidence_refs:[]}]};
+  render(<StructuredAgentResult answer={historical} evidence={[]} />);
+  expect(screen.queryByText('可继续推进')).not.toBeInTheDocument();
+  expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
+  expect(screen.getAllByText('历史规则待核验').length).toBeGreaterThan(0);
+});
+
+it('identifies the subject period and scope of each metric and distinguishes source time', () => {
+  const c = {...answer.claims[0],entity_id:'company:1',dimension:'quality',fact_path:'quality_rate',value:0.952,unit:'ratio',evidence_refs:['scoped']};
+  const scoped: AgentEvidenceRecord = {...evidence[0],evidence_id:'scoped',entity_id:'company:1',dimension:'quality',
+    facts:{company_name:'甲公司',period:'2026-10',scope:{material_code:'M1',base:'P1'},quality_rate:0.952,quality_rate_unit:'ratio',observed_at:null}};
+  render(<StructuredAgentResult answer={{...answer,claims:[c]}} evidence={[scoped]} />);
+  expect(screen.getByText(/甲公司.*2026-10.*物料 M1.*基地 P1/)).toBeInTheDocument();
+  expect(screen.getByText(/本次采集时间/)).toBeInTheDocument();
+  expect(screen.getByText(/来源观察时间：未知/)).toBeInTheDocument();
+  expect(screen.queryByText(/更新于/)).not.toBeInTheDocument();
+});

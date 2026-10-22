@@ -100,3 +100,27 @@ def test_actual_harness_contract_matches_frontend_fixture(monkeypatch):
     fixture = Path(__file__).resolve().parents[2] / 'frontend/src/__tests__/fixtures/operationalMetricAnswer.json'
     assert fixture.exists(), 'Generate fixture from public_fixture, not by hand'
     assert actual == json.loads(fixture.read_text())
+
+
+def test_unknown_time_does_not_swallow_fresh_source_fact(monkeypatch):
+    install(monkeypatch,[transaction(inspected=100,quality_rate=0.5),
+        transaction(source_record_id='r2',batch='B2',inspected=9900,quality_rate=1,observed_at=None)])
+    result = run_operational(['quality'])
+    supported = [c for c in result['answer']['claims'] if c['validation_status']=='supported']
+    assert any(c['value']==0.5 for c in supported)
+    assert not any(c['value']==0.995 for c in supported)
+    assert '50.0%' in result['answer']['summary']
+    assert '没有可验证' not in result['answer']['summary']
+
+
+def test_claims_include_source_scope_and_preserve_individual_observations(monkeypatch):
+    install(monkeypatch,[transaction(inspected=100,quality_rate=0.5),
+        transaction(source_record_id='r2',batch='B2',inspected=9900,quality_rate=1)])
+    result = run_operational(['quality'])
+    assert len(result['evidence_records']) == 3  # aggregate plus each raw observation
+    for claim in result['answer']['claims']:
+        assert '甲公司' in claim['statement']
+        assert '2026-10' in claim['statement']
+        assert '物料 M1' in claim['statement']
+        assert '基地 P1' in claim['statement']
+    assert all(r['facts']['company_name']=='甲公司' for r in result['evidence_records'])

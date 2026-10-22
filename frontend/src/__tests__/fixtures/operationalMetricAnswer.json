@@ -1,13 +1,13 @@
 {
   "answer": {
     "status": "partial",
-    "summary": "已取得质量/交付指标：甲公司 合格率：95.2%；甲公司 准时交付率：70.0%。评级政策尚未确认，暂不提供正式风险分与等级。",
+    "summary": "已取得质量/交付指标：甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 合格率：95.2%；甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 准时交付率：70.0%。评级政策尚未确认，暂不提供正式风险分与等级。",
     "claims": [
       {
         "claim_id": "operational:entity:甲公司:quality:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f:claim:quality_rate",
         "entity_id": "entity:甲公司",
         "dimension": "quality",
-        "statement": "甲公司 合格率：95.2%",
+        "statement": "甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 合格率：95.2%",
         "value": 0.952,
         "fact_path": "quality_rate",
         "operator": "eq",
@@ -23,7 +23,7 @@
         "claim_id": "operational:entity:甲公司:delivery:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371:claim:on_time_rate",
         "entity_id": "entity:甲公司",
         "dimension": "delivery",
-        "statement": "甲公司 准时交付率：70.0%",
+        "statement": "甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 准时交付率：70.0%",
         "value": 0.7,
         "fact_path": "on_time_rate",
         "operator": "eq",
@@ -67,9 +67,10 @@
       "collected_at": "2026-10-22T00:00:00Z",
       "valid_until": "2099-11-01T00:00:00Z",
       "data_mode": "formal",
-      "content_hash": "8017e65c044aa6cddb5f19dd76d6f24c616dc90d1ad20ceecee1b2b129f6e175",
+      "content_hash": "d9a10ab780227e27d20a3b360334a7e11f92965818dd7276a4371dae1eb9aa8d",
       "raw_payload_ref": "operational-source:test-contract:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f",
       "facts": {
+        "company_name": "甲公司",
         "period": "2026-10",
         "scope": {
           "supplier_code": "S1",
@@ -132,9 +133,10 @@
       "collected_at": "2026-10-22T00:00:00Z",
       "valid_until": "2099-11-01T00:00:00Z",
       "data_mode": "formal",
-      "content_hash": "3f168e26eec060c0d051700d2f9cd0c486f53fa7481aa4f5c110291e97ebd72d",
+      "content_hash": "d310302d8d8335e4b74cce266dd861e9757fef80cba0cf45d800ec45c0d3745c",
       "raw_payload_ref": "operational-source:test-contract:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371",
       "facts": {
+        "company_name": "甲公司",
         "period": "2026-10",
         "scope": {
           "supplier_code": "S1",
