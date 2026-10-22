@@ -4,7 +4,7 @@ import math
 import re
 from typing import Literal
 
-from app.domains.risk.risk_contract import OperationalObservation, OperationalSourceContract
+from app.domains.risk.risk_contract import OperationalMetricResult, OperationalObservation, OperationalSourceContract
 
 
 def _number(value: object) -> float:
@@ -95,3 +95,56 @@ def normalize_operational_row(row: dict, contract: OperationalSourceContract) ->
         return OperationalObservation(**base, value=rate, numerator=numerator, denominator=denominator, status='available')
     except ValueError as exc:
         return OperationalObservation(**base, status=status, reasons=(str(exc),))
+
+
+def aggregate_operational_observations(observations: list[OperationalObservation]) -> OperationalMetricResult:
+    """Aggregate only disjoint, comparable observations; retain every limitation."""
+    unique: dict[tuple[str, str, str], OperationalObservation] = {}
+    retained = []
+    reasons = []
+    conflict = False
+    for item in observations:
+        key = (item.source, item.source_version, item.source_record_id)
+        previous = unique.get(key) if item.source_record_id else None
+        if previous == item:
+            continue
+        retained.append(item)
+        if previous is not None:
+            conflict = True
+            reasons.append('conflicting_source_record')
+        unique[key] = item
+        if item.status != 'available':
+            reasons.extend(item.reasons)
+            conflict |= item.status == 'conflicting'
+    first = retained[0] if retained else None
+    common = dict(metric=first.metric if first else '', period=first.period if first else None,
+                  observations=tuple(retained))
+    if not first:
+        return OperationalMetricResult(**common, status='unavailable', reasons=('missing_observations',))
+    if not reasons and any(item.status != 'available' for item in retained):
+        reasons.append('invalid_observation')
+    if len(retained) > 1:
+        signature = lambda item: (item.metric, item.period, item.source, item.source_version,
+                                 item.scope, item.quantity_unit, item.denominator_basis, item.row_kind)
+        if any(signature(item) != signature(first) for item in retained[1:]):
+            reasons.append('incomparable_scope_or_basis')
+        if any(not item.source_record_id or not item.partition or item.row_kind != 'detail' for item in retained):
+            reasons.append('unproven_disjointness')
+        if len({item.partition for item in retained}) != len(retained):
+            reasons.append('overlapping_partition')
+        if any(item.denominator is None or item.numerator is None for item in retained):
+            reasons.append('missing_aggregation_weights')
+    elif first.row_kind == 'detail' and not first.source_record_id:
+        reasons.append('missing_record_identity')
+    if reasons:
+        return OperationalMetricResult(**common, status='conflicting' if conflict else 'partial',
+                                       reasons=tuple(dict.fromkeys(reasons)))
+    if len(retained) == 1:
+        return OperationalMetricResult(**common, status='available', value=first.value,
+                                       numerator=first.numerator, denominator=first.denominator)
+    numerator = math.fsum(item.numerator for item in retained)
+    denominator = math.fsum(item.denominator for item in retained)
+    if not math.isfinite(numerator) or not math.isfinite(denominator) or denominator <= 0:
+        return OperationalMetricResult(**common, status='unavailable', reasons=('invalid_aggregate',))
+    return OperationalMetricResult(**common, status='available', value=numerator / denominator,
+                                   numerator=numerator, denominator=denominator)

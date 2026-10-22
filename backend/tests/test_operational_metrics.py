@@ -102,3 +102,60 @@ def test_source_metadata_and_input_are_preserved():
     assert result.period == '2026-10'
     assert result.raw_unit == 'ratio'
     assert result.observed_at.isoformat() == '2026-10-01T00:00:00+00:00'
+
+
+def aggregate(items):
+    from app.domains.risk.operational_metrics import aggregate_operational_observations
+    return aggregate_operational_observations(items)
+
+
+def observations():
+    return [normalize(row(quality_rate=0.5, inspected=100)),
+            normalize(row(quality_rate=1.0, inspected=9900, source_record_id='r2', batch='B2'))]
+
+
+def test_weighted_quality_rate_uses_inspected_denominator():
+    result = aggregate(observations())
+    assert result.status == 'available'
+    assert result.denominator == 10000
+    assert result.numerator == 9950
+    assert result.value == pytest.approx(0.995)
+
+
+def test_unweighted_rates_remain_individual_observations():
+    result = aggregate([normalize(row()), normalize(row(source_record_id='r2', batch='B2'))])
+    assert result.value is None
+    assert len(result.observations) == 2
+    single = aggregate([normalize(row(), contract(row_kind='summary'))])
+    assert single.value == 0.952
+
+
+@pytest.mark.parametrize('changes', [dict(partition=None), dict(partition='B1'),
+    dict(quantity_unit='kg'), dict(period='2026-09'), dict(scope={'supplier_code':'S2'}),
+    dict(source='other'), dict(source_version='2'), dict(row_kind='summary'),
+    dict(denominator_basis='order_lines'), dict(source_record_id='')])
+def test_distinct_record_ids_do_not_prove_disjointness(changes):
+    items = observations()
+    items[1] = items[1].model_copy(update=changes)
+    result = aggregate(items)
+    assert result.value is None
+    assert result.reasons
+    assert len(result.observations) == 2
+
+
+def test_identical_record_is_counted_once_and_conflict_is_preserved():
+    items = observations()
+    assert aggregate(items + [items[0]]).denominator == 10000
+    conflicting = items[0].model_copy(update={'value':0.6})
+    result = aggregate(items + [conflicting])
+    assert result.status == 'conflicting'
+    assert result.value is None
+    assert len(result.observations) == 3
+
+
+def test_bad_row_is_not_dropped_for_a_good_aggregate():
+    result = aggregate([normalize(row()), normalize(row(quality_rate=-1, source_record_id='r2'))])
+    assert result.value is None
+    assert result.status != 'available'
+    assert len(result.observations) == 2
+    assert aggregate([]).status == 'unavailable'
