@@ -5852,7 +5852,7 @@
 - 根因：计划触发与实际业务执行耦合，缺少持久计划和周期任务账本。
 - 修复方案：3B 先建立不可变 revision 定义、按时区计算的周期及 UTC 边界、独立只入队 scheduler 和唯一约束。默认漏跑只补最近一次，DST 重复小时同一逻辑键；付费任务暂记 BLOCKED_POLICY。后续接入执行前权限/预算/审计及业务消费者，再切换部署入口。
 - 验证结果：将覆盖双 scheduler 同周期同任务、时区/DST/漏跑、revision 冲突、进程重启不丢队列及付费不外呼；所有写测试仅在服务器 scheduler_stage3_test。
-- 关联提交：3A 基线 `6f51036b`；3B 首包 `c0f02777`；执行门禁提交待记录。
+- 关联提交：3A 基线 `6f51036b`；3B 首包 `c0f02777`；执行门禁 `46cd6b2b`。
 - 首包验证：周期 15、scheduler worker 7、真实 PG 8，共 30 passed；双 scheduler 并发同周期返回同一 job_id；同一 revision 改写被拒；失败扫描回滚且 cursor 单独推进。
 
 ## ISS-20261022-006 坏计划可使轮转游标停住并饿死后续计划
@@ -5873,7 +5873,7 @@
 - 根因：只校验了 UUID 格式，没有确认 FK 目标仍存在。
 - 修复方案：同事务内检查 users；不存在则 user_id=NULL，actor_id 保留在审计 details。
 - 验证结果：真实 PG 终态与审计用例通过；撤权任务 CANCELLED 且审计可查。
-- 关联提交：3B 执行门禁提交。
+- 关联提交：`46cd6b2b`。
 
 ## ISS-20261022-008 付费外呼中断后可能被自动重放
 
@@ -5883,7 +5883,7 @@
 - 根因：只记录尝试次数，没有记录是否已越过外部调用边界。
 - 修复方案：handler 前写 provider_started_at；过期任务若已越过边界直接 NEEDS_REVIEW(external_result_unknown)，不自动重放；预算预留按 job id 幂等。
 - 验证结果：真实 PG 用例覆盖“已越过边界→NEEDS_REVIEW”“未越过边界→可接管重试”。
-- 关联提交：3B 执行门禁提交。
+- 关联提交：`46cd6b2b`。
 
 ## ISS-20261022-009 API 与独立 scheduler 可能同时触发业务 cron
 
@@ -5893,4 +5893,4 @@
 - 根因：缺少角色互斥检查。
 - 修复方案：独立 scheduler 启动前拒绝 SCHEDULER_ROLE_ENABLED=true；API 内业务 cron 默认保留以兼容现有部署，切换时显式置 false；Outbox 继续由 advisory leader 单一 owner 轮询。
 - 验证结果：角色开关 3 项、既有 scheduler 生命周期 5 项通过；真实 CLI 在 false 下运行、true 下拒绝。
-- 关联提交：3B 执行门禁提交。
+- 关联提交：`46cd6b2b`。
