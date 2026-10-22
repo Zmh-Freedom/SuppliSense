@@ -118,3 +118,18 @@
 同库初始化和真实事务门禁必须串行。首次并行触发 DDL deadlock 的 setup error 已记录，串行全量重跑全部通过。
 
 - 最终阶段一真实门禁 51 passed（685.92s，使用服务器隔离库）；恢复、取消、审批与唯一终态保持通过。实现与验收文档均保留在当前开发分支。
+
+### 第二阶段业务验收（2026-10-20，服务器开发库）
+
+环境：`127.0.0.1:15432/sra`、`127.0.0.1:27018/tianyancha`、`127.0.0.1:16379`（SSH 隧道），API 进程 `127.0.0.1:8011`；为隔离投影时序，验收进程使用 `OUTBOX_POLL_SECONDS=3600`，投影由一次性 worker 显式驱动。
+
+| 链路 | 操作 | 验收结果 |
+| --- | --- | --- |
+| 发起评估、重复请求 | `POST /api/v2/assessments`，重庆卓通汽车工业有限公司，`dimensions=["operational"]`，同一 `request_key` 连续两次 | 两次均 200，评估 ID 均为 `f3f23236-e724-46d8-85fb-a2c350c7c807`；`risk_score=91`、`assessed_at=2026-10-20T08:25:19.110163+00:00` 完全一致，未产生第二条记录 |
+| 查看历史、证据、政策，追加复核 | `GET /api/v2/assessments/{id}`、`GET /api/v2/assessments/company/{company_id}`、`POST /api/v2/assessments/{id}/reviews`（confirmed），同键重复复核 | 详情返回政策快照与 `judicial` 证据清单；历史分段 1 条；复核 ID `30844627-cd56-4f64-9b19-4cb6f812e229`，重复请求返回同一复核 ID。复核前后 `risk_score=82`、`assessed_at=2026-10-20T08:22:05.349903+00:00`、原始 `result` 均未变化，复核记录仅 1 条 |
+| Mongo 投影失败后补偿 | 评估 `8b2afd7b-f2fa-4231-817f-2886d3b68075` 提交后保持 Outbox 待投递；以不可达 Mongo 端口执行 worker 制造投影失败，再经管理员接口回放 `risk.assessment.committed` 并重投 | 失败时事件 `26f7767c-27f9-45cc-8263-2ed3fafdf7d7` 为 `attempt_count=1`、`last_error=consumer_handler_failed`，Mongo 快照 0 条；此时详情仍 200 且 `risk_score=82`，历史仍为 2 段各 1 条。回放后事件发布时间 `2026-10-20T08:24:30.892147+00:00`，快照恰好 1 条；重复执行投影后仍为 1 条，历史仍为 2 段各 1 条 |
+
+补充观察：
+
+- 首轮以“上海宇内新材料有限公司 + operational”探测时，因该主体缺少可证明时效的运营证据，评估以 `committed/unavailable`、`risk_score=null` 落库；这是数据覆盖结果，不涉及身份或幂等缺陷。正式验收改用具备证据的重庆卓通与浙江亚太机电。
+- 四条验收评估在 `assessment_snapshots` 中均为 1 条，Outbox 均已发布；复核仅追加，不改写 `assessment_history` 的冻结结果。

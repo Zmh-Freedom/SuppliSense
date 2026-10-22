@@ -118,6 +118,15 @@ class Settings(BaseSettings):
         default=int(os.getenv("AGENT_RUN_V2_CANARY_PERCENT", "0")), ge=0, le=100
     )
     AGENT_RUN_CHECKPOINT_SCHEMA: str = os.getenv("AGENT_RUN_CHECKPOINT_SCHEMA", "agent_checkpoint")
+    # Agent execution role: inline keeps the API runner for rollback; worker
+    # creates durable jobs and requires an independent Agent worker.
+    AGENT_EXECUTION_MODE: Literal["inline", "worker"] = os.getenv(
+        "AGENT_EXECUTION_MODE", "inline"
+    )
+    AGENT_WORKER_HEARTBEAT_SECONDS: int = Field(default=5, ge=1)
+    AGENT_WORKER_LEASE_SECONDS: int = Field(default=30, ge=3)
+    AGENT_WORKER_POLL_SECONDS: float = Field(default=1.0, gt=0)
+    AGENT_WORKER_MAX_RECOVERIES: int = Field(default=3, ge=0)
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)

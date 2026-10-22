@@ -278,6 +278,31 @@ DDL_STATEMENTS = [
     "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS execution_input JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS snapshot JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS recovery_count INTEGER NOT NULL DEFAULT 0",
+    """
+    CREATE TABLE IF NOT EXISTS agent_execution_jobs (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL UNIQUE REFERENCES agent_runs(id) ON DELETE CASCADE,
+        queue VARCHAR(32) NOT NULL DEFAULT 'agent',
+        status VARCHAR(32) NOT NULL DEFAULT 'QUEUED' CHECK (status IN
+            ('QUEUED','LEASED','PAUSED','SUCCEEDED','FAILED','CANCELLED')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        recoveries INTEGER NOT NULL DEFAULT 0 CHECK (recoveries >= 0),
+        max_recoveries INTEGER NOT NULL DEFAULT 3 CHECK (max_recoveries >= 0),
+        available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        lease_owner TEXT,
+        lease_until TIMESTAMPTZ,
+        attempt_id UUID,
+        fencing_token BIGINT,
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_execution_jobs_claim ON agent_execution_jobs (queue,status,available_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_execution_jobs_lease ON agent_execution_jobs (lease_until) WHERE status='LEASED'",
+    "ALTER TABLE agent_execution_jobs ALTER COLUMN status SET DEFAULT 'QUEUED'",
     """
     DO $$ BEGIN
         IF NOT EXISTS (

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.logging import get_logger
 
@@ -248,6 +249,53 @@ async def _langgraph_harness_stream(
         yield event
 
 
+async def _stream_durable_harness_run(
+    run_id: str,
+    user_id: str,
+    user_role: str,
+    *,
+    last_event_id: int = 0,
+):
+    """Subscribe to a worker-owned Harness Run from the durable event log."""
+    from app.domains.agent_run.coordinator import run_coordinator
+    from app.domains.agent_run.repo import get_run, list_events_after
+    from app.graphs.streaming import _sse_event
+
+    terminal = {
+        "COMPLETED", "PARTIAL", "NEEDS_REVIEW", "ACTION_FAILED", "FAILED",
+        "CANCELLED", "ROLLBACK_FROZEN",
+    }
+    cursor = last_event_id
+    idle_cycles = 0
+    while True:
+        events = await asyncio.to_thread(list_events_after, run_id, cursor)
+        for event in events:
+            cursor = int(event["event_id"])
+            yield _sse_event(
+                event["event_type"], dict(event.get("payload") or {}), cursor
+            )
+        run = await asyncio.to_thread(get_run, run_id)
+        if run is None or str(run.get("user_id") or "") not in {user_id, ""}:
+            yield _sse_event("error", {"message": "任务不存在或无权访问"})
+            return
+        if run["status"] in terminal or await asyncio.to_thread(run_coordinator.is_paused, run_id):
+            # The worker may have committed its terminal/pause transaction
+            # between the first event read and the state read above.
+            tail = await asyncio.to_thread(list_events_after, run_id, cursor)
+            for event in tail:
+                cursor = int(event["event_id"])
+                yield _sse_event(event["event_type"], dict(event.get("payload") or {}), cursor)
+            return
+        if not events:
+            idle_cycles += 1
+            if idle_cycles >= 40:
+                idle_cycles = 0
+                yield ": keepalive\n\n"
+        else:
+            idle_cycles = 0
+        await asyncio.sleep(0.25)
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
@@ -283,6 +331,22 @@ async def chat_run_events(
         event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/runs/{run_id}", summary="查询聊天 Harness 运行状态")
+async def get_chat_run_status(
+    run_id: UUID,
+    current_user: Any = Depends(get_current_user),
+):
+    """Return run, execution and durable job state for reconnect or operations."""
+    from app.domains.agent_run.service import get_harness_run_status
+
+    return await asyncio.to_thread(
+        get_harness_run_status,
+        str(run_id),
+        str(getattr(current_user, "id", "")),
+        str(getattr(getattr(current_user, "role", None), "value", "")),
     )
 
 
@@ -349,6 +413,31 @@ async def _resume_chat_event_generator(
         from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
 
         try:
+            if paused.get("mode") == "harness" and settings.AGENT_EXECUTION_MODE == "worker":
+                from app.domains.agent_run.coordinator import run_coordinator
+
+                run_id = str(config["managed_run_id"])
+                if req.approved:
+                    await asyncio.to_thread(
+                        run_coordinator.resume_for_worker,
+                        run_id,
+                        str(getattr(current_user, "id", "")),
+                    )
+                else:
+                    await asyncio.to_thread(
+                        run_coordinator.cancel,
+                        run_id,
+                        str(getattr(current_user, "id", "")),
+                    )
+                async for event in _stream_durable_harness_run(
+                    run_id,
+                    str(getattr(current_user, "id", "")),
+                    str(getattr(getattr(current_user, "role", None), "value", "")),
+                ):
+                    yield event
+                if claim_token:
+                    await asyncio.to_thread(ack_chat_interrupt, req.session_id, claim_token)
+                return
             saver = await get_sourcing_risk_checkpointer()
             if paused.get("mode") == "harness":
                 from app.graphs.harness.recovery import stream_harness_recovery
@@ -752,6 +841,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             )
             requested_action = requested_write_action if requested_write_action != "none" else llm_requested_action
             stream_fn = _select_chat_stream(mode, requested_action=requested_action)
+            control = None
 
             if (
                 stream_fn in (_langgraph_harness_stream, _langgraph_agent_supervisor_stream)
@@ -780,14 +870,25 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
             # Stream the chat response
             try:
-                async for event in stream_fn(
-                    sid,
-                    req.message,
-                    pref_ctx,
-                    execution_context=execution_context,
+                if (
+                    settings.AGENT_EXECUTION_MODE == "worker"
+                    and stream_fn is _langgraph_harness_stream
+                    and control is not None
                 ):
-                    await asyncio.to_thread(renew_agent_session_run, sid, run_token)
-                    yield event
+                    async for event in _stream_durable_harness_run(
+                        str(control["run"].id), user_id, user_role
+                    ):
+                        await asyncio.to_thread(renew_agent_session_run, sid, run_token)
+                        yield event
+                else:
+                    async for event in stream_fn(
+                        sid,
+                        req.message,
+                        pref_ctx,
+                        execution_context=execution_context,
+                    ):
+                        await asyncio.to_thread(renew_agent_session_run, sid, run_token)
+                        yield event
             except Exception as exc:
                 logger.exception("chat_stream_failed", error=str(exc), session_id=sid)
                 yield f"event: error\ndata: {json.dumps({'message': 'Agent 工作流执行失败，请重试。'}, ensure_ascii=False)}\n\n"

@@ -458,6 +458,66 @@ def stream_events(
         yield {"event_type": "keepalive", "data": {}}
 
 
+def get_harness_run_status(
+    run_id: str, user_id: str, user_role: str
+) -> dict[str, Any]:
+    """Return the durable Run/execution/job state without graph internals."""
+    run = _get_authorized_run(run_id, user_id, user_role)
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """SELECT state,attempt_id,fencing_token,owner_id,lease_until,quality,
+                      pause_reason,recovery_count
+               FROM agent_run_executions WHERE run_id=%s""",
+            (run_id,),
+        )
+        execution_row = cur.fetchone()
+        cur.execute(
+            """SELECT status,attempts,recoveries,max_recoveries,available_at,
+                      lease_owner,lease_until,last_error,completed_at
+               FROM agent_execution_jobs WHERE run_id=%s""",
+            (run_id,),
+        )
+        job_row = cur.fetchone()
+    execution = None
+    if execution_row:
+        execution = {
+            "state": execution_row[0],
+            "attempt_id": str(execution_row[1]) if execution_row[1] else None,
+            "fencing_token": execution_row[2],
+            "owner_id": execution_row[3],
+            "lease_until": execution_row[4],
+            "quality": execution_row[5],
+            "pause_reason": execution_row[6],
+            "recovery_count": execution_row[7],
+        }
+    job = None
+    if job_row:
+        job = {
+            "status": job_row[0],
+            "attempts": job_row[1],
+            "recoveries": job_row[2],
+            "max_recoveries": job_row[3],
+            "available_at": job_row[4],
+            "lease_owner": job_row[5],
+            "lease_until": job_row[6],
+            "last_error": job_row[7],
+            "completed_at": job_row[8],
+        }
+    requirement = dict(run.get("requirement") or {})
+    return {
+        "run_id": str(run["id"]),
+        "session_id": str(run.get("session_id") or ""),
+        "turn_id": str(requirement.get("turn_id") or ""),
+        "status": run["status"],
+        "error_code": run.get("error_code"),
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+        "completed_at": run.get("completed_at"),
+        "execution": execution,
+        "job": job,
+    }
+
+
 def stream_harness_events(
     run_id: str, last_event_id: int, user_id: str, user_role: str
 ) -> Iterator[dict[str, Any]]:

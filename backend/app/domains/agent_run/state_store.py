@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from psycopg2.extras import Json
 
+from app.core.config import settings
 from app.db.postgres import PgCursor, get_cursor
 from app.domains.agent_run.coordinator import ExecutionPermit, lock_run, require_active
 from app.domains.agent_run.harness_contracts import (
@@ -179,6 +180,14 @@ class SessionStateStore:
                     "runtime": "harness" if run_type == "agent_harness" else "agent-supervisor",
                 })),
             )
+            if run_type == "agent_harness" and settings.AGENT_EXECUTION_MODE == "worker":
+                from app.domains.agent_run.execution_jobs import enqueue_job_with_cursor
+
+                enqueue_job_with_cursor(
+                    cur,
+                    str(run["id"]),
+                    max_recoveries=settings.AGENT_WORKER_MAX_RECOVERIES,
+                )
             cur.execute(
                 "UPDATE agent_turns SET run_id = %s WHERE id = %s RETURNING *",
                 (run["id"], turn_id),
