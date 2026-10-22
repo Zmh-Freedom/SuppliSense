@@ -187,6 +187,7 @@ def _append_claims(
         if value is _MISSING or value is None:
             continue
         claims.append({
+            **({"unit": "ratio"} if path in {"quality_rate", "on_time_rate"} else {}),
             "claim_id": f"{record['evidence_id']}:claim:{path}",
             "entity_id": record["entity_id"],
             "dimension": record["dimension"],
@@ -201,6 +202,8 @@ def _append_claims(
 
 _CLAIM_LABELS = {
     "risk_score": "综合风险评分",
+    "quality_rate": "合格率",
+    "on_time_rate": "准时交付率",
     "risk_level": "风险等级",
     "revenue_growth": "营业收入同比增长率",
     "net_profit_growth": "净利润同比增长率",
@@ -261,6 +264,7 @@ _CLAIM_LABELS = {
     "count": "企业数量",
 }
 _PERCENTAGE_CLAIMS = {
+    "quality_rate", "on_time_rate",
     "revenue_growth", "net_profit_growth", "debt_ratio", "roe", "net_profit_margin",
     "settlement_change_ratio", "receipt_record_change_ratio",
     "risk_detail.data_coverage.coverage_ratio",
@@ -324,3 +328,54 @@ def _read_path(value: Any, path: str) -> Any:
 
 
 __all__ = ["attach_tool_evidence"]
+
+
+def attach_operational_metric_evidence(analysis: dict, *, entity_id: str, dimension: str) -> dict:
+    """Bind each operational observation without altering domain/API payloads."""
+    from app.domains.risk.assessment_contracts import canonical_hash
+    from app.graphs.agent_core.evidence_ledger import EvidenceStatus, build_evidence_record
+
+    result = dict(analysis['payload'])
+    metric_result = analysis['metric_result']
+    if metric_result is None or not metric_result.observations:
+        return attach_tool_evidence(result, tool_name='assess_operational_risk',
+                                    entity_id=entity_id, dimension=dimension)
+    entity_id = _active_entity_id(entity_id)
+    now = datetime.now(timezone.utc)
+    observations = metric_result.observations
+    aggregate = metric_result.status == 'available' and metric_result.value is not None and len(observations) > 1
+    groups = [list(observations)] if aggregate else [[item] for item in observations]
+    records = []
+    for group in groups:
+        item = group[0]
+        raw = [observation.model_dump(mode='json') for observation in group]
+        digest = canonical_hash(raw)
+        facts = {
+            'period': item.period, 'scope': item.scope, 'source_version': item.source_version,
+            'observed_at': min((observation.observed_at.isoformat() for observation in group if observation.observed_at), default=None),
+            'source_observations': raw, 'limitations': analysis['limitations'],
+        }
+        value = metric_result.value if aggregate else item.value
+        if value is not None:
+            facts[item.metric] = value
+            facts[f'{item.metric}_unit'] = 'ratio'
+        status = EvidenceStatus.AVAILABLE
+        if any(observation.status == 'conflicting' for observation in group) or metric_result.status == 'conflicting':
+            status = EvidenceStatus.CONFLICTING
+        elif any(observation.status != 'available' or not observation.observed_at or not observation.valid_until
+                 or observation.observed_at > now or observation.valid_until <= observation.observed_at for observation in group):
+            status = EvidenceStatus.UNAVAILABLE
+        elif any(observation.valid_until < now for observation in group):
+            status = EvidenceStatus.STALE
+        valid_until = min((observation.valid_until for observation in group if observation.valid_until), default=None)
+        record = build_evidence_record(
+            evidence_id=f'operational:{entity_id}:{dimension}:{digest}', entity_id=entity_id, dimension=dimension,
+            provider='assess_operational_risk', source_type='feishu_transaction_snapshot',
+            payload=facts, status=status, collected_at=now, valid_until=valid_until,
+            data_mode='formal', query={'scope': item.scope, 'period': item.period},
+            raw_payload_ref=f'operational-source:{item.source}:{digest}',
+        ).model_dump(mode='json')
+        records.append(record)
+        _append_claims(result, [item.metric], [record], result.get('company_name'))
+    result['evidence_records'] = records
+    return attach_tool_evidence(result, tool_name='assess_operational_risk', entity_id=entity_id, dimension=dimension)

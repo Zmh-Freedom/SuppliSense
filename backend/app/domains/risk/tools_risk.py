@@ -150,14 +150,11 @@ def assess_operational_risk(company_name: str, dimension: str) -> dict:
             "company_name": company_name,
             "error": "dimension 必须是 quality 或 delivery",
         }
-    from app.domains.risk.operational_risk_service import assess_operational_risk as _assess
-    from app.tools.evidence import attach_tool_evidence
+    from app.domains.risk.operational_risk_service import analyze_operational_metrics
+    from app.tools.evidence import attach_operational_metric_evidence
 
-    result = _assess(company_name, dimension)  # type: ignore[arg-type]
-    return attach_tool_evidence(
-        result,
-        tool_name="assess_operational_risk",
+    return attach_operational_metric_evidence(
+        analyze_operational_metrics(company_name, dimension),
         entity_id=f"entity:{company_name}",
         dimension=dimension,
-        claim_fields=["risk_score", "risk_level"],
     )
