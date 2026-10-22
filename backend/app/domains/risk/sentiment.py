@@ -743,8 +743,8 @@ def analyze_sentiment_background(company_name: str) -> None:
         analyze_sentiment(company_name, force_refresh=True)
         # Notify WebSocket clients that analysis is ready
         try:
-            from app.services.ws_manager import ws_manager
-            ws_manager.broadcast_from_thread(
+            from app.services.realtime import publish
+            publish(
                 "sentiment_ready",
                 {"company_name": company_name},
             )

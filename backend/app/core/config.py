@@ -142,6 +142,10 @@ class Settings(BaseSettings):
     SCHEDULER_SERVICE_PRINCIPALS: str = ""
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
+    # API owns Outbox delivery by default. Set False only when a dedicated
+    # delivery worker is deployed, to keep a single delivery owner.
+    DELIVERY_ROLE_ENABLED: bool = True
+    REALTIME_CHANNEL: str = "supplisense:realtime:events"
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)
     OUTBOX_BATCH_SIZE: int = Field(default=50, ge=1)
     OUTBOX_MAX_ATTEMPTS: int = Field(default=8, ge=1)

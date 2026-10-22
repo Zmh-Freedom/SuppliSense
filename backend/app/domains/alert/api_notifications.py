@@ -2,6 +2,8 @@
 Notification API routes -- user notification center.
 """
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.core.deps import get_current_active_user
@@ -44,6 +46,8 @@ async def list_notifications(
         query["read"] = read
     notifs = list(db["notifications"].find(query).sort("created_at", -1).limit(limit))
     for n in notifs:
+        n.pop("_delivery_updated_at", None)
+        n.pop("_delivery_version", None)
         n["_id"] = str(n["_id"])
         if "created_at" in n:
             n["created_at"] = n["created_at"].isoformat()
@@ -72,7 +76,10 @@ async def mark_read(
     try:
         object_id = ObjectId(notif_id)
     except Exception:
-        return {"status": "ok"}
+        try:
+            object_id = str(UUID(notif_id))
+        except (ValueError, TypeError, AttributeError):
+            return {"status": "ok"}
     db["notifications"].update_one(
         {"_id": object_id, **_notification_scope(current_user)}, {"$set": {"read": True}}
     )

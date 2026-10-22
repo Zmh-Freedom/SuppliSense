@@ -440,6 +440,11 @@ export interface AccessApplicationItem {
 }
 
 export interface WSEventMap {
+  agent_run_updated: Record<string, never>;
+  assessment_updated: Record<string, never>;
+  action_updated: Record<string, never>;
+  company_updated: Record<string, never>;
+  realtime_resync: Record<string, never>;
   alert: AlertDoc;
   alert_update: AlertDoc;
   risk_update: { company_name: string; score: number; level: string };
@@ -458,6 +463,10 @@ export interface WSEventMap {
       risk_level: string;
     }>;
   };
+}
+
+export interface WSConnectionState {
+  reconnected: boolean;
 }
 
 // ---- Sourcing ----

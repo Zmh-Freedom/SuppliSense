@@ -1,4 +1,3 @@
-import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -456,14 +455,9 @@ def get_watchlist_target_risk_detail(
 def _broadcast_alert_update() -> None:
     """Notify all WebSocket clients that alert data changed."""
     try:
-        from app.services.ws_manager import ws_manager
-        db = get_db()
-        count = db["alerts"].count_documents({})
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(ws_manager.broadcast("alert_update", {"count": count}))
-        else:
-            asyncio.run(ws_manager.broadcast("alert_update", {"count": count}))
+        from app.services.realtime import publish
+
+        publish("alert_update", {})
     except Exception:
         pass  # WebSocket push is best-effort
 

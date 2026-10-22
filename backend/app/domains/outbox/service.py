@@ -91,6 +91,7 @@ def process_outbox_batch(
                 repo.record_consumption(event_id, consumer_name)
             if repo.mark_published(event_id, worker_id):
                 result["published"] += 1
+                _publish_invalidation(event["event_type"])
                 _notify_outcome(outcome_observer, event["event_type"], "published")
                 if event["event_type"] == V2_ACTION_EVENT_TYPE:
                     notify_sourcing_risk_action_outcome(event, "published")
@@ -135,6 +136,27 @@ def process_outbox_batch(
                     worker_id=worker_id,
                 )
     return result
+
+
+def _publish_invalidation(event_type: str) -> None:
+    """A hint never contains business data or changes committed delivery state."""
+    if event_type.startswith("company."):
+        hint = "company_updated"
+    else:
+        hint = {
+            "agent.chat.completed": "agent_run_updated",
+            "risk.assessment.committed": "assessment_updated",
+            "agent.action.approved": "action_updated",
+            "notification.requested": "notification",
+        }.get(event_type)
+    if hint is None:
+        return
+    try:
+        from app.services.realtime import publish
+
+        publish(hint, {})
+    except Exception:
+        logger.exception("outbox_invalidation_failed", event_type=event_type)
 
 
 def _notify_outcome(
@@ -274,3 +296,7 @@ from app.domains.risk.assessment_projection import project_assessment, reconcile
 
 register_consumer("risk.assessment.committed", "assessment_display", project_assessment)
 register_consumer("risk.assessment.reconcile", "assessment_payload_reconcile", reconcile_assessment_payloads)
+
+from app.domains.outbox.notification_delivery import deliver_notification
+
+register_consumer("notification.requested", "notification_delivery", deliver_notification)

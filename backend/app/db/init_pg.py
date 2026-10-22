@@ -194,6 +194,25 @@ DDL_STATEMENTS = [
     )
     """,
 
+    """
+    CREATE TABLE IF NOT EXISTS notification_dispatches (
+        id UUID PRIMARY KEY,
+        dedupe_key VARCHAR(64) NOT NULL,
+        document JSONB NOT NULL,
+        recipient JSONB NOT NULL,
+        message_text TEXT NOT NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'QUEUED'
+            CHECK (status IN ('QUEUED','SENDING','SENT','FAILED','CANCELLED','NEEDS_REVIEW')),
+        attempt_id UUID,
+        version INTEGER NOT NULL DEFAULT 1,
+        diagnostic VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    )
+    """,
+    "ALTER TABLE notification_dispatches ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+    "CREATE INDEX IF NOT EXISTS idx_notification_dispatch_dedupe ON notification_dispatches (dedupe_key,created_at DESC)",
+
     # Assessment history
     """
     CREATE TABLE IF NOT EXISTS assessment_history (

@@ -66,6 +66,7 @@ from app.graphs.sourcing_risk_v2.checkpointer import (
     get_sourcing_risk_checkpointer,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.realtime import start_realtime_subscriber, stop_realtime_subscriber
 
 # Setup logging
 setup_logging()
@@ -162,6 +163,7 @@ async def lifespan(app: FastAPI):
     if settings.AGENT_RUN_V2_ENABLED:
         await get_sourcing_risk_checkpointer()
     start_scheduler()
+    start_realtime_subscriber()
     logger.info("application_started")
     from app.graphs.harness.runner import reconcile_interrupted_runs, stop_managed_runners
 
@@ -178,6 +180,7 @@ async def lifespan(app: FastAPI):
             reconciler.cancel()
             await asyncio.gather(reconciler, return_exceptions=True)
         await stop_managed_runners()
+        await asyncio.to_thread(stop_realtime_subscriber)
         stop_scheduler()
         await close_sourcing_risk_checkpointer()
         close_db()
@@ -354,8 +357,11 @@ async def websocket_endpoint(websocket: WebSocket):
     from app.domains.supplier.access import feishu_open_id_for_user
 
     user_id = str(payload.get("sub") or "")
-    user = get_user_by_id(user_id)
-    open_id = feishu_open_id_for_user(user_id) if user else None
+    user = await asyncio.to_thread(get_user_by_id, user_id)
+    if user is None or not user.is_active:
+        await websocket.close(code=4001, reason="Inactive user")
+        return
+    open_id = await asyncio.to_thread(feishu_open_id_for_user, user_id)
 
     await websocket.accept()
     client_id = f"{id(websocket)}"

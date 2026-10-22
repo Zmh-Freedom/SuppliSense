@@ -6,12 +6,14 @@ import NetworkStatus from './NetworkStatus';
 import Sidebar from './Sidebar';
 import { useTheme } from '../hooks/useTheme';
 import { wsClient } from '../websocket';
+import { useRealtimeInvalidation } from '../hooks/useRealtimeInvalidation';
 
 export default function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   useTheme();
+  useRealtimeInvalidation();
 
   useEffect(() => {
     if (Notification.permission === 'default') {

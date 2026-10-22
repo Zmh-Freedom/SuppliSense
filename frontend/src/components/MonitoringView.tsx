@@ -97,17 +97,17 @@ export default function MonitoringView() {
     ? targets.find(target => target.monitor_target_id === decodeURIComponent(monitorTargetId))
     : undefined;
   const detailTaskQuery = useQuery({
-    queryKey: ['monitor-review-task', selectedTarget?.review_task?.id],
+    queryKey: queryKeys.monitorReviewTask(selectedTarget?.review_task?.id),
     queryFn: () => api.get<MonitorReviewTask>(`/alert/review-tasks/${selectedTarget?.review_task?.id}`),
     enabled: Boolean(selectedTarget?.review_task?.id),
   });
   const identityResolutionQuery = useQuery<MonitorIdentityResolution>({
-    queryKey: ['monitor-identity-candidates', selectedTarget?.monitor_target_id],
+    queryKey: queryKeys.monitorIdentityCandidate(selectedTarget?.monitor_target_id),
     queryFn: () => api.get<MonitorIdentityResolution>(`/alert/watch/${encodeURIComponent(selectedTarget!.monitor_target_id)}/identity-candidates`),
     enabled: Boolean(selectedTarget && selectedTarget.identity_status !== 'verified'),
   });
   const riskDetailQuery = useQuery<MonitorRiskDetail>({
-    queryKey: ['monitor-risk-detail', selectedTarget?.monitor_target_id],
+    queryKey: queryKeys.monitorRiskDetail(selectedTarget?.monitor_target_id),
     queryFn: () => api.get<MonitorRiskDetail>(`/alert/watch/${encodeURIComponent(selectedTarget!.monitor_target_id)}/risk-detail`),
     enabled: Boolean(selectedTarget?.monitor_target_id),
   });
@@ -116,7 +116,7 @@ export default function MonitoringView() {
     queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
     queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
     queryClient.invalidateQueries({ queryKey: queryKeys.alertHistory });
-    queryClient.invalidateQueries({ queryKey: ['monitor-review-task'] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.monitorReviewTasks });
   };
 
   const intakeMutation = useMutation({

@@ -1,11 +1,11 @@
 """按责任人隔离的风险通知生成、投递与审计。"""
 
-import asyncio
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
 from app.core.logging import get_logger
+from app.core.config import settings
 from app.db.mongo import get_db
 
 logger = get_logger()
@@ -47,7 +47,9 @@ def get_target_recipients(target: dict) -> list[dict]:
                 "recipient_open_id": manager_open_id,
                 "recipient_user_id": user_id_for_feishu_open_id(manager_open_id),
             })
-    if not recipients and target.get("owner_user_id"):
+    # Formal suppliers use current responsibility snapshots exclusively.
+    # A historical owner must not restore revoked supplier access.
+    if not recipients and not target.get("supplier_id") and target.get("owner_user_id"):
         purchaser_open_id = feishu_open_id_for_user(str(target["owner_user_id"])) or ""
         if purchaser_open_id:
             recipients.append({
@@ -146,6 +148,11 @@ def _create_and_deliver(db: object, target: dict, recipient: dict, *, notificati
         "event_fingerprint": fingerprint,
         **extra,
     }
+    if not settings.DELIVERY_ROLE_ENABLED:
+        from app.domains.outbox.notification_delivery import queue_notification
+
+        dispatch = queue_notification(document, recipient, text, fingerprint)
+        return "duplicate" if dispatch["duplicate"] else "queued"
     result = db["notifications"].insert_one(document)
     notification_id = str(result.inserted_id)
     status = _deliver_notification(db, notification_id, recipient, text)
@@ -179,19 +186,9 @@ def notify_target_change(target: dict, changes: list[dict], severity: str = "war
 def _broadcast(event: str, payload: dict, recipient_open_ids: set[str]) -> None:
     if not recipient_open_ids:
         return
-    from app.services.ws_manager import ws_manager
+    from app.services.realtime import publish
 
-    async def publish() -> None:
-        await ws_manager.broadcast(event, payload, recipient_open_ids)
-
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(publish())
-        else:
-            asyncio.run(publish())
-    except RuntimeError:
-        asyncio.run(publish())
+    publish(event, payload, recipient_open_ids)
 
 
 def check_and_notify() -> dict:

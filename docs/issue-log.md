@@ -5904,3 +5904,80 @@
 - 受控演练：`ops-drill:45add5f1` 经真实 PG 权限/审计路径完成一次本地替身执行，job SUCCEEDED；计划随后 disabled。
 - 未完成：生产 watchlist 迁移、全局业务 cron 与 full_refresh 迁移、真实付费 pilot；生产切换前不得直接关闭 API 业务 cron。
 - 关联提交：`b2fe8c90`。
+
+
+## ISS-20261022-011 Delivery 与实时失效仍依赖 API 进程
+
+- 发现日期：2026-10-22；状态：已修复（3C 隔离环境验证）；优先级：P1；关联 ISS-20261018-008。
+- 现象：Outbox interval 在 API 内领取；风险、舆情等广播只触达当前进程的 WSManager，前端重连没有统一失效查询。当前 3C 草稿尚无回归与独立 worker。
+- 影响：API 进程退出影响投递；不同 API 进程的浏览器无法可靠感知后台结果；分发中断后页面可能长期陈旧。
+- 根因：缺少独立投递角色、共享失效总线及前端重连对账。
+- 修复方案：独立 delivery worker 复用 PG Outbox 租约/幂等/死信；成功提交后发最小化失效提示；Redis 订阅重新建立时通知本地浏览器 resync；前端统一事件与重连 Query key 失效。
+- 验证结果：最终专项 54 passed，完整离线 1195 passed；真实双 API、Redis 重连、多 delivery 与 SIGKILL 门禁通过；前端 146 passed，build/lint 通过。
+- 关联提交：3B 基线 c89e9b9a；3C 待提交。
+
+## ISS-20261022-012 共享广播草稿将空收件人范围扩大为全体
+
+- 发现日期：2026-10-22；状态：已修复（3C）；优先级：P1。
+- 现象：realtime 草稿把空收件人列表通过 or None 变成全体广播；WSManager 也将空集合当成无过滤。
+- 影响：定向通知在收件人为空时可能发给其他登录用户。
+- 根因：未区分 None（公开失效提示）与空列表（无人可见）。
+- 修复方案：总线与 WSManager 保留 None/空列表语义，畸形 scope 拒绝，定向数据绝不回退全体。
+- 验证结果：共享总线/收件范围回归先见 RED，修复后 realtime 模块 13 项通过，真实双 API 隔离 channel 分发通过。
+- 关联提交：3C 待提交。
+
+- 2026-10-22（ISS-20261022-011 新根因）：Redis publish 异常分支 logger.exception 使用保留参数 event=event，覆盖原错误并阻止 fallback；回归先见 TypeError，改用 event_type。
+
+- 2026-10-22（ISS-20261022-011 前端边界）：旧 socket 的 onmessage 没有校验当前连接身份，退出/重连后迟到事件仍可调用处理器；补 stale socket 拒绝测试，与重连 Query 对账一起修复。
+
+- 2026-10-22（ISS-20261022-011 联调）：服务器隧道入口 15432 拒绝连接；先恢复既有 supplisense-db 隧道再认证，不切换本机实例。另检查到 WS 握手只验证 JWT，没有拒绝删除/停用用户，并在事件循环内同步查库；补认证回归后与跨进程广播边界一起修复。
+
+
+## ISS-20261022-013 通知外发没有可接管的投递记录及未知结果状态
+
+- 发现日期：2026-10-22；状态：独立投递模式已修复；旧 API 兼容路径随 3D 切换；优先级：P1。
+- 现象：_create_and_deliver 在调用线程直接发飞书，异常被压成 False 后立即尝试三次；进程死亡或超时后无法区分已送达与未送达。
+- 影响：独立 delivery 只能处理原有投影，通知还依赖触发进程；网络结果未知时可能重复外发。
+- 根因：缺少通知请求与 Outbox 原子提交、调用前边界、稳定消费键及 NEEDS_REVIEW 状态。
+- 修复方案：独立投递模式下用 PG 通知账本+Outbox 原子入队；24 小时按目标/收件人/事件指纹去重；投递前保存 SENDING，成功/已知失败持久回执，超时/中断后标记 NEEDS_REVIEW，不自动重发。原 API 投递模式保留兼容路径。
+- 验证结果：通知专库 10 项、真实 SENDING 后 SIGKILL 接管用例通过；覆盖去重、原子回滚、已知/未知结果、投影故障与版本门。全部供应商/飞书调用使用替身。
+- 关联提交：3C 待提交。
+
+- 2026-10-22（ISS-20261022-013 新根因）：SENDING 恢复的 Mongo 投递审计使用 setOnInsert，可能停在 pending；并发/迟到投影还可能覆盖较新状态。先加状态对账断言，再用 PG updated_at 做投影版本门与审计更新。
+
+
+## ISS-20261022-014 Redis 订阅停止与线程清理竞争导致 API 退出失败
+
+- 发现日期：2026-10-22；状态：已修复（3C）；优先级：P1。
+- 现象：3C 完整离线回归 1182 passed、1 teardown error；stop 与订阅线程 finally 同时调用 PubSub.close，redis-py reset 内 connection 变成 None，抛 AttributeError，后续 scheduler 清理未执行。
+- 影响：API 退出不完整，后续 TestClient/调度线程遗留。
+- 根因：PubSub 的关闭被两个线程并发拥有。
+- 修复方案：仅订阅线程在 finally 关闭 PubSub；停止方设置 Event 并有界 join，通过异步 to_thread 等待，不直接从另一个线程 reset PubSub。
+- 验证结果：关闭所有权回归 RED→GREEN；最后完整离线 1195 passed、1 skipped，无 teardown error。
+- 关联提交：3C 待提交。
+
+
+## ISS-20261022-015 3C 独立审查发现通知 ID 与监控缓存兼容缺口
+
+- 发现日期：2026-10-22；状态：已修复（3C）；优先级：P1。
+- 现象：新通知使用 UUID 字符串，旧单条已读只接受 ObjectId，转换失败返回 ok 但未更新；监控页面的 monitor-risk-detail、monitor-review-task、monitor-identity-candidates 未纳入共享事件/重连失效。
+- 影响：用户不能真正标记新通知已读；重连后监控详情可能继续显示旧风险/复核信息。
+- 根因：新增投影 ID 和统一失效映射未完整核对现有消费者。
+- 修复方案：保留 ObjectId 并支持 UUID 标记已读，保留原范围过滤；集中定义监控 key 并纳入事件/重连映射。
+- 验证结果：UUID/ObjectId/非法 ID 与撤权权限回归（通知单元 12 项）通过；真实 QueryClient 验证三个监控前缀在事件/重连后失效。三个 Important 均 RED→GREEN。
+- 关联提交：3C 待提交。
+
+- 2026-10-22（ISS-20261022-015 审查补充）：正式供应商责任快照撤销后 get_target_recipients 回退历史 owner，使排队通知的当前权限检查失效；将 owner 回退限定为未关联正式供应商的外部目标，并补正式撤销/外部 owner 正向回归。三项均按 Important 修复，无延后 Minor。
+
+- 2026-10-22（ISS-20261022-013 契约补充）：通知列表直接返回 Mongo 文档，会泄露新增内部投影版本字段并改变旧接口字段集合；新增回归已见 RED，列表显式剔除 _delivery_updated_at，保留旧公共字段。
+
+- 2026-10-22（ISS-20261022-013 投影版本精度）：Mongo Date 只保留毫秒，两个 PG 状态更新可能被压成相同版本，迟到 pending 可覆盖 SENT。将门禁改为 PG 单调整数 version；先补相同毫秒迟到快照回归观察 RED，再修复。
+
+
+### 2026-10-22 3C 最终验证（011–015）
+
+- 共享范围过滤、Redis 重连对账、WS 停用用户拒绝、通知 UUID/权限/单调投影版本等回归均通过，三项 Important 完成 RED→GREEN。
+- 后端完整离线 1195 passed、1 skipped、102 deselected；3C 专项 54 passed（含 14 项真实 PG/Mongo/Redis/多进程用例）；前端 146 passed，tsc/build/lint 均通过。
+- 双 API 同次失效各收到一次、Redis 订阅重连 resync、双 delivery 争抢、投影后 SIGKILL 接管、通知 SENDING 后 SIGKILL 不重复外发均通过。
+- 仅使用服务器独立测试数据库和 UUID 隔离 Redis channel，未真实外发通知、未消费共享开发/生产队列；运行角色切换与版本化发布在 3D 实施。
+- 关联提交：本次 3C 实现提交，哈希在关联文档提交补齐。
