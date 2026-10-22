@@ -7,6 +7,7 @@ offline tests and future API adapters.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -98,3 +99,64 @@ __all__ = [
     "RISK_DIMENSION_SPECS", "RiskAssessmentRequest", "RiskDimension",
     "RiskDimensionSpec", "get_risk_dimension_spec",
 ]
+
+
+OperationalDimension = Literal['quality', 'delivery']
+
+
+class OperationalSourceContract(BaseModel):
+    """Trusted source configuration, never inferred from a business row."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    source: str
+    version: str
+    dimension: OperationalDimension
+    rate_fields: tuple[str, ...]
+    rate_unit: Literal['ratio', 'percent']
+    rate_kind: Literal['pass', 'on_time', 'reject', 'late', 'defect_occurrence']
+    numerator_field: str | None = None
+    denominator_field: str | None = None
+    denominator_basis: Literal['inspected_units', 'ordered_units', 'order_lines', 'batches'] | None = None
+    complement_allowed: bool = False
+    quantity_unit_field: str | None = None
+    scope_fields: tuple[str, ...]
+    record_id_field: str
+    partition_field: str | None = None
+    row_kind: Literal['detail', 'summary']
+    observed_at_field: str
+    valid_until_field: str
+
+
+class OperationalObservation(BaseModel):
+    """One source observation; numeric validity is distinct from freshness."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    metric: str
+    raw_value: float | None = None
+    raw_unit: str
+    value: float | None = None
+    numerator: float | None = None
+    denominator: float | None = None
+    denominator_basis: str | None = None
+    quantity_unit: str | None = None
+    period: str
+    scope: dict[str, str]
+    source: str
+    source_record_id: str
+    partition: str | None = None
+    row_kind: str
+    source_version: str
+    observed_at: 'datetime | None' = None
+    valid_until: 'datetime | None' = None
+    status: Literal['available', 'unavailable', 'conflicting']
+    reasons: tuple[str, ...] = ()
+
+
+class OperationalMetricResult(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    metric: str
+    period: str | None = None
+    value: float | None = None
+    numerator: float | None = None
+    denominator: float | None = None
+    observations: tuple[OperationalObservation, ...] = ()
+    status: Literal['available', 'partial', 'unavailable', 'conflicting']
+    reasons: tuple[str, ...] = ()
