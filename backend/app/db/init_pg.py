@@ -692,6 +692,88 @@ DDL_STATEMENTS = [
         UNIQUE (task_id, evidence_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_cases (
+        id UUID PRIMARY KEY,
+        monitor_target_id TEXT NOT NULL,
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        department_code VARCHAR(128),
+        case_type VARCHAR(32) NOT NULL,
+        scope_key TEXT NOT NULL,
+        trigger_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+        status VARCHAR(32) NOT NULL DEFAULT 'open',
+        created_by TEXT NOT NULL,
+        owner_user_id TEXT,
+        due_at TIMESTAMPTZ,
+        next_review_at TIMESTAMPTZ,
+        version INTEGER NOT NULL DEFAULT 1,
+        closure_request JSONB,
+        reopened_from_case_id UUID REFERENCES procurement_cases(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        closed_at TIMESTAMPTZ,
+        CONSTRAINT procurement_cases_type_check
+            CHECK (case_type IN ('risk_review', 'coverage_gap', 'identity_review')),
+        CONSTRAINT procurement_cases_priority_check
+            CHECK (priority IN ('high', 'normal')),
+        CONSTRAINT procurement_cases_status_check
+            CHECK (status IN ('open', 'in_progress', 'deferred', 'pending_closure', 'closed')),
+        CONSTRAINT procurement_cases_scope_key_check CHECK (BTRIM(scope_key) <> ''),
+        CONSTRAINT procurement_cases_trigger_key_check CHECK (BTRIM(trigger_key) <> ''),
+        CONSTRAINT procurement_cases_title_check CHECK (BTRIM(title) <> ''),
+        CONSTRAINT procurement_cases_version_check CHECK (version > 0),
+        CONSTRAINT procurement_cases_closed_at_check
+            CHECK ((status = 'closed' AND closed_at IS NOT NULL) OR status <> 'closed'),
+        CONSTRAINT procurement_cases_deferred_review_check
+            CHECK ((status = 'deferred' AND next_review_at IS NOT NULL) OR status <> 'deferred')
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_case_requests (
+        id UUID PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        case_id UUID REFERENCES procurement_cases(id) ON DELETE RESTRICT,
+        response JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT procurement_case_requests_actor_key_key UNIQUE (actor_id, request_key),
+        CONSTRAINT procurement_case_requests_key_check CHECK (BTRIM(request_key) <> ''),
+        CONSTRAINT procurement_case_requests_hash_check CHECK (LENGTH(request_hash) = 64),
+        CONSTRAINT procurement_case_requests_completion_check
+            CHECK ((case_id IS NULL AND response IS NULL) OR (case_id IS NOT NULL AND response IS NOT NULL))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_case_events (
+        id UUID PRIMARY KEY,
+        case_id UUID NOT NULL REFERENCES procurement_cases(id) ON DELETE CASCADE,
+        actor_id TEXT,
+        event_type VARCHAR(64) NOT NULL,
+        from_status VARCHAR(32),
+        to_status VARCHAR(32),
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        request_id UUID REFERENCES procurement_case_requests(id) ON DELETE SET NULL,
+        version INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT procurement_case_events_version_check CHECK (version > 0),
+        CONSTRAINT procurement_case_events_event_type_check CHECK (BTRIM(event_type) <> ''),
+        CONSTRAINT procurement_case_events_case_version_key UNIQUE (case_id, version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_case_tasks (
+        id UUID PRIMARY KEY,
+        case_id UUID NOT NULL REFERENCES procurement_cases(id) ON DELETE CASCADE,
+        task_id UUID NOT NULL REFERENCES monitor_review_tasks(id) ON DELETE CASCADE,
+        linked_by TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT procurement_case_tasks_case_task_key UNIQUE (case_id, task_id)
+    )
+    """,
 ]
 
 VERIFIED_EVIDENCE_CONDITION = """
@@ -879,6 +961,18 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_monitor_review_tasks_status_updated ON monitor_review_tasks (status, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_monitor_review_task_events_task_created ON monitor_review_task_events (task_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_monitor_review_task_evidence_task_created ON monitor_review_task_evidence (task_id, created_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_procurement_cases_active_trigger "
+    "ON procurement_cases (monitor_target_id, case_type, scope_key, trigger_key) WHERE status <> 'closed'",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_cases_target_updated "
+    "ON procurement_cases (monitor_target_id, updated_at DESC, id)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_cases_department_status_updated "
+    "ON procurement_cases (department_code, status, updated_at DESC, id)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_case_events_case_created "
+    "ON procurement_case_events (case_id, created_at, version)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_case_tasks_task "
+    "ON procurement_case_tasks (task_id, case_id)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_case_requests_case "
+    "ON procurement_case_requests (case_id) WHERE case_id IS NOT NULL",
 ]
 
 
