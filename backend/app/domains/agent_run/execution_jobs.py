@@ -11,7 +11,12 @@ from app.domains.agent_run.coordinator import (
     lock_run,
     takeover_with_cursor,
 )
-from app.domains.agent_run.repo import _row_to_dict, append_event_with_cursor
+from app.domains.agent_run.repo import (
+    _row_to_dict,
+    append_event_with_cursor,
+    get_run_for_update,
+    update_run_status,
+)
 
 
 def enqueue_job_with_cursor(
@@ -235,13 +240,137 @@ def claim_job(
         return job
 
 
+def claim_candidate_review_batch(
+    worker_id: str,
+    *,
+    lease_seconds: int = 30,
+    max_attempts: int = 3,
+) -> dict[str, Any] | None:
+    """Lease one durable sourcing review batch without entering Harness execution."""
+    if lease_seconds < 3:
+        raise ValueError("执行租约必须至少为 3 秒")
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT batch_id, run_id FROM sourcing_candidate_review_events
+            WHERE dispatch_status='pending'
+               OR (dispatch_status='processing' AND lease_until <= clock_timestamp())
+            ORDER BY event_id
+            LIMIT 1
+            """
+        )
+        candidate = cur.fetchone()
+        if candidate is None:
+            return None
+        batch_id, run_id = str(candidate[0]), str(candidate[1])
+
+        run = get_run_for_update(run_id, cur)
+        if run is None:
+            return None
+        cur.execute(
+            """SELECT *, lease_until IS NOT NULL AND lease_until > clock_timestamp() AS lease_active
+               FROM sourcing_candidate_review_events WHERE batch_id=%s FOR UPDATE""",
+            (batch_id,),
+        )
+        event = _row_to_dict(cur, cur.fetchone())
+        if event is None or event["dispatch_status"] not in {"pending", "processing"}:
+            return None
+        if event["dispatch_status"] == "processing" and event.get("lease_active"):
+            return None
+
+        if run["status"] in {"CANCELLED", "ROLLBACK_FROZEN"}:
+            cur.execute(
+                """UPDATE sourcing_candidate_review_events
+                   SET dispatch_status='cancelled', lease_owner=NULL, lease_until=NULL
+                   WHERE batch_id=%s""",
+                (batch_id,),
+            )
+            return {"batch_id": batch_id, "run_id": run_id, "status": "cancelled"}
+
+        if run["status"] != "IDENTITY_RESOLVING" or int(run["version"]) != int(event["run_version"]):
+            cur.execute(
+                """UPDATE sourcing_candidate_review_events
+                   SET dispatch_status='failed', lease_owner=NULL, lease_until=NULL,
+                       last_error='stale_run_version'
+                   WHERE batch_id=%s""",
+                (batch_id,),
+            )
+            return {"batch_id": batch_id, "run_id": run_id, "status": "stale"}
+
+        if int(event["attempt_count"]) >= max_attempts:
+            cur.execute(
+                """UPDATE sourcing_candidate_review_events
+                   SET dispatch_status='failed', lease_owner=NULL, lease_until=NULL,
+                       last_error='recovery_limit_exceeded'
+                   WHERE batch_id=%s""",
+                (batch_id,),
+            )
+            updated = update_run_status(
+                run_id, int(run["version"]), "NEEDS_REVIEW", "CANDIDATE_REVIEW_RECOVERY_LIMIT", cur=cur
+            )
+            if updated is not None:
+                append_event_with_cursor(
+                    cur,
+                    run_id,
+                    int(updated["version"]),
+                    "candidate_review_failed",
+                    {"batch_id": batch_id, "status": "NEEDS_REVIEW", "reason": "recovery_limit_exceeded"},
+                )
+            return {"batch_id": batch_id, "run_id": run_id, "status": "failed"}
+
+        cur.execute(
+            """
+            UPDATE sourcing_candidate_review_events
+            SET dispatch_status='processing', lease_owner=%s,
+                lease_until=clock_timestamp() + %s * INTERVAL '1 second',
+                attempt_count=attempt_count+1, fencing_token=fencing_token+1,
+                last_error=NULL
+            WHERE batch_id=%s
+            RETURNING batch_id, run_id, run_version, fencing_token, attempt_count
+            """,
+            (worker_id, lease_seconds, batch_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "batch_id": str(row[0]),
+            "run_id": str(row[1]),
+            "run_version": int(row[2]),
+            "fencing_token": int(row[3]),
+            "attempt_count": int(row[4]),
+            "status": "processing",
+        }
+
+
+def heartbeat_candidate_review_batch(
+    batch_id: str,
+    worker_id: str,
+    fencing_token: int,
+    *,
+    lease_seconds: int = 30,
+) -> bool:
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """UPDATE sourcing_candidate_review_events
+               SET lease_until=clock_timestamp() + %s * INTERVAL '1 second'
+               WHERE batch_id=%s AND dispatch_status='processing'
+                 AND lease_owner=%s AND fencing_token=%s
+                 AND lease_until > clock_timestamp()
+               RETURNING batch_id""",
+            (lease_seconds, batch_id, worker_id, fencing_token),
+        )
+        return cur.fetchone() is not None
+
 
 __all__ = [
     "claim_job",
+    "claim_candidate_review_batch",
     "enqueue_job",
     "enqueue_job_with_cursor",
     "finish_job_with_cursor",
     "get_job_for_run",
     "heartbeat_job",
+    "heartbeat_candidate_review_batch",
     "requeue_job_with_cursor",
 ]

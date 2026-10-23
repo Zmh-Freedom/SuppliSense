@@ -571,15 +571,55 @@ DDL_STATEMENTS = [
         decisions JSONB NOT NULL,
         response JSONB NOT NULL,
         resume_status VARCHAR(32) NOT NULL,
-        dispatch_status VARCHAR(16) NOT NULL DEFAULT 'pending'
-            CHECK (dispatch_status IN ('pending','consumed','not_required','cancelled','failed')),
+        dispatch_status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        lease_owner TEXT,
+        lease_until TIMESTAMPTZ,
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+        last_error TEXT,
         new_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         consumed_at TIMESTAMPTZ,
         UNIQUE (actor_id, request_key)
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_sourcing_candidate_review_pending ON sourcing_candidate_review_events (created_at) WHERE dispatch_status='pending'",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS lease_owner TEXT",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS last_error TEXT",
+    "DO $$ BEGIN ALTER TABLE sourcing_candidate_review_events ADD CONSTRAINT sourcing_candidate_review_events_attempt_count_check CHECK (attempt_count >= 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$",
+    "DO $$ BEGIN ALTER TABLE sourcing_candidate_review_events ADD CONSTRAINT sourcing_candidate_review_events_fencing_token_check CHECK (fencing_token >= 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$",
+    "ALTER TABLE sourcing_candidate_review_events DROP CONSTRAINT IF EXISTS sourcing_candidate_review_events_dispatch_status_check",
+    "ALTER TABLE sourcing_candidate_review_events ADD CONSTRAINT sourcing_candidate_review_events_dispatch_status_check CHECK (dispatch_status IN ('pending','processing','consumed','not_required','cancelled','failed'))",
+    "DROP INDEX IF EXISTS idx_sourcing_candidate_review_pending",
+    "CREATE INDEX idx_sourcing_candidate_review_pending ON sourcing_candidate_review_events (created_at) WHERE dispatch_status IN ('pending','processing')",
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_candidate_review_run_event ON sourcing_candidate_review_events (run_id, event_id DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_followups (
+        child_run_id UUID PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        parent_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        source_candidate_ids JSONB NOT NULL,
+        child_candidate_ids JSONB NOT NULL,
+        policy_snapshot_id UUID NOT NULL REFERENCES sourcing_policy_snapshots(id) ON DELETE RESTRICT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_followup_events (
+        event_id BIGSERIAL UNIQUE,
+        id UUID PRIMARY KEY,
+        parent_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+        child_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        response JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (actor_id, request_key)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS agent_evidence (
         id UUID PRIMARY KEY,

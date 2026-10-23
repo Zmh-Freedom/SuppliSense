@@ -6079,6 +6079,10 @@
 - 验证结果：已核对 `IdentityReviewCard` 和图的 `identity_resolution/identity_review`；混合候选恢复仍需后续浏览器验收。
 - 2026-10-23（Task 2 修复前补充根因）：代码检查发现 `runner.py` 在 `identity_review` 后无条件连接 `investigate_parallel`，即使仍有待审核候选也会继续；`nodes.py` 还会用公司 ID、供应商 ID 或名称补造候选键。Task 2 将增加显式路由与已持久化候选 ID 校验，防止未确认候选流入调查。
 - 2026-10-23（Task 1）：新增独立候选处置API、当前处置与追加批次记录；提交时锁定Run、校验版本/操作者/当前候选选项，并以持久化candidate_id作键。旧身份确认入口也拒绝候选选项之外的company_id。离线专项 101 passed、6 个真实PG用例安全跳过；Task 2 仍须修复图路由并证明 deferred/excluded 不调查，因此本问题保持打开。
+- 2026-10-23（Task 2 修复前补充根因）：失败测试确认 `investigate_parallel` 与评分节点仍消费完整 `state.candidates`，`ready_for_review` 也不把暂存组映射为 `PARTIAL`；此外当前 `lock_policy` 只返回 checksum，没有把快照写入 `sourcing_policy_snapshots` 或 Run 的 `policy_snapshot_id`，终态子任务无法可靠继承同一规则版本。Task 2 将在新增失败测试约束下修正筛选/终态/持久策略引用。
+- 2026-10-23（Task 2 修复前补充根因）：终态候选只读且 `submit_candidate_decisions` 仅接受 `IDENTITY_REVIEW`，因此用户无法把误排除候选显式改回暂存，`derive_candidate_followup` 即使拒绝直接恢复 excluded 也缺少安全的纠正入口。Task 2 将只允许终态排除项改为暂存，并保持父 Run 终态不变。
+- 2026-10-23（Task 2 离线验证发现）：旧 API/图衔接测试 mock 了图事件和快照，但没有 mock 新增的 follow-up 上下文查询，离线用例因此向共享开发 PostgreSQL 发起只读查询并以测试库表缺失失败；未执行写入或 schema 初始化。修复方案：在该 API/图测试 seam 显式 mock follow-up 上下文读取，并将所有 Task 2 测试固定为离线；共享开发库不用于测试。
+- 2026-10-23（Task 2 回归发现）：取消 Run 时新增的候选批次 SQL 放在 service 层，导致现有事务边界单测的 cursor seam 无法模拟该更新。修复方案：将批次取消收敛到 repo 的 cursor 方法，并在取消单测中断言同事务调用。
 - 关联提交：未提交；本轮仅记录，未修复。
 
 ### ISS-20261022-022 寻源任务历史与跨页面候选上下文不连续

@@ -75,6 +75,12 @@ def enable_v2_graph(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "AGENT_RUN_V2_ENABLED", True)
     monkeypatch.setattr(nodes, "append_typed_event", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(nodes, "record_orchestration_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(nodes.agent_run_service, "get_sourcing_candidate_followup_context", lambda *_args: None)
+    monkeypatch.setattr(
+        nodes.agent_run_service,
+        "persist_sourcing_policy_snapshot",
+        lambda _run_id, policy: {"id": "policy-snapshot-id", "policy": policy},
+    )
     monkeypatch.setattr(
         nodes,
         "persist_orchestration_snapshot",

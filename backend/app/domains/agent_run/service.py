@@ -22,13 +22,21 @@ from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunSta
 from app.domains.agent_run.harness_contracts import TurnStatus
 from app.domains.agent_run.repo import (
     append_event,
+    cancel_pending_candidate_review_batches_with_cursor,
     get_candidate_review_event_by_request_with_cursor,
+    get_candidate_followup_event_by_request_with_cursor,
+    get_candidate_followup_context,
+    get_candidate_review_batch_for_execution as repo_get_candidate_review_batch_for_execution,
+    get_policy_snapshot_by_id_with_cursor,
+    get_policy_snapshot_by_run_with_cursor,
     get_latest_harness_run_for_session,
     get_run,
     get_run_for_update,
     get_run_detail_collections,
     get_run_for_user,
     insert_candidate_review_event_with_cursor,
+    insert_candidate_followup_event_with_cursor,
+    insert_candidate_followup_with_cursor,
     insert_approval_decision,
     insert_run,
     list_candidate_review_events_with_cursor,
@@ -38,12 +46,17 @@ from app.domains.agent_run.repo import (
     list_raw_payload_compensations,
     list_sourcing_candidate_dispositions_with_cursor,
     lock_candidate_review_request_with_cursor,
+    lock_candidate_followup_request_with_cursor,
+    mark_candidate_review_batch_consumed_with_cursor,
     persist_run_snapshot,
     update_raw_payload_compensation,
     update_run_requirement,
+    update_run_policy_snapshot_with_cursor,
     update_run_status,
+    touch_terminal_run_with_cursor,
     upsert_raw_payload_compensations,
     upsert_sourcing_candidate_disposition_with_cursor,
+    upsert_policy_snapshot_with_cursor,
 )
 from app.domains.agent_run.schemas import (
     AgentRunResponse,
@@ -491,7 +504,18 @@ def submit_candidate_decisions(
             return dict(response)
 
         _require_version(run, request.expected_version)
-        _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+        terminal_reclassification = str(run.get("status")) in TERMINAL_STATUSES
+        if terminal_reclassification and run.get("status") not in {
+            AgentRunStatus.PARTIAL.value,
+            AgentRunStatus.NEEDS_REVIEW.value,
+        }:
+            raise DomainError(
+                "SOURCING_TERMINAL_DISPOSITION_INVALID",
+                "当前终态不支持修改候选处置",
+                409,
+            )
+        if not terminal_reclassification:
+            _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
         persisted_candidates = list_candidates_with_cursor(run_id, cur)
         disposition_rows = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
         disposition_by_candidate = {str(row["candidate_id"]): row for row in disposition_rows}
@@ -520,6 +544,21 @@ def submit_candidate_decisions(
             review_candidates.append(candidate)
 
         normalized_decisions = [item.model_dump(exclude_none=True) for item in request.decisions]
+        if terminal_reclassification:
+            existing_actions = {
+                str(item["candidate_id"]): str(item["action"])
+                for item in disposition_rows
+            }
+            if not normalized_decisions or any(
+                item.get("action") != "defer"
+                or existing_actions.get(str(item.get("candidate_key"))) != "exclude"
+                for item in normalized_decisions
+            ):
+                raise DomainError(
+                    "SOURCING_TERMINAL_DISPOSITION_INVALID",
+                    "终态任务仅允许将已排除候选显式改为暂存",
+                    409,
+                )
         try:
             groups = apply_candidate_decisions(review_candidates, normalized_decisions)
         except ValueError as exc:
@@ -530,10 +569,13 @@ def submit_candidate_decisions(
         disposition_payloads: list[dict[str, Any]] = []
         for _group_name, candidates in groups.items():
             for candidate in candidates:
+                candidate_key = str(candidate["candidate_key"])
+                if terminal_reclassification and candidate_key not in submitted_by_key:
+                    continue
                 action = candidate.get("disposition")
                 if action not in {"confirm", "defer", "exclude"}:
                     continue
-                submitted = submitted_by_key.get(str(candidate["candidate_key"]), {})
+                submitted = submitted_by_key.get(candidate_key, {})
                 company_id = str(candidate["company_id"]) if action == "confirm" else None
                 reason = submitted.get("reason") or candidate.get("reason")
                 if not submitted and action == "defer" and not reason:
@@ -549,7 +591,7 @@ def submit_candidate_decisions(
                     cur=cur,
                 )
                 disposition_payloads.append({
-                    "candidate_key": str(candidate["candidate_key"]),
+                    "candidate_key": candidate_key,
                     "action": action,
                     "company_id": company_id,
                     "reason": reason,
@@ -557,18 +599,32 @@ def submit_candidate_decisions(
 
         has_eligible = bool(groups["eligible"])
         run_status = (
-            AgentRunStatus.IDENTITY_RESOLVING.value
+            str(run["status"])
+            if terminal_reclassification
+            else AgentRunStatus.IDENTITY_RESOLVING.value
             if has_eligible
             else AgentRunStatus.NEEDS_REVIEW.value
         )
-        resume_status = "pending" if has_eligible else "needs_review"
-        updated = update_run_status(run_id, request.expected_version, run_status, cur=cur)
+        resume_status = (
+            "followup_available"
+            if terminal_reclassification
+            else "pending"
+            if has_eligible
+            else "needs_review"
+        )
+        updated = (
+            touch_terminal_run_with_cursor(
+                cur, run_id, request.expected_version, run_status
+            )
+            if terminal_reclassification
+            else update_run_status(run_id, request.expected_version, run_status, cur=cur)
+        )
         if updated is None:
             _raise_version_conflict()
         append_event(
             run_id,
             int(updated["version"]),
-            "candidate_review_submitted",
+            "candidate_dispositions_updated" if terminal_reclassification else "candidate_review_submitted",
             {
                 "batch_id": batch_id,
                 "dispositions": disposition_payloads,
@@ -595,10 +651,238 @@ def submit_candidate_decisions(
             decisions=disposition_payloads,
             response=response,
             resume_status=resume_status,
-            dispatch_status="pending" if has_eligible else "not_required",
+            dispatch_status="pending" if has_eligible and not terminal_reclassification else "not_required",
             cur=cur,
         )
     return response
+
+
+def persist_sourcing_policy_snapshot(run_id: str, policy: dict[str, Any]) -> dict[str, Any]:
+    """Persist one immutable scoring policy and bind its UUID to the source Run."""
+    with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        if run is None or run.get("run_type") != "sourcing_risk_v2":
+            raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+        snapshot = get_policy_snapshot_by_run_with_cursor(run_id, cur)
+        if snapshot is None:
+            snapshot = upsert_policy_snapshot_with_cursor(run_id, policy, cur)
+        else:
+            update_run_policy_snapshot_with_cursor(run_id, str(snapshot["id"]), cur)
+    return snapshot
+
+
+def get_sourcing_policy_snapshot(snapshot_id: str) -> dict[str, Any] | None:
+    with get_cursor() as (_, cur):
+        return get_policy_snapshot_by_id_with_cursor(snapshot_id, cur)
+
+
+def get_sourcing_candidate_followup_context(child_run_id: str) -> dict[str, Any] | None:
+    """Load the selected parent candidates and frozen policy for a child Run."""
+    followup = get_candidate_followup_context(child_run_id)
+    if followup is None:
+        return None
+    policy_snapshot_id = str(followup.get("policy_snapshot_id") or "")
+    policy_snapshot = get_sourcing_policy_snapshot(policy_snapshot_id) if policy_snapshot_id else None
+    if policy_snapshot is None:
+        raise DomainError(
+            "SOURCING_POLICY_SNAPSHOT_UNAVAILABLE",
+            "父任务规则快照不可用，不能恢复候选任务",
+            409,
+        )
+    with get_cursor() as (_, cur):
+        candidates = list_candidates_with_cursor(child_run_id, cur)
+    candidate_ids = {str(item) for item in followup.get("child_candidate_ids") or []}
+    selected = [
+        candidate for candidate in candidates
+        if str(candidate.get("candidate_id") or candidate.get("id")) in candidate_ids
+    ]
+    if len(selected) != len(candidate_ids):
+        raise DomainError(
+            "SOURCING_FOLLOWUP_CANDIDATES_UNAVAILABLE",
+            "恢复任务候选快照不完整，不能继续执行",
+            409,
+        )
+    return {
+        **followup,
+        "candidates": selected,
+        "policy_snapshot_id": policy_snapshot_id,
+        "policy_snapshot": dict(policy_snapshot.get("policy") or {}),
+    }
+
+
+def get_candidate_review_batch_for_execution(batch_id: str) -> dict[str, Any] | None:
+    """Read the currently leased candidate batch for the persistent worker."""
+    batch = repo_get_candidate_review_batch_for_execution(batch_id)
+    if batch is None:
+        return None
+    return {
+        **batch,
+        "fencing_token": int(batch.get("fencing_token") or 0),
+        "run_version": int(batch.get("run_version") or 0),
+    }
+
+
+def mark_candidate_review_batch_consumed(batch_id: str, fencing_token: int) -> bool:
+    with get_cursor() as (_, cur):
+        return mark_candidate_review_batch_consumed_with_cursor(batch_id, fencing_token, cur)
+
+
+def get_candidate_review_groups_for_batch(batch_id: str) -> dict[str, Any]:
+    """Rebuild the resume groups from PostgreSQL candidates and dispositions."""
+    batch = repo_get_candidate_review_batch_for_execution(batch_id)
+    if batch is None or batch.get("dispatch_status") != "processing":
+        raise DomainError("SOURCING_CANDIDATE_BATCH_UNAVAILABLE", "候选恢复批次不可用", 409)
+    run_id = str(batch["run_id"])
+    with get_cursor() as (_, cur):
+        candidates = list_candidates_with_cursor(run_id, cur)
+        disposition_rows = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+    by_candidate = {str(row["candidate_id"]): row for row in disposition_rows}
+    review_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_id = str(candidate.get("candidate_id") or candidate.get("id") or "")
+        if not candidate_id:
+            raise DomainError("SOURCING_CANDIDATE_KEY_UNAVAILABLE", "候选缺少已持久化标识", 409)
+        review_candidate = {**candidate, "candidate_key": candidate_id}
+        disposition = by_candidate.get(candidate_id)
+        if disposition:
+            review_candidate.update(
+                disposition=str(disposition["action"]),
+                reason=disposition.get("reason"),
+            )
+            if disposition.get("action") == "confirm" and disposition.get("company_id"):
+                review_candidate.update(
+                    company_id=str(disposition["company_id"]),
+                    identity_status="exact",
+                    score_eligible=True,
+                )
+        review_candidates.append(review_candidate)
+    decisions = list(batch.get("decisions") or [])
+    try:
+        groups = apply_candidate_decisions(review_candidates, decisions)
+    except ValueError as exc:
+        raise DomainError("SOURCING_CANDIDATE_DECISION_INVALID", str(exc), 409) from exc
+    return {**groups, "all_candidates": [*groups["eligible"], *groups["deferred"], *groups["excluded"]]}
+
+
+def derive_candidate_followup(
+    run_id: str,
+    candidate_keys: list[str],
+    user_id: str,
+    user_role: str,
+    request_key: str,
+) -> dict[str, Any]:
+    """Create a child Run for explicitly resumed deferred candidates."""
+    _require_candidate_review_role(user_role)
+    request_key = request_key.strip()
+    if not request_key or len(request_key) > 255:
+        raise DomainError("IDEMPOTENCY_KEY_INVALID", "Idempotency-Key 无效", 422)
+    if not candidate_keys or any(not isinstance(key, str) or not key.strip() for key in candidate_keys):
+        raise DomainError("SOURCING_FOLLOWUP_CANDIDATES_INVALID", "必须选择至少一个有效候选", 422)
+    if len(set(candidate_keys)) != len(candidate_keys):
+        raise DomainError("SOURCING_FOLLOWUP_CANDIDATES_INVALID", "candidate_key 不得重复", 422)
+    request_hash = hashlib.sha256(
+        json.dumps({"run_id": run_id, "candidate_keys": candidate_keys}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    with get_cursor() as (_, cur):
+        parent = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(parent, user_id, user_role)
+        lock_candidate_followup_request_with_cursor(user_id, request_key, cur)
+        previous = get_candidate_followup_event_by_request_with_cursor(user_id, request_key, cur)
+        if previous is not None:
+            if previous["request_hash"] != request_hash or str(previous["parent_run_id"]) != run_id:
+                raise DomainError("SOURCING_FOLLOWUP_IDEMPOTENCY_CONFLICT", "Idempotency-Key 已用于不同的恢复请求", 409)
+            response = previous.get("response") or {}
+            if isinstance(response, str):
+                response = json.loads(response)
+            return {**dict(response), "_start_required": False}
+
+        if parent["status"] not in {
+            AgentRunStatus.PARTIAL.value,
+            AgentRunStatus.NEEDS_REVIEW.value,
+        }:
+            raise DomainError("SOURCING_FOLLOWUP_PARENT_NOT_TERMINAL", "父任务尚未终态，不能派生恢复任务", 409)
+        policy_snapshot_id = str(parent.get("policy_snapshot_id") or "") or None
+        policy_snapshot = (
+            get_policy_snapshot_by_id_with_cursor(policy_snapshot_id, cur)
+            if policy_snapshot_id else None
+        )
+        if policy_snapshot is None:
+            raise DomainError("SOURCING_POLICY_SNAPSHOT_UNAVAILABLE", "父任务规则快照不可用，不能派生恢复任务", 409)
+
+        candidates = list_candidates_with_cursor(run_id, cur)
+        candidates_by_id = {
+            str(candidate.get("candidate_id") or candidate.get("id")): candidate
+            for candidate in candidates
+        }
+        dispositions = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+        disposition_by_id = {str(item["candidate_id"]): item for item in dispositions}
+        selected_candidates: list[dict[str, Any]] = []
+        for candidate_key in candidate_keys:
+            candidate = candidates_by_id.get(candidate_key)
+            disposition = disposition_by_id.get(candidate_key)
+            if candidate is None or disposition is None:
+                raise DomainError("SOURCING_FOLLOWUP_CANDIDATE_NOT_FOUND", "候选不存在或没有可恢复处置", 404)
+            if disposition.get("action") == "exclude":
+                raise DomainError("SOURCING_FOLLOWUP_CANDIDATE_EXCLUDED", "排除候选需先显式改为暂存后才能恢复", 409)
+            if disposition.get("action") != "defer":
+                raise DomainError("SOURCING_FOLLOWUP_CANDIDATE_NOT_DEFERRED", "只有本轮暂存候选可以派生恢复任务", 409)
+            snapshot = {
+                key: value
+                for key, value in candidate.items()
+                if key not in {"id", "candidate_id", "source", "status", "updated_at"}
+            }
+            snapshot.update(
+                candidate_key=f"followup:{run_id}:{candidate_key}",
+                parent_candidate_id=candidate_key,
+            )
+            selected_candidates.append(snapshot)
+
+        child = insert_run(
+            run_type="sourcing_risk_v2",
+            requirement=dict(parent.get("requirement") or {}),
+            user_id=user_id,
+            status=AgentRunStatus.CREATED.value,
+            cur=cur,
+        )
+        update_run_policy_snapshot_with_cursor(str(child["id"]), policy_snapshot_id, cur)
+        child_snapshot = persist_run_snapshot(
+            str(child["id"]), candidates=selected_candidates, cur=cur
+        )
+        child_candidates = list(child_snapshot.get("candidates") or [])
+        child_candidate_ids = [str(item["id"]) for item in child_candidates]
+        insert_candidate_followup_with_cursor(
+            parent_run_id=run_id,
+            child_run_id=str(child["id"]),
+            created_by=user_id,
+            source_candidate_ids=list(candidate_keys),
+            child_candidate_ids=child_candidate_ids,
+            policy_snapshot_id=policy_snapshot_id,
+            cur=cur,
+        )
+        response = {
+            "parent_run_id": run_id,
+            "run_id": str(child["id"]),
+            "resume_url": f"/sourcing?run_id={child['id']}",
+        }
+        append_event(
+            str(child["id"]),
+            int(child.get("version") or 1),
+            "candidate_followup_created",
+            {"parent_run_id": run_id, "candidate_count": len(child_candidate_ids), "status": child["status"]},
+            cur=cur,
+        )
+        insert_candidate_followup_event_with_cursor(
+            event_id=str(uuid4()),
+            parent_run_id=run_id,
+            child_run_id=str(child["id"]),
+            actor_id=user_id,
+            request_key=request_key,
+            request_hash=request_hash,
+            response=response,
+            cur=cur,
+        )
+    return {**response, "_start_required": True}
 
 
 def cancel_run(
@@ -616,6 +900,8 @@ def cancel_run(
         updated = update_run_status(run_id, expected_version, AgentRunStatus.CANCELLED.value, cur=cur)
         if updated is None:
             _raise_version_conflict()
+        if run.get("run_type") == "sourcing_risk_v2":
+            cancel_pending_candidate_review_batches_with_cursor(run_id, cur)
         append_event(run_id, updated["version"], "done", {"status": updated["status"]}, cur=cur)
     return updated
 

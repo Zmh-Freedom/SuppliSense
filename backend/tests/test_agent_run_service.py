@@ -35,9 +35,15 @@ def test_cancel_run_updates_only_the_expected_version(monkeypatch: pytest.Monkey
 def test_cancel_run_persists_terminal_stage_event(monkeypatch: pytest.MonkeyPatch):
     """Removing the terminal event would make a cancelled run unreplayable to SSE clients."""
     events: list[dict] = []
+    cancelled_batches: list[str] = []
     monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("CLARIFYING", 2))
+    monkeypatch.setattr(
+        service,
+        "cancel_pending_candidate_review_batches_with_cursor",
+        lambda run_id, _cur: cancelled_batches.append(run_id),
+    )
     monkeypatch.setattr(
         service,
         "update_run_status",
@@ -55,6 +61,7 @@ def test_cancel_run_persists_terminal_stage_event(monkeypatch: pytest.MonkeyPatc
 
     assert result["status"] == "CANCELLED"
     assert result["version"] == 3
+    assert cancelled_batches == ["run-id"]
     assert events == [{"run_id": "run-id", "version": 3, "event_type": "done", "payload": {"status": "CANCELLED"}}]
 
 

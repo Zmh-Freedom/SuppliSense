@@ -97,6 +97,84 @@ async def _heartbeat_until_done(
             return
 
 
+async def _heartbeat_candidate_review_until_done(
+    *,
+    batch_id: str,
+    worker_id: str,
+    fencing_token: int,
+    producer: asyncio.Task,
+) -> None:
+    """Renew the review-batch lease and stop graph work after fencing."""
+    interval = settings.AGENT_WORKER_HEARTBEAT_SECONDS
+    lease_seconds = settings.AGENT_WORKER_LEASE_SECONDS
+    while not producer.done():
+        await asyncio.sleep(interval)
+        if producer.done():
+            return
+        lease_ok = await asyncio.to_thread(
+            execution_jobs.heartbeat_candidate_review_batch,
+            batch_id,
+            worker_id,
+            fencing_token,
+            lease_seconds=lease_seconds,
+        )
+        if not lease_ok:
+            producer.cancel()
+            return
+
+
+async def _execute_candidate_review_batch(
+    claimed: dict[str, Any], worker_id: str,
+) -> dict[str, Any]:
+    """Resume the sourcing graph through its durable interrupt checkpoint."""
+    from app.graphs.sourcing_risk_v2.runner import resume_candidate_review_batch
+
+    batch_id = str(claimed["batch_id"])
+    fencing_token = int(claimed["fencing_token"])
+    producer = asyncio.create_task(
+        resume_candidate_review_batch(batch_id),
+        name=f"candidate-review:{batch_id}",
+    )
+    heartbeat = asyncio.create_task(
+        _heartbeat_candidate_review_until_done(
+            batch_id=batch_id,
+            worker_id=worker_id,
+            fencing_token=fencing_token,
+            producer=producer,
+        ),
+        name=f"candidate-review-heartbeat:{batch_id}",
+    )
+    try:
+        outcome = await producer
+    except asyncio.CancelledError:
+        return {"terminal": False, "lease_lost": True, "candidate_batch": {"status": "lease_lost"}}
+    except Exception as exc:
+        logger.exception(
+            "candidate_review_resume_failed",
+            batch_id=batch_id,
+            worker_id=worker_id,
+        )
+        # Keep the lease until expiry. The next worker can recover the same PG
+        # intent and LangGraph checkpoint without marking the batch consumed.
+        return {
+            "terminal": False,
+            "candidate_batch": {"status": "retry_pending", "error": str(exc) or type(exc).__name__},
+        }
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+        if not producer.done():
+            producer.cancel()
+            await asyncio.gather(producer, return_exceptions=True)
+
+    lease_lost = outcome.get("status") == "lease_lost"
+    return {
+        "terminal": not lease_lost,
+        "lease_lost": lease_lost,
+        "candidate_batch": outcome,
+    }
+
+
 async def _finish_failed(permit, run_id: str, message: str, frozen: dict[str, Any]) -> None:
     failures = [
         (
@@ -206,6 +284,31 @@ async def _execute_claimed_job(
 async def run_worker_once_async(worker_id: str | None = None) -> dict[str, Any]:
     """Claim and execute at most one durable job in the current event loop."""
     worker_id = worker_id or _default_worker_id()
+    review_batch = await asyncio.to_thread(
+        execution_jobs.claim_candidate_review_batch,
+        worker_id,
+        lease_seconds=settings.AGENT_WORKER_LEASE_SECONDS,
+    )
+    if review_batch is not None:
+        if review_batch.get("status") != "processing":
+            return {
+                "executed": 1,
+                "worker_id": worker_id,
+                "terminal": review_batch.get("status") in {"cancelled", "stale", "failed"},
+                "candidate_batch": review_batch,
+            }
+        try:
+            outcome = await _execute_candidate_review_batch(review_batch, worker_id)
+        except Exception as exc:
+            logger.exception("candidate_review_worker_failed", worker_id=worker_id)
+            return {
+                "executed": 1,
+                "worker_id": worker_id,
+                "terminal": False,
+                "candidate_batch": {"status": "retry_pending", "error": str(exc) or type(exc).__name__},
+            }
+        return {"executed": 1, "worker_id": worker_id, **outcome}
+
     claimed = await asyncio.to_thread(
         execution_jobs.claim_job,
         worker_id,

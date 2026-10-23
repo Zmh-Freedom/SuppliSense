@@ -19,6 +19,7 @@ from app.domains.agent_run.service import (
     decide_action_proposal,
     get_candidate_decisions,
     get_sourcing_risk_run,
+    derive_candidate_followup,
     retry_sourcing_risk_raw_payload_compensations,
     stream_events,
     submit_clarification,
@@ -30,6 +31,8 @@ from app.domains.agent_run.schemas import (
     ApprovalDecisionRequest,
     CandidateDecisionBatchRequest,
     CandidateDecisionResponse,
+    CandidateFollowupRequest,
+    CandidateFollowupResponse,
     CancelRunRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
@@ -198,6 +201,32 @@ async def write_candidate_decisions(
         request_key,
     )
     return CandidateDecisionResponse.model_validate(result)
+
+
+@workspace_router.post(
+    "/runs/{run_id}/followups",
+    summary="从暂存候选创建恢复任务",
+    response_model=CandidateFollowupResponse,
+)
+async def create_candidate_followup(
+    run_id: UUID,
+    data: CandidateFollowupRequest,
+    request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    current_user: UserInDB = Depends(get_current_user),
+) -> CandidateFollowupResponse:
+    _require_v2_route(current_user, allow_shadow=False)
+    result = await asyncio.to_thread(
+        derive_candidate_followup,
+        str(run_id),
+        list(data.candidate_keys),
+        current_user.id,
+        current_user.role.value,
+        request_key,
+    )
+    start_required = bool(result.pop("_start_required", True))
+    if start_required:
+        await _schedule_graph(start_sourcing_risk_graph(str(result["run_id"])))
+    return CandidateFollowupResponse.model_validate(result)
 
 
 @router.post("/{run_id}/approvals/{approval_id}/decisions", summary="提交审批决定")

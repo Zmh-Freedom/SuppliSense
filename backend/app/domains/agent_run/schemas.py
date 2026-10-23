@@ -93,6 +93,25 @@ class CandidateDecisionResponse(_ImmutableModel):
     new_run_id: UUID | None = None
 
 
+class CandidateFollowupRequest(_ImmutableModel):
+    candidate_keys: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("candidate_keys")
+    @classmethod
+    def validate_candidate_keys(cls, value: list[str]) -> list[str]:
+        if any(not key.strip() for key in value):
+            raise ValueError("candidate_key 不能为空")
+        if len(set(value)) != len(value):
+            raise ValueError("candidate_key 不得重复")
+        return value
+
+
+class CandidateFollowupResponse(_ImmutableModel):
+    parent_run_id: UUID
+    run_id: UUID
+    resume_url: str = Field(min_length=1, max_length=255)
+
+
 class ApprovalDecisionRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
     decision: Literal["approved", "rejected"]

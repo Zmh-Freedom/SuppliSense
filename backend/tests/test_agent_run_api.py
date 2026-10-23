@@ -54,6 +54,39 @@ def test_agent_run_endpoints_require_authentication(agent_client):
     assert response.status_code == 401
 
 
+def test_sourcing_followup_endpoint_returns_child_run_and_starts_graph(
+    agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.domains.agent_run import api
+
+    scheduled: list[str] = []
+    response_payload = {
+        "parent_run_id": RUN_ID,
+        "run_id": "00000000-0000-4000-8000-000000000004",
+        "resume_url": "/sourcing?run_id=00000000-0000-4000-8000-000000000004",
+    }
+    monkeypatch.setattr(api, "_require_v2_route", lambda *_args, **_kwargs: "execute")
+    monkeypatch.setattr(api, "derive_candidate_followup", lambda *_args: response_payload)
+    async def start_graph(run_id: str) -> None:
+        scheduled.append(run_id)
+
+    monkeypatch.setattr(api, "start_sourcing_risk_graph", start_graph)
+
+    async def schedule(coroutine):
+        await coroutine
+
+    monkeypatch.setattr(api, "_schedule_graph", schedule)
+    response = agent_client.post(
+        f"/api/v1/sourcing-workspace/runs/{RUN_ID}/followups",
+        headers={**agent_headers, "Idempotency-Key": "followup-key"},
+        json={"candidate_keys": ["00000000-0000-4000-8000-000000000003"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == response_payload
+    assert scheduled == [response_payload["run_id"]]
+
+
 def test_approval_decision_records_actor_and_request_ip(
     agent_client, agent_headers, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -622,6 +655,12 @@ def test_clarification_api_service_runner_seam_consumes_durable_requirement_patc
     )
     monkeypatch.setattr(nodes, "record_orchestration_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(nodes, "persist_orchestration_snapshot", lambda *_args, **_kwargs: {"candidates": []})
+    monkeypatch.setattr(nodes.agent_run_service, "get_sourcing_candidate_followup_context", lambda *_: None)
+    monkeypatch.setattr(
+        nodes.agent_run_service,
+        "persist_sourcing_policy_snapshot",
+        lambda _run_id, policy: {"id": "policy-snapshot-id", "policy": policy},
+    )
     monkeypatch.setattr(nodes, "parse_requirement", lambda raw_text, data: {
         "status": "ready", "requirement": {"category": "摄像头", "specification": data["specification"]}
     } if data.get("specification") else {"status": "clarification_required", "missing": ["specification"]})
