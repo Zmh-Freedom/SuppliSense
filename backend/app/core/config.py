@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     PG_DB: str = os.getenv("PG_DB", "sra")
     PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "4"))
     PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "20"))
+    PG_POOL_ACQUIRE_TIMEOUT_SECONDS: float = float(
+        os.getenv("PG_POOL_ACQUIRE_TIMEOUT_SECONDS", "5")
+    )
 
     # Agent Run V2 LangGraph checkpoints (managed with a dedicated psycopg3 connection)
     AGENT_RUN_V2_ENABLED: bool = os.getenv("AGENT_RUN_V2_ENABLED", "false").lower() == "true"

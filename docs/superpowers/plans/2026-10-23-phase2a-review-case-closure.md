@@ -135,9 +135,7 @@ queryKeys.procurementCases(filters)、procurementCase(id)；新组件使用新�
   实际复核执行needs_review→回执→独立审核accepted_limitation；最终事项closed但风险仍未知。
   固定输入，隔离外部服务；另测无权操作在读源前拒绝、重复命令无重复执行。
 - [x] **2. 跑专项与集成。** 完整后端离线门禁、Agent E2E、前端全门禁均通过；`SUPPLISENSE_TEST_PG_DB=run_lifecycle_test` 下 2A 仓储/复核集成 6 passed，覆盖并发、回滚、重复初始化和任务去重。
-- [ ] **3. 浏览器验收。** 真实三角色/两科室、调岗撤权、关闭自批拒绝、搁置到期、390px、刷新；
-  若使用fixture必须标明真实登录/DB未覆盖部分，不能替代PG并发测试。
-  本轮本地浏览器仍停在登录页，缺少已授权隔离测试身份；Playwright 启动 Chrome 被桌面环境拒绝（EPERM）。因此该矩阵未执行，等待测试身份后补验。
+- [x] **3. 浏览器验收。** 已使用隔离 PG/Mongo fixture 在 390px 浏览器验证 D1/D2 采购员和经理、管理员全局列表、本人/科室隔离、刷新与深链接；管理员提交关闭申请后没有审核控件，另一科室经理可独立批准。验证了关闭后重新打开、设置过去期限、搁置并设未来复查时间；刷新后事项仍按原期限计为逾期。D1/D2 关闭接受资料限制后仍显示覆盖未知。文档明确该 fixture 不覆盖真实 Feishu 身份映射、正式责任数据与调岗撤权；隔离 PostgreSQL 并发验证由独立 integration 测试覆盖。
 - [x] **4. 独立审查和修复。** 复核提出的两个 Important 均补回归后修复；受影响门禁重跑通过。
 - [x] **5. 提交验收。** `test: verify procurement case handling and closure journey`；
   写 `docs/reviews/2026-10-23-phase2a-case-validation.md`，019/020只按实际覆盖关闭。
