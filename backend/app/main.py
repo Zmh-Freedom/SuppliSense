@@ -23,6 +23,7 @@ from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.p2 import router as p2_router
 from app.domains.alert.api import router as alert_router
+from app.domains.alert.api_cases import router as procurement_cases_router
 from app.domains.alert.api_notifications import router as notifications_router
 from app.domains.auth.api import router as auth_router
 from app.domains.company.api import router as company_identity_router
@@ -290,6 +291,7 @@ api_v1 = APIRouter(prefix="/api/v1")
 api_v1.include_router(auth_router)
 api_v1.include_router(async_tasks_router)
 api_v1.include_router(alert_router, prefix="/alert", tags=["alert"])
+api_v1.include_router(procurement_cases_router)
 api_v1.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_v1.include_router(company_router, prefix="/company", tags=["company"])
 api_v1.include_router(company_identity_router)

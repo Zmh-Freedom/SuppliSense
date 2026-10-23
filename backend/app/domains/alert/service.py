@@ -354,7 +354,9 @@ def get_watchlist_target_summaries(
             enriched = dict(target)
             try:
                 from app.domains.alert.review_tasks import get_latest_review_task
-                review_task = get_latest_review_task(target.get("monitor_target_id"))
+                review_task = get_latest_review_task(
+                    target.get("monitor_target_id"), user_id, user_role
+                )
             except Exception:
                 # The monitoring dashboard remains readable while PostgreSQL is
                 # unavailable; task details will appear once the store recovers.

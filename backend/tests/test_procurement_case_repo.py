@@ -155,6 +155,31 @@ def test_transition_rejects_stale_version_before_writing():
     assert len(cursor.queries) == 1
 
 
+def test_event_only_transition_increments_version_and_appends_event():
+    cursor = _TransitionCursor(_transition_rows())
+    transition = getattr(case_repo, "apply_case_transition", None)
+    assert callable(transition), "apply_case_transition must be implemented"
+
+    result = transition(
+        "case-1",
+        1,
+        {},
+        {
+            "actor_id": "buyer-1",
+            "event_type": "transfer_requested",
+            "from_status": "in_progress",
+            "to_status": "in_progress",
+            "payload": {"reason": "请经理协调"},
+        },
+        cur=cursor,
+    )
+
+    assert result["version"] == 2
+    assert result["event_id"]
+    assert "version = version + 1" in cursor.queries[1]
+    assert "INSERT INTO procurement_case_events" in cursor.queries[2]
+
+
 def test_case_schema_has_active_uniqueness_and_append_only_events():
     cases_ddl = next(sql for sql in DDL_STATEMENTS if "CREATE TABLE IF NOT EXISTS procurement_cases" in sql)
     events_ddl = next(sql for sql in DDL_STATEMENTS if "CREATE TABLE IF NOT EXISTS procurement_case_events" in sql)
@@ -169,6 +194,42 @@ def test_case_schema_has_active_uniqueness_and_append_only_events():
     assert "UNIQUE (actor_id, request_key)" in requests_ddl
     assert "case_id UUID REFERENCES procurement_cases(id) ON DELETE RESTRICT" in requests_ddl
     assert "WHERE status <> 'closed'" in active_index
+
+
+def test_case_list_applies_actor_scope_and_keyset_before_page_limit():
+    class ListCursor:
+        description = [("id",), ("updated_at",)]
+
+        def __init__(self) -> None:
+            self.query = ""
+            self.params: tuple = ()
+
+        def execute(self, query: str, params: tuple = ()) -> None:
+            self.query = query
+            self.params = params
+
+        def fetchall(self) -> list[tuple]:
+            return []
+
+    cursor = ListCursor()
+    result = case_repo.list_cases(
+        {"status": "open"},
+        actor_id="manager-1",
+        user_role="purchaser",
+        manager_departments=["D1", "D2"],
+        limit=20,
+        cursor={"updated_at": "2026-10-22T00:00:00+00:00", "id": "case-1"},
+        cur=cursor,
+    )
+
+    assert result == {"items": [], "next_cursor": None}
+    assert "created_by = %s" in cursor.query
+    assert "owner_user_id = %s" in cursor.query
+    assert "department_code = ANY(%s)" in cursor.query
+    assert "updated_at < %s OR (updated_at = %s AND id > %s)" in cursor.query
+    assert cursor.query.index("WHERE") < cursor.query.index("LIMIT %s")
+    assert "ORDER BY updated_at DESC, id ASC" in cursor.query
+    assert cursor.params[-1] == 21
 
 
 def _case_values(target_id: str, actor_id: str, trigger_key: str = "trigger-1") -> dict:

@@ -56,6 +56,35 @@ def _target_for_case(monitor_target_id: str) -> dict[str, Any] | None:
     return target
 
 
+def get_case_target(monitor_target_id: str) -> dict[str, Any] | None:
+    """Return the current Mongo read model used to re-check a case target."""
+    return _target_for_case(monitor_target_id)
+
+
+def current_manager_departments(user_id: str) -> list[str]:
+    """Return departments managed by this active Feishu identity today."""
+    try:
+        open_id = feishu_open_id_for_user(str(user_id))
+        if not open_id:
+            return []
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """
+                SELECT DISTINCT department_code
+                FROM supplier_responsibility_snapshots
+                WHERE manager_open_id = %s
+                  AND source_active = TRUE
+                  AND sync_status = 'current'
+                  AND department_code IS NOT NULL
+                ORDER BY department_code
+                """,
+                (str(open_id),),
+            )
+            return [str(row[0]) for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
 def _actor_assignments(
     assignments: list[dict[str, Any]], open_id: str
 ) -> list[dict[str, Any]]:
@@ -102,6 +131,12 @@ def resolve_case_scope(
     except Exception as exc:
         raise PermissionError("无法确认供应商当前责任范围") from exc
     if not assignments:
+        if user_role == "admin" and department_code is None:
+            return {
+                "target_id": target_id,
+                "department_code": None,
+                "is_manager": False,
+            }
         raise PermissionError("供应商没有可用的当前科室责任记录")
 
     open_id = ""

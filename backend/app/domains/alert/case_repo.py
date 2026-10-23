@@ -238,7 +238,8 @@ def _append_event(
     payload: dict[str, Any] | None,
     version: int,
     request_id: str | None = None,
-) -> None:
+) -> str:
+    event_id = str(uuid4())
     cur.execute(
         """
         INSERT INTO procurement_case_events
@@ -247,7 +248,7 @@ def _append_event(
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            str(uuid4()),
+            event_id,
             str(case_id),
             str(actor_id) if actor_id is not None else None,
             str(event_type),
@@ -258,6 +259,7 @@ def _append_event(
             int(version),
         ),
     )
+    return event_id
 
 
 def _create_case_with_cursor(
@@ -357,8 +359,6 @@ def apply_case_transition(
 ) -> dict[str, Any] | None:
     if expected_version < 1:
         raise ValueError("事项版本必须大于0")
-    if not changes:
-        raise ValueError("事项状态变更不能为空")
     unexpected = set(changes) - _CASE_MUTABLE_FIELDS
     if unexpected:
         raise ValueError(f"不允许更新事项字段：{', '.join(sorted(unexpected))}")
@@ -392,7 +392,7 @@ def apply_case_transition(
     if updated is None:
         return None
 
-    _append_event(
+    event_id = _append_event(
         transaction_cursor,
         case_id=str(case_id),
         actor_id=event.get("actor_id"),
@@ -403,6 +403,7 @@ def apply_case_transition(
         version=int(updated["version"]),
         request_id=event.get("request_id"),
     )
+    updated["event_id"] = event_id
     return updated
 
 
@@ -452,7 +453,8 @@ def list_case_tasks(case_id: str, *, cur: object | None = None) -> list[dict[str
         transaction_cursor.execute(
             """
             SELECT link.id, link.case_id, link.task_id, link.linked_by, link.created_at,
-                   task.task_type, task.status, task.version, task.result, task.updated_at
+                   task.task_type, task.status, task.version, task.result,
+                   task.evidence_refs, task.updated_at
             FROM procurement_case_tasks AS link
             JOIN monitor_review_tasks AS task ON task.id = link.task_id
             WHERE link.case_id = %s
@@ -465,6 +467,106 @@ def list_case_tasks(case_id: str, *, cur: object | None = None) -> list[dict[str
             _json_safe(dict(zip(columns, row, strict=True)))
             for row in transaction_cursor.fetchall()
         ]
+
+    if cur is not None:
+        return _list(cur)
+    with get_cursor() as (_, transaction_cursor):
+        return _list(transaction_cursor)
+
+
+def get_linked_case_for_task(
+    task_id: str, *, cur: object | None = None
+) -> dict[str, Any] | None:
+    """Return the business case linked to a technical review task, if any."""
+    cases = list_linked_cases_for_task(task_id, cur=cur)
+    return cases[0] if cases else None
+
+
+def list_linked_cases_for_task(
+    task_id: str, *, cur: object | None = None
+) -> list[dict[str, Any]]:
+    """Return every business case associated with a technical task."""
+    def _get(transaction_cursor: Any) -> list[dict[str, Any]]:
+        transaction_cursor.execute(
+            """
+            SELECT cases.*
+            FROM procurement_cases AS cases
+            JOIN procurement_case_tasks AS links ON links.case_id = cases.id
+            WHERE links.task_id = %s
+            ORDER BY links.created_at ASC, links.id
+            """,
+            (str(task_id),),
+        )
+        columns = [description[0] for description in transaction_cursor.description]
+        return [
+            _json_safe(dict(zip(columns, row, strict=True)))
+            for row in transaction_cursor.fetchall()
+        ]
+
+    if cur is not None:
+        return _get(cur)
+    with get_cursor() as (_, transaction_cursor):
+        return _get(transaction_cursor)
+
+
+def list_cases(
+    filters: dict[str, Any],
+    *,
+    actor_id: str,
+    user_role: str,
+    manager_departments: list[str],
+    limit: int = 20,
+    cursor: dict[str, Any] | None = None,
+    cur: object | None = None,
+) -> dict[str, Any]:
+    """List cases with actor scope and keyset paging applied in SQL."""
+    page_size = max(1, min(int(limit), 100))
+
+    def _list(transaction_cursor: Any) -> dict[str, Any]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if user_role != "admin":
+            scope_parts = ["created_by = %s", "owner_user_id = %s"]
+            params.extend([str(actor_id), str(actor_id)])
+            if manager_departments:
+                scope_parts.append("department_code = ANY(%s)")
+                params.append(manager_departments)
+            clauses.append(f"({' OR '.join(scope_parts)})")
+
+        for field in ("status", "case_type", "monitor_target_id", "owner_user_id"):
+            value = filters.get(field)
+            if value:
+                clauses.append(f"{field} = %s")
+                params.append(value)
+        if cursor and cursor.get("updated_at") and cursor.get("id"):
+            clauses.append("(updated_at < %s OR (updated_at = %s AND id > %s))")
+            params.extend([cursor["updated_at"], cursor["updated_at"], cursor["id"]])
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        transaction_cursor.execute(
+            f"""
+            SELECT * FROM procurement_cases
+            {where}
+            ORDER BY updated_at DESC, id ASC
+            LIMIT %s
+            """,
+            tuple([*params, page_size + 1]),
+        )
+        columns = [description[0] for description in transaction_cursor.description]
+        rows = [
+            _json_safe(dict(zip(columns, row, strict=True)))
+            for row in transaction_cursor.fetchall()
+        ]
+        has_more = len(rows) > page_size
+        page = rows[:page_size]
+        next_cursor = None
+        if has_more and page:
+            next_cursor = {
+                "updated_at": page[-1]["updated_at"].isoformat()
+                if isinstance(page[-1].get("updated_at"), datetime)
+                else page[-1].get("updated_at"),
+                "id": str(page[-1]["id"]),
+            }
+        return {"items": page, "next_cursor": next_cursor}
 
     if cur is not None:
         return _list(cur)

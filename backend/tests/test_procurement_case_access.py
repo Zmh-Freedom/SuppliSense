@@ -233,6 +233,30 @@ def test_admin_can_read_case_after_department_mapping_disappears(monkeypatch: py
     assert capabilities["can_decide_closure"] is True
 
 
+def test_admin_can_open_unassigned_formal_case_without_assigning_a_department(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _install_scope_data(
+        monkeypatch,
+        identities={},
+        assignments=[],
+        targets={"target-1": {"monitor_target_id": "target-1", "supplier_id": "supplier-1"}},
+    )
+
+    scope = _resolve(
+        {"monitor_target_id": "target-1", "supplier_id": "supplier-1"},
+        "admin",
+        "admin",
+        None,
+    )
+
+    assert scope == {
+        "target_id": "target-1",
+        "department_code": None,
+        "is_manager": False,
+    }
+
+
 def test_viewer_has_no_case_capabilities(monkeypatch: pytest.MonkeyPatch):
     _install_scope_data(
         monkeypatch,
