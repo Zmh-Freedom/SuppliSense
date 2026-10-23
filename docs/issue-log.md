@@ -372,7 +372,7 @@
 - 根因：测试夹具替换了高层授权判断而非仅固定底层供应商访问数据，缩小了真实业务链。
 - 修复方案：保留 `can_access_handoff_candidate` 的生产判断，通过 fixture supplier access 查询替身授予指定候选访问，并断言授权边界在创建和执行阶段均被调用。
 - 验证结果：保留生产 `can_access_handoff_candidate` 判断，仅替换底层供应商访问查询；断言创建交接和恢复 session 两个阶段均命中授权边界。`agent_e2e and not integration` 全集 121 passed；独立只读复审确认修复正确且无其他重要问题。
-- 关联提交：`test: verify sourcing continuity across pages`（提交 SHA 在关联文档提交中补录）。
+- 关联提交：`8523edd5`（Task 5 连续旅程验收）。
 
 ## ISS-20261016-003 批量监控导入失败时可能留下未说明的部分写入
 
@@ -6097,7 +6097,7 @@
 - 2026-10-23（Task 2 完成）：候选处置批次、图路由与节点筛选、暂存组终态、候选后续Run、持久策略快照及worker恢复租约均已实现；父Run终态保持不变。显式隔离 PostgreSQL `run_lifecycle_test` 与持久 checkpointer 重启/并发集成验证纳入专项，最终定向集 150 passed、3 warnings；无共享开发库写入。
 - 2026-10-23（Task 5 真实图 E2E 发现与修复）：默认及摄像头策略仅按评分维度配置 `freshness_days`，证据归一化却按 provider 维度查窗口；其中强制必需的 `sanctions` 永远得到 `freshness_status=unknown`，安全门因此将有效候选持续判为 `NEEDS_REVIEW`，覆盖暂存组时也无法派生计划要求的 `PARTIAL`。已建立 provider 证据维度到策略评分维度的共享映射，在证据归一化和交接时效重算中使用同一映射；冻结策略快照与 checksum 语义保持不变，并增加真实策略+真实节点回归用例。
 - 2026-10-23（Task 5 完成）：终态暂存候选续接入口已在 Task 5 修复并由统一历史页面浏览器验收；完整后端离线集 1372 passed、1 skipped，Agent E2E 121 passed，独立 PostgreSQL `run_lifecycle_test` 恢复集 2 passed；前端及跨页验收记录见 `docs/reviews/2026-10-23-phase2b-sourcing-validation.md`。未对共享开发库写入。
-- 关联提交：`933a74f6`（恢复、过滤与终态候选派生）、`test: verify sourcing continuity across pages`（SHA 在关联文档提交中补录）。
+- 关联提交：`933a74f6`（恢复、过滤与终态候选派生）、`8523edd5`（Task 5 连续旅程验收）。
 
 ### ISS-20261022-022 寻源任务历史与跨页面候选上下文不连续
 
@@ -6129,10 +6129,9 @@
 - 2026-10-23（Task 5 E2E 第三轮）：虚构 provider fixture 缺少 `conflict_status`，证据归一化按 fail-closed 默认值 `unknown`，因此真实评分节点将主体置为 `NEEDS_REVIEW`，而非计划验证的暂存组 `PARTIAL`。修复方案：固定源显式提供 `conflict_status=none`，保留真实证据校验与评分路径。最终真实图连续旅程用例通过，且 Agent E2E 全集 121 passed。
 - 2026-10-23（Task 5 完成）：统一历史可恢复 Agent Run 与兼容寻源请求；浏览器以本地固定 API fixture 验证两来源历史、PARTIAL 子任务派生、刷新/后退、兼容详情恢复、篡改交接 ID 与撤权拒绝。390px 视口未横向溢出；监控意图停在人工审批，fixture 仅收到一次交接创建和一次聊天流请求，没有监控写入。后端 Agent E2E、隔离 PostgreSQL 恢复集、前端全套门禁均通过；独立只读复审未发现重要问题。详细边界见验证报告。
 - 2026-10-23（Task 5 提交前差异检查）：`git diff --cached --check` 检出验收报告日期和计划行尾的 Markdown 双空格；清理行尾空格后重新检查暂存差异。
-- 关联提交：Task 3/4 的既有提交及 `test: verify sourcing continuity across pages`（SHA 在关联文档提交中补录）。
 - 修复方案：提供统一“我的寻源任务”；保留来源和适配边界；交接带 task/candidate/company ID 及需求快照，目的端重验权限。
 - 验证结果：Task 3 定向后端历史/授权/旧寻源服务共 28 passed，前端历史/工作台/legacy 深链接共 39 passed；前端 lint、typecheck、build，后端 compileall 与 `git diff --check` 通过。普通 Harness 聊天不进入寻源任务，来源部分失败不生成下一页游标，兼容详情和重搜均验证 owner/admin 边界。Task 4 最终后端交接/状态/上下文专项 36 passed；前端 27 个文件、215 tests passed，typecheck/lint/build、compileall 与 `git diff --check` 通过。Task 5 最终全后端离线 1372 passed/1 skipped、Agent E2E 121 passed、隔离 PG 恢复 2 passed；前端 217 项、lint/typecheck/build 全部通过。浏览器验收和复审记录见 `docs/reviews/2026-10-23-phase2b-sourcing-validation.md`。
-- 关联提交：`73d26d75`（统一任务历史、候选处置提示与兼容寻源授权）、`7e639f2d`（服务端受权交接、Harness 原子消费与前端恢复）、`test: verify sourcing continuity across pages`（SHA 在关联文档提交中补录）。
+- 关联提交：`73d26d75`（统一任务历史、候选处置提示与兼容寻源授权）、`7e639f2d`（服务端受权交接、Harness 原子消费与前端恢复）、`8523edd5`（Task 5 连续旅程验收）。
 
 ### ISS-20261022-023 监控覆盖摘要把历史记录存在当作当前可用
 
@@ -6512,4 +6511,4 @@
 - 根因：Task 2 已实现候选派生服务与路由，但前端终态页面没有消费候选处置状态或 follow-up API，服务端 resume_url 与当前路由契约未对齐。
 - 修复方案：终态任务页读取持久化处置，只允许用户明确勾选 defer 候选并创建 follow-up；导航使用工作台支持的 `run` 参数，父 Run 保持终态，排除候选不进入选择项。
 - 验证结果：新增终态续接面板读取候选处置，仅允许显式选择 defer 项；排除候选需先以理由重新暂存；后端 `resume_url` 改为工作台识别的 `run` 参数。前端覆盖选择及重新暂存用例均通过；浏览器确认父任务可刷新找回、派生后导航子 Run，390px 无横向溢出。最终前端 217 passed，lint/typecheck/build 均通过。
-- 关联提交：`test: verify sourcing continuity across pages`（SHA 在关联文档提交中补录）。
+- 关联提交：`8523edd5`（Task 5 连续旅程验收）。

@@ -41,4 +41,4 @@
 
 独立只读复审确认 E2E 保留生产 `can_access_handoff_candidate`，并断言创建与恢复阶段都执行授权检查；终态候选续接 UI 与 `run` 路由契约有测试覆盖。复审未发现可行动的重要缺陷或安全问题，未修改代码。
 
-Task 5 实现提交：`test: verify sourcing continuity across pages`。关联提交 SHA 将在提交后补入本报告和 `docs/issue-log.md`。
+Task 5 实现提交：`8523edd5`（`test: verify sourcing continuity across pages`）。
