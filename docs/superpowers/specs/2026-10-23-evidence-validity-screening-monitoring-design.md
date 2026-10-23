@@ -1,7 +1,7 @@
 # 名单筛查与监控证据有效性设计（交付 B1）
 
 日期：2026-10-23；基线：`2ad9b0df`。
-状态：用户已确认优先实施第一项；本文为待审阅的具体设计，尚未进入产品代码实施。
+状态：用户已确认本文具体设计（2026-10-23）；实施计划待审阅，尚未进入产品代码实施。
 关联：ISS-20261022-016、023；沿用 2026-10-22 风险结论可信度路线。执行方式沿用用户指定的当前会话顺序实施。
 
 ## 1. 用户目标与完成边界
@@ -68,7 +68,7 @@ screening_status：
 ### 4.2 旧 API 和工具兼容
 
 - `check_sanctions(company_name)` 保留旧成功字段集合。只有能精确投影为旧契约时才成功：no_match_in_scope 对应 clean=true；confirmed_match 对应 clean=false；旧 HTTP 成功分支的分数/等级类型也必须保持。没有已验收评分规则而无法满足旧分支类型时同样返回不可用，不能借工具字段可空偷偷改变旧 HTTP 类型。不再按混合计数凑制裁风险分。
-- 无法投影时 service 抛业务 ValueError；旧 `/api/v1/sanctions/{company_name}` 返回统一错误信封的 HTTP 503。不能用 clean=false 表达未知。
+- 无法投影时 service 抛业务 ValueError；旧 `/api/v1/analysis/sanctions/{company_name}` 返回统一错误信封的 HTTP 503。不能用 clean=false 表达未知。
 - 旧总览不统计 unknown 为 clean；任一对象不能完整投影则返回 503，避免静默跳过。保留原成功结构，不在本轮扩展总览能力。
 - 新增 `/api/v1/sanctions-screenings/{company_name}` 返回显式状态读模型，使用现有主体解析和责任范围校验；不接受仅登录就扩大到无权限主体。若主体不唯一，返回 409；无权 403；未找到 404。来源不可用属于正常业务状态返回 200，不与接口执行失败混淆。
 - 保留工具名 `check_sanctions`、注册及执行策略，内部改用 analyze_sanctions；仍输出既有 SanctionsOutput 和 evidence/claims 结构。其 clean/score/level 已允许 None，未知时不得生成这类事实 Claim。详细状态放入 evidence.facts 并投影为现有 AgentAnswer limitations。
@@ -140,3 +140,5 @@ Dashboard、MonitoringWorkbench、MonitoringView、MonitoringIntakePanel 和 Har
 主要代价：旧制裁接口将比之前更常返回 503，这是把无依据的成功改为诚实不可用；新版画像需额外只读请求。缺少可靠时效的旧数据将增加待核验数量，不能以降低门槛减少告警。正式名单与内部交易有效期契约未启用不阻止安全收口，但这两个来源不能宣称已具备正向业务能力。
 
 回退只可退到“无法确认/待核验”，不得恢复样本清白、布尔未知或历史低风险默认放行。完成 B1 不代表 B2/C 或整体重构完成。
+
+实施计划：`docs/superpowers/plans/2026-10-23-evidence-validity-screening-monitoring.md`。路径校正：既有 sanctions router 在 main.py 挂于 /api/v1/analysis，本次保持原地址；新 screening router 单独挂于 /api/v1，设计行为不变。

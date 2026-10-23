@@ -5999,7 +5999,7 @@
 - 关联提交：未提交；本轮仅记录，未修复。
 
 - 2026-10-23 B1 设计：补充核查：SanctionsOutput 已允许 clean=None，但旧 HTTP 和画像布尔字段不能表达未知；Supervisor 合规摘要也把非 clean 一律称命中。B1 设计将正式名单与国内司法信号分开，使用新版只读状态契约，旧成功结构不扩展；正式来源尚未接入。
-- 设计文档：`docs/superpowers/specs/2026-10-23-evidence-validity-screening-monitoring-design.md`；待审阅，尚未修改产品代码，问题保持待修复。
+- 设计文档：`docs/superpowers/specs/2026-10-23-evidence-validity-screening-monitoring-design.md`；2026-10-23 用户已确认具体设计；实施计划已编写待审阅，尚未修改产品代码，问题保持待修复。
 
 ### ISS-20261022-017 质量交付指标单位、汇总和风险阈值缺少业务契约
 
@@ -6081,7 +6081,7 @@
 - 关联提交：未提交；本轮仅记录，未修复。
 
 - 2026-10-23 B1 设计：补充核查：监控接入调查也独立按存在性判断；PG 兼容快照未携完整证据清单；舆情已有六小时缓存规则，不能另造期限。B1 将在受权内部读模型取得冻结清单和策略、按当前时间重验，旧交易无来源时效契约保持待核验。
-- 设计文档：`docs/superpowers/specs/2026-10-23-evidence-validity-screening-monitoring-design.md`；待审阅，尚未修改产品代码，问题保持待修复。
+- 设计文档：`docs/superpowers/specs/2026-10-23-evidence-validity-screening-monitoring-design.md`；2026-10-23 用户已确认具体设计；实施计划已编写待审阅，尚未修改产品代码，问题保持待修复。
 
 ### ISS-20261022-024 首页未把未知风险和真实待办作为优先工作内容
 
