@@ -236,6 +236,111 @@ def get_run_detail_collections(run_id: str) -> dict[str, Any]:
     }
 
 
+def list_candidates_with_cursor(run_id: str, cur: PgCursor) -> list[dict[str, Any]]:
+    """Load persisted candidates inside the caller's locked-run transaction."""
+    return [
+        _candidate_detail(candidate)
+        for candidate in _list_rows(
+            cur,
+            "SELECT * FROM agent_run_candidates WHERE run_id = %s ORDER BY created_at ASC, id ASC",
+            (run_id,),
+        )
+    ]
+
+
+def list_sourcing_candidate_dispositions_with_cursor(
+    run_id: str, cur: PgCursor,
+) -> list[dict[str, Any]]:
+    return _list_rows(
+        cur,
+        "SELECT * FROM sourcing_candidate_dispositions WHERE run_id = %s ORDER BY candidate_id ASC",
+        (run_id,),
+    )
+
+
+def get_candidate_review_event_by_request_with_cursor(
+    actor_id: str, request_key: str, cur: PgCursor,
+) -> dict[str, Any] | None:
+    cur.execute(
+        "SELECT * FROM sourcing_candidate_review_events WHERE actor_id=%s AND request_key=%s",
+        (actor_id, request_key),
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
+def lock_candidate_review_request_with_cursor(actor_id: str, request_key: str, cur: PgCursor) -> None:
+    """Serialize the actor-wide idempotency key before checking/inserting it."""
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"sourcing-candidate-review:{actor_id}:{request_key}",),
+    )
+
+
+def upsert_sourcing_candidate_disposition_with_cursor(
+    run_id: str,
+    candidate_id: str,
+    action: str,
+    company_id: str | None,
+    reason: str | None,
+    decided_by: str,
+    batch_id: str,
+    cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO sourcing_candidate_dispositions
+            (run_id, candidate_id, action, company_id, reason, decided_by, batch_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (run_id, candidate_id) DO UPDATE SET
+            action=EXCLUDED.action, company_id=EXCLUDED.company_id,
+            reason=EXCLUDED.reason, decided_by=EXCLUDED.decided_by,
+            batch_id=EXCLUDED.batch_id, updated_at=NOW()
+        RETURNING *
+        """,
+        (run_id, candidate_id, action, company_id, reason, decided_by, batch_id),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def insert_candidate_review_event_with_cursor(
+    *,
+    batch_id: str,
+    run_id: str,
+    actor_id: str,
+    request_key: str,
+    request_hash: str,
+    expected_version: int,
+    run_version: int,
+    decisions: list[dict[str, Any]],
+    response: dict[str, Any],
+    resume_status: str,
+    dispatch_status: str,
+    cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO sourcing_candidate_review_events
+            (batch_id, run_id, actor_id, request_key, request_hash, expected_version,
+             run_version, decisions, response, resume_status, dispatch_status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            batch_id, run_id, actor_id, request_key, request_hash, expected_version,
+            run_version, Json(decisions), Json(response), resume_status, dispatch_status,
+        ),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def list_candidate_review_events_with_cursor(run_id: str, cur: PgCursor) -> list[dict[str, Any]]:
+    return _list_rows(
+        cur,
+        "SELECT * FROM sourcing_candidate_review_events WHERE run_id=%s ORDER BY event_id DESC",
+        (run_id,),
+    )
+
+
 def upsert_raw_payload_compensations(
     compensations: list[dict[str, Any]], cur: PgCursor | None = None
 ) -> None:

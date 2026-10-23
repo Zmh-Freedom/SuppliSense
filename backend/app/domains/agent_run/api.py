@@ -17,15 +17,19 @@ from app.domains.agent_run.service import (
     cancel_run,
     create_sourcing_risk_run,
     decide_action_proposal,
+    get_candidate_decisions,
     get_sourcing_risk_run,
     retry_sourcing_risk_raw_payload_compensations,
     stream_events,
     submit_clarification,
+    submit_candidate_decisions,
     submit_identity_resolution,
 )
 from app.domains.agent_run.schemas import (
     AgentRunResponse,
     ApprovalDecisionRequest,
+    CandidateDecisionBatchRequest,
+    CandidateDecisionResponse,
     CancelRunRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
@@ -35,6 +39,11 @@ from app.graphs.sourcing_risk_v2.runner import resume_sourcing_risk_graph, start
 from app.schemas.user import UserInDB
 
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"], dependencies=[Depends(get_current_user)])
+workspace_router = APIRouter(
+    prefix="/sourcing-workspace",
+    tags=["sourcing-workspace"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _agent_run_sse_event(event: dict) -> str:
@@ -150,6 +159,45 @@ async def resolve_agent_run_identity(
     run = await asyncio.to_thread(submit_identity_resolution, str(run_id), data, current_user.id, current_user.role.value)
     await _schedule_graph(resume_sourcing_risk_graph(str(run_id), {"identity_resolutions": dict(data.resolutions)}))
     return run
+
+
+@workspace_router.get(
+    "/runs/{run_id}/candidate-decisions",
+    summary="读取寻源候选处置",
+    response_model=CandidateDecisionResponse,
+)
+async def read_candidate_decisions(
+    run_id: UUID,
+    current_user: UserInDB = Depends(get_current_user),
+) -> CandidateDecisionResponse:
+    _require_v2_route(current_user)
+    result = await asyncio.to_thread(
+        get_candidate_decisions, str(run_id), current_user.id, current_user.role.value
+    )
+    return CandidateDecisionResponse.model_validate(result)
+
+
+@workspace_router.post(
+    "/runs/{run_id}/candidate-decisions",
+    summary="提交寻源候选处置",
+    response_model=CandidateDecisionResponse,
+)
+async def write_candidate_decisions(
+    run_id: UUID,
+    data: CandidateDecisionBatchRequest,
+    request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    current_user: UserInDB = Depends(get_current_user),
+) -> CandidateDecisionResponse:
+    _require_v2_route(current_user, allow_shadow=False)
+    result = await asyncio.to_thread(
+        submit_candidate_decisions,
+        str(run_id),
+        data.model_dump(mode="json"),
+        current_user.id,
+        current_user.role.value,
+        request_key,
+    )
+    return CandidateDecisionResponse.model_validate(result)
 
 
 @router.post("/{run_id}/approvals/{approval_id}/decisions", summary="提交审批决定")

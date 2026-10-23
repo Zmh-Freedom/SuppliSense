@@ -1,11 +1,34 @@
 """Integration coverage for agent run V2 persistence primitives."""
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+
+import pytest
 
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, put_conn
 from app.domains.agent_run import repo
+
+
+@pytest.fixture
+def isolated_pg(monkeypatch: pytest.MonkeyPatch):
+    test_database = os.environ.get("SUPPLISENSE_TEST_PG_DB")
+    if not test_database:
+        pytest.skip("SUPPLISENSE_TEST_PG_DB 未设置，跳过真实 PostgreSQL 验收")
+    if test_database.lower() in {"sra", "tianyancha"}:
+        pytest.fail("禁止在共享开发库上运行 Agent Run 集成测试")
+
+    from app.core.config import settings
+    from app.db.postgres import close_pool
+
+    if test_database == settings.PG_DB:
+        pytest.fail("测试数据库必须显式覆盖当前开发库 PG_DB")
+    monkeypatch.setattr(settings, "PG_DB", test_database)
+    close_pool()
+    ensure_pg_schema()
+    yield
+    close_pool()
 
 
 class _RollbackCursor:
@@ -241,9 +264,10 @@ def _delete_run(run_id: str) -> None:
         conn.commit()
 
 
-def test_append_event_assigns_monotonic_event_ids_for_one_run():
+@pytest.mark.integration
+def test_append_event_assigns_monotonic_event_ids_for_one_run(isolated_pg):
     """Replacing the locked sequence with a constant must be detected."""
-    ensure_pg_schema()
+    del isolated_pg
     run = _insert_run_for_test()
     try:
         first = repo.append_event(run["id"], 1, "stage", {"status": "CREATED"})
@@ -255,9 +279,10 @@ def test_append_event_assigns_monotonic_event_ids_for_one_run():
         _delete_run(run["id"])
 
 
-def test_append_event_uses_callers_transaction_when_cursor_is_supplied():
+@pytest.mark.integration
+def test_append_event_uses_callers_transaction_when_cursor_is_supplied(isolated_pg):
     """A rollback of the business transaction must also remove its event."""
-    ensure_pg_schema()
+    del isolated_pg
     run = _insert_run_for_test()
     try:
         with _real_connection() as (writer_conn, writer_cur):
@@ -281,9 +306,10 @@ def test_append_event_uses_callers_transaction_when_cursor_is_supplied():
         _delete_run(run["id"])
 
 
-def test_status_update_and_event_roll_back_with_one_callers_transaction():
+@pytest.mark.integration
+def test_status_update_and_event_roll_back_with_one_callers_transaction(isolated_pg):
     """A rollback must leave neither the status update nor its event visible."""
-    ensure_pg_schema()
+    del isolated_pg
     run = _insert_run_for_test()
     try:
         with _real_connection() as (writer_conn, writer_cur):
@@ -305,9 +331,10 @@ def test_status_update_and_event_roll_back_with_one_callers_transaction():
         _delete_run(run["id"])
 
 
-def test_update_run_status_requires_expected_version():
+@pytest.mark.integration
+def test_update_run_status_requires_expected_version(isolated_pg):
     """Removing the version predicate must not permit stale status changes."""
-    ensure_pg_schema()
+    del isolated_pg
     run = _insert_run_for_test()
     try:
         assert repo.update_run_status(run["id"], 99, "CANCELLED") is None
@@ -315,9 +342,10 @@ def test_update_run_status_requires_expected_version():
         _delete_run(run["id"])
 
 
-def test_update_run_status_increments_version():
+@pytest.mark.integration
+def test_update_run_status_increments_version(isolated_pg):
     """A matching version must atomically advance once with the status change."""
-    ensure_pg_schema()
+    del isolated_pg
     run = _insert_run_for_test()
     try:
         updated = repo.update_run_status(run["id"], 1, "CANCELLED")
@@ -327,9 +355,10 @@ def test_update_run_status_increments_version():
         _delete_run(run["id"])
 
 
-def test_insert_approval_decision_rejects_proposal_from_another_run():
+@pytest.mark.integration
+def test_insert_approval_decision_rejects_proposal_from_another_run(isolated_pg):
     """Removing the composite foreign key must allow an invalid cross-run approval."""
-    ensure_pg_schema()
+    del isolated_pg
     first_run = _insert_run_for_test()
     second_run = _insert_run_for_test()
     try:

@@ -43,6 +43,7 @@ from app.domains.sourcing.api import router as sourcing_router
 from app.domains.supplier.api import router as supplier_router
 from app.domains.sourcing.api_access import router as access_router
 from app.domains.agent_run.api import router as agent_run_router
+from app.domains.agent_run.api import workspace_router as sourcing_workspace_router
 from app.domains.agent_run.rollout_api import router as agent_rollout_router
 from app.core.config import settings
 from app.core.errors import (
@@ -312,6 +313,7 @@ api_v1.include_router(trend_router)
 api_v1.include_router(compare_router)
 api_v1.include_router(notifications_router)
 api_v1.include_router(agent_run_router)
+api_v1.include_router(sourcing_workspace_router)
 api_v1.include_router(agent_rollout_router)
 
 from app.domains.risk.assessment_api import router as assessment_router

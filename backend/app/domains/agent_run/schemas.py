@@ -73,6 +73,26 @@ class IdentityResolutionRequest(_ImmutableModel):
         return _deep_freeze(value)
 
 
+class CandidateDecisionItem(_ImmutableModel):
+    candidate_key: str = Field(min_length=1, max_length=255)
+    action: Literal["confirm", "defer", "exclude"]
+    company_id: str | None = Field(default=None, min_length=1, max_length=64)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class CandidateDecisionBatchRequest(_ImmutableModel):
+    expected_version: int = Field(ge=1)
+    decisions: list[CandidateDecisionItem] = Field(default_factory=list, max_length=100)
+
+
+class CandidateDecisionResponse(_ImmutableModel):
+    run_id: UUID
+    run_version: int = Field(ge=1)
+    dispositions: list[dict[str, Any]] = Field(default_factory=list)
+    resume_status: str = Field(min_length=1, max_length=32)
+    new_run_id: UUID | None = None
+
+
 class ApprovalDecisionRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
     decision: Literal["approved", "rejected"]

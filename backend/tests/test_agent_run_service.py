@@ -12,6 +12,7 @@ from app.domains.agent_run.schemas import ClarificationRequest, CreateSourcingRi
 def _run(status: str = "CREATED", version: int = 1, user_id: str = "user-id") -> dict:
     return {
         "id": "00000000-0000-4000-8000-000000000001",
+        "run_type": "sourcing_risk_v2",
         "user_id": user_id,
         "status": status,
         "version": version,
@@ -849,7 +850,16 @@ def test_identity_resolution_versions_a_durable_resume_event(monkeypatch: pytest
     events: list[dict] = []
     monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
-    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(service, "get_run_for_update", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(
+        service,
+        "list_candidates_with_cursor",
+        lambda *_: [{
+            "candidate_id": "candidate-row",
+            "supplier_name": "candidate-a",
+            "identity_candidates": [{"company_id": "company-a"}],
+        }],
+    )
     monkeypatch.setattr(
         service,
         "update_run_status",
@@ -877,6 +887,38 @@ def test_identity_resolution_versions_a_durable_resume_event(monkeypatch: pytest
         "event_type": "identity_resolution",
         "payload": {"identity_resolutions": {"candidate-a": "company-a"}, "status": "IDENTITY_REVIEW"},
     }]
+
+
+def test_identity_resolution_rejects_company_outside_persisted_options(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_run_for_update", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(
+        service,
+        "list_candidates_with_cursor",
+        lambda *_: [{
+            "candidate_id": "candidate-row",
+            "supplier_name": "candidate-a",
+            "identity_candidates": [{"company_id": "company-a"}],
+        }],
+    )
+    monkeypatch.setattr(
+        service,
+        "update_run_status",
+        lambda *_args, **_kwargs: pytest.fail("forged identity must not advance the run"),
+    )
+
+    with pytest.raises(DomainError) as exc:
+        service.submit_identity_resolution(
+            "run-id",
+            IdentityResolutionRequest(expected_version=2, resolutions={"candidate-a": "forged-company"}),
+            "user-id",
+            "analyst",
+        )
+
+    assert exc.value.code == "SOURCING_IDENTITY_OPTION_INVALID"
+    assert exc.value.status_code == 422
 
 
 def test_orchestration_state_transition_writes_typed_event_with_new_version(monkeypatch: pytest.MonkeyPatch):

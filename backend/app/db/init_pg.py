@@ -546,6 +546,41 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_dispositions (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID NOT NULL REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
+        action VARCHAR(16) NOT NULL CHECK (action IN ('confirm','defer','exclude')),
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        reason TEXT,
+        decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        batch_id UUID NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, candidate_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_review_events (
+        event_id BIGSERIAL UNIQUE,
+        batch_id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        expected_version INTEGER NOT NULL,
+        run_version INTEGER NOT NULL,
+        decisions JSONB NOT NULL,
+        response JSONB NOT NULL,
+        resume_status VARCHAR(32) NOT NULL,
+        dispatch_status VARCHAR(16) NOT NULL DEFAULT 'pending'
+            CHECK (dispatch_status IN ('pending','consumed','not_required','cancelled','failed')),
+        new_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        consumed_at TIMESTAMPTZ,
+        UNIQUE (actor_id, request_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_candidate_review_pending ON sourcing_candidate_review_events (created_at) WHERE dispatch_status='pending'",
+    """
     CREATE TABLE IF NOT EXISTS agent_evidence (
         id UUID PRIMARY KEY,
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,

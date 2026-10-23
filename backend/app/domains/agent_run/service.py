@@ -1,8 +1,10 @@
 """Framework-independent lifecycle commands for sourcing-risk agent runs."""
 
+import hashlib
+import json
 import time
-from datetime import datetime, timedelta, timezone
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -20,30 +22,39 @@ from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunSta
 from app.domains.agent_run.harness_contracts import TurnStatus
 from app.domains.agent_run.repo import (
     append_event,
+    get_candidate_review_event_by_request_with_cursor,
+    get_latest_harness_run_for_session,
     get_run,
     get_run_for_update,
     get_run_detail_collections,
     get_run_for_user,
-    get_latest_harness_run_for_session,
+    insert_candidate_review_event_with_cursor,
     insert_approval_decision,
     insert_run,
+    list_candidate_review_events_with_cursor,
+    list_candidates_with_cursor,
     list_events_after,
     list_execution_snapshot_events,
+    list_raw_payload_compensations,
+    list_sourcing_candidate_dispositions_with_cursor,
+    lock_candidate_review_request_with_cursor,
     persist_run_snapshot,
+    update_raw_payload_compensation,
     update_run_requirement,
     update_run_status,
-    list_raw_payload_compensations,
-    update_raw_payload_compensation,
     upsert_raw_payload_compensations,
+    upsert_sourcing_candidate_disposition_with_cursor,
 )
 from app.domains.agent_run.schemas import (
     AgentRunResponse,
     ApprovalDecisionRequest,
+    AgentExecutionSnapshot,
+    CandidateDecisionBatchRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
     IdentityResolutionRequest,
-    AgentExecutionSnapshot,
 )
+from app.domains.sourcing.candidate_review import apply_candidate_decisions
 from app.graphs.agent_core.trace import TRACE_EVENT_TYPE, build_agent_trace_events
 
 TERMINAL_STATUSES = frozenset(
@@ -375,10 +386,31 @@ def submit_identity_resolution(
     user_role: str,
 ) -> dict[str, Any]:
     """Durably record reviewer-selected company identities before graph resume."""
-    run = _get_authorized_run(run_id, user_id, user_role)
-    _require_version(run, request.expected_version)
-    _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+    _require_candidate_review_role(user_role)
     with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(run, user_id, user_role)
+        _require_version(run, request.expected_version)
+        _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+        persisted_candidates = list_candidates_with_cursor(run_id, cur)
+        by_review_id: dict[str, dict[str, Any]] = {}
+        for candidate in persisted_candidates:
+            review_id = _legacy_candidate_review_id(candidate)
+            if review_id in by_review_id:
+                raise DomainError(
+                    "SOURCING_IDENTITY_REVIEW_AMBIGUOUS",
+                    "候选审核标识不唯一，请使用候选处置入口重新审核",
+                    409,
+                )
+            by_review_id[review_id] = candidate
+        for review_id, company_id in request.resolutions.items():
+            candidate = by_review_id.get(review_id)
+            if candidate is None or company_id not in _candidate_identity_options(candidate):
+                raise DomainError(
+                    "SOURCING_IDENTITY_OPTION_INVALID",
+                    "所选企业不在当前候选主体选项中",
+                    422,
+                )
         updated = update_run_status(run_id, request.expected_version, AgentRunStatus.IDENTITY_REVIEW.value, cur=cur)
         if updated is None:
             _raise_version_conflict()
@@ -390,6 +422,183 @@ def submit_identity_resolution(
             cur=cur,
         )
     return updated
+
+
+def get_candidate_decisions(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
+    """Return the latest separately persisted disposition state for one Run."""
+    with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(run, user_id, user_role)
+        candidates = list_candidates_with_cursor(run_id, cur)
+        dispositions = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+        batches = list_candidate_review_events_with_cursor(run_id, cur)
+    disposition_by_candidate = {str(row["candidate_id"]): row for row in dispositions}
+    effective = []
+    for candidate in candidates:
+        row = disposition_by_candidate.get(str(candidate.get("candidate_id") or candidate.get("id")))
+        if row is None:
+            continue
+        effective.append(_candidate_disposition_payload(candidate, row))
+    latest_batch = batches[0] if batches else None
+    resume_status = (
+        str(latest_batch.get("resume_status"))
+        if latest_batch
+        else str(run.get("status") or "not_started").lower()
+    )
+    return {
+        "run_id": str(run["id"]),
+        "run_version": int(run["version"]),
+        "dispositions": effective,
+        "resume_status": resume_status,
+        "new_run_id": str(latest_batch["new_run_id"]) if latest_batch and latest_batch.get("new_run_id") else None,
+    }
+
+
+def submit_candidate_decisions(
+    run_id: str,
+    payload: dict[str, Any],
+    user_id: str,
+    user_role: str,
+    request_key: str,
+) -> dict[str, Any]:
+    """Persist a candidate review batch and its durable resume intent atomically."""
+    _require_candidate_review_role(user_role)
+    request_key = request_key.strip()
+    if not request_key or len(request_key) > 255:
+        raise DomainError("IDEMPOTENCY_KEY_INVALID", "Idempotency-Key 无效", 422)
+    request = CandidateDecisionBatchRequest.model_validate(payload)
+    serialized_request = request.model_dump(mode="json")
+    request_hash = hashlib.sha256(
+        json.dumps(serialized_request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(run, user_id, user_role)
+
+        lock_candidate_review_request_with_cursor(user_id, request_key, cur)
+        previous = get_candidate_review_event_by_request_with_cursor(user_id, request_key, cur)
+        if previous is not None:
+            if previous["request_hash"] != request_hash or str(previous["run_id"]) != run_id:
+                raise DomainError(
+                    "SOURCING_CANDIDATE_IDEMPOTENCY_CONFLICT",
+                    "Idempotency-Key 已用于不同的候选处置请求",
+                    409,
+                )
+            response = previous.get("response") or {}
+            if isinstance(response, str):
+                response = json.loads(response)
+            return dict(response)
+
+        _require_version(run, request.expected_version)
+        _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+        persisted_candidates = list_candidates_with_cursor(run_id, cur)
+        disposition_rows = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+        disposition_by_candidate = {str(row["candidate_id"]): row for row in disposition_rows}
+        review_candidates: list[dict[str, Any]] = []
+        for persisted in persisted_candidates:
+            stable_id = str(persisted.get("candidate_id") or persisted.get("id") or "")
+            if not stable_id:
+                raise DomainError(
+                    "SOURCING_CANDIDATE_KEY_UNAVAILABLE",
+                    "候选缺少已持久化的稳定标识，无法提交审核",
+                    409,
+                )
+            candidate = {**persisted, "candidate_key": stable_id}
+            existing = disposition_by_candidate.get(stable_id)
+            if existing:
+                candidate.update(
+                    disposition=str(existing["action"]),
+                    reason=existing.get("reason"),
+                )
+                if existing.get("action") == "confirm" and existing.get("company_id"):
+                    candidate.update(
+                        company_id=str(existing["company_id"]),
+                        identity_status="exact",
+                        score_eligible=True,
+                    )
+            review_candidates.append(candidate)
+
+        normalized_decisions = [item.model_dump(exclude_none=True) for item in request.decisions]
+        try:
+            groups = apply_candidate_decisions(review_candidates, normalized_decisions)
+        except ValueError as exc:
+            raise DomainError("SOURCING_CANDIDATE_DECISION_INVALID", str(exc), 422) from exc
+
+        batch_id = str(uuid4())
+        submitted_by_key = {item["candidate_key"]: item for item in normalized_decisions}
+        disposition_payloads: list[dict[str, Any]] = []
+        for _group_name, candidates in groups.items():
+            for candidate in candidates:
+                action = candidate.get("disposition")
+                if action not in {"confirm", "defer", "exclude"}:
+                    continue
+                submitted = submitted_by_key.get(str(candidate["candidate_key"]), {})
+                company_id = str(candidate["company_id"]) if action == "confirm" else None
+                reason = submitted.get("reason") or candidate.get("reason")
+                if not submitted and action == "defer" and not reason:
+                    reason = "not_selected_this_round"
+                upsert_sourcing_candidate_disposition_with_cursor(
+                    run_id=run_id,
+                    candidate_id=str(candidate["candidate_key"]),
+                    action=action,
+                    company_id=company_id,
+                    reason=reason,
+                    decided_by=user_id,
+                    batch_id=batch_id,
+                    cur=cur,
+                )
+                disposition_payloads.append({
+                    "candidate_key": str(candidate["candidate_key"]),
+                    "action": action,
+                    "company_id": company_id,
+                    "reason": reason,
+                })
+
+        has_eligible = bool(groups["eligible"])
+        run_status = (
+            AgentRunStatus.IDENTITY_RESOLVING.value
+            if has_eligible
+            else AgentRunStatus.NEEDS_REVIEW.value
+        )
+        resume_status = "pending" if has_eligible else "needs_review"
+        updated = update_run_status(run_id, request.expected_version, run_status, cur=cur)
+        if updated is None:
+            _raise_version_conflict()
+        append_event(
+            run_id,
+            int(updated["version"]),
+            "candidate_review_submitted",
+            {
+                "batch_id": batch_id,
+                "dispositions": disposition_payloads,
+                "resume_status": resume_status,
+                "status": updated["status"],
+            },
+            cur=cur,
+        )
+        response = {
+            "run_id": run_id,
+            "run_version": int(updated["version"]),
+            "dispositions": disposition_payloads,
+            "resume_status": resume_status,
+            "new_run_id": None,
+        }
+        insert_candidate_review_event_with_cursor(
+            batch_id=batch_id,
+            run_id=run_id,
+            actor_id=user_id,
+            request_key=request_key,
+            request_hash=request_hash,
+            expected_version=request.expected_version,
+            run_version=int(updated["version"]),
+            decisions=disposition_payloads,
+            response=response,
+            resume_status=resume_status,
+            dispatch_status="pending" if has_eligible else "not_required",
+            cur=cur,
+        )
+    return response
 
 
 def cancel_run(
@@ -1053,3 +1262,52 @@ def _require_transition(run: dict[str, Any], target: AgentRunStatus) -> None:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
     if target != current and target not in ALLOWED_STATUS_TRANSITIONS[current]:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许此操作", 409)
+
+
+def _require_candidate_review_role(user_role: str) -> None:
+    if user_role not in {"admin", "purchaser", "analyst"}:
+        raise DomainError("SOURCING_CANDIDATE_REVIEW_FORBIDDEN", "当前用户无权审核寻源候选", 403)
+
+
+def _authorize_locked_sourcing_run(
+    run: dict[str, Any] | None, user_id: str, user_role: str,
+) -> None:
+    if run is None or run.get("run_type") != "sourcing_risk_v2":
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+    if user_role != "admin" and str(run.get("user_id") or "") != user_id:
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+
+
+def _legacy_candidate_review_id(candidate: dict[str, Any]) -> str:
+    return str(
+        candidate.get("company_id")
+        or candidate.get("supplier_id")
+        or candidate.get("supplier_name")
+        or candidate.get("identity_status")
+        or ""
+    )
+
+
+def _candidate_identity_options(candidate: dict[str, Any]) -> set[str]:
+    options = candidate.get("identity_candidates") or []
+    if not isinstance(options, list):
+        return set()
+    return {
+        str(option["company_id"])
+        for option in options
+        if isinstance(option, dict) and option.get("company_id")
+    }
+
+
+def _candidate_disposition_payload(
+    candidate: dict[str, Any], disposition: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **candidate,
+        "candidate_key": str(candidate.get("candidate_id") or candidate.get("id")),
+        "candidate_company_id": candidate.get("company_id"),
+        "action": disposition.get("action"),
+        "company_id": str(disposition["company_id"]) if disposition.get("company_id") else None,
+        "reason": disposition.get("reason"),
+        "updated_at": disposition.get("updated_at"),
+    }

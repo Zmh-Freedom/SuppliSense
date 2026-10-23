@@ -57,18 +57,18 @@ action(confirm/defer/exclude)、company_id(confirm必需)、reason(其余必需)
 {run_id,run_version,dispositions,resume_status,new_run_id}，new_run_id可空。
 旧run仍按原schema序列化，前端从新接口取得处置，不能悄悄添加旧响应字段。
 
-- [ ] **1. 写失败测试。** `tests/test_sourcing_candidate_review.py`：
+- [x] **1. 写失败测试。** `tests/test_sourcing_candidate_review.py`：
   exact A+无选项B，B defer时只有A eligible；全部exclude零eligible；
   伪造company_id不在当前候选options拒绝；重复candidate_key拒绝；
   已exact未提交仍保留；未提交的pending转defer且固定reason；原输入不变。
-- [ ] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_sourcing_candidate_review.py -q`。
-- [ ] **3. 实现纯函数/事务服务。** 新表sourcing_candidate_dispositions保存当前处置，
+- [x] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_sourcing_candidate_review.py -q`。
+- [x] **3. 实现纯函数/事务服务。** 新表sourcing_candidate_dispositions保存当前处置，
   sourcing_candidate_review_events追加保留各批决策/actor/reason；锁run、复核权限、CAS版本、
   写批次及恢复意图同事务；幂等(actor,key)+请求hash，冲突409。
   稳定key取已持久化review/candidate键；无稳定键时拒绝提交，不用名称补造。
-- [ ] **4. 验证GREEN。** 上述测试、新 `tests/test_sourcing_candidate_review_api.py` 和旧
+- [x] **4. 验证GREEN。** 上述测试、新 `tests/test_sourcing_candidate_review_api.py` 和旧
   `tests/test_agent_run_service.py tests/test_agent_run_api.py`；旧确认入口也不能信任任意company_id。
-- [ ] **5. 提交。** `feat: persist independent sourcing candidate decisions`，补021记录。
+- [x] **5. 提交。** `feat: persist independent sourcing candidate decisions`，补021记录。
 
 ## Task 2：恢复、过滤与终态候选派生
 
