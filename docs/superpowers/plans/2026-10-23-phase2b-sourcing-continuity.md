@@ -104,17 +104,17 @@ GET `/tasks`只聚合受权两来源，查询前完成owner/run_type/灰度约�
 legacy查询在 `backend/app/domains/sourcing/repo.py` 新增受权游标读函数，
 无updated_at使用created_at排序；不能用当前仅created_at/页码排序的list_requests硬拼游标。
 
-- [ ] **1. 写失败测试。** `tests/test_sourcing_workspace.py`：同更新时间无遗漏重复；
+- [x] **1. 写失败测试。** `tests/test_sourcing_workspace.py`：同更新时间无遗漏重复；
   run和legacy id相同仍分两任务；非本人run不可见；普通Harness聊天排除；
   经理无全局私有任务权；灰度未开不泄露run；来源失败显示局部不可用。
   前端 `SourcingTaskHistory.test.tsx`、扩展 `SourcingRiskWorkbench.test.tsx`：
   exact与无选项混合可提交，明确剩余暂存；历史深链接能恢复原来源和选定候选。
-- [ ] **2. 验证RED。** 运行上述后端文件和前端两个组件测试文件。
-- [ ] **3. 实现历史API及组件。** 替换仅legacy历史的入口；候选提供确认/本轮暂存/排除及理由。
+- [x] **2. 验证RED。** 运行上述后端文件和前端两个组件测试文件。
+- [x] **3. 实现历史API及组件。** 替换仅legacy历史的入口；候选提供确认/本轮暂存/排除及理由。
   原legacy任务仍打开兼容结果，不强制转换成run；新run打开现有run URL。
   历史状态含暂停组提示，但不改旧AgentRunResponse；新query key独立集中定义。
-- [ ] **4. 验证GREEN。** 上述测试、`test_sourcing_service.py`、前端typecheck/lint/build。
-- [ ] **5. 提交。** `feat: restore sourcing history and partial candidate progress`。
+- [x] **4. 验证GREEN。** 上述测试、`test_sourcing_service.py`、前端typecheck/lint/build。
+- [x] **5. 提交。** `feat: restore sourcing history and partial candidate progress`。
 
 ## Task 4：服务端受权交接到Harness
 
