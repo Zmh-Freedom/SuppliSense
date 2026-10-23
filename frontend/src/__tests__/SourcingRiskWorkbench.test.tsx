@@ -89,6 +89,48 @@ describe('SourcingRiskWorkbench', () => {
     expect(screen.queryByText('暂未找到可确认主体')).not.toBeInTheDocument();
   });
 
+  it('submits confirmed candidates while clearly staging the unselected candidate', async () => {
+    const mixedRun = {
+      ...identityReviewRun,
+      id: 'run-mixed-review',
+      version: 4,
+      candidates: [
+        { id: 'candidate-exact', supplier_name: '已确认供应商', company_id: 'company-exact', identity_status: 'exact' },
+        { id: 'candidate-unknown', supplier_name: '暂不可确认供应商', identity_review: true, identity_status: 'pending_verification', identity_candidates: [] },
+        { id: 'candidate-selectable', supplier_name: '可确认供应商', identity_review: true, identity_status: 'pending_verification', identity_candidates: [{ company_id: 'company-selectable', legal_name: '可确认供应商有限公司' }] },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent-runs/run-mixed-review')) return Response.json(mixedRun);
+      if (url.endsWith('/candidate-decisions') && init?.method !== 'POST') {
+        return Response.json({ run_id: 'run-mixed-review', run_version: 4, dispositions: [], resume_status: 'not_started', new_run_id: null });
+      }
+      if (url.endsWith('/candidate-decisions') && init?.method === 'POST') {
+        return Response.json({ run_id: 'run-mixed-review', run_version: 5, dispositions: [], resume_status: 'pending', new_run_id: null });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-mixed-review" />);
+
+    expect(await screen.findByText(/未选择的候选会暂存到下一轮/)).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: '候选供应商：已确认供应商' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('可确认供应商本轮处置'), { target: { value: 'confirm' } });
+    fireEvent.change(screen.getByLabelText('可确认供应商主体'), { target: { value: 'company-selectable' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交候选处置' }));
+
+    await vi.waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/candidate-decisions') && init?.method === 'POST');
+      expect(postCall).toBeDefined();
+      expect(JSON.parse(String(postCall?.[1]?.body))).toEqual({
+        expected_version: 4,
+        decisions: [{ candidate_key: 'candidate-selectable', action: 'confirm', company_id: 'company-selectable' }],
+      });
+    });
+  });
+
   it('shows missing sourcing fields and resumes the same run', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith('/agent-runs/run-clarify')) return Response.json(clarificationRun);

@@ -102,6 +102,7 @@ export function useSourcingRiskRun(initialRunId?: string) {
 
   const createRun = useMutation({
     mutationFn: (requirement: SourcingRiskRequirement) => api.post<SourcingRiskAgentRun>('/agent-runs', requirement),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.sourcingTasks }),
   });
 
   useEffect(() => {
@@ -130,8 +131,12 @@ export function useSourcingRiskRun(initialRunId?: string) {
                 : { ...current, events: [...current.events, traceEvent] };
             });
           }
+          if (terminal) void queryClient.invalidateQueries({ queryKey: queryKeys.sourcingTasks });
         },
-        onDone: () => queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(initialRunId) }),
+        onDone: () => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(initialRunId) });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.sourcingTasks });
+        },
         onError: () => {
           if (!stopped && !terminal) retryTimer.current = window.setTimeout(connect, RECONNECT_DELAY_MS);
         },

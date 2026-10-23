@@ -131,6 +131,74 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def list_sourcing_risk_runs_with_cursor(
+    *,
+    user_id: str,
+    scope_all: bool,
+    cursor: dict[str, str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read only authorized sourcing-risk Runs using the workspace's stable cursor order."""
+    sort_at = "COALESCE(updated_at, created_at)"
+    clauses = ["run_type = %s"]
+    params: list[object] = ["sourcing_risk_v2"]
+    if not scope_all:
+        clauses.append("user_id = %s")
+        params.append(user_id)
+
+    if cursor is not None:
+        cursor_at = cursor["updated_at"]
+        source_type = cursor["source_type"]
+        if "agent_run" > source_type:
+            clauses.append(f"({sort_at} < %s OR {sort_at} = %s)")
+            params.extend([cursor_at, cursor_at])
+        elif "agent_run" < source_type:
+            clauses.append(f"{sort_at} < %s")
+            params.append(cursor_at)
+        else:
+            clauses.append(f"({sort_at} < %s OR ({sort_at} = %s AND id::text > %s))")
+            params.extend([cursor_at, cursor_at, cursor["source_id"]])
+
+    query = f"""
+        SELECT id, status, requirement, created_at, updated_at
+        FROM agent_runs
+        WHERE {' AND '.join(clauses)}
+        ORDER BY {sort_at} DESC, id::text ASC
+        LIMIT %s
+    """
+    params.append(limit)
+    with get_cursor() as (_, cur):
+        cur.execute(query, tuple(params))
+        rows = [_row_to_dict(cur, row) for row in cur.fetchall()]
+
+    tasks: list[dict[str, Any]] = []
+    for row in rows:
+        if row is None:
+            continue
+        requirement = dict(row.get("requirement") or {})
+        updated_at = row.get("updated_at")
+        created_at = row.get("created_at")
+        sort_time = updated_at or created_at
+        if sort_time is None:
+            continue
+        run_id = str(row["id"])
+        tasks.append({
+            "source_type": "agent_run",
+            "source_id": run_id,
+            "title": str(
+                requirement.get("title")
+                or requirement.get("requirement_text")
+                or requirement.get("category")
+                or "智能寻源任务"
+            ),
+            "status": str(row.get("status") or "unknown"),
+            "updated_at": sort_time.isoformat(),
+            "time_basis": "updated_at" if updated_at else "created_at",
+            "resume_url": f"/sourcing?run={run_id}",
+        })
+    return tasks
+
+
 def get_latest_harness_run_for_session(
     session_id: str,
     user_id: str,

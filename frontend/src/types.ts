@@ -625,6 +625,44 @@ export interface SourcingRequestDetail {
   results: SourcingResultItem[];
 }
 
+export type SourcingTaskSourceType = 'agent_run' | 'legacy_request';
+
+export interface SourcingTaskHistoryItem {
+  source_type: SourcingTaskSourceType;
+  source_id: string;
+  title: string;
+  status: string;
+  updated_at: string;
+  time_basis: 'updated_at' | 'created_at';
+  resume_url: string;
+}
+
+export interface SourcingTaskSourceStatus {
+  status: 'available' | 'unavailable' | 'disabled';
+  reason?: string | null;
+}
+
+export interface SourcingTaskListResponse {
+  items: SourcingTaskHistoryItem[];
+  next_cursor: string | null;
+  sources: Record<SourcingTaskSourceType, SourcingTaskSourceStatus>;
+}
+
+export interface SourcingCandidateDisposition {
+  candidate_key: string;
+  action: 'confirm' | 'defer' | 'exclude';
+  company_id?: string | null;
+  reason?: string | null;
+}
+
+export interface SourcingCandidateDispositionState {
+  run_id: string;
+  run_version: number;
+  dispositions: SourcingCandidateDisposition[];
+  resume_status: string;
+  new_run_id: string | null;
+}
+
 // ---- Sourcing Risk V2 agent runs ----
 export type AgentRunStatus =
   | 'CREATED'

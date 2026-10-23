@@ -1,16 +1,20 @@
 import { useState, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { getRiskColor, getRiskLevelLabel } from '../riskColors';
 import type { SourcingRequestDetail, SourcingResultItem, SourcingRiskCandidate } from '../types';
 import SourcingRiskWorkbench from './SourcingRiskWorkbench';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
+import SourcingTaskHistory from './SourcingTaskHistory';
 
 type Step = { label: string; done: boolean };
 
 export default function SourcingPage() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const legacyRequestParam = searchParams.get('request');
   const [form, setForm] = useState({ title: '', category: '', spec: '', region: '', quantity: '' });
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SourcingResultItem[]>([]);
@@ -24,9 +28,10 @@ export default function SourcingPage() {
   // Track which results have been added to risk monitoring.
   const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
 
-  const historyQuery = useQuery({
-    queryKey: queryKeys.sourcingRequests,
-    queryFn: () => api.get<{ items: SourcingRequestDetail[]; total: number }>('/sourcing/requests'),
+  const legacyRequestQuery = useQuery({
+    queryKey: queryKeys.sourcingDetail(legacyRequestParam ?? ''),
+    queryFn: () => api.get<SourcingRequestDetail>(`/sourcing/requests/${encodeURIComponent(legacyRequestParam!)}`),
+    enabled: Boolean(legacyRequestParam),
   });
 
   const createMutation = useMutation({
@@ -39,6 +44,9 @@ export default function SourcingPage() {
     }),
     onSuccess: (data) => {
       setCurrentRequestId(data.request_id);
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('request');
+      setSearchParams(nextParams, { replace: true });
       startSearch(data.request_id);
     },
     onError: () => setError('创建寻源请求失败'),
@@ -110,6 +118,7 @@ export default function SourcingPage() {
     } finally {
       setSearching(false);
       qc.invalidateQueries({ queryKey: queryKeys.sourcingRequests });
+      qc.invalidateQueries({ queryKey: queryKeys.sourcingTasks });
     }
   }, [qc]);
 
@@ -118,6 +127,7 @@ export default function SourcingPage() {
       api.post(`/sourcing/results/${resultId}/select`, { action }),
     onSuccess: (_data, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.sourcingRequests });
+      qc.invalidateQueries({ queryKey: queryKeys.sourcingTasks });
       if (vars.action === 'watchlist') {
         setWatchedIds(prev => new Set(prev).add(vars.resultId));
         setSelectMsg('已加入监控列表');
@@ -137,10 +147,12 @@ export default function SourcingPage() {
   });
 
   const canSubmit = form.category && form.spec;
-  const hasResults = results.length > 0;
-  const hasExternalCandidates = externalCandidates.length > 0;
-  const hasHistory = historyQuery.data && historyQuery.data.items.length > 0;
-  const showEmpty = !searching && !error && currentRequestId && !hasResults && !hasExternalCandidates;
+  const displayedResults = legacyRequestParam ? legacyRequestQuery.data?.results ?? [] : results;
+  const displayedRequestId = legacyRequestParam ?? currentRequestId;
+  const displayedExternalCandidates = legacyRequestParam ? [] : externalCandidates;
+  const hasResults = displayedResults.length > 0;
+  const hasExternalCandidates = displayedExternalCandidates.length > 0;
+  const showEmpty = !searching && !error && displayedRequestId && !hasResults && !hasExternalCandidates;
 
   return (
     <div className="h-full py-6 px-6 overflow-auto">
@@ -154,6 +166,8 @@ export default function SourcingPage() {
         </div>
 
         <SourcingRiskWorkbench />
+
+        <SourcingTaskHistory />
 
         <details className="border-t border-[var(--color-border)] pt-4">
           <summary className="cursor-pointer list-none text-sm font-medium text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">按字段填写（兼容入口）<span className="ml-2 text-xs font-normal text-gray-400">适用于已有明确品类和规格、需要按字段提交的需求</span></summary>
@@ -252,7 +266,7 @@ export default function SourcingPage() {
             <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">
               候选供应商 ({results.length})
             </h3>
-            {results.map(r => (
+            {displayedResults.map(r => (
               <SourcingResultCard
                 key={r.result_id}
                 result={r}
@@ -269,11 +283,11 @@ export default function SourcingPage() {
               <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">外部待核验候选 ({externalCandidates.length})</h3>
               <p className="text-xs text-amber-700 mt-1">盖世人工获取候选优先展示；需完成天眼查主体与风险核验，以及采购技术、认证、产能和报价确认，才可进入后续准入流程。</p>
             </div>
-            {externalCandidates.map(candidate => <SourcingRiskCandidateCard key={candidate.candidate_id ?? candidate.supplier_name} candidate={candidate} onVerify={candidate.candidate_id ? () => verifyMutation.mutate(candidate.candidate_id!) : undefined} verifying={verifyMutation.isPending && verifyMutation.variables === candidate.candidate_id} />)}
+        {displayedExternalCandidates.map(candidate => <SourcingRiskCandidateCard key={candidate.candidate_id ?? candidate.supplier_name} candidate={candidate} onVerify={candidate.candidate_id ? () => verifyMutation.mutate(candidate.candidate_id!) : undefined} verifying={verifyMutation.isPending && verifyMutation.variables === candidate.candidate_id} />)}
           </div>
         )}
 
-        {!searching && externalStatus === 'failed' && externalFailures.length > 0 && (
+        {!legacyRequestParam && !searching && externalStatus === 'failed' && externalFailures.length > 0 && (
           <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
             外部发现未完成：{externalFailures.map(item => `${item.stage || '外部阶段'}：${item.reason || '调用失败'}`).join('；')}
           </div>
@@ -287,50 +301,14 @@ export default function SourcingPage() {
           </div>
         )}
 
-        {/* 历史记录 */}
-        {hasHistory && (
-          <div className="space-y-3">
-            <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">历史寻源</h3>
-            {historyQuery.data.items.slice(0, 10).map(item => (
-              <div
-                key={item.request_id}
-                className="flex items-center justify-between bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl px-4 py-3 text-sm"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="font-medium text-[var(--color-text)]">{item.title || item.category}</span>
-                  <StatusBadge status={item.status} count={item.result_count} />
-                </div>
-                <div className="flex items-center gap-3">
-                  {item.created_at && (
-                    <span className="text-xs text-gray-400">{item.created_at.slice(0, 10)}</span>
-                  )}
-                  <button
-                    onClick={() => {
-                      setCurrentRequestId(item.request_id);
-                      startSearch(item.request_id);
-                    }}
-                    disabled={searching}
-                    className="text-xs text-[var(--color-primary-bg)] hover:underline disabled:opacity-40"
-                  >
-                    重新搜索
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {legacyRequestQuery.isLoading && <p className="text-xs text-[var(--color-text-secondary)]">正在读取兼容寻源结果…</p>}
+        {legacyRequestQuery.isError && <p role="alert" className="text-xs text-red-600">读取兼容寻源任务失败，请确认任务权限后重试。</p>}
+        {legacyRequestParam && legacyRequestQuery.data && <p className="text-xs text-[var(--color-text-secondary)]">兼容任务：{legacyRequestQuery.data.title}；品类：{legacyRequestQuery.data.category}；规格：{legacyRequestQuery.data.spec || '未填写'}</p>}
           </div>
         </details>
       </div>
     </div>
   );
-}
-
-function StatusBadge({ status, count }: { status: string; count: number }) {
-  if (status === 'done') return <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">{count} 个结果</span>;
-  if (status === 'searching') return <span className="text-xs text-blue-500 animate-pulse">搜索中</span>;
-  if (status === 'draft') return <span className="text-xs text-gray-400">草稿</span>;
-  return <span className="text-xs text-gray-400">{status}</span>;
 }
 
 function SourcingResultCard({ result, watched, onWatch }: {

@@ -20,6 +20,7 @@ from app.domains.sourcing.service import (
 def gaishi_source_boundary(monkeypatch):
     """Tests opt into Gaishi candidates explicitly; default is no external source."""
     monkeypatch.setattr("app.domains.sourcing.service._stage_gaishi_candidates", lambda _request, _id: [])
+    monkeypatch.setattr("app.domains.sourcing.service._search_internal_history_candidates", lambda _request: [])
 
 
 def test_batch_assess_risk_does_not_rank_when_snapshot_query_fails(monkeypatch) -> None:
@@ -140,6 +141,10 @@ def test_category_filter_keeps_unstructured_search_backward_compatible() -> None
 
 def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None:
     monkeypatch.setattr(
+        "app.domains.sourcing.service._search_internal_history_candidates",
+        lambda _request: [],
+    )
+    monkeypatch.setattr(
         "app.domains.sourcing.service._search_feishu_snapshot_suppliers",
         lambda _request: None,
     )
@@ -149,8 +154,8 @@ def test_search_suppliers_returns_no_cross_category_results(monkeypatch) -> None
     )
     monkeypatch.setattr("app.domains.sourcing.service.update_request_status", lambda *args: None)
     monkeypatch.setattr(
-        "app.domains.sourcing_risk.discovery_service.search_external_provider",
-        lambda *_args: [],
+        "app.domains.sourcing_risk.discovery_service.discover_external_provider",
+        lambda *_args: {"candidates": [], "status": "not_found", "failure_reasons": []},
     )
     monkeypatch.setattr(
         "app.domains.sourcing.service._vector_search",
@@ -197,8 +202,8 @@ def test_search_suppliers_marks_local_results_for_typed_agent_routing(monkeypatc
         lambda candidates, _category: candidates,
     )
     monkeypatch.setattr(
-        "app.domains.sourcing_risk.discovery_service.search_external_provider",
-        lambda _requirement: [],
+        "app.domains.sourcing_risk.discovery_service.discover_external_provider",
+        lambda _requirement: {"candidates": [], "status": "not_found", "failure_reasons": []},
     )
     monkeypatch.setattr(
         "app.domains.sourcing.service._batch_assess_risk",
@@ -301,8 +306,8 @@ def test_search_suppliers_uses_feishu_snapshot_candidate_details(monkeypatch) ->
         }],
     )
     monkeypatch.setattr(
-        "app.domains.sourcing_risk.discovery_service.search_external_provider",
-        lambda _requirement: [],
+        "app.domains.sourcing_risk.discovery_service.discover_external_provider",
+        lambda _requirement: {"candidates": [], "status": "not_found", "failure_reasons": []},
     )
     monkeypatch.setattr(
         "app.domains.sourcing.service._batch_assess_risk",

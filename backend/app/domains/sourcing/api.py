@@ -44,11 +44,19 @@ async def create_request(req: SourcingRequestInput, request: Request):
     summary="执行寻源搜索（SSE 流式）",
     description="流式返回寻源进度和结果。事件: retrieving / assessing / ranking / sourcing_result / done / error。",
 )
-async def search_stream(request_id: str):
+async def search_stream(
+    request_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
     from app.domains.sourcing.service import search_suppliers
-    from app.domains.sourcing.repo import get_request as _get_req
+    from app.domains.sourcing.service import get_sourcing_request_detail_for_user
 
-    req = _get_req(request_id)
+    req = await asyncio.to_thread(
+        get_sourcing_request_detail_for_user,
+        request_id,
+        current_user.id,
+        current_user.role.value,
+    )
     if not req:
         raise HTTPException(status_code=404, detail="寻源请求不存在")
 
@@ -111,10 +119,18 @@ async def list_requests(
     summary="寻源详情",
     description="获取单次寻源请求的详情和结果列表。",
 )
-async def get_request_detail(request_id: str):
-    from app.domains.sourcing.service import get_request_detail as _detail
+async def get_request_detail(
+    request_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.domains.sourcing.service import get_sourcing_request_detail_for_user
 
-    result = await asyncio.to_thread(_detail, request_id)
+    result = await asyncio.to_thread(
+        get_sourcing_request_detail_for_user,
+        request_id,
+        current_user.id,
+        current_user.role.value,
+    )
     if not result:
         raise HTTPException(status_code=404, detail="寻源请求不存在")
     return result

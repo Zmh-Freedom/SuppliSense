@@ -392,6 +392,18 @@ def get_request_detail(request_id: str) -> dict | None:
     req = get_request(request_id)
     if not req:
         return None
+    return _request_detail_payload(req, request_id)
+
+
+def get_sourcing_request_detail_for_user(request_id: str, user_id: str, user_role: str) -> dict | None:
+    """Return a legacy request only to its owner or an administrator."""
+    req = get_request(request_id)
+    if not req or (user_role != "admin" and str(req.get("user_id") or "") != user_id):
+        return None
+    return _request_detail_payload(req, request_id)
+
+
+def _request_detail_payload(req: dict, request_id: str) -> dict:
     results = get_results(request_id)
     return {
         "request_id": str(req.get("_id", req.get("request_id", ""))),

@@ -78,6 +78,64 @@ def list_requests(
     return {"items": items, "total": total}
 
 
+def list_requests_with_cursor(
+    *,
+    user_id: str,
+    scope_all: bool,
+    cursor: dict[str, str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read legacy requests with owner filtering and the cross-source cursor order."""
+    match: dict[str, Any] = {}
+    if not scope_all:
+        match["user_id"] = user_id
+    pipeline: list[dict[str, Any]] = [
+        {"$match": match},
+        {"$addFields": {"_workspace_sort_at": {"$ifNull": ["$updated_at", "$created_at"]}}},
+        {"$match": {"_workspace_sort_at": {"$ne": None}}},
+    ]
+    if cursor is not None:
+        cursor_at = datetime.fromisoformat(cursor["updated_at"])
+        source_type = "legacy_request"
+        cursor_source_type = cursor["source_type"]
+        cursor_options: list[dict[str, Any]] = [{"$lt": ["$_workspace_sort_at", cursor_at]}]
+        if source_type > cursor_source_type:
+            cursor_options.append({"$eq": ["$_workspace_sort_at", cursor_at]})
+        elif source_type == cursor_source_type:
+            cursor_options.append({
+                "$and": [
+                    {"$eq": ["$_workspace_sort_at", cursor_at]},
+                    {"$gt": ["$_id", cursor["source_id"]]},
+                ],
+            })
+        pipeline.append({"$match": {"$expr": {"$or": cursor_options}}})
+    pipeline.extend([
+        {"$sort": {"_workspace_sort_at": -1, "_id": 1}},
+        {"$limit": limit},
+    ])
+
+    rows = list(get_db()["sourcing_requests"].aggregate(pipeline))
+    tasks: list[dict[str, Any]] = []
+    for row in rows:
+        sort_time = row.get("updated_at") or row.get("created_at")
+        if sort_time is None:
+            continue
+        request_id = str(row.get("_id", row.get("request_id", "")))
+        if not request_id:
+            continue
+        title = str(row.get("title") or row.get("category") or "兼容寻源任务")
+        tasks.append({
+            "source_type": "legacy_request",
+            "source_id": request_id,
+            "title": title,
+            "status": str(row.get("status") or "unknown"),
+            "updated_at": sort_time.isoformat(),
+            "time_basis": "updated_at" if row.get("updated_at") else "created_at",
+            "resume_url": f"/sourcing?request={request_id}",
+        })
+    return tasks
+
+
 def save_result(result_id: str, data: dict) -> None:
     validated = _validate_sourcing_result(data)
     db = get_db()

@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useSourcingRiskRun } from '../hooks/useSourcingRiskRun';
 import { queryKeys } from '../query-keys';
-import type { SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskEvidence, SourcingRiskRequirement } from '../types';
+import type { SourcingCandidateDispositionState, SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskEvidence, SourcingRiskRequirement } from '../types';
 import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
 import AgentExecutionTrace from './AgentExecutionTrace';
@@ -67,6 +67,10 @@ const GROUP_TITLES: Record<string, string> = {
   unclassified: '候选供应商',
 };
 
+function stableCandidateKey(candidate: SourcingRiskCandidate): string {
+  return String(candidate.id ?? candidate.candidate_id ?? '');
+}
+
 function candidateId(candidate: SourcingRiskCandidate): string {
   return String(candidate.id ?? candidate.candidate_id ?? candidate.company_id ?? candidate.supplier_id ?? candidate.supplier_name ?? candidate.name ?? 'candidate');
 }
@@ -76,36 +80,118 @@ function candidateName(candidate: SourcingRiskCandidate): string {
 }
 
 function IdentityReviewCard({ runId, version, candidates, onEditRequirement }: { runId: string; version: number; candidates: SourcingRiskCandidate[]; onEditRequirement: () => void }) {
+  type DecisionPayload =
+    | { candidate_key: string; action: 'confirm'; company_id: string }
+    | { candidate_key: string; action: 'defer' | 'exclude'; reason: string };
   const queryClient = useQueryClient();
-  const [resolutions, setResolutions] = useState<Record<string, string>>({});
+  const [actions, setActions] = useState<Record<string, string>>({});
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const requestKey = useRef('');
   const reviewCandidates = candidates.filter(candidate => candidate.identity_review || candidate.identity_status !== 'exact');
-  const resolve = useMutation({
-    mutationFn: () => api.post(`/agent-runs/${encodeURIComponent(runId)}/identity-resolution`, { expected_version: version, resolutions }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(runId) }),
+  const dispositionQuery = useQuery({
+    queryKey: queryKeys.sourcingCandidateDecisions(runId),
+    queryFn: () => api.get<SourcingCandidateDispositionState>(`/sourcing-workspace/runs/${encodeURIComponent(runId)}/candidate-decisions`),
+    enabled: Boolean(runId),
   });
-  const canSubmit = reviewCandidates.length > 0 && reviewCandidates.every(candidate => resolutions[candidateId(candidate)]);
+  const savedByKey = new Map((dispositionQuery.data?.dispositions ?? []).map(disposition => [disposition.candidate_key, disposition]));
+  const decisionPayload = (): DecisionPayload[] => reviewCandidates.flatMap<DecisionPayload>(candidate => {
+    const key = stableCandidateKey(candidate);
+    const action = actions[key];
+    if (!key || !action) return [];
+    if (action === 'confirm') {
+      return selections[key] ? [{ candidate_key: key, action: 'confirm' as const, company_id: selections[key] }] : [];
+    }
+    const saved = savedByKey.get(key);
+    const reason = (reasons[key] ?? (saved?.action === action ? saved.reason : ''))?.trim();
+    return reason ? [{ candidate_key: key, action: action as 'defer' | 'exclude', reason }] : [];
+  });
+  const decisionsAreValid = reviewCandidates.every(candidate => {
+    const key = stableCandidateKey(candidate);
+    if (!key) return false;
+    const action = actions[key];
+    if (!action) return true;
+    const saved = savedByKey.get(key);
+    if (action === 'confirm') return Boolean(selections[key] ?? savedByKey.get(key)?.company_id);
+    if (action === 'defer' || action === 'exclude') {
+      return Boolean((reasons[key] ?? (saved?.action === action ? saved.reason : '') ?? '').trim());
+    }
+    return true;
+  });
+  const submit = useMutation({
+    mutationFn: (idempotencyKey: string) => api.post<SourcingCandidateDispositionState>(
+        `/sourcing-workspace/runs/${encodeURIComponent(runId)}/candidate-decisions`,
+        { expected_version: version, decisions: decisionPayload() },
+        undefined,
+        { 'Idempotency-Key': idempotencyKey },
+      ),
+    onSuccess: () => {
+      requestKey.current = '';
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agentRunDetail(runId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sourcingCandidateDecisions(runId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sourcingTasks });
+    },
+  });
   const hasSelectableCandidate = reviewCandidates.some(candidate => (candidate.identity_candidates ?? []).length > 0);
-  const hasUnresolvedCandidates = reviewCandidates.some(candidate => (candidate.identity_candidates ?? []).length === 0);
   const hasNoCandidates = reviewCandidates.length === 0;
 
   return (
     <section className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-4">
       <div>
-        <h3 className="font-semibold text-amber-900">{hasNoCandidates || !hasSelectableCandidate ? '暂未找到可确认主体' : '请确认企业主体'}</h3>
+        <h3 className="font-semibold text-amber-900">{hasNoCandidates || !hasSelectableCandidate ? '暂未找到可确认主体' : '请确认或处理候选主体'}</h3>
         <p className="text-xs text-amber-800 mt-1">主体未确认前不会形成正式推荐；已检索到的候选资料仍可先行比较。{hasNoCandidates || !hasSelectableCandidate ? '可以补充更明确的企业信息，或返回修改采购需求。' : ''}</p>
       </div>
       {hasNoCandidates && <p className="rounded-xl border border-dashed border-amber-200 bg-white/70 px-3 py-3 text-xs leading-5 text-amber-900">本次主体核验没有返回可选择的企业候选，当前任务不会被解释为已完成推荐。</p>}
       {reviewCandidates.map(candidate => {
-        const id = candidateId(candidate);
+        const id = stableCandidateKey(candidate);
+        const saved = id ? savedByKey.get(id) : undefined;
         const options = candidate.identity_candidates ?? [];
-        return <div key={id} className="bg-white/70 rounded-xl p-3 space-y-2"><p className="text-sm font-medium text-[var(--color-text)]">{candidateName(candidate)}</p>{options.length > 0 ? <select aria-label={`${candidateName(candidate)}主体`} value={resolutions[id] ?? ''} onChange={event => setResolutions(current => ({ ...current, [id]: event.target.value }))} className="w-full text-sm rounded-lg border border-amber-200 px-3 py-2 bg-white"><option value="">选择匹配的企业主体</option>{options.map(option => <option key={option.company_id} value={option.company_id}>{option.legal_name ?? option.name ?? option.company_id}</option>)}</select> : <p className="text-xs text-amber-800">暂无可确认主体，请补充企业信息后重试。</p>}</div>;
+        const action = actions[id] ?? saved?.action ?? '';
+        const reason = reasons[id] ?? (saved?.action === action ? saved.reason : '') ?? '';
+        return <div key={id || candidateName(candidate)} className="bg-white/70 rounded-xl p-3 space-y-2">
+          <p className="text-sm font-medium text-[var(--color-text)]">{candidateName(candidate)}</p>
+          {id ? <select
+            aria-label={`${candidateName(candidate)}本轮处置`}
+            value={action}
+            onChange={event => { requestKey.current = ''; setActions(current => ({ ...current, [id]: event.target.value })); }}
+            className="w-full text-sm rounded-lg border border-amber-200 px-3 py-2 bg-white"
+          >
+            <option value="">本轮暂存（默认）</option>
+            <option value="confirm" disabled={options.length === 0}>确认主体</option>
+            <option value="defer">暂存并说明</option>
+            <option value="exclude">排除此候选</option>
+          </select> : <p className="text-xs text-amber-800">候选缺少稳定标识，暂不能提交处置。</p>}
+          {action === 'confirm' && <select
+            aria-label={`${candidateName(candidate)}主体`}
+            value={selections[id] ?? saved?.company_id ?? ''}
+            onChange={event => { requestKey.current = ''; setSelections(current => ({ ...current, [id]: event.target.value })); }}
+            className="w-full text-sm rounded-lg border border-amber-200 px-3 py-2 bg-white"
+          >
+            <option value="">选择匹配的企业主体</option>
+            {options.map(option => <option key={option.company_id} value={option.company_id}>{option.legal_name ?? option.name ?? option.company_id}</option>)}
+          </select>}
+          {(action === 'defer' || action === 'exclude') && <textarea
+            aria-label={`${candidateName(candidate)}处置原因`}
+            value={reason}
+            onChange={event => { requestKey.current = ''; setReasons(current => ({ ...current, [id]: event.target.value })); }}
+            placeholder={action === 'defer' ? '说明本轮暂存原因' : '说明排除原因'}
+            rows={2}
+            className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm"
+          />}
+          {options.length === 0 && <p className="text-xs text-amber-800">暂无可确认主体；未选择时会暂存到下一轮。</p>}
+        </div>;
       })}
       <div className="flex flex-wrap gap-2">
-        {hasSelectableCandidate && <button type="button" disabled={!canSubmit || hasUnresolvedCandidates || resolve.isPending} onClick={() => resolve.mutate()} className="min-h-[44px] text-sm rounded-xl bg-amber-700 text-white px-4 py-2 disabled:opacity-50">提交主体确认</button>}
+        {reviewCandidates.length > 0 && <button type="button" disabled={!decisionsAreValid || submit.isPending} onClick={() => {
+          if (!requestKey.current) requestKey.current = globalThis.crypto?.randomUUID?.() ?? `${runId}-${version}`;
+          submit.mutate(requestKey.current);
+        }} className="min-h-[44px] text-sm rounded-xl bg-amber-700 text-white px-4 py-2 disabled:opacity-50">{submit.isPending ? '提交中…' : '提交候选处置'}</button>}
         <button type="button" onClick={onEditRequirement} className="min-h-[44px] text-sm rounded-xl border border-amber-300 bg-white px-4 py-2 text-amber-900 hover:bg-amber-100">返回修改需求</button>
       </div>
-      {hasUnresolvedCandidates && hasSelectableCandidate && <p className="text-xs text-amber-800">仍有候选缺少可确认主体，全部候选完成核验后才能提交。</p>}
-      {resolve.isError && <p className="text-xs text-red-600">主体确认提交失败，请刷新后重试。</p>}
+      {reviewCandidates.length > 0 && <p className="text-xs text-amber-800">未选择的候选会暂存到下一轮；本轮不会调查或评分。已确认主体的候选会保留。</p>}
+      {dispositionQuery.isError && <p className="text-xs text-amber-800">已保存的候选处置暂不可用，请检查任务版本后重试。</p>}
+      {submit.isError && <p className="text-xs text-red-600">候选处置提交失败，请刷新任务确认最新状态后重试。</p>}
+      {submit.isSuccess && <p role="status" className="text-xs text-green-700">候选处置已提交，任务会按本轮确认的候选继续。</p>}
     </section>
   );
 }
@@ -262,8 +348,17 @@ function CandidateEmptyState({ status, errorCode }: { status: string; errorCode?
 
 export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const runParam = searchParams.get('run') ?? undefined;
+  const hasMounted = useRef(false);
   const [requirementText, setRequirementText] = useState('');
-  const [activeRunId, setActiveRunId] = useState(initialRunId ?? searchParams.get('run') ?? undefined);
+  const [activeRunId, setActiveRunId] = useState(initialRunId ?? runParam);
+  useEffect(() => {
+    if (!hasMounted.current) {
+      hasMounted.current = true;
+      return;
+    }
+    setActiveRunId(runParam);
+  }, [runParam]);
   const { data: run, isLoading, isFetching, error, createRun, refresh, traceEvents } = useSourcingRiskRun(activeRunId);
   const isIdentityReview = run?.status === 'IDENTITY_REVIEW' || run?.next_action === 'identity_review_required';
   const isClarifying = run?.status === 'CLARIFYING' || run?.next_action === 'clarification_required';
