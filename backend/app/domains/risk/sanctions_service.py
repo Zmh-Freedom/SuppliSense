@@ -1,204 +1,428 @@
-"""
-国际制裁/黑名单筛查服务。
+"""Evidence-backed sanctions screening and compatible legacy projection."""
 
-数据源：
-  1. OFAC SDN 名单（美国财政部外国资产控制办公室）
-  2. 世界银行取消资格名单
-  3. 中国失信被执行人名单（已有天眼查数据）
-  4. 敏感国家/地区风险
+from copy import deepcopy
+from datetime import datetime, timezone
+from typing import Any
 
-筛查方式：
-  - 精确名称匹配
-  - 模糊名称匹配（基于编辑距离）
-  - 地区风险匹配
-"""
-
-from app.db.mongo import get_db
-from app.domains.risk.repo_company import get_baseinfo
-
-# OFAC sanctioned countries (simplified, publicly available)
-SANCTIONED_COUNTRIES = {
-    "伊朗": {"level": "comprehensive", "desc": "全面制裁"},
-    "朝鲜": {"level": "comprehensive", "desc": "全面制裁"},
-    "叙利亚": {"level": "comprehensive", "desc": "全面制裁"},
-    "古巴": {"level": "comprehensive", "desc": "部分制裁"},
-    "俄罗斯": {"level": "sectoral", "desc": "行业制裁（军工、能源、金融）"},
-    "白俄罗斯": {"level": "sectoral", "desc": "行业制裁"},
-    "委内瑞拉": {"level": "targeted", "desc": "定向制裁"},
-    "缅甸": {"level": "targeted", "desc": "定向制裁（军政府关联）"},
-    "苏丹": {"level": "targeted", "desc": "定向制裁"},
-    "克里米亚": {"level": "comprehensive", "desc": "全面制裁（地区）"},
-    "顿涅茨克": {"level": "comprehensive", "desc": "全面制裁（地区）"},
-    "卢甘斯克": {"level": "comprehensive", "desc": "全面制裁（地区）"},
-}
-
-# Known sanctioned entities (sample from public OFAC SDN list)
-# In production, this would be loaded from the full SDN XML/CSV
-KNOWN_SANCTIONED: list[dict] = [
-    {"name": "华为技术", "aliases": ["华为", "Huawei"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "中芯国际", "aliases": ["SMIC", "中芯"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "海康威视", "aliases": ["海康", "Hikvision"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "大华技术", "aliases": ["大华", "Dahua"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "科大讯飞", "aliases": ["科大", "iFlytek"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "商汤科技", "aliases": ["商汤", "SenseTime"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "旷视科技", "aliases": ["旷视", "Megvii"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "中科曙光", "aliases": ["曙光", "Sugon"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "天津飞腾", "aliases": ["飞腾", "Phytium"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "长江存储", "aliases": ["长江", "YMTC"], "program": "实体清单", "authority": "美国BIS"},
-    {"name": "长江电力", "aliases": [], "program": "SDN特别指定国民", "authority": "美国OFAC"},
-    {"name": "振华重工", "aliases": ["振华", "ZPMC"], "program": "军事企业清单", "authority": "美国国防部"},
-]
+from app.domains.risk.assessment_contracts import get_assessment_context
+from app.domains.risk.assessment_service import resolve_identity
+from app.domains.risk.evidence_validity import evaluate_evidence_validity
+from app.domains.risk import sanctions_sources
+from app.domains.supplier.compliance_service import read_domestic_findings
 
 
-def _normalize(name: str) -> str:
-    """标准化企业名称用于比对。"""
-    import re
-    # remove common suffixes
-    suffixes = [
-        "股份有限公司", "有限责任公司", "有限公司", "股份公司",
-        "集团", "控股", "有限合伙", "合伙企业",
-    ]
-    n = name
-    for s in sorted(suffixes, key=len, reverse=True):
-        n = n.replace(s, "")
-    # remove spaces and special chars
-    n = re.sub(r"\s+", "", n)
-    n = re.sub(r"[（(].*?[)）]", "", n)
-    return n.strip()
+def _utc_now(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
-def check_sanctions(company_name: str) -> dict:
-    """检查企业是否在国际制裁/黑名单中。
-
-    返回：制裁命中情况 + 风险等级。
-    """
-    results = []
-    sanctions_score = 0
-
-    # 1. check known sanctioned entities
-    normalized = _normalize(company_name)
-    for entity in KNOWN_SANCTIONED:
-        entity_normalized = _normalize(entity["name"])
-        # exact match on normalized names
-        if normalized == entity_normalized:
-            results.append({
-                "type": "entity_match",
-                "name": entity["name"],
-                "program": entity["program"],
-                "authority": entity["authority"],
-                "match_type": "精确匹配",
-                "level": "critical",
-            })
-            sanctions_score += 50
-            continue
-        # check aliases
-        for alias in entity["aliases"]:
-            if _normalize(alias) in normalized or normalized in _normalize(alias):
-                results.append({
-                    "type": "entity_match",
-                    "name": entity["name"],
-                    "program": entity["program"],
-                    "authority": entity["authority"],
-                    "match_type": f"别名匹配({alias})",
-                    "level": "critical",
-                })
-                sanctions_score += 50
-                break
-
-    # 2. check region
-    profile = get_baseinfo(company_name)
-    if profile:
-        db = get_db()
-        doc = db["baseinfo"].find_one({"name": company_name})
-        location = ""
-        if doc:
-            result = (doc.get("items") or {}).get("result") or {}
-            location = result.get("regLocation", "") or result.get("city", "")
-
-        for country, info in SANCTIONED_COUNTRIES.items():
-            if country in location:
-                results.append({
-                    "type": "region_match",
-                    "country": country,
-                    "sanction_level": info["level"],
-                    "desc": info["desc"],
-                    "level": "high" if info["level"] == "comprehensive" else "medium",
-                })
-                sanctions_score += 30 if info["level"] == "comprehensive" else 15
-
-    # 3. check existing risk data (dishonesty, executed)
-    db = get_db()
-    risk_doc = db["riskInfo"].find_one({"name": company_name})
-    if risk_doc:
-        r = (risk_doc.get("item") or {}).get("result") or {}
-        risk_list = r.get("riskList", [])
-        for category in risk_list:
-            for sub in category.get("list", []):
-                title = sub.get("title", "")
-                total = sub.get("total", 0) or 0
-                if "失信" in title and total > 0:
-                    results.append({
-                        "type": "dishonesty",
-                        "detail": f"中国失信被执行人: {total}条",
-                        "level": "high",
-                    })
-                    sanctions_score += 20
-                if "被执行人" in title and total > 0:
-                    results.append({
-                        "type": "executed",
-                        "detail": f"被执行人: {total}条",
-                        "level": "medium",
-                    })
-                    sanctions_score += 10
-
-    # determine overall level
-    if sanctions_score >= 50:
-        level = "critical"
-    elif sanctions_score >= 20:
-        level = "high"
-    elif sanctions_score >= 10:
-        level = "medium"
-    else:
-        level = "low"
-
+def _empty_analysis(
+    company_name: str,
+    *,
+    now: datetime,
+    status: str,
+    limitation: str,
+    entity_id: str | None = None,
+    scope: str | None = None,
+    domestic_findings: list[dict] | None = None,
+) -> dict[str, Any]:
     return {
+        "schema_version": 1,
         "company_name": company_name,
-        "sanctions_score": sanctions_score,
-        "sanctions_level": level,
-        "match_count": len(results),
-        "matches": results,
-        "clean": len(results) == 0,
+        "entity_id": entity_id,
+        "scope": scope,
+        "screening_status": status,
+        "coverage": {"status": "insufficient", "sources": [], "required_sources": []},
+        "matches": [],
+        "domestic_findings": domestic_findings or [],
+        "limitations": [limitation],
+        "checked_at": now.isoformat(),
+        "legacy_projection_policy": None,
     }
 
 
+def _normalized_name(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return "".join(value.casefold().split())
+
+
+def _source_failure(contract: dict, identity: dict, reason: str) -> dict:
+    return {
+        "evidence": {
+            "source": contract.get("source"),
+            "source_version": contract.get("source_version"),
+            "entity_id": identity.get("company_id"),
+            "scope": contract.get("scope"),
+            "source_mode": "formal",
+            "status": "failed",
+            "observed_at": None,
+            "collected_at": None,
+            "expires_at": None,
+            "query_receipt": {"status": "failed", "reason": reason},
+            "coverage_partial": False,
+            "conflict": False,
+        },
+        "matches": [],
+    }
+
+
+def _record_match(record: dict, identity: dict, contract: dict) -> tuple[str, str] | None:
+    allowed_identifiers = contract.get("allowed_match_identifiers") or []
+    identifiers = record.get("identifiers") if isinstance(record.get("identifiers"), dict) else {}
+    for field in allowed_identifiers:
+        expected = identity.get(field)
+        actual = identifiers.get(field)
+        if expected and actual and str(expected).strip() == str(actual).strip():
+            return "confirmed", str(field)
+
+    target = _normalized_name(identity.get("company_name"))
+    if not target:
+        return None
+    names = [record.get("name"), *(record.get("aliases") or [])]
+    if any(_normalized_name(candidate) == target for candidate in names):
+        return "possible", "name"
+    return None
+
+
+def _legacy_policy(contracts: list[dict]) -> dict | None:
+    policies = [
+        contract.get("legacy_projection")
+        for contract in contracts
+        if contract.get("required", True)
+    ]
+    if not policies or any(not isinstance(policy, dict) for policy in policies):
+        return None
+    first = policies[0]
+    if any(policy != first for policy in policies[1:]):
+        return None
+    return deepcopy(first)
+
+
+def _source_validity(
+    result: dict,
+    contract: dict,
+    identity: dict,
+    *,
+    expected_scope: str,
+    now: datetime,
+) -> dict:
+    evidence = result.get("evidence") if isinstance(result, dict) else None
+    if not isinstance(evidence, dict):
+        evidence = {
+            "source": contract.get("source"),
+            "status": "unknown",
+            "entity_id": identity.get("company_id"),
+            "scope": contract.get("scope"),
+        }
+    return evaluate_evidence_validity(
+        evidence,
+        expected_entity_id=str(identity.get("company_id") or ""),
+        expected_scope=expected_scope,
+        now=now,
+    )
+
+
+def _coverage_status(source_entries: list[dict], required_sources: list[str]) -> str:
+    by_source = {item["source"]: item["validity"]["status"] for item in source_entries}
+    required_states = [by_source.get(source, "missing") for source in required_sources]
+    if required_states and all(state in {"available", "empty"} for state in required_states):
+        return "complete"
+    if any(state in {"available", "empty"} for state in by_source.values()):
+        return "partial"
+    return "insufficient"
+
+
+def _screening_status(
+    source_entries: list[dict],
+    required_sources: list[str],
+    matches: list[dict],
+    coverage_status: str,
+) -> str:
+    current_matches = [item for item in matches if item["validity"]["status"] == "available"]
+    if any(item["match_type"] == "confirmed" for item in current_matches):
+        return "confirmed_match"
+    if current_matches:
+        return "possible_match"
+
+    states = [item["validity"]["status"] for item in source_entries]
+    if "conflicting" in states:
+        return "conflicting"
+    if source_entries and all(state == "stale" for state in states):
+        return "stale"
+    if source_entries and all(
+        state == "unknown" and not (item.get("evidence") or {}).get("query_receipt")
+        for item, state in zip(source_entries, states)
+    ):
+        return "not_queried"
+    if coverage_status == "complete":
+        return "no_match_in_scope"
+    if coverage_status == "partial":
+        return "partial"
+    if not source_entries:
+        return "unavailable"
+    if all(state in {"missing", "failed"} for state in states):
+        return "unavailable"
+    if all(state == "missing" for state in states):
+        return "unavailable"
+    return "unavailable"
+
+
+def analyze_sanctions(company_name: str, *, now: datetime | None = None) -> dict:
+    """Screen one currently authorized, verified company against configured lists."""
+    checked_at = _utc_now(now)
+    context = get_assessment_context()
+    actor_id = context.get("actor_id")
+    actor_role = context.get("actor_role")
+    if not company_name or not actor_id or not actor_role:
+        return _empty_analysis(
+            company_name,
+            now=checked_at,
+            status="unavailable",
+            limitation="缺少当前已授权的主体范围，未查询名单来源。",
+        )
+
+    identity = resolve_identity(
+        company_name,
+        company_id=context.get("company_id"),
+        monitor_target_id=context.get("monitor_target_id"),
+        actor_id=str(actor_id),
+        actor_role=str(actor_role),
+        dimensions=["compliance"],
+        purchase_scope=str(context.get("purchase_scope") or ""),
+    )
+    entity_id = str(identity.get("company_id") or "")
+    canonical_name = str(identity.get("company_name") or company_name)
+    scope = str(context.get("scope") or context.get("purchase_scope") or "organization")
+    if not entity_id:
+        return _empty_analysis(
+            canonical_name,
+            now=checked_at,
+            status="unavailable",
+            limitation="未取得已核验的稳定主体标识，未查询名单来源。",
+            scope=scope,
+        )
+
+    domestic_findings = read_domestic_findings(
+        canonical_name,
+        entity_id=entity_id,
+        scope=scope,
+        now=checked_at,
+    )
+    contracts = [
+        contract
+        for contract in sanctions_sources.get_sanctions_source_contracts()
+        if isinstance(contract, dict) and contract.get("source")
+    ]
+    if not contracts:
+        return _empty_analysis(
+            canonical_name,
+            now=checked_at,
+            status="unavailable",
+            limitation="当前未接入经确认的正式名单来源，不能完成筛查。",
+            entity_id=entity_id,
+            scope=scope,
+            domestic_findings=domestic_findings,
+        )
+
+    source_entries: list[dict] = []
+    all_matches: list[dict] = []
+    for contract in contracts:
+        try:
+            source_result = sanctions_sources.load_sanctions_source(contract, identity)
+        except Exception as exc:
+            source_result = _source_failure(contract, identity, type(exc).__name__)
+        evidence = (source_result.get("evidence") or {}) if isinstance(source_result, dict) else {}
+        source_records = source_result.get("matches") if isinstance(source_result, dict) else []
+        receipt = evidence.get("query_receipt") if isinstance(evidence, dict) else None
+        if (
+            isinstance(evidence, dict)
+            and evidence.get("status") == "empty"
+            and isinstance(receipt, dict)
+            and receipt.get("status") == "success"
+            and receipt.get("record_count") == 0
+            and source_records
+        ):
+            evidence = {**evidence, "status": "conflicting", "conflict": True}
+            source_result = {**source_result, "evidence": evidence}
+        validity = _source_validity(
+            source_result,
+            contract,
+            identity,
+            expected_scope=str(contract.get("scope") or scope),
+            now=checked_at,
+        )
+        source_entry = {
+            "source": contract["source"],
+            "list_name": contract.get("list_name"),
+            "authority": contract.get("authority"),
+            "list_type": contract.get("list_type"),
+            "version": evidence.get("source_version") or contract.get("source_version"),
+            "scope": contract.get("scope"),
+            "required": bool(contract.get("required", True)),
+            "validity": validity,
+            "evidence": evidence,
+        }
+        source_entries.append(source_entry)
+
+        if validity.get("status") not in {"available", "stale"}:
+            continue
+        if evidence.get("source_mode") != "formal":
+            continue
+        for record in source_records or []:
+            if not isinstance(record, dict):
+                continue
+            match = _record_match(record, identity, contract)
+            if not match:
+                continue
+            match_type, matched_on = match
+            all_matches.append(
+                {
+                    "source": contract["source"],
+                    "list_name": contract.get("list_name"),
+                    "authority": contract.get("authority"),
+                    "list_type": contract.get("list_type"),
+                    "source_version": evidence.get("source_version"),
+                    "record_id": record.get("record_id"),
+                    "record_name": record.get("name"),
+                    "match_type": match_type,
+                    "matched_on": matched_on,
+                    "validity": validity,
+                }
+            )
+
+    required_sources = [
+        {
+            "source": contract["source"],
+            "list_name": contract.get("list_name"),
+            "scope": contract.get("scope"),
+        }
+        for contract in contracts
+        if contract.get("required", True)
+    ]
+    required_source_ids = [item["source"] for item in required_sources]
+    coverage_status = _coverage_status(source_entries, required_source_ids)
+    status = _screening_status(source_entries, required_source_ids, all_matches, coverage_status)
+    limitations = []
+    if status == "no_match_in_scope":
+        limitations.append("未命中仅适用于已列明的名单及其声明范围。")
+    elif status == "possible_match":
+        limitations.append("存在名称线索，主体标识尚未核实。")
+    elif status == "confirmed_match":
+        limitations.append("确认仅针对所列名单记录；其他名单覆盖情况见来源状态。")
+    elif status == "partial":
+        limitations.append("部分必需名单来源当前不可用，不能形成完整筛查结论。")
+    elif status == "stale":
+        limitations.append("现有名单依据已过期，需要重新核验。")
+    elif status == "conflicting":
+        limitations.append("来源或主体信息存在冲突，需要人工核对。")
+    elif status == "not_queried":
+        limitations.append("已配置的名单来源尚未完成查询。")
+    else:
+        limitations.append("当前没有可用的正式名单查询结果。")
+
+    return {
+        "schema_version": 1,
+        "company_name": canonical_name,
+        "entity_id": entity_id,
+        "scope": scope,
+        "screening_status": status,
+        "coverage": {
+            "status": coverage_status,
+            "sources": [
+                {key: value for key, value in item.items() if key != "evidence"}
+                for item in source_entries
+            ],
+            "required_sources": required_sources,
+        },
+        "matches": all_matches,
+        "domestic_findings": domestic_findings,
+        "limitations": limitations,
+        "checked_at": checked_at.isoformat(),
+        "legacy_projection_policy": _legacy_policy(contracts),
+    }
+
+
+def project_legacy_sanctions(analysis: dict) -> dict:
+    """Project only explicitly rated, current conclusions to the old response."""
+    if not isinstance(analysis, dict):
+        raise ValueError("名单筛查结果无效，无法转换为旧响应")
+    status = analysis.get("screening_status")
+    if status not in {"no_match_in_scope", "confirmed_match"}:
+        raise ValueError("当前名单筛查状态无法安全转换为旧响应")
+    policy = analysis.get("legacy_projection_policy")
+    if not isinstance(policy, dict) or not policy.get("version"):
+        raise ValueError("没有已验收的旧版名单评分政策")
+    projected = (policy.get("statuses") or {}).get(status)
+    if not isinstance(projected, dict):
+        raise ValueError("旧版名单评分政策未覆盖当前状态")
+    score = projected.get("sanctions_score")
+    level = projected.get("sanctions_level")
+    if isinstance(score, bool) or not isinstance(score, int) or not isinstance(level, str) or not level:
+        raise ValueError("旧版名单评分政策字段无效")
+    legacy_matches = []
+    if status == "confirmed_match":
+        for match in analysis.get("matches") or []:
+            if match.get("match_type") != "confirmed" or match.get("validity", {}).get("status") != "available":
+                continue
+            legacy_matches.append(
+                {
+                    "type": "entity_match",
+                    "name": match.get("record_name"),
+                    "program": match.get("list_type"),
+                    "authority": match.get("authority"),
+                    "match_type": f"确认匹配({match.get('matched_on')})",
+                    "level": level,
+                }
+            )
+    if status == "confirmed_match" and not legacy_matches:
+        raise ValueError("确认命中缺少可投影的当前名单记录")
+    return {
+        "company_name": analysis.get("company_name", ""),
+        "sanctions_score": score,
+        "sanctions_level": level,
+        "match_count": len(legacy_matches),
+        "matches": legacy_matches,
+        "clean": status == "no_match_in_scope",
+    }
+
+
+def check_sanctions(company_name: str) -> dict:
+    """Keep the legacy response contract when a trusted projection exists."""
+    return project_legacy_sanctions(analyze_sanctions(company_name))
+
+
 def get_sanctions_dashboard() -> dict:
-    """制裁筛查总览。"""
+    """Build the legacy dashboard; any non-projectable item fails closed."""
     from app.domains.alert.service import get_watchlist_targets
 
     targets = get_watchlist_targets()
     companies = [target.get("company_name", "") for target in targets]
-
     results = []
     for name in companies:
-        r = check_sanctions(name)
-        results.append({
-            "company_name": name,
-            "monitor_target_id": next(
-                (target.get("monitor_target_id") for target in targets if target.get("company_name") == name),
-                None,
-            ),
-            "sanctions_score": r["sanctions_score"],
-            "sanctions_level": r["sanctions_level"],
-            "match_count": r["match_count"],
-        })
+        projected = check_sanctions(name)
+        results.append(
+            {
+                "company_name": name,
+                "monitor_target_id": next(
+                    (target.get("monitor_target_id") for target in targets if target.get("company_name") == name),
+                    None,
+                ),
+                "sanctions_score": projected["sanctions_score"],
+                "sanctions_level": projected["sanctions_level"],
+                "match_count": projected["match_count"],
+            }
+        )
 
-    critical = [r for r in results if r["sanctions_level"] == "critical"]
-    high = [r for r in results if r["sanctions_level"] == "high"]
-
+    critical = [item for item in results if item["sanctions_level"] == "critical"]
+    high = [item for item in results if item["sanctions_level"] == "high"]
     return {
         "total_screened": len(companies),
         "critical_count": len(critical),
         "high_count": len(high),
-        "clean_count": sum(1 for r in results if r["sanctions_level"] == "low"),
-        "companies": sorted(results, key=lambda x: x["sanctions_score"], reverse=True),
+        "clean_count": sum(1 for item in results if item["sanctions_level"] == "low"),
+        "companies": sorted(results, key=lambda item: item["sanctions_score"], reverse=True),
     }
