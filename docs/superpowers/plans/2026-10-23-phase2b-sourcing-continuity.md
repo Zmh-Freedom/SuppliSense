@@ -78,21 +78,21 @@ action(confirm/defer/exclude)、company_id(confirm必需)、reason(其余必需)
 新POST `/runs/{run_id}/followups`返回{parent_run_id,run_id,resume_url}；
 父任务终态不可更改，派生需求和政策引用从受权父任务读取。
 
-- [ ] **1. 写失败测试。** `tests/test_sourcing_candidate_resume.py`：
+- [x] **1. 写失败测试。** `tests/test_sourcing_candidate_resume.py`：
   partial审核后仅eligible传给真实investigate/decision；defer/exclude不外呼；
   全部暂存=>NEEDS_REVIEW，部分处理=>PARTIAL并保留暂停组；
   不新增公共status枚举。原pending返回不能穿过runner无条件边进入调查。
   提交后resume前崩溃可按PG批次恢复；重复调度不能重复推进；取消先于恢复则停止。
-- [ ] **2. 验证RED。** `.venv/bin/python -m pytest tests/test_sourcing_candidate_resume.py -q`。
-- [ ] **3. 修改节点与runner。** 将Task1分组保存在内部state并持久化决策源；
+- [x] **2. 验证RED。** `.venv/bin/python -m pytest tests/test_sourcing_candidate_resume.py -q`。
+- [x] **3. 修改节点与runner。** 将Task1分组保存在内部state并持久化决策源；
   identity_review后明确有eligible/无eligible路由；原样Command(resume=...)，
   使用现有执行租约/持久job机制处理待恢复记录，禁止只靠asyncio.create_task保证恢复。
   新恢复记录消费成功前不标完成；重复交付先检查批次已消费和run版本。
   暂存恢复在终态创建子run，排除候选需先显式新决策恢复为defer，不能直接派生排除项。
-- [ ] **4. 验证GREEN。** 新专项及 `test_sourcing_risk_graph.py`、
+- [x] **4. 验证GREEN。** 新专项及 `test_sourcing_risk_graph.py`、
   `test_agent_run_checkpointer.py`、`test_agent_harness_identity_review.py`；
   独立PG/checkpointer集成验证重启/抢占/并发，仅mock不算持久恢复已验收。
-- [ ] **5. 提交。** `fix: resume sourcing with eligible candidates only`。
+- [x] **5. 提交。** `fix: resume sourcing with eligible candidates only`。
 
 ## Task 3：统一任务历史与实际候选操作
 
