@@ -59,7 +59,7 @@ scope和capabilities由后端计算；view=department需当前经理能力，adm
   游标保存完整排序键；不受可见前20项限制计总数；单域失败保留另一域并附sections说明。
 - [x] **4. 验证GREEN。** 同命令、case_access/api和monitor_coverage_validity专项；
   数据量超过一页、同时间记录和撤权后的总数与详情一致。
-- [ ] **5. 提交。** `feat: expose scoped procurement work queues`。
+- [x] **5. 提交。** `feat: expose scoped procurement work queues`（`7cc8c782`）。
 
 ## Task 2：首页真实待办与未知风险
 
@@ -77,18 +77,16 @@ scope和capabilities由后端计算；view=department需当前经理能力，adm
   历史快照分布标题注明口径，未知显式可见；原示例移至帮助折叠区域。
 - [x] **4. 验证GREEN。** 前端全test/typecheck/lint/build；
   事项关闭后队列和数量同步刷新，切换账号清除前一用户数据。
-- [ ] **5. 提交。** `feat: prioritize real cases and unknown coverage on dashboard`。
+- [x] **5. 提交。** `feat: prioritize real cases and unknown coverage on dashboard`（`b0f0ac35`）。
 
 ## Task 3：三批用户旅程收口
 
-- [ ] **1. 新增 `backend/tests/test_phase2_procurement_journey.py`。** agent_e2e覆盖
+- [x] **1. 新增 `backend/tests/test_phase2_procurement_journey.py`。** agent_e2e覆盖
   首页待办→同事项处理→经理独立关闭→刷新消失；另测接受限制关闭后unknown覆盖仍存在。
   复用2A/2B真实服务，固定时钟/虚构源/隔离状态边界，断言可验证业务回执。
-- [ ] **2. 验证后端和数据库。** 跑新Agent E2E、总计划离线全门禁；
-  独立PG验证聚合计数/分页及关闭事务后的队列变化。
+- [x] **2. 验证后端和数据库。** 完整 Agent E2E 126 passed / 5 skipped；总计划离线全门禁 1506 passed；`SUPPLISENSE_TEST_PG_DB=run_lifecycle_test` 下工作台聚合计数/稳定分页 1 passed。关闭后的队列变化由 Agent E2E 验证。
 - [ ] **3. 浏览器验收。** 本人和经理队列、不同科室、刷新、无期限、过期、部分服务故障、
-  390px布局、键盘可达及真实详情导航；确认没有自动飞书/邮件外发。
-- [ ] **4. 最终审查与提交。** 写 `docs/reviews/2026-10-23-phase2c-workbench-validation.md`，
-  最终提交 `test: verify actionable procurement workbench journeys`；
-  024仅在未知/比例、真实待办、权限和导航全部通过后关闭。
-  继续总计划的第二阶段整体审查，业务指标记录基线，不宣称已有收益提升。
+  390px布局、键盘可达及真实详情导航；确认没有自动飞书/邮件外发。当前浏览器无登录态且缺少已授权隔离账号，Playwright 启动 Chrome 返回 EPERM；需补做真实角色矩阵。
+- [x] **4. 最终审查与提交。** 已写 `docs/reviews/2026-10-23-phase2c-workbench-validation.md`，
+  复审修复后通过，已提交连续旅程和验收记录；ISS-20261022-024 的代码、自动化和数据库验收完成，真实浏览器项目仍待验收，不提前关闭。
+  业务指标仅记录工程基线，不宣称已有收益提升。

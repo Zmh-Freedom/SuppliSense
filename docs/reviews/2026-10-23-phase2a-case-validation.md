@@ -1,7 +1,7 @@
 # Phase 2A 采购事项闭环验收记录
 
 日期：2026-10-23
-状态：代码与离线回归完成；独立 PostgreSQL 并发和真实浏览器验收仍待执行。
+状态：代码、自动化回归和独立 PostgreSQL 验收完成；真实三角色浏览器验收仍待授权隔离测试身份。
 
 ## 本批结果
 
@@ -16,9 +16,10 @@
 
 | 范围 | 命令 | 结果 |
 | --- | --- | --- |
-| 后端离线套件 | `PYTHONPATH=. .venv/bin/python -m pytest -m 'not integration and not agent_e2e_live' -q` | 1429 passed，109 deselected；包含隔离的 `agent_e2e` |
-| 事项/任务专项 | `PYTHONPATH=. .venv/bin/python -m pytest tests/test_monitor_review_tasks.py tests/test_procurement_case_service.py tests/test_procurement_case_repo.py tests/test_procurement_case_e2e.py -q` | 54 passed，6 skipped；6 项为 PostgreSQL integration 用例 |
-| 前端 | `npm test` | 201 passed，24 files |
+| 后端离线套件 | `PYTHONPATH=../docs/reviews:. .venv/bin/python -m pytest -p operational_metric_offline_guard -m 'not integration and not agent_e2e_live' -q` | 1506 passed，110 deselected；包含完整离线 Agent E2E，且包含第二阶段收尾授权故障回归 |
+| Agent E2E 全集 | `PYTHONPATH=../docs/reviews:. .venv/bin/python -m pytest -m agent_e2e -q` | 126 passed，5 skipped；live 用例和单独运行的 integration 用例安全跳过 |
+| 事项/任务 PostgreSQL 集成 | `SUPPLISENSE_TEST_PG_DB=run_lifecycle_test PYTHONPATH=. .venv/bin/python -m pytest tests/test_procurement_case_repo.py tests/test_monitor_review_tasks.py -m integration -q` | 6 passed，25 deselected；独立 PG，覆盖并发/回滚/DDL 重复执行/任务去重 |
+| 前端 | `npm test` | 225 passed，28 files |
 | 前端静态与生产构建 | `npm run typecheck`、`npm run lint`、`npm run build` | 全部通过 |
 | Python 编译与差异检查 | `python -m compileall ...`、`git diff --check` | 通过 |
 
@@ -26,16 +27,16 @@
 
 ## 尚未覆盖
 
-- 独立 PostgreSQL 测试库未配置：`SUPPLISENSE_TEST_PG_DB` 为空，事项并发/事务和任务去重并发用例安全跳过。没有访问共享开发库，也未将 mock 结果当作数据库并发验收。
-- 浏览器端真实三角色/两科室、Feishu 当前身份、调岗撤权、刷新及 390px 验收未完成。此前 Playwright 启动 Chrome 时遇到 `EPERM`，且没有真实登录身份上下文；本记录不声称这些场景已通过。
-- 因此 2A 功能代码已具备离线验收，但生产数据结构、真实责任快照与数据库并发仍需独立环境补验。
+- PostgreSQL 集成现已在显式隔离库 `run_lifecycle_test` 完成；测试 fixture 使用测试 UUID 并管理清理自身事项记录，没有把共享开发库作为可清空测试库。
+- 浏览器端真实三角色/两科室、Feishu 当前身份、调岗撤权、关闭自批拒绝、搁置到期、刷新及 390px 验收未完成。本地页面停在登录页，缺少已授权隔离测试身份；Playwright 启动 Chrome 遇到桌面环境 `EPERM`。本记录不声称这些场景已通过。
+- `ISS-20261023-014` 的真实覆盖源验收和 `ISS-20261023-015` 的真实经理身份/撤权链路仍待隔离环境；`ISS-20261023-017` 的独立 PostgreSQL 并发验收已通过。
 
 ## 问题状态
 
 - ISS-20261023-014：实现已修复，待真实覆盖数据验收。
-- ISS-20261023-015：实现已修复，待真实账号/浏览器验收。
+- ISS-20261023-015：实现已修复，待授权隔离账号的浏览器验收。
 - ISS-20261023-016、018、019：离线与组件回归通过，已关闭。
-- ISS-20261023-017：实现已修复，待独立 PostgreSQL 并发验收。
+- ISS-20261023-017：独立 PostgreSQL 并发验收通过，已关闭。
 
 ## 关联提交
 

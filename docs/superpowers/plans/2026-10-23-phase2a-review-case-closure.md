@@ -74,7 +74,7 @@ canonical request hash、response和case_id；所有更新与幂等回执同事�
   case_tasks唯一(case_id,task_id)，事件唯一(case_id,version)；事务内SELECT FOR UPDATE+CAS。
   读分页先约束当前scope再LIMIT；禁止先取全局200条后内存过滤。
 - [x] **4. 验证GREEN。** 离线 repo 回归通过；隔离 PostgreSQL 集成用例因 `SUPPLISENSE_TEST_PG_DB` 未配置安全跳过。
-- [ ] **4a. 真实PG验收。** 独立测试库并发/回滚/DDL重复执行待补验；共享库保护未放宽。
+- [x] **4a. 真实PG验收。** `SUPPLISENSE_TEST_PG_DB=run_lifecycle_test` 下运行仓储与复核任务集成集，6 passed；共享库保护未放宽。
 - [x] **5. 提交。** `feat: persist procurement cases and immutable handling events`。
 
 ## Task 3：生命周期、新API与旧任务兼容
@@ -134,11 +134,10 @@ queryKeys.procurementCases(filters)、procurementCase(id)；新组件使用新�
 - [x] **1. 写Agent E2E。** `@pytest.mark.agent_e2e`：监控缺口→发起事项→
   实际复核执行needs_review→回执→独立审核accepted_limitation；最终事项closed但风险仍未知。
   固定输入，隔离外部服务；另测无权操作在读源前拒绝、重复命令无重复执行。
-- [ ] **2. 跑专项与集成。** 离线专项/前端门禁通过；独立 PostgreSQL 用例因测试库未配置安全跳过，待补验。
-  独立PG上重跑Task2并发与Task3事务故障；前端全门禁。
+- [x] **2. 跑专项与集成。** 完整后端离线门禁、Agent E2E、前端全门禁均通过；`SUPPLISENSE_TEST_PG_DB=run_lifecycle_test` 下 2A 仓储/复核集成 6 passed，覆盖并发、回滚、重复初始化和任务去重。
 - [ ] **3. 浏览器验收。** 真实三角色/两科室、调岗撤权、关闭自批拒绝、搁置到期、390px、刷新；
   若使用fixture必须标明真实登录/DB未覆盖部分，不能替代PG并发测试。
-  真实验收待补：此前 Playwright 启动 Chrome 返回 `EPERM`，当前没有真实登录身份上下文。
+  本轮本地浏览器仍停在登录页，缺少已授权隔离测试身份；Playwright 启动 Chrome 被桌面环境拒绝（EPERM）。因此该矩阵未执行，等待测试身份后补验。
 - [x] **4. 独立审查和修复。** 复核提出的两个 Important 均补回归后修复；受影响门禁重跑通过。
 - [x] **5. 提交验收。** `test: verify procurement case handling and closure journey`；
   写 `docs/reviews/2026-10-23-phase2a-case-validation.md`，019/020只按实际覆盖关闭。
