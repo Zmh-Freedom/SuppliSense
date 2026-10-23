@@ -48,16 +48,16 @@ sections标明cases/coverage各自available/unavailable，失败部分count为nu
 items={case_id,target_id,title,group,status,owner_user_id,due_at,next_review_at,detail_url}。
 scope和capabilities由后端计算；view=department需当前经理能力，admin显式选定部门。
 
-- [ ] **1. 写失败测试。** test_queue_group_precedence：本人可独立审批项优先，
+- [x] **1. 写失败测试。** test_queue_group_precedence：本人可独立审批项优先，
   再overdue/due_review/high/normal；同事项一条；closed排除；
   due_at<=now才逾期，空期限不算；deferred仍可能逾期；closed重开重新计。
   同target多个缺维度仅计一次unknown；旧高风险保持历史标签；
   请求者自批项不进入待我审核；跨科室聚合不可见；cases失效时counts为null。
-- [ ] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_procurement_workbench.py tests/test_procurement_workbench_api.py -q`。
-- [ ] **3. 实现服务/API。** 复用当前权限和共享覆盖计算，一请求同一now；
+- [x] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_procurement_workbench.py tests/test_procurement_workbench_api.py -q`。
+- [x] **3. 实现服务/API。** 复用当前权限和共享覆盖计算，一请求同一now；
   同谓词计算总数和分页项，limit前做权限过滤；优先组+due/null-last+updated/id稳定排序。
   游标保存完整排序键；不受可见前20项限制计总数；单域失败保留另一域并附sections说明。
-- [ ] **4. 验证GREEN。** 同命令、case_access/api和monitor_coverage_validity专项；
+- [x] **4. 验证GREEN。** 同命令、case_access/api和monitor_coverage_validity专项；
   数据量超过一页、同时间记录和撤权后的总数与详情一致。
 - [ ] **5. 提交。** `feat: expose scoped procurement work queues`。
 

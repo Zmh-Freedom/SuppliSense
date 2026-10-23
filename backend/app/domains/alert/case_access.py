@@ -40,6 +40,26 @@ def _current_supplier_assignments(supplier_id: str) -> list[dict[str, Any]]:
         return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
 
 
+def current_target_departments(
+    target: dict[str, Any], user_id: str, user_role: str
+) -> list[str]:
+    """Return active target departments visible to an actor; DB errors propagate."""
+    supplier_id = str(target.get("supplier_id") or "")
+    if not supplier_id:
+        return []
+    assignments = _current_supplier_assignments(supplier_id)
+    if user_role == "admin":
+        eligible = assignments
+    else:
+        open_id = feishu_open_id_for_user(str(user_id))
+        eligible = _actor_assignments(assignments, str(open_id or ""))
+    return sorted({
+        str(item["department_code"])
+        for item in eligible
+        if item.get("department_code")
+    })
+
+
 def _target_id(target: dict[str, Any]) -> str:
     value = target.get("monitor_target_id") or target.get("_id")
     return str(value) if value else ""
@@ -83,6 +103,22 @@ def current_manager_departments(user_id: str) -> list[str]:
             return [str(row[0]) for row in cur.fetchall()]
     except Exception:
         return []
+
+
+def current_departments() -> list[str]:
+    """Return active departments available to an administrator's selector."""
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT DISTINCT department_code
+            FROM supplier_responsibility_snapshots
+            WHERE source_active = TRUE
+              AND sync_status = 'current'
+              AND department_code IS NOT NULL
+            ORDER BY department_code
+            """
+        )
+        return [str(row[0]) for row in cur.fetchall()]
 
 
 def is_current_manager_for_target(target: dict[str, Any], user_id: str) -> bool:

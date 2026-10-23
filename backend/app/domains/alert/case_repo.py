@@ -598,3 +598,56 @@ def list_cases(
         return _list(cur)
     with get_cursor() as (_, transaction_cursor):
         return _list(transaction_cursor)
+
+
+def list_workbench_cases(
+    filters: dict[str, Any],
+    *,
+    actor_id: str,
+    user_role: str,
+    target_ids: list[str],
+    cur: object | None = None,
+) -> list[dict[str, Any]]:
+    """Load active workbench candidates after applying the requested SQL scope.
+
+    The service performs current object capability checks before computing queue
+    counts or slicing a page. This query deliberately has no LIMIT so a page of
+    stale or newly revoked rows cannot hide later authorized cases.
+    """
+    view = str(filters.get("view") or "mine")
+    department_code = filters.get("department_code")
+    if view not in {"mine", "department"}:
+        raise ValueError("不支持的工作台范围")
+    if view == "department" and not department_code:
+        raise ValueError("科室工作台必须指定科室")
+    if not target_ids:
+        return []
+
+    clauses = ["status <> 'closed'", "monitor_target_id = ANY(%s)"]
+    params: list[Any] = [list(map(str, target_ids))]
+    if view == "mine":
+        clauses.append("(created_by = %s OR owner_user_id = %s)")
+        params.extend([str(actor_id), str(actor_id)])
+    else:
+        clauses.append("department_code = %s")
+        params.append(str(department_code))
+
+    def _list(transaction_cursor: Any) -> list[dict[str, Any]]:
+        transaction_cursor.execute(
+            f"""
+            SELECT * FROM procurement_cases
+            WHERE {' AND '.join(clauses)}
+            ORDER BY updated_at DESC, id ASC
+            """,
+            tuple(params),
+        )
+        columns = [description[0] for description in transaction_cursor.description]
+        return [
+            _json_safe(dict(zip(columns, row, strict=True)))
+            for row in transaction_cursor.fetchall()
+        ]
+
+    if cur is not None:
+        return _list(cur)
+    with get_cursor() as (_, transaction_cursor):
+        return _list(transaction_cursor)
