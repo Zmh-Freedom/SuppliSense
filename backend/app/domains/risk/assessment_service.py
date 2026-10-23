@@ -334,6 +334,58 @@ def monitor_assessment(
     return response
 
 
+def get_monitor_assessment_context(
+    target: dict,
+    snapshot: dict,
+    *,
+    actor_id: str,
+    actor_role: str,
+) -> dict | None:
+    """Read and revalidate the frozen PG assessment behind a monitor snapshot."""
+    assessment_id = snapshot.get("assessment_id") if isinstance(snapshot, dict) else None
+    if not assessment_id or not actor_id or not actor_role:
+        return None
+
+    dimensions = snapshot.get("assessment_dimensions") or list(current_policy()["required_dimensions"])
+    current_identity = resolve_identity(
+        str(target.get("company_name") or ""),
+        company_id=str(target.get("company_id") or "") or None,
+        monitor_target_id=str(target.get("monitor_target_id") or "") or None,
+        actor_id=actor_id,
+        actor_role=actor_role,
+        dimensions=dimensions,
+        purchase_scope=str(target.get("purchase_scope") or ""),
+    )
+    row = repo.get_assessment(
+        str(assessment_id),
+        actor_id,
+        allow_all=actor_role == "admin",
+    )
+    if not isinstance(row, dict):
+        return None
+
+    row_identity = row.get("identity") or {}
+    row_company_id = str(row.get("company_id") or row_identity.get("company_id") or "")
+    target_company_id = str(target.get("company_id") or "")
+    row_monitor_id = str(row.get("monitor_target_id") or row_identity.get("monitor_target_id") or "")
+    target_monitor_id = str(target.get("monitor_target_id") or "")
+    row_purchase_scope = str(row_identity.get("purchase_scope") or "")
+    current_purchase_scope = str(current_identity.get("purchase_scope") or "")
+    if (
+        str(row.get("id") or row.get("assessment_id") or "") != str(assessment_id)
+        or row.get("assessment_status") != "committed"
+        or row_company_id != str(current_identity.get("company_id") or "")
+        or (target_company_id and row_company_id != target_company_id)
+        or (target_monitor_id and row_monitor_id != target_monitor_id)
+        or (snapshot.get("assessment_scope_key") and row.get("scope_key") != snapshot["assessment_scope_key"])
+        or (snapshot.get("policy_hash") and row.get("policy_hash") != snapshot["policy_hash"])
+        or (snapshot.get("scoring_version") and row.get("scoring_version") != snapshot["scoring_version"])
+        or row_purchase_scope != current_purchase_scope
+    ):
+        return None
+    return {**row, "resolved_identity": current_identity}
+
+
 def comparable_trend(
     company_name: str, *, actor_id: str, actor_role: str, days: int = 90
 ) -> list[dict]:

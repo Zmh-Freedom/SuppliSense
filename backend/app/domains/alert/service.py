@@ -1,5 +1,6 @@
 import json
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
 from pymongo.errors import DuplicateKeyError
@@ -247,61 +248,16 @@ def _has_transaction_data(db: object, target: dict) -> bool:
         return False
 
 
-def _data_coverage(db: object, target: dict, snapshot: dict | None) -> dict:
-    """Build user-facing coverage semantics without treating missing data as low risk."""
-    risk_detail = (snapshot or {}).get("risk_detail") or {}
-    snapshot_coverage = risk_detail.get("data_coverage") if isinstance(risk_detail, dict) else {}
-    available_dimensions = set((snapshot_coverage or {}).get("available_dimensions") or [])
-    identity_status = target.get("identity_status") or "unresolved"
-    transaction_available = _has_transaction_data(db, target)
-    try:
-        sentiment_available = db["sentiment_results"].find_one({"company_name": target.get("company_name")}) is not None
-    except Exception:
-        sentiment_available = False
-    dimensions = [
-        {
-            "key": "identity",
-            "label": "主体身份",
-            "status": "available" if identity_status == "verified" else "pending",
-            "detail": "已核验" if identity_status == "verified" else "待核验",
-        },
-        {
-            "key": "risk_snapshot",
-            "label": "风险快照",
-            "status": "available" if snapshot else "missing",
-            "detail": "已有评估快照" if snapshot else "尚未完成首次评估",
-        },
-        {
-            "key": "financial",
-            "label": "财务/公开信息",
-            "status": "available" if (snapshot or "financial" in available_dimensions) and ((snapshot or {}).get("financial") or "financial" in available_dimensions) else "missing",
-            "detail": "已获取" if (snapshot or {}).get("financial") or "financial" in available_dimensions else "当前未覆盖",
-        },
-        {
-            "key": "transaction",
-            "label": "内部交易",
-            "status": "available" if transaction_available else "missing",
-            "detail": "已有供应商月度数据" if transaction_available else "暂无内部交易数据",
-        },
-        {
-            "key": "sentiment",
-            "label": "舆情",
-            "status": "available" if sentiment_available else "missing",
-            "detail": "已有舆情分析" if sentiment_available else "尚未形成舆情分析",
-        },
-    ]
-    available_count = sum(item["status"] == "available" for item in dimensions)
-    ratio = round(available_count / len(dimensions), 2) if dimensions else 0.0
-    status = "complete" if available_count == len(dimensions) else "partial" if available_count else "insufficient"
-    return {
-        "status": status,
-        "available_count": available_count,
-        "total_count": len(dimensions),
-        "coverage_ratio": ratio,
-        "summary": f"{available_count}/{len(dimensions)} 个数据域可用",
-        "dimensions": dimensions,
-        "missing_dimensions": [item["label"] for item in dimensions if item["status"] != "available"],
-    }
+def _data_coverage(db: object, target: dict, snapshot: dict | None, *, now: datetime | None = None) -> dict:
+    """Thin adapter preserving the public coverage response shape."""
+    from app.domains.alert.coverage_service import build_monitor_coverage
+
+    return build_monitor_coverage(
+        db,
+        target,
+        snapshot,
+        now=now or datetime.now(timezone.utc),
+    )
 
 
 def _risk_change(snapshots: list[dict]) -> dict:
@@ -337,7 +293,17 @@ def _next_action(target: dict, snapshot: dict | None, risk_change: dict, coverag
             return {"code": "assess", "label": "首次评估进行中", "priority": "high", "reason": "首次风险评估正在执行，完成后将生成风险快照"}
         return {"code": "assess", "label": "执行首次评估", "priority": "high", "reason": "暂无风险快照，不能判断风险变化"}
     if risk_change["status"] == "deteriorating" or snapshot.get("risk_level") == "高风险":
-        return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": "风险分数上升或当前处于高风险"}
+        risk_dimension = next(
+            (item for item in coverage.get("dimensions", []) if item.get("key") == "risk_snapshot"),
+            {},
+        )
+        historical = risk_dimension.get("status") != "available"
+        reason = (
+            "历史风险评估仍显示高风险或风险恶化，当前证据待核验，需要优先复核"
+            if historical
+            else "当前风险分数上升或处于高风险，需要优先复核"
+        )
+        return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": reason}
     if coverage["status"] != "complete":
         return {"code": "supplement_data", "label": "核验数据覆盖范围", "priority": "medium", "reason": "部分数据域当前未覆盖，不能形成完整结论"}
     return {"code": "continue_monitoring", "label": "继续观察", "priority": "low", "reason": "当前已有完整覆盖且未发现明显恶化"}
@@ -355,47 +321,83 @@ def get_watchlist_target_summaries(
         if user_id is None and user_role is None
         else get_watchlist_targets(user_id, user_role)
     )
-    for target in targets:
-        snapshots = _target_snapshots(db, target)
-        latest = snapshots[0] if snapshots else None
-        initial_status = target.get("initial_assessment_status")
-        if not initial_status:
-            # Rows created before the status fields were introduced are
-            # considered complete when a historical snapshot already exists.
-            initial_status = "completed" if latest else "pending"
-        initial_assessment = {
-            "status": initial_status,
-            "started_at": target.get("initial_assessment_started_at"),
-            "completed_at": target.get("initial_assessment_at"),
-            "failed_at": target.get("initial_assessment_failed_at"),
-            "error": target.get("initial_assessment_error"),
-        }
-        risk_change = _risk_change(snapshots)
-        coverage = _data_coverage(db, target, latest)
-        next_action = _next_action(target, latest, risk_change, coverage)
-        enriched = dict(target)
-        try:
-            from app.domains.alert.review_tasks import get_latest_review_task
-            review_task = get_latest_review_task(target.get("monitor_target_id"))
-        except Exception:
-            # The monitoring dashboard remains readable while PostgreSQL is
-            # unavailable; task details will appear once the store recovers.
-            review_task = None
-        enriched.update({
-            "risk_score": latest.get("risk_score") if latest else None,
-            "risk_level": latest.get("risk_level") if latest else None,
-            "risk_change": risk_change,
-            "data_coverage": coverage,
-            "last_checked_at": latest.get("checked_at") if latest else None,
-            "next_action": next_action,
-            "review_task": review_task,
-            "initial_assessment_status": initial_status,
-            "initial_assessment_at": target.get("initial_assessment_at"),
-            "initial_assessment_error": target.get("initial_assessment_error"),
-            "initial_assessment": initial_assessment,
-        })
-        summaries.append(enriched)
+    checked_at = datetime.now(timezone.utc)
+    scope = nullcontext()
+    if user_id and user_role:
+        from app.domains.risk.assessment_contracts import assessment_scope
+
+        scope = assessment_scope(actor_id=user_id, actor_role=user_role)
+    with scope:
+        for target in targets:
+            try:
+                snapshots = _target_snapshots(db, target)
+            except Exception:
+                snapshots = _projected_target_history(db, target)
+                for snapshot in snapshots:
+                    snapshot["_assessment_context_unavailable"] = True
+            latest = snapshots[0] if snapshots else None
+            initial_status = target.get("initial_assessment_status")
+            if not initial_status:
+                # Rows created before the status fields were introduced are
+                # considered complete when a historical snapshot already exists.
+                initial_status = "completed" if latest else "pending"
+            initial_assessment = {
+                "status": initial_status,
+                "started_at": target.get("initial_assessment_started_at"),
+                "completed_at": target.get("initial_assessment_at"),
+                "failed_at": target.get("initial_assessment_failed_at"),
+                "error": target.get("initial_assessment_error"),
+            }
+            risk_change = _risk_change(snapshots)
+            coverage = _data_coverage(db, target, latest, now=checked_at)
+            next_action = _next_action(target, latest, risk_change, coverage)
+            enriched = dict(target)
+            try:
+                from app.domains.alert.review_tasks import get_latest_review_task
+                review_task = get_latest_review_task(target.get("monitor_target_id"))
+            except Exception:
+                # The monitoring dashboard remains readable while PostgreSQL is
+                # unavailable; task details will appear once the store recovers.
+                review_task = None
+            enriched.update({
+                "risk_score": latest.get("risk_score") if latest else None,
+                "risk_level": latest.get("risk_level") if latest else None,
+                "risk_change": risk_change,
+                "data_coverage": coverage,
+                "last_checked_at": latest.get("checked_at") if latest else None,
+                "next_action": next_action,
+                "review_task": review_task,
+                "initial_assessment_status": initial_status,
+                "initial_assessment_at": target.get("initial_assessment_at"),
+                "initial_assessment_error": target.get("initial_assessment_error"),
+                "initial_assessment": initial_assessment,
+            })
+            summaries.append(enriched)
     return summaries
+
+
+def _projected_target_history(db: object, target: dict, limit: int = 2) -> list[dict]:
+    """Keep stable-ID historical values visible during PG outages, marked non-current."""
+    monitor_target_id = target.get("monitor_target_id")
+    if not monitor_target_id:
+        return []
+    try:
+        rows = list(
+            db["alert_snapshots"]
+            .find({"monitor_target_id": monitor_target_id})
+            .sort([("checked_at", -1), ("snapshot_version", -1)])
+            .limit(100)
+        )
+    except Exception:
+        return []
+    rows = [item for item in rows if isinstance(item, dict)]
+    if target.get("company_id"):
+        rows = [item for item in rows if item.get("company_id") in (None, target["company_id"])]
+    if not rows:
+        return []
+    first = rows[0]
+    comparable = [item for item in rows if _comparable_snapshots(first, item)]
+    return comparable[: max(1, min(limit, 20))]
 
 
 def get_watchlist_target_risk_detail(
@@ -411,7 +413,16 @@ def get_watchlist_target_risk_detail(
         return None
 
     db = get_db()
-    snapshots = _target_snapshots(db, target, limit=20)
+    scope = nullcontext()
+    if user_id and user_role:
+        from app.domains.risk.assessment_contracts import assessment_scope
+
+        scope = assessment_scope(actor_id=user_id, actor_role=user_role)
+    with scope:
+        try:
+            snapshots = _target_snapshots(db, target, limit=20)
+        except Exception:
+            snapshots = _projected_target_history(db, target, limit=20)
     latest = snapshots[0] if snapshots else None
     history = [
         {
