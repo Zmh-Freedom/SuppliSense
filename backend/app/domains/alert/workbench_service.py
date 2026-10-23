@@ -321,7 +321,7 @@ def get_procurement_workbench(
                 )
             grouped: list[tuple[dict[str, Any], str]] = []
             for case in candidates:
-                case_capabilities = case_service._can_read_case(case, actor_id, role)
+                case_capabilities = case_service._can_read_case_for_workbench(case, actor_id, role)
                 if not case_capabilities.get("can_read"):
                     continue
                 group = _queue_group(case, case_capabilities, now=checked_at)

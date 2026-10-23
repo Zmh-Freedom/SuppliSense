@@ -115,7 +115,7 @@ def test_service_filters_revoked_and_self_approval_before_counts_and_pagination(
     monkeypatch.setattr(workbench_service.case_access, "current_manager_departments", lambda _user_id: [])
     monkeypatch.setattr(workbench_service, "_visible_targets", lambda *_args, **_kwargs: [{"monitor_target_id": "target-visible", "company_name": "A"}])
     monkeypatch.setattr(workbench_service.case_repo, "list_workbench_cases", lambda *_args, **_kwargs: cases)
-    monkeypatch.setattr(workbench_service.case_service, "_can_read_case", lambda case, *_args: _caps(can_read=case["id"] != "revoked", can_update=case["id"] not in {"self-approval", "closed"}, can_request_closure=case["id"] not in {"self-approval", "closed"}, can_decide_closure=False, can_reopen=case["id"] == "closed"))
+    monkeypatch.setattr(workbench_service.case_service, "_can_read_case_for_workbench", lambda case, *_args: _caps(can_read=case["id"] != "revoked", can_update=case["id"] not in {"self-approval", "closed"}, can_request_closure=case["id"] not in {"self-approval", "closed"}, can_decide_closure=False, can_reopen=case["id"] == "closed"))
     monkeypatch.setattr(workbench_service, "_coverage_for_targets", lambda *_args, **_kwargs: [])
 
     result = workbench_service.get_procurement_workbench("buyer-1", "purchaser", now=NOW, limit=1)
@@ -157,6 +157,27 @@ def test_coverage_failure_keeps_cases_available_and_cases_failure_does_not_repor
     assert all(value is None for value in result["counts"].values())
 
 
+def test_authorization_lookup_failure_marks_cases_section_unavailable(monkeypatch: pytest.MonkeyPatch):
+    case = _case("candidate")
+    monkeypatch.setattr(workbench_service.case_access, "current_manager_departments", lambda _user_id: [])
+    monkeypatch.setattr(workbench_service, "_visible_targets", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(workbench_service.case_repo, "list_workbench_cases", lambda *_args, **_kwargs: [case])
+    monkeypatch.setattr(workbench_service.case_access, "_target_for_case", lambda _target_id: {"monitor_target_id": "target-candidate", "supplier_id": "supplier-1"})
+    monkeypatch.setattr(
+        workbench_service.case_access,
+        "_current_supplier_assignments",
+        lambda _supplier_id: (_ for _ in ()).throw(RuntimeError("responsibility database unavailable")),
+    )
+    monkeypatch.setattr(workbench_service, "_coverage_for_targets", lambda *_args, **_kwargs: [])
+
+    result = workbench_service.get_procurement_workbench("buyer-1", "purchaser", now=NOW)
+
+    assert result["sections"]["cases"]["status"] == "unavailable"
+    assert all(value is None for value in result["counts"].values())
+    assert result["items"] == []
+    assert result["next_cursor"] is None
+
+
 def test_queue_cursor_keeps_priority_and_due_order_across_pages(monkeypatch: pytest.MonkeyPatch):
     cases = [
         _case("normal", priority="normal"),
@@ -166,7 +187,7 @@ def test_queue_cursor_keeps_priority_and_due_order_across_pages(monkeypatch: pyt
     monkeypatch.setattr(workbench_service.case_access, "current_manager_departments", lambda _user_id: [])
     monkeypatch.setattr(workbench_service, "_visible_targets", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(workbench_service.case_repo, "list_workbench_cases", lambda *_args, **_kwargs: cases)
-    monkeypatch.setattr(workbench_service.case_service, "_can_read_case", lambda *_args: _caps())
+    monkeypatch.setattr(workbench_service.case_service, "_can_read_case_for_workbench", lambda *_args: _caps())
     monkeypatch.setattr(workbench_service, "_coverage_for_targets", lambda *_args, **_kwargs: [])
 
     first = workbench_service.get_procurement_workbench("buyer-1", "purchaser", now=NOW, limit=2)

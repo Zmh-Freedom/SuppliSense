@@ -622,6 +622,12 @@ def _can_read_case(case: dict[str, Any], user_id: str, user_role: str) -> dict[s
     return case_access.case_capabilities(case, str(user_id), str(user_role))
 
 
+def _can_read_case_for_workbench(
+    case: dict[str, Any], user_id: str, user_role: str
+) -> dict[str, bool]:
+    return case_access.case_capabilities_strict(case, str(user_id), str(user_role))
+
+
 def _require_current_case_read(
     case: dict[str, Any] | None, user_id: str, user_role: str
 ) -> dict[str, bool]:

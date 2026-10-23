@@ -21,6 +21,10 @@ PURCHASER_ROLES = frozenset({"purchaser", "analyst"})
 VIEWER_ROLE = "viewer"
 
 
+class CaseAuthorizationUnavailableError(PermissionError):
+    """Raised when current authorization dependencies cannot be checked."""
+
+
 def _current_supplier_assignments(supplier_id: str) -> list[dict[str, Any]]:
     """Read active responsibility rows; stale and inactive snapshots never grant scope."""
     with get_cursor() as (_, cur):
@@ -182,7 +186,7 @@ def resolve_case_scope(
     try:
         assignments = _current_supplier_assignments(supplier_id)
     except Exception as exc:
-        raise PermissionError("无法确认供应商当前责任范围") from exc
+        raise CaseAuthorizationUnavailableError("无法确认供应商当前责任范围") from exc
     if not assignments:
         if user_role == "admin" and department_code is None:
             return {
@@ -199,7 +203,7 @@ def resolve_case_scope(
         try:
             open_id = feishu_open_id_for_user(str(user_id))
         except Exception as exc:
-            raise PermissionError("无法确认用户当前责任身份") from exc
+            raise CaseAuthorizationUnavailableError("无法确认用户当前责任身份") from exc
         if not open_id:
             raise PermissionError("用户没有有效的当前责任身份")
         eligible = _actor_assignments(assignments, str(open_id))
@@ -240,8 +244,13 @@ def _denied_capabilities() -> dict[str, bool]:
     return {key: False for key in CASE_CAPABILITY_KEYS}
 
 
-def case_capabilities(case: dict[str, Any], user_id: str, user_role: str) -> dict[str, bool]:
-    """Return only actions allowed by current object, department, and case scope."""
+def _case_capabilities(
+    case: dict[str, Any],
+    user_id: str,
+    user_role: str,
+    *,
+    strict: bool,
+) -> dict[str, bool]:
     denied = _denied_capabilities()
     if user_role == VIEWER_ROLE or user_role not in PURCHASER_ROLES | {"admin"}:
         return denied
@@ -262,7 +271,15 @@ def case_capabilities(case: dict[str, Any], user_id: str, user_role: str) -> dic
                 user_role,
                 str(case["department_code"]) if case.get("department_code") else None,
             )
+    except CaseAuthorizationUnavailableError:
+        if strict:
+            raise
+        return denied
+    except PermissionError:
+        return denied
     except Exception:
+        if strict:
+            raise
         return denied
 
     is_admin = user_role == "admin"
@@ -293,3 +310,15 @@ def case_capabilities(case: dict[str, Any], user_id: str, user_role: str) -> dic
         ),
         "can_reopen": status == "closed" and (is_admin or is_manager),
     }
+
+
+def case_capabilities(case: dict[str, Any], user_id: str, user_role: str) -> dict[str, bool]:
+    """Return only actions allowed by current object, department, and case scope."""
+    return _case_capabilities(case, user_id, user_role, strict=False)
+
+
+def case_capabilities_strict(
+    case: dict[str, Any], user_id: str, user_role: str
+) -> dict[str, bool]:
+    """Return capabilities or raise when authorization cannot be verified."""
+    return _case_capabilities(case, user_id, user_role, strict=True)
