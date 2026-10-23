@@ -49,14 +49,14 @@
 can_read/can_claim/can_assign/can_update/can_request_closure/can_decide_closure/can_reopen。
 当前manager映射仅来自current/source_active快照及活跃用户；viewer全部false。
 
-- [ ] **1. 写测试。** `test_manager_scope_does_not_equal_supplier_visibility`：采购员可见供应商但非经理；
+- [x] **1. 写测试。** `test_manager_scope_does_not_equal_supplier_visibility`：采购员可见供应商但非经理；
   两科室同供应商必须指定部门；撤权后read/update false；外部对象只所有者/admin；
   管理员申请关闭后其decide false；viewer拒绝操作，历史analyst按采购员兼容。
-- [ ] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_procurement_case_access.py -q`。
-- [ ] **3. 实现case_access。** 复用供应商访问能力和当前用户映射；不扩展UserRole。
+- [x] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_procurement_case_access.py -q`。
+- [x] **3. 实现case_access。** 复用供应商访问能力和当前用户映射；不扩展UserRole。
   读取共享授权结果，任何异常fail closed；权限不由客户端owner或department字符串授予。
-- [ ] **4. 验证GREEN。** 上述测试和 `tests/test_monitor_review_tasks.py`；保留旧请求者合法路径。
-- [ ] **5. 提交。** `feat: define scoped procurement case capabilities`，更新019问题进度。
+- [x] **4. 验证GREEN。** 上述测试和 `tests/test_monitor_review_tasks.py`；保留旧请求者合法路径。
+- [x] **5. 提交。** `feat: define scoped procurement case capabilities`，更新019问题进度。
 
 ## Task 2：事项、事件与并发安全存储
 
@@ -66,16 +66,16 @@ can_read/can_claim/can_assign/can_update/can_request_closure/can_decide_closure/
 新增表为设计§4.1三张表和 `procurement_case_requests`；requests唯一(actor_id,key)，保存
 canonical request hash、response和case_id；所有更新与幂等回执同事务。
 
-- [ ] **1. 写失败测试。** 重复创建同活动唯一键返回原事项；并发创建只有一事项；
+- [x] **1. 写失败测试。** 重复创建同活动唯一键返回原事项；并发创建只有一事项；
   同key同请求返回原响应，同key不同payload拒绝；事件/链接失败整体回滚；
   closed后同触发另开必须关联前事项。活动部分唯一索引排除closed。
-- [ ] **2. 验证RED。** `.venv/bin/python -m pytest tests/test_procurement_case_repo.py -m 'not integration' -q`。
-- [ ] **3. 实现DDL和repo。** 状态/priority/version检查、FK和索引；关闭记录不覆盖事件。
+- [x] **2. 验证RED。** `.venv/bin/python -m pytest tests/test_procurement_case_repo.py -m 'not integration' -q`。
+- [x] **3. 实现DDL和repo。** 状态/priority/version检查、FK和索引；关闭记录不覆盖事件。
   case_tasks唯一(case_id,task_id)，事件唯一(case_id,version)；事务内SELECT FOR UPDATE+CAS。
   读分页先约束当前scope再LIMIT；禁止先取全局200条后内存过滤。
-- [ ] **4. 验证GREEN和真实PG。** 同命令；integration标记用独立测试库显式连接跑并发/回滚/DDL重复执行，
-  共享库保护断言必须先通过；没有测试库则记录未验收，不放宽保护。
-- [ ] **5. 提交。** `feat: persist procurement cases and immutable handling events`。
+- [x] **4. 验证GREEN。** 离线 repo 回归通过；隔离 PostgreSQL 集成用例因 `SUPPLISENSE_TEST_PG_DB` 未配置安全跳过。
+- [ ] **4a. 真实PG验收。** 独立测试库并发/回滚/DDL重复执行待补验；共享库保护未放宽。
+- [x] **5. 提交。** `feat: persist procurement cases and immutable handling events`。
 
 ## Task 3：生命周期、新API与旧任务兼容
 
@@ -97,19 +97,19 @@ command必需字段：assign为owner_user_id；request_transfer为reason；recei
 defer为reason及next_review_at；set_due为due_at（可空）；request_closure为category/summary/receipt_ids；
 approve/reject_closure及reopen为reason；claim/resume无附加字段。未列字段拒绝，文本1–2000字符。
 
-- [ ] **1. 写失败测试。** 所有合法/非法状态边；claim只有open且owner空；
+- [x] **1. 写失败测试。** 所有合法/非法状态边；claim只有open且owner空；
   搁置无原因/非未来复查时间拒绝；关闭需回执，覆盖resolved需当前有效新证据，
   accepted_limitation需残余限制；审批者非申请人；duplicate同scope无循环；
   责任变更后操作拒绝；转交仅记录请求、经理assign才改owner；技术completed不关事项。
-- [ ] **2. 验证RED。** `.venv/bin/python -m pytest tests/test_procurement_case_service.py tests/test_procurement_case_api.py -q`。
-- [ ] **3. 实现状态服务及路由。** 状态转换严格用设计图；每条命令同事务事件和version。
+- [x] **2. 验证RED。** `.venv/bin/python -m pytest tests/test_procurement_case_service.py tests/test_procurement_case_api.py -q`。
+- [x] **3. 实现状态服务及路由。** 状态转换严格用设计图；每条命令同事务事件和version。
   当前关联事项及旧任务都通过Task1能力校验；旧任务决策仍返回原结构，UI语义改确认执行。
   alert/service.py的嵌入任务通过同一授权校验，无权时review_task为None，不能只隐藏前端按钮。
   非法输入422，版本/状态409，不存在404，越权动作403；同步service用to_thread。
   再次执行读取当前来源，不把旧coverage payload当当前证明；运行前撤权必须拒绝。
-- [ ] **4. 验证GREEN。** 新测试、`test_monitor_review_tasks.py`、`test_monitor_coverage_validity.py`；
+- [x] **4. 验证GREEN。** 新测试、`test_monitor_review_tasks.py`、`test_monitor_coverage_validity.py`；
   固定旧返回字段集合，验证新API/列表计数无越权泄露。
-- [ ] **5. 提交。** `feat: support scoped case handling and independent closure review`。
+- [x] **5. 提交。** `feat: support scoped case handling and independent closure review`。
 
 ## Task 4：真实页面贯通
 
@@ -118,26 +118,27 @@ queryKeys.procurementCases(filters)、procurementCase(id)；新组件使用新�
 `ProcurementCasePanel({caseId}: {caseId: string})`；列表支持mine/department视图。
 监控对象通过稳定monitor_target_id查询事项，不通过企业名称找事项。
 
-- [ ] **1. 写组件失败测试。** 创建→接手→回执→申请关闭→切换经理审核；
+- [x] **1. 写组件失败测试。** 创建→接手→回执→申请关闭→切换经理审核；
   capabilities控制按钮；409保留输入并刷新；刷新和深链接恢复同事项；
   原技术completed显示执行完成；accepted_limitation关闭后仍显示资料缺口。
-- [ ] **2. 验证RED。** frontend `npm test -- src/__tests__/ProcurementCases.test.tsx src/__tests__/MonitoringView.test.tsx`。
-- [ ] **3. 实现页面。** 新/cases导航、详情与监控入口；状态/动作中文，期限与下次复查分开。
+- [x] **2. 验证RED。** frontend `npm test -- src/__tests__/ProcurementCases.test.tsx src/__tests__/MonitoringView.test.tsx`。
+- [x] **3. 实现页面。** 新/cases导航、详情与监控入口；状态/动作中文，期限与下次复查分开。
   mutation成功失效列表/详情/监控及未来工作台query key，失败不清空用户回执草稿。
-- [ ] **4. 验证GREEN。** 同组件命令及 `npm run typecheck`、`npm run lint`、`npm run build`。
-- [ ] **5. 提交。** `feat: deliver procurement case handling flow in monitoring`。
+- [x] **4. 验证GREEN。** 同组件命令及 `npm run typecheck`、`npm run lint`、`npm run build`。
+- [x] **5. 提交。** `feat: deliver procurement case handling flow in monitoring`。
 
 ## Task 5：闭环验收与分批收口
 
 **Interfaces:** 使用真实router/service/repo边界和实际组件，不另造业务状态机。
 
-- [ ] **1. 写Agent E2E。** `@pytest.mark.agent_e2e`：监控缺口→发起事项→
+- [x] **1. 写Agent E2E。** `@pytest.mark.agent_e2e`：监控缺口→发起事项→
   实际复核执行needs_review→回执→独立审核accepted_limitation；最终事项closed但风险仍未知。
   固定输入，隔离外部服务；另测无权操作在读源前拒绝、重复命令无重复执行。
-- [ ] **2. 跑专项与集成。** `.venv/bin/python -m pytest tests/test_procurement_case_e2e.py -v`；
+- [ ] **2. 跑专项与集成。** 离线专项/前端门禁通过；独立 PostgreSQL 用例因测试库未配置安全跳过，待补验。
   独立PG上重跑Task2并发与Task3事务故障；前端全门禁。
 - [ ] **3. 浏览器验收。** 真实三角色/两科室、调岗撤权、关闭自批拒绝、搁置到期、390px、刷新；
   若使用fixture必须标明真实登录/DB未覆盖部分，不能替代PG并发测试。
-- [ ] **4. 独立审查和修复。** 补失败回归再改代码；重跑受影响门禁。
-- [ ] **5. 提交验收。** `test: verify procurement case handling and closure journey`；
+  真实验收待补：此前 Playwright 启动 Chrome 返回 `EPERM`，当前没有真实登录身份上下文。
+- [x] **4. 独立审查和修复。** 复核提出的两个 Important 均补回归后修复；受影响门禁重跑通过。
+- [x] **5. 提交验收。** `test: verify procurement case handling and closure journey`；
   写 `docs/reviews/2026-10-23-phase2a-case-validation.md`，019/020只按实际覆盖关闭。
