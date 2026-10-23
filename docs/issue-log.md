@@ -6547,7 +6547,7 @@
 - 根因：`ThreadedConnectionPool.getconn()` 在连接数达到 maxconn 时立即抛出 PoolError，不提供等待可归还连接的能力；没有证据表明存在连接未归还。页面初始化会并发发起多组请求，使短时峰值更容易触顶。
 - 修复方案：在连接池外增加与 maxconn 对齐的有界 semaphore，获取连接前等待空位，超过 `PG_POOL_ACQUIRE_TIMEOUT_SECONDS` 后返回明确 PoolError；连接归还或获取失败时释放槽位，并串行保护连接池初始化/关闭。
 - 验证结果：新增单连接并发回归证明第二请求等待首连接归还；连接池及运行时连接专项 13 passed。完整后端离线门禁 1507 passed、Agent E2E 126 passed/5 skipped；此前端测试 225 passed，typecheck/lint/build 通过。修复后浏览器登录、工作台刷新、D1/D2 页面流共观察到相关 API 成功返回，未再见 PoolError。所有浏览器 fixture 均位于隔离 PG/Mongo 库。
-- 关联提交：待提交后补录。
+- 关联提交：`56039c26`。
 
 
 ### ISS-20261023-026 回执必填引用被误认为提交故障
