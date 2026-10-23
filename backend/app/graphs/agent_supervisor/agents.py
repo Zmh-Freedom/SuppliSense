@@ -305,31 +305,87 @@ async def _run_compliance(context: AgentTaskContext) -> AgentResult:
     if not company_names:
         return AgentResult(agent="compliance", status="needs_review", summary="缺少待筛查供应商名称。")
 
-    from app.domains.risk.sanctions_service import check_sanctions
+    from app.domains.risk.sanctions_service import analyze_sanctions
 
-    results = [(name, await _provider_call(check_sanctions, name)) for name in company_names]
-    evidence = [
-        _evidence(
-            name, "compliance", "制裁与黑名单筛查",
-            "未命中制裁或黑名单记录。" if result.get("clean") else f"命中 {result.get('match_count', 0)} 条制裁或合规记录。",
-            {"compliance": result}, confidence=0.8,
-            target_fields=_target_fields(context, name),
-        )
-        for name, result in results
-    ]
-    findings = [
-        {
-            "type": "compliance",
-            "level": _risk_level(result.get("sanctions_level")),
-            "title": f"{name} 合规筛查",
-            "description": f"匹配记录 {result.get('match_count', 0)} 条。",
-            "confidence": 0.8,
-            "evidence_ids": [f"compliance:{name}"],
-        }
-        for name, result in results if not result.get("clean")
-    ]
+    results = [(name, await _provider_call(analyze_sanctions, name)) for name in company_names]
+    evidence = []
+    findings = []
+    statuses = []
+    for name, analysis in results:
+        status = str(analysis.get("screening_status") or "unavailable")
+        statuses.append(status)
+        coverage = analysis.get("coverage") if isinstance(analysis.get("coverage"), dict) else {}
+        source_entries = [item for item in coverage.get("sources", []) if isinstance(item, dict)]
+        matches = [item for item in analysis.get("matches", []) if isinstance(item, dict)]
+        if not source_entries:
+            source_entries = [{"source": "名单筛查", "validity": {"status": "unknown"}, "evidence": {}}]
+        for index, source in enumerate(source_entries):
+            source_name = str(source.get("source") or "名单筛查")
+            source_matches = [item for item in matches if str(item.get("source") or "") == source_name]
+            source_state = str((source.get("validity") or {}).get("status") or "unknown")
+            freshness = "fresh" if source_state in {"available", "empty"} else "stale" if source_state == "stale" else "unknown"
+            source_type = "registry"
+            source_claim = (
+                f"在 {source_name} 中存在名称相似线索，主体尚未确认。"
+                if any(item.get("match_type") == "possible" for item in source_matches)
+                else f"在 {source_name} 中发现主体标识匹配记录。"
+                if any(item.get("match_type") == "confirmed" for item in source_matches)
+                else f"{source_name} 当前来源状态：{source_state}。"
+            )
+            evidence_id = f"compliance:{name}:{source_name}:{index}"
+            evidence.append({
+                "evidence_id": evidence_id,
+                "source": source_name,
+                "source_type": source_type,
+                "collected_at": (source.get("evidence") or {}).get("collected_at"),
+                "freshness": freshness,
+                "confidence": 0.9 if source_state in {"available", "empty"} else 0.0,
+                "monitor_target_id": _target_fields(context, name).get("monitor_target_id"),
+                "target_type": _target_fields(context, name).get("target_type"),
+                "company_id": str(analysis.get("entity_id") or "") or None,
+                "dimension": "compliance",
+                "claim": source_claim,
+                "metadata": {
+                    "screening_status": status,
+                    "coverage_status": coverage.get("status"),
+                    "scope": analysis.get("scope"),
+                    "source_evidence": source.get("evidence") or {},
+                    "validity": source.get("validity") or {},
+                    "matches": source_matches,
+                    "limitations": analysis.get("limitations") or [],
+                },
+            })
+            for match in source_matches:
+                if (match.get("validity") or {}).get("status") not in {"available", "stale"}:
+                    continue
+                match_type = str(match.get("match_type") or "possible")
+                findings.append({
+                    "type": "compliance",
+                    "level": "high" if match_type == "confirmed" else "unknown",
+                    "title": f"{name} 名单匹配待复核",
+                    "description": (
+                        "主体标识与名单记录一致，需要采购人员复核。"
+                        if match_type == "confirmed"
+                        else "发现名称相似线索，主体尚未确认。"
+                    ),
+                    "confidence": 0.95 if match_type == "confirmed" else 0.65,
+                    "evidence_ids": [evidence_id],
+                })
+
+    if statuses and all(item == "no_match_in_scope" for item in statuses):
+        summary = "在已核验的名单范围内未发现匹配记录；未命中范围和来源限制见证据。"
+        result_status = "completed"
+    elif "confirmed_match" in statuses:
+        summary = "发现与主体标识匹配的名单记录，需要人工复核；其他来源覆盖情况见证据。"
+        result_status = "needs_review"
+    elif "possible_match" in statuses:
+        summary = "发现名称相似的名单线索，主体尚未确认，需要人工核验。"
+        result_status = "needs_review"
+    else:
+        summary = "当前没有足够的正式名单证据，无法判断是否存在名单命中。"
+        result_status = "needs_review"
     return AgentResult(
-        agent="compliance", status="completed", summary=f"已完成 {len(results)} 家供应商的合规筛查。",
+        agent="compliance", status=result_status, summary=summary,
         evidence=evidence, findings=findings, metrics=AgentMetrics(evidence_count=len(evidence)),
     )
 

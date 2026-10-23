@@ -3,6 +3,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from app.graphs.agent_supervisor import agents as supervisor_agents
 from app.graphs.agent_supervisor.agents import AGENT_HANDLERS, AgentTaskContext, run_ready_tasks
 from app.graphs.agent_supervisor.contracts import AgentResult, PlannerTask, TaskPlan
@@ -169,8 +171,24 @@ def test_four_risk_workers_keep_all_structured_supplier_targets(monkeypatch):
         risk_preview,
     )
     monkeypatch.setattr(
-        "app.domains.risk.sanctions_service.check_sanctions",
-        lambda name: {"company_name": name, "clean": True, "match_count": 0, "sanctions_level": "low"},
+        "app.domains.risk.sanctions_service.analyze_sanctions",
+        lambda name: {
+            "company_name": name,
+            "entity_id": name,
+            "scope": "fixture-scope",
+            "screening_status": "no_match_in_scope",
+            "coverage": {
+                "status": "complete",
+                "sources": [{
+                    "source": "fixture-list",
+                    "validity": {"status": "empty"},
+                    "evidence": {"collected_at": "2026-10-23T00:00:00+00:00"},
+                }],
+                "required_sources": [{"source": "fixture-list"}],
+            },
+            "matches": [],
+            "limitations": ["仅适用于虚构测试名单。"],
+        },
     )
     monkeypatch.setattr(
         "app.domains.risk.sentiment._get_cached_sentiment",
@@ -235,6 +253,50 @@ def test_risk_worker_uses_read_only_v2_score_and_marks_partial_coverage(monkeypa
     assert "不足以形成综合风险结论" in result.evidence[0].claim
     assert result.findings[0].level == "unknown"
     assert result.evidence[0].metadata["risk"]["risk_detail"]["data_coverage"]["assessment_status"] == "partial"
+
+
+@pytest.mark.parametrize(
+    ("screening_status", "matches", "coverage"),
+    [
+        ("unavailable", [], {"status": "insufficient", "sources": [], "required_sources": []}),
+        (
+            "possible_match",
+            [{"record_id": "fixture-match", "record_name": "同名虚构主体", "match_type": "possible"}],
+            {"status": "partial", "sources": [], "required_sources": [{"source": "fixture-list"}]},
+        ),
+    ],
+)
+def test_compliance_worker_never_turns_unknown_or_possible_match_into_completed(
+    monkeypatch, screening_status, matches, coverage
+):
+    context = AgentTaskContext(
+        task=PlannerTask(task_id="compliance", agent="compliance"),
+        run_id="run-1",
+        user_query="筛查供应商合规状态",
+        intent={"target_supplier_names": ["虚构甲供应链有限公司"]},
+        dependency_results={},
+    )
+    monkeypatch.setattr(
+        "app.domains.risk.sanctions_service.analyze_sanctions",
+        lambda name: {
+            "company_name": name,
+            "entity_id": "company-fixture-a",
+            "scope": "fixture-scope",
+            "screening_status": screening_status,
+            "coverage": coverage,
+            "matches": matches,
+            "limitations": ["测试范围外名单未确认。"],
+            "checked_at": "2026-10-23T00:00:00+00:00",
+        },
+    )
+
+    result = asyncio.run(supervisor_agents._run_compliance(context))
+
+    assert result.status == "needs_review"
+    assert "已完成" not in result.summary
+    assert "命中 0 条" not in result.summary
+    if screening_status == "possible_match":
+        assert "名称" in result.summary or "核验" in result.summary
 
 
 def test_esg_worker_never_labels_insufficient_data_as_low_risk(monkeypatch):

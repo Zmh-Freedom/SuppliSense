@@ -12,6 +12,7 @@ from app.schemas.supplier import (
     SupplierUpdateInput,
 )
 from app.schemas.user import UserInDB
+from app.schemas.screening import SupplierComplianceReadResponse
 from app.domains.supplier.access import (
     can_access_supplier,
     is_admin,
@@ -190,6 +191,50 @@ async def get_supplier_profile(
         raise HTTPException(status_code=404, detail=str(e))
 
     return profile
+
+
+@router.get(
+    "/{supplier_id}/compliance-status",
+    response_model=SupplierComplianceReadResponse,
+    summary="读取供应商合规核验状态",
+    description="按供应商访问范围读取版本化名单筛查状态和可核验的国内司法经营事实。",
+    responses={401: {"description": "未登录"}, 403: {"description": "无权查看该供应商"}, 404: {"description": "供应商不存在"}, 409: {"description": "供应商主体未核验"}},
+)
+async def get_supplier_compliance_status(
+    supplier_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+) -> SupplierComplianceReadResponse:
+    import asyncio
+
+    from app.domains.risk.assessment_contracts import assessment_scope
+    from app.domains.supplier.compliance_service import build_supplier_compliance_status
+    from app.domains.supplier.repo import get_supplier
+
+    supplier = await asyncio.to_thread(get_supplier, supplier_id)
+    if not supplier:
+        raise HTTPException(status_code=404, detail=f"供应商 {supplier_id} 不存在")
+    stable_id = str(supplier.get("supplier_id") or supplier.get("_id"))
+    if not await asyncio.to_thread(can_access_supplier, stable_id, current_user.id, current_user.role.value):
+        raise HTTPException(status_code=403, detail="无权查看该供应商")
+
+    context = {
+        "actor_id": current_user.id,
+        "actor_role": current_user.role.value,
+        "supplier_id": stable_id,
+    }
+    company_id = str(supplier.get("company_id") or "")
+    if company_id:
+        context["company_id"] = company_id
+    with assessment_scope(**context):
+        try:
+            result = await asyncio.to_thread(build_supplier_compliance_status, stable_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    screening = result.get("screening") or {}
+    if not screening.get("entity_id"):
+        raise HTTPException(status_code=409, detail="供应商主体尚未唯一核验，无法读取合规状态")
+    return SupplierComplianceReadResponse.model_validate(result)
 
 
 @router.get(

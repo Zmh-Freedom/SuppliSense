@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -78,6 +79,292 @@ def attach_tool_evidence(
     ).model_dump(mode="json")]
     _append_claims(result, claim_fields, result["evidence_records"], claim_subject)
     return result
+
+
+def attach_screening_evidence(analysis: dict[str, Any], *, entity_id: str) -> dict[str, Any]:
+    """Map screening source states and matches into auditable tool evidence.
+
+    Unknown screening states deliberately omit clean and zero-match claims.
+    Source observation, collection, expiry, and scope stay attached to the
+    corresponding source evidence record rather than becoming one generic
+    tool-call timestamp.
+    """
+    from app.graphs.agent_core.evidence_ledger import EvidenceStatus, build_evidence_record
+    from app.domains.risk.sanctions_service import project_legacy_sanctions
+
+    status = str(analysis.get("screening_status") or "unavailable")
+    coverage = analysis.get("coverage") if isinstance(analysis.get("coverage"), dict) else {}
+    coverage_status = str(coverage.get("status") or "insufficient")
+    company_name = str(analysis.get("company_name") or "")
+    stable_entity_id = str(analysis.get("entity_id") or entity_id or "")
+    matches = [item for item in analysis.get("matches", []) if isinstance(item, dict)]
+    current_matches = [
+        item for item in matches
+        if (item.get("validity") or {}).get("status") == "available"
+    ]
+    clean: bool | None = True if status == "no_match_in_scope" else False if status == "confirmed_match" else None
+    projection: dict[str, Any] = {}
+    if status in {"no_match_in_scope", "confirmed_match"}:
+        try:
+            projection = project_legacy_sanctions(analysis)
+        except ValueError:
+            projection = {}
+
+    tool_status = (
+        "success"
+        if coverage_status == "complete" and status in {"no_match_in_scope", "confirmed_match"}
+        else "partial"
+        if current_matches or any(
+            ((item.get("validity") or {}).get("status")) in {"available", "empty"}
+            for item in (coverage.get("sources") or []) if isinstance(item, dict)
+        )
+        else "unavailable"
+    )
+    result: dict[str, Any] = {
+        "company_name": company_name,
+        "sanctions_score": projection.get("sanctions_score"),
+        "sanctions_level": projection.get("sanctions_level"),
+        "match_count": len(current_matches),
+        "matches": matches,
+        "clean": clean,
+        "status": tool_status,
+        "evidence_refs": [],
+        "evidence_records": [],
+        "claims": [],
+    }
+
+    source_records: dict[str, dict[str, Any]] = {}
+    evidence_refs: list[str] = []
+    required_sources = {
+        str(item.get("source") if isinstance(item, dict) else item)
+        for item in coverage.get("required_sources", [])
+    }
+    source_entries = [item for item in coverage.get("sources", []) if isinstance(item, dict)]
+    limitations = [str(item) for item in analysis.get("limitations", []) if str(item).strip()]
+    for index, entry in enumerate(source_entries):
+        source = str(entry.get("source") or "sanctions_source")
+        evidence = entry.get("evidence") if isinstance(entry.get("evidence"), dict) else {}
+        validity = entry.get("validity") if isinstance(entry.get("validity"), dict) else {}
+        state = str(validity.get("status") or evidence.get("status") or "unknown")
+        evidence_status = _screening_evidence_status(state)
+        source_matches = [item for item in matches if str(item.get("source") or "") == source]
+        current_source_matches = [
+            item for item in source_matches
+            if (item.get("validity") or {}).get("status") == "available"
+        ]
+        checked_at = _screening_datetime(analysis.get("checked_at")) or datetime.now(timezone.utc)
+        collected_at = _screening_datetime(evidence.get("collected_at")) or checked_at
+        observed_at = evidence.get("observed_at") or validity.get("observed_at")
+        expires_at = validity.get("expires_at") or evidence.get("expires_at")
+        source_version = evidence.get("source_version") or entry.get("version")
+        digest = hashlib.sha256(
+            f"{stable_entity_id}:{source}:{source_version}:{index}".encode()
+        ).hexdigest()[:24]
+        record_id = f"screening:{digest}:source"
+        facts = {
+            "source": source,
+            "source_version": source_version,
+            "scope": entry.get("scope") or evidence.get("scope"),
+            "observed_at": observed_at,
+            "collected_at": evidence.get("collected_at") or validity.get("collected_at"),
+            "expires_at": expires_at,
+            "query_receipt": evidence.get("query_receipt") or {},
+            "validity_status": state,
+            "screening_status": status,
+            "coverage_status": coverage_status,
+            "match_count": len(current_source_matches),
+            "limitations": limitations,
+        }
+        if status == "no_match_in_scope" and source in required_sources and state in {"available", "empty"}:
+            facts["clean"] = True
+        record = build_evidence_record(
+            evidence_id=record_id,
+            entity_id=stable_entity_id,
+            dimension="compliance",
+            provider=source[:128],
+            source_type="sanctions_list",
+            payload=facts,
+            status=evidence_status,
+            collected_at=collected_at,
+            valid_until=_screening_datetime(expires_at),
+            data_mode="synthetic" if evidence.get("source_mode") in {"sample", "synthetic"} else "formal",
+        ).model_dump(mode="json")
+        result["evidence_records"].append(record)
+        evidence_refs.append(record_id)
+        source_records[source] = {"record_id": record_id, "status": state, "entry": entry}
+
+        for match_index, match in enumerate(source_matches):
+            match_digest = hashlib.sha256(
+                f"{record_id}:{match.get('record_id')}:{match.get('record_name')}:{match_index}".encode()
+            ).hexdigest()[:20]
+            match_record_id = f"screening:{digest}:match:{match_digest}"
+            match_facts = {
+                **facts,
+                "record_id": match.get("record_id"),
+                "record_name": match.get("record_name"),
+                "match_type": match.get("match_type"),
+                "matched_on": match.get("matched_on"),
+            }
+            match_record = build_evidence_record(
+                evidence_id=match_record_id,
+                entity_id=stable_entity_id,
+                dimension="compliance",
+                provider=source[:128],
+                source_type="sanctions_list_match",
+                payload=match_facts,
+                status=_screening_evidence_status((match.get("validity") or {}).get("status") or state),
+                collected_at=collected_at,
+                valid_until=_screening_datetime(expires_at),
+                data_mode="synthetic" if evidence.get("source_mode") in {"sample", "synthetic"} else "formal",
+            ).model_dump(mode="json")
+            result["evidence_records"].append(match_record)
+            evidence_refs.append(match_record_id)
+            if (match.get("validity") or {}).get("status") != "available" or match.get("match_type") not in {"confirmed", "possible"}:
+                continue
+            confirmed = match.get("match_type") == "confirmed"
+            record_name = str(match.get("record_name") or "名单记录")
+            statement = (
+                f"在 {source} 中发现与当前主体标识一致的名单记录：{record_name}。"
+                if confirmed
+                else f"在 {source} 中发现名称相似名单线索：{record_name}；主体尚未确认。"
+            )
+            result["claims"].append({
+                "claim_id": f"{match_record_id}:claim:record_name",
+                "entity_id": stable_entity_id,
+                "dimension": "compliance",
+                "statement": statement,
+                "value": record_name,
+                "fact_path": "record_name",
+                "operator": "eq",
+                "evidence_refs": [match_record_id],
+                "confidence": 0.95 if confirmed else 0.65,
+            })
+
+    domestic_findings = [
+        item for item in analysis.get("domestic_findings", []) if isinstance(item, dict)
+    ]
+    for index, finding in enumerate(domestic_findings):
+        validity = finding.get("validity") if isinstance(finding.get("validity"), dict) else {}
+        source = str(finding.get("source") or "domestic_compliance_source")
+        state = str(validity.get("status") or "unknown")
+        checked_at = _screening_datetime(analysis.get("checked_at")) or datetime.now(timezone.utc)
+        observed_at = validity.get("observed_at")
+        collected_at = _screening_datetime(validity.get("collected_at")) or checked_at
+        expires_at = validity.get("expires_at")
+        digest = hashlib.sha256(
+            f"{stable_entity_id}:{source}:{finding.get('kind')}:{index}".encode()
+        ).hexdigest()[:24]
+        record_id = f"screening:{digest}:domestic"
+        facts = {
+            "domestic_finding_kind": finding.get("kind"),
+            "count": finding.get("count"),
+            "source": source,
+            "source_version": validity.get("source_version"),
+            "scope": analysis.get("scope"),
+            "observed_at": observed_at,
+            "collected_at": validity.get("collected_at"),
+            "expires_at": expires_at,
+            "query_receipt": validity.get("query_receipt") or {},
+            "validity_status": state,
+            "screening_status": status,
+            "limitations": limitations,
+        }
+        record = build_evidence_record(
+            evidence_id=record_id,
+            entity_id=stable_entity_id,
+            dimension="compliance",
+            provider=source[:128],
+            source_type="domestic_compliance",
+            payload=facts,
+            status=_screening_evidence_status(state),
+            collected_at=collected_at,
+            valid_until=_screening_datetime(expires_at),
+        ).model_dump(mode="json")
+        result["evidence_records"].append(record)
+        evidence_refs.append(record_id)
+        count = finding.get("count")
+        if state not in {"available", "empty"} or isinstance(count, bool) or not isinstance(count, int):
+            continue
+        result["claims"].append({
+            "claim_id": f"{record_id}:claim:count",
+            "entity_id": stable_entity_id,
+            "dimension": "compliance",
+            "statement": f"国内 {finding.get('kind') or '风险'} 来源核验记录数：{count}。",
+            "value": count,
+            "fact_path": "count",
+            "operator": "eq",
+            "evidence_refs": [record_id],
+            "confidence": 0.9,
+        })
+
+    if status == "no_match_in_scope":
+        required_refs = [
+            source_records[source]["record_id"]
+            for source in required_sources
+            if source in source_records and source_records[source]["status"] in {"available", "empty"}
+        ]
+        if required_sources and len(required_refs) == len(required_sources):
+            result["claims"].append({
+                "claim_id": f"screening:{stable_entity_id}:claim:clean",
+                "entity_id": stable_entity_id,
+                "dimension": "compliance",
+                "statement": f"在已核验的名单范围内，{company_name} 未发现匹配记录。",
+                "value": True,
+                "fact_path": "clean",
+                "operator": "eq",
+                "evidence_refs": required_refs,
+                "confidence": 0.9,
+            })
+
+    if not result["evidence_records"] and stable_entity_id:
+        checked_at = _screening_datetime(analysis.get("checked_at")) or datetime.now(timezone.utc)
+        digest = hashlib.sha256(f"{stable_entity_id}:{status}:{checked_at.isoformat()}".encode()).hexdigest()[:24]
+        record_id = f"screening:{digest}:query"
+        record = build_evidence_record(
+            evidence_id=record_id,
+            entity_id=stable_entity_id,
+            dimension="compliance",
+            provider="sanctions_service",
+            source_type="screening_query",
+            payload={
+                "screening_status": status,
+                "coverage_status": coverage_status,
+                "scope": analysis.get("scope"),
+                "limitations": limitations,
+                "observed_at": None,
+                "expires_at": None,
+            },
+            status=EvidenceStatus.UNAVAILABLE,
+            collected_at=checked_at,
+        ).model_dump(mode="json")
+        result["evidence_records"].append(record)
+        evidence_refs.append(record_id)
+    result["evidence_refs"] = evidence_refs
+    return result
+
+
+def _screening_evidence_status(value: Any):
+    from app.graphs.agent_core.evidence_ledger import EvidenceStatus
+
+    return {
+        "available": EvidenceStatus.AVAILABLE,
+        "empty": EvidenceStatus.CONFIRMED_EMPTY,
+        "missing": EvidenceStatus.MISSING,
+        "stale": EvidenceStatus.STALE,
+        "conflicting": EvidenceStatus.CONFLICTING,
+    }.get(str(value), EvidenceStatus.UNAVAILABLE)
+
+
+def _screening_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
 def _active_entity_id(fallback: str) -> str:

@@ -89,10 +89,14 @@ def check_sanctions(company_name: str) -> dict:
     Args:
         company_name: 企业全称
     """
-    from app.domains.risk.sanctions_service import check_sanctions as _check
-    from app.tools.evidence import attach_tool_evidence
+    from app.domains.risk.sanctions_service import analyze_sanctions
+    from app.tools.evidence import attach_screening_evidence
+    from app.tools.executor import get_active_tool_context
 
-    return attach_tool_evidence(_check(company_name), tool_name="check_sanctions", entity_id=f"entity:{company_name}", dimension="compliance", claim_fields=["clean", "match_count"])
+    analysis = analyze_sanctions(company_name)
+    context = get_active_tool_context()
+    entity_id = str(analysis.get("entity_id") or (context.entity_id if context else "") or "")
+    return attach_screening_evidence(analysis, entity_id=entity_id)
 
 
 @tool

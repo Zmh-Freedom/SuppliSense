@@ -126,6 +126,32 @@ def test_build_supplier_profile_passes_context_to_all_sections(monkeypatch):
     assert changelog_calls == [("supplier-1", 20)]
 
 
+def test_build_supplier_profile_keeps_other_sections_when_compliance_is_unavailable(monkeypatch):
+    master = {"_id": "supplier-view-2", "supplier_id": "supplier-2", "name": "虚构供应商", "categories": []}
+    monkeypatch.setattr("app.domains.supplier.repo.get_supplier", lambda _supplier_id: master)
+    monkeypatch.setattr("app.domains.supplier.repo.get_changelog", lambda *_args: [])
+    monkeypatch.setattr(service, "_load_cached_enrichment", lambda _master: {})
+    monkeypatch.setattr(service, "_build_basic_info", lambda *_args: {"name": "虚构供应商"})
+    monkeypatch.setattr(service, "_build_risk_summary", lambda *_args: {"risk_score": 42})
+    monkeypatch.setattr(service, "_build_financial_snapshot", lambda *_args: {"revenue": None})
+    monkeypatch.setattr(service, "_build_sentiment_summary", lambda *_args: {"overall_sentiment": "未知"})
+    monkeypatch.setattr(
+        service,
+        "_build_compliance_status",
+        lambda *_args: (_ for _ in ()).throw(ValueError("名单来源当前不可用")),
+    )
+    monkeypatch.setattr(service, "_build_esg_summary", lambda *_args: {"governance": None})
+    monkeypatch.setattr(service, "_build_alert_list", lambda *_args: [])
+    monkeypatch.setattr(service, "_build_relationship_summary", lambda *_args: {"entities": []})
+
+    profile = service.build_supplier_profile("supplier-2")
+
+    assert profile["compliance"] is None
+    assert profile["risk"]["risk_score"] == 42
+    assert profile["financial"] == {"revenue": None}
+    assert profile["sentiment"]["overall_sentiment"] == "未知"
+
+
 def test_compliance_status_handles_empty_tianyancha_result(monkeypatch):
     """A no-result cache document must be treated as zero findings."""
     collections = {

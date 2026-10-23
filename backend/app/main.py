@@ -35,6 +35,7 @@ from app.domains.risk.api_financial import router as financial_router
 from app.domains.risk.api_report import router as report_router
 from app.domains.risk.api_macro import router as macro_router
 from app.domains.risk.api_scenario import router as scenario_router
+from app.domains.risk.api_screening import router as screening_router
 from app.domains.risk.api_sentiment import router as sentiment_router
 from app.domains.risk.api_trend import router as trend_router
 from app.domains.sourcing.api import router as sourcing_router
@@ -300,6 +301,7 @@ api_v1.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 api_v1.include_router(p2_router, prefix="/p2", tags=["p2"])
 api_v1.include_router(macro_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
+api_v1.include_router(screening_router)
 api_v1.include_router(report_router, prefix="/report", tags=["report"])
 api_v1.include_router(sourcing_router)
 api_v1.include_router(supplier_router)

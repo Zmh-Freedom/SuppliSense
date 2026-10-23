@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.domains.risk.assessment_contracts import get_assessment_context
-from app.domains.risk.assessment_service import resolve_identity
+from app.domains.risk.assessment_service import _actor, resolve_identity
 from app.domains.risk.evidence_validity import evaluate_evidence_validity
 from app.domains.risk import sanctions_sources
 from app.domains.supplier.compliance_service import read_domestic_findings
@@ -177,6 +177,8 @@ def analyze_sanctions(company_name: str, *, now: datetime | None = None) -> dict
     context = get_assessment_context()
     actor_id = context.get("actor_id")
     actor_role = context.get("actor_role")
+    if actor_id and not actor_role:
+        actor_id, actor_role = _actor(str(actor_id), None)
     if not company_name or not actor_id or not actor_role:
         return _empty_analysis(
             company_name,
@@ -395,28 +397,38 @@ def check_sanctions(company_name: str) -> dict:
     return project_legacy_sanctions(analyze_sanctions(company_name))
 
 
-def get_sanctions_dashboard() -> dict:
+def get_sanctions_dashboard(user_id: str | None = None, user_role: str | None = None) -> dict:
     """Build the legacy dashboard; any non-projectable item fails closed."""
     from app.domains.alert.service import get_watchlist_targets
 
-    targets = get_watchlist_targets()
-    companies = [target.get("company_name", "") for target in targets]
+    targets = (
+        get_watchlist_targets()
+        if user_id is None and user_role is None
+        else get_watchlist_targets(user_id, user_role)
+    )
     results = []
-    for name in companies:
-        projected = check_sanctions(name)
-        results.append(
-            {
-                "company_name": name,
-                "monitor_target_id": next(
-                    (target.get("monitor_target_id") for target in targets if target.get("company_name") == name),
-                    None,
-                ),
-                "sanctions_score": projected["sanctions_score"],
-                "sanctions_level": projected["sanctions_level"],
-                "match_count": projected["match_count"],
-            }
-        )
+    from app.domains.risk.assessment_contracts import assessment_scope
 
+    for target in targets:
+        name = target.get("company_name", "")
+        with assessment_scope(
+            actor_id=user_id,
+            actor_role=user_role,
+            company_id=target.get("company_id"),
+            monitor_target_id=target.get("monitor_target_id"),
+            supplier_id=target.get("supplier_id"),
+            scope=target.get("purchase_scope") or "",
+        ):
+            projected = check_sanctions(name)
+        results.append({
+            "company_name": name,
+            "monitor_target_id": target.get("monitor_target_id"),
+            "sanctions_score": projected["sanctions_score"],
+            "sanctions_level": projected["sanctions_level"],
+            "match_count": projected["match_count"],
+        })
+
+    companies = [target.get("company_name", "") for target in targets]
     critical = [item for item in results if item["sanctions_level"] == "critical"]
     high = [item for item in results if item["sanctions_level"] == "high"]
     return {

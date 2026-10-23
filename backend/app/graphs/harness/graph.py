@@ -890,12 +890,95 @@ def _latest_tool_data(outcomes: list[Any], tool_names: set[str]) -> dict[str, An
     return {}
 
 
+def _screening_statuses(outcomes: list[Any]) -> list[str]:
+    statuses: list[str] = []
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        if str(outcome.get("tool_name") or outcome.get("tool") or "") != "check_sanctions":
+            continue
+        data = outcome.get("data") if isinstance(outcome.get("data"), dict) else {}
+        outcome_statuses: list[str] = []
+        for record in data.get("evidence_records") or []:
+            facts = record.get("facts") if isinstance(record, dict) else None
+            status = facts.get("screening_status") if isinstance(facts, dict) else None
+            if status:
+                outcome_statuses.append(str(status))
+        if not outcome_statuses:
+            declared = str(data.get("status") or outcome.get("status") or "")
+            if declared in {"unavailable", "failed", "denied", "invalid"}:
+                outcome_statuses.append("unavailable")
+        statuses.extend(outcome_statuses)
+    return list(dict.fromkeys(statuses))
+
+
 def _claim_values(claims: list[Any]) -> dict[str, Any]:
     return {
         str(claim.fact_path): claim.value
         for claim in claims
         if claim.fact_path and claim.value is not None
     }
+
+
+def _verified_domestic_facts(answer: AgentAnswer, outcomes: list[Any]) -> list[str]:
+    labels = {
+        "lawsuit": ("诉讼记录", "起"),
+        "court_register": ("开庭公告", "条"),
+        "executed_person": ("被执行人记录", "条"),
+        "dishonesty": ("失信被执行人记录", "条"),
+        "abnormal_operation": ("经营异常记录", "条"),
+        "administrative_penalty": ("行政处罚记录", "条"),
+        "tax_arrears": ("欠税记录", "条"),
+    }
+    domestic_records: dict[str, tuple[str, str, str]] = {}
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        data = outcome.get("data") if isinstance(outcome.get("data"), dict) else {}
+        for record in data.get("evidence_records") or []:
+            if not isinstance(record, dict):
+                continue
+            facts = record.get("facts") if isinstance(record.get("facts"), dict) else {}
+            kind = str(facts.get("domestic_finding_kind") or "")
+            if kind in labels and record.get("evidence_id"):
+                domestic_records[str(record["evidence_id"])] = (
+                    kind,
+                    str(record.get("entity_id") or ""),
+                    str(data.get("company_name") or ""),
+                )
+
+    summaries: list[str] = []
+    seen: set[tuple[str, str, int]] = set()
+    for claim in answer.claims:
+        if (
+            claim.dimension != "compliance"
+            or claim.fact_path != "count"
+            or claim.validation_status != "supported"
+            or isinstance(claim.value, bool)
+            or not isinstance(claim.value, int)
+            or claim.value <= 0
+        ):
+            continue
+        findings = {
+            domestic_records[ref]
+            for ref in claim.evidence_refs
+            if ref in domestic_records
+        }
+        for kind, entity_id, company_name in findings:
+            key = (entity_id, kind, claim.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            label, unit = labels[kind]
+            subject_label = f"{company_name}的" if company_name else ""
+            summaries.append(f"{subject_label}{label} {claim.value} {unit}")
+    return summaries
+
+
+def _append_verified_domestic_facts(summary: str, facts: list[str]) -> str:
+    if not facts:
+        return summary
+    return summary + " 已核实的国内风险信息：" + "、".join(facts) + "。"
 
 
 def _summary_subject(target_names: list[str]) -> str:
@@ -1170,15 +1253,60 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if primary_capability == "compliance":
         compliance_claims = [claim for claim in answer.claims if claim.dimension == "compliance"]
         values = _claim_values(compliance_claims)
+        screening_statuses = _screening_statuses(outcomes)
+        domestic_facts = _verified_domestic_facts(answer, outcomes)
+        if "confirmed_match" in screening_statuses:
+            return _summary_with_boundary(
+                answer,
+                _append_verified_domestic_facts(
+                    f"{subject} 存在与主体标识一致的名单记录，需要人工复核；其他来源覆盖情况见下方证据。",
+                    domestic_facts,
+                ),
+                "请结合名单来源和主体信息复核后再作采购判断。",
+            )
+        if "possible_match" in screening_statuses:
+            return _summary_with_boundary(
+                answer,
+                _append_verified_domestic_facts(
+                    f"{subject} 存在名称相似的名单线索，主体尚未确认，需要人工核验。",
+                    domestic_facts,
+                ),
+                "请先核对统一社会信用代码等主体标识。",
+            )
+        if screening_statuses and all(status == "no_match_in_scope" for status in screening_statuses):
+            return _summary_with_boundary(
+                answer,
+                _append_verified_domestic_facts(
+                    f"在已核验的名单范围内，{subject} 未发现匹配记录。",
+                    domestic_facts,
+                ),
+                "未命中结论仅适用于本轮列明的名单与声明范围。",
+            )
+        if "stale" in screening_statuses:
+            return _append_verified_domestic_facts(
+                f"{subject} 的现有名单依据已过期，当前无法确认筛查结果，需要重新核验。",
+                domestic_facts,
+            )
+        if "conflicting" in screening_statuses:
+            return _append_verified_domestic_facts(
+                f"{subject} 的名单来源或主体信息存在冲突，当前结论需要人工核对。",
+                domestic_facts,
+            )
         if not compliance_claims:
-            return f"已完成 {subject} 的合规筛查，但当前没有可验证的筛查结果。"
+            return _append_verified_domestic_facts(
+                f"当前没有足够的正式名单证据，无法判断 {subject} 是否存在名单命中。",
+                domestic_facts,
+            )
         clean = values.get("clean")
         match_count = values.get("match_count")
-        result = f"已完成 {subject} 的合规与制裁筛查；" + (
-            "当前未发现名单命中"
+        result = (
+            f"在已核验的名单范围内，{subject} 未发现匹配记录。"
             if clean is True
-            else f"发现名单命中 {int(match_count)} 条" if isinstance(match_count, (int, float)) else "发现需要人工核验的名单信号"
-        ) + "。"
+            else f"{subject} 发现名单记录，需要人工复核。"
+            if isinstance(match_count, (int, float)) and match_count > 0
+            else f"当前没有足够的正式名单证据，无法判断 {subject} 是否存在名单命中。"
+        )
+        result = _append_verified_domestic_facts(result, domestic_facts)
         return _summary_with_boundary(answer, result, "可结合命中记录和主体信息继续人工核验。")
     if primary_capability == "esg":
         esg_claims = [claim for claim in answer.claims if claim.dimension == "esg"]
@@ -1858,6 +1986,25 @@ def build_harness_graph(
             required_dimensions=_required_dimensions(tasks),
             required_evidence=_required_evidence_items(tasks),
         )
+        screening_statuses = _screening_statuses(state.get("tool_outcomes", []))
+        unresolved_screening = [status for status in screening_statuses if status != "no_match_in_scope"]
+        if unresolved_screening:
+            status_limitations = {
+                "confirmed_match": "名单主体标识匹配需要人工复核",
+                "possible_match": "名称相似线索尚未核实主体身份",
+                "partial": "名单来源覆盖不完整",
+                "stale": "名单来源依据已过期",
+                "conflicting": "名单来源或主体信息存在冲突",
+                "not_queried": "已配置名单来源尚未完成查询",
+                "unavailable": "没有足够的正式名单证据确认筛查结果",
+            }
+            answer = answer.model_copy(update={
+                "status": "needs_review",
+                "limitations": list(dict.fromkeys([
+                    *answer.limitations,
+                    *[status_limitations.get(status, "名单筛查状态需要人工核验") for status in unresolved_screening],
+                ])),
+            })
         operational_limits = []
         for record in state.get("evidence_records", []):
             if record.get("dimension") in {"quality", "delivery"}:
