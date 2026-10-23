@@ -49,6 +49,7 @@ async def list_procurement_cases(
     limit: int = Query(default=20, ge=1, le=100),
     cursor: str | None = None,
     current_user: UserInDB = Depends(get_current_user),
+    view: str = "accessible",
 ) -> dict[str, Any]:
     filters = {
         key: value
@@ -57,6 +58,7 @@ async def list_procurement_cases(
             "case_type": case_type,
             "monitor_target_id": monitor_target_id,
             "owner_user_id": owner_user_id,
+            "view": view,
         }.items()
         if value is not None
     }

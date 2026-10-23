@@ -232,6 +232,69 @@ def test_case_list_applies_actor_scope_and_keyset_before_page_limit():
     assert cursor.params[-1] == 21
 
 
+@pytest.mark.parametrize(
+    ("view", "required_scope", "forbidden_scope"),
+    [
+        ("mine", "created_by = %s", "department_code = ANY(%s)"),
+        ("department", "department_code = ANY(%s)", "created_by = %s"),
+    ],
+)
+def test_case_list_applies_selected_view_scope_in_sql(view, required_scope, forbidden_scope):
+    class ListCursor:
+        description = [("id",), ("updated_at",)]
+
+        def __init__(self) -> None:
+            self.query = ""
+            self.params: tuple = ()
+
+        def execute(self, query: str, params: tuple = ()) -> None:
+            self.query = query
+            self.params = params
+
+        def fetchall(self) -> list[tuple]:
+            return []
+
+    cursor = ListCursor()
+    case_repo.list_cases(
+        {"view": view},
+        actor_id="buyer-1",
+        user_role="purchaser",
+        manager_departments=["D1"],
+        cur=cursor,
+    )
+
+    assert required_scope in cursor.query
+    assert forbidden_scope not in cursor.query
+    assert cursor.query.index("WHERE") < cursor.query.index("LIMIT %s")
+
+
+def test_department_case_list_is_empty_without_current_manager_departments():
+    class ListCursor:
+        description = [("id",), ("updated_at",)]
+
+        def __init__(self) -> None:
+            self.query = ""
+            self.params: tuple = ()
+
+        def execute(self, query: str, params: tuple = ()) -> None:
+            self.query = query
+            self.params = params
+
+        def fetchall(self) -> list[tuple]:
+            return []
+
+    cursor = ListCursor()
+    case_repo.list_cases(
+        {"view": "department"},
+        actor_id="buyer-1",
+        user_role="purchaser",
+        manager_departments=[],
+        cur=cursor,
+    )
+
+    assert "WHERE FALSE" in cursor.query
+
+
 def _case_values(target_id: str, actor_id: str, trigger_key: str = "trigger-1") -> dict:
     return {
         "monitor_target_id": target_id,

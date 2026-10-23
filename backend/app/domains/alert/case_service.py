@@ -553,20 +553,39 @@ def get_case_detail(case_id: str, user_id: str, user_role: str) -> dict[str, Any
 
 
 def list_cases(filters: dict[str, Any], user_id: str, user_role: str) -> dict[str, Any]:
-    allowed_filters = {"status", "case_type", "monitor_target_id", "owner_user_id", "limit", "cursor"}
+    allowed_filters = {
+        "status",
+        "case_type",
+        "monitor_target_id",
+        "owner_user_id",
+        "view",
+        "limit",
+        "cursor",
+    }
     if set(filters) - allowed_filters:
         raise ValueError("事项查询包含不支持的过滤条件")
+    view = str(filters.get("view") or "accessible")
+    if view not in {"mine", "department", "accessible"}:
+        raise ValueError("不支持的事项视图")
     if filters.get("status") and filters["status"] not in case_repo.CASE_STATUSES:
         raise ValueError("不支持的事项状态")
     if filters.get("case_type") and filters["case_type"] not in case_repo.CASE_TYPES:
         raise ValueError("不支持的采购事项类型")
     limit = max(1, min(int(filters.get("limit", 20)), 100))
     cursor = _decode_cursor(filters.get("cursor"))
+    manager_departments = case_access.current_manager_departments(str(user_id))
     page = case_repo.list_cases(
-        {key: value for key, value in filters.items() if key in allowed_filters - {"limit", "cursor"}},
+        {
+            **{
+                key: value
+                for key, value in filters.items()
+                if key in allowed_filters - {"limit", "cursor"}
+            },
+            "view": view,
+        },
         actor_id=str(user_id),
         user_role=str(user_role),
-        manager_departments=case_access.current_manager_departments(str(user_id)),
+        manager_departments=manager_departments,
         limit=limit,
         cursor=cursor,
     )
@@ -575,7 +594,15 @@ def list_cases(filters: dict[str, Any], user_id: str, user_role: str) -> dict[st
         capabilities = _can_read_case(case, user_id, user_role)
         if capabilities.get("can_read"):
             visible.append({"case": case, "capabilities": capabilities})
-    return {"items": visible, "next_cursor": _encode_cursor(page["next_cursor"])}
+    can_list_cases = str(user_role) in case_access.PURCHASER_ROLES | {"admin"}
+    return {
+        "items": visible,
+        "next_cursor": _encode_cursor(page["next_cursor"]),
+        "available_views": {
+            "mine": can_list_cases,
+            "department": can_list_cases and bool(manager_departments),
+        },
+    }
 
 
 def _case_receipts(case_id: str, *, cur: object) -> list[dict[str, Any]]:

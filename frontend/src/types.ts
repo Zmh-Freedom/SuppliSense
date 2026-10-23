@@ -162,6 +162,87 @@ export interface MonitorTarget {
   };
 }
 
+export type ProcurementCaseStatus = 'open' | 'in_progress' | 'deferred' | 'pending_closure' | 'closed' | string;
+export type ProcurementCaseType = 'risk_review' | 'coverage_gap' | 'identity_review';
+export type ProcurementClosureCategory = 'resolved' | 'accepted_limitation' | 'duplicate' | 'withdrawn';
+
+export interface ProcurementCase {
+  id: string;
+  monitor_target_id: string;
+  case_type: ProcurementCaseType;
+  department_code?: string | null;
+  title: string;
+  priority: 'high' | 'normal' | string;
+  status: ProcurementCaseStatus;
+  version: number;
+  created_by: string;
+  owner_user_id?: string | null;
+  due_at?: string | null;
+  next_review_at?: string | null;
+  closure_request?: {
+    category?: ProcurementClosureCategory;
+    summary?: string;
+    receipt_ids?: string[];
+    residual_limitations?: string;
+    requested_by?: string;
+    requested_at?: string;
+    reviewed_by?: string;
+    reviewed_at?: string;
+    review_reason?: string;
+  } | null;
+  closed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CaseCapabilities {
+  can_read: boolean;
+  can_claim: boolean;
+  can_assign: boolean;
+  can_update: boolean;
+  can_request_closure: boolean;
+  can_decide_closure: boolean;
+  can_reopen: boolean;
+}
+
+export interface ProcurementCaseEvent {
+  id: string;
+  case_id?: string;
+  version?: number;
+  event_type: string;
+  actor_id?: string;
+  payload?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ProcurementCaseTask {
+  id: string;
+  task_type: string;
+  status: string;
+  version?: number;
+  result?: {
+    summary?: string;
+    status?: string;
+    missing_dimensions?: string[];
+    [key: string]: unknown;
+  } | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProcurementCaseDetail {
+  case: ProcurementCase;
+  events: ProcurementCaseEvent[];
+  linked_tasks: ProcurementCaseTask[];
+  capabilities: CaseCapabilities;
+}
+
+export interface ProcurementCaseList {
+  items: Array<{ case: ProcurementCase; capabilities: CaseCapabilities }>;
+  next_cursor: string | null;
+  available_views?: { mine: boolean; department: boolean };
+}
+
 export interface MonitorRiskDetail {
   monitor_target_id: string;
   company_name: string;

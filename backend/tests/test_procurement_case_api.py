@@ -42,6 +42,21 @@ def test_case_detail_uses_404_for_inaccessible_cases(monkeypatch: pytest.MonkeyP
     assert error.value.status_code == 404
 
 
+def test_case_list_forwards_authorized_view_filter(monkeypatch: pytest.MonkeyPatch):
+    captured: dict = {}
+
+    def capture(filters, user_id, user_role):
+        captured.update(filters=filters, user_id=user_id, user_role=user_role)
+        return {"items": [], "next_cursor": None}
+
+    monkeypatch.setattr(case_service, "list_cases", capture)
+    result = asyncio.run(api_cases.list_procurement_cases(current_user=_user(), view="department"))
+
+    assert result["items"] == []
+    assert captured["filters"]["view"] == "department"
+    assert captured["user_id"] == "buyer-1"
+
+
 def test_idempotency_conflicts_map_to_http_409(monkeypatch: pytest.MonkeyPatch):
     endpoint = getattr(api_cases, "send_procurement_case_command", None)
     assert callable(endpoint), "send_procurement_case_command must be implemented"

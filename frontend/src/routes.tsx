@@ -11,6 +11,7 @@ const Settings = lazy(() => import('./components/Settings'));
 const SourcingPage = lazy(() => import('./components/SourcingPage'));
 const SupplierLibraryPage = lazy(() => import('./components/SupplierLibraryPage'));
 const SupplierProfilePage = lazy(() => import('./components/SupplierProfilePage'));
+const ProcurementCases = lazy(() => import('./components/ProcurementCases'));
 
 function Lazy({ children }: { children: ReactNode }) {
   return (
@@ -24,6 +25,7 @@ export const TAB_ROUTES = [
   { path: '/', label: '采购工作台', icon: 'dashboard', primary: true },
   { path: '/sourcing', label: '寻源建议', icon: 'sourcing' },
   { path: '/assess', label: '风险监控', icon: 'assess' },
+  { path: '/cases', label: '采购事项', icon: 'cases' },
   { path: '/suppliers', label: '供应商库', icon: 'sourcing' },
   { path: '/settings', label: '设置', icon: 'settings' },
 ];
@@ -38,6 +40,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Lazy><Dashboard /></Lazy> },
       { path: 'assess/:monitorTargetId?', element: <Lazy><MonitoringView /></Lazy> },
+      { path: 'cases/:caseId?', element: <Lazy><ProcurementCases /></Lazy> },
       { path: 'sourcing', element: <Lazy><SourcingPage /></Lazy> },
       { path: 'suppliers', element: <Lazy><SupplierLibraryPage /></Lazy> },
       { path: 'suppliers/:id', element: <Lazy><SupplierProfilePage /></Lazy> },

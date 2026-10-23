@@ -28,7 +28,7 @@ const target: MonitorTarget = {
   next_action: { code: 'verify_identity', label: '完成主体核验', priority: 'high', reason: '外部候选尚未完成主体确认' },
 };
 
-vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), upload: vi.fn() } }));
+vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), upload: vi.fn() }, getStoredUser: () => ({ username: 'buyer', role: 'purchaser' }) }));
 vi.mock('../hooks', () => ({
   useDashboard: () => ({ data: { total: 1, alert_count: 0, distribution: {}, targets: [target] }, isLoading: false, error: null, refetch: vi.fn() }),
   useWatchlist: () => ({ companies: [], targets: [target], isLoading: false, error: null, refetch: vi.fn() }),
@@ -180,5 +180,52 @@ describe('MonitoringView', () => {
     expect(screen.getByText(/注册号：450205000188432/)).toBeInTheDocument();
     expect(screen.getByText('主体尚未核验，不能绑定')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '确认此主体' })).not.toBeInTheDocument();
+  });
+
+  it('labels a completed legacy review as execution completion', async () => {
+    const originalTask = target.review_task;
+    target.review_task = {
+      id: 'legacy-task-1',
+      monitor_target_id: target.monitor_target_id,
+      task_type: 'review',
+      status: 'completed',
+      version: 2,
+      created_at: '2026-10-23T08:00:00Z',
+      updated_at: '2026-10-23T09:00:00Z',
+      result: { summary: '技术复核执行完成。' },
+    };
+    vi.mocked(api.get).mockImplementation(path => path === '/procurement-cases'
+      ? Promise.resolve({ items: [], next_cursor: null, available_views: { mine: true, department: false } })
+      : path.includes('legacy-task-1') ? Promise.resolve(target.review_task) : Promise.resolve({}));
+    try {
+      renderView('/assess/monitor-1');
+      expect(await screen.findByText('执行完成')).toBeInTheDocument();
+      expect(screen.getByText('技术复核执行完成。')).toBeInTheDocument();
+    } finally {
+      target.review_task = originalTask;
+    }
+  });
+
+  it('creates a procurement case from the stable monitor target id', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path === '/procurement-cases') return Promise.resolve({ items: [], next_cursor: null, available_views: { mine: true, department: false } });
+      if (path.includes('/identity-candidates')) return Promise.resolve({ monitor_target_id: 'monitor-1', query: '待核验候选有限公司', resolution: 'pending_verification', candidates: [] });
+      return Promise.resolve({});
+    });
+    vi.mocked(api.post).mockResolvedValueOnce({ case: { id: 'case-created' }, capabilities: { can_read: true } });
+    renderView('/assess/monitor-1');
+
+    await user.click(await screen.findByRole('button', { name: '创建采购事项' }));
+    await user.clear(screen.getByLabelText('事项标题'));
+    await user.type(screen.getByLabelText('事项标题'), '核验候选主体身份');
+    await user.click(screen.getByRole('button', { name: '创建事项' }));
+
+    expect(api.post).toHaveBeenLastCalledWith('/procurement-cases', expect.objectContaining({
+      monitor_target_id: 'monitor-1',
+      case_type: 'identity_review',
+      title: '核验候选主体身份',
+    }), undefined, expect.objectContaining({ 'Idempotency-Key': expect.any(String) }));
+    expect(await screen.findByTestId('location')).toHaveTextContent('/cases/case-created');
   });
 });

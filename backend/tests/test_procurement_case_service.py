@@ -40,6 +40,46 @@ def _case(**updates) -> dict:
     }
 
 
+def test_case_list_reports_views_from_current_manager_scope(monkeypatch: pytest.MonkeyPatch):
+    captured: dict = {}
+
+    def capture_list(filters, **kwargs):
+        captured["filters"] = filters
+        captured.update(kwargs)
+        return {"items": [], "next_cursor": None}
+
+    monkeypatch.setattr(case_service.case_access, "current_manager_departments", lambda _user_id: ["D1"])
+    monkeypatch.setattr(case_service.case_repo, "list_cases", capture_list)
+
+    result = case_service.list_cases({"view": "department"}, "buyer-1", "purchaser")
+
+    assert result == {
+        "items": [],
+        "next_cursor": None,
+        "available_views": {"mine": True, "department": True},
+    }
+    assert captured["filters"]["view"] == "department"
+    assert captured["manager_departments"] == ["D1"]
+
+
+def test_case_list_rejects_unknown_view():
+    with pytest.raises(ValueError, match="事项视图"):
+        case_service.list_cases({"view": "all"}, "buyer-1", "purchaser")
+
+
+def test_viewer_receives_no_available_case_list_views(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(case_service.case_access, "current_manager_departments", lambda _user_id: ["D1"])
+    monkeypatch.setattr(
+        case_service.case_repo,
+        "list_cases",
+        lambda *_args, **_kwargs: {"items": [], "next_cursor": None},
+    )
+
+    result = case_service.list_cases({"view": "mine"}, "viewer-1", "viewer")
+
+    assert result["available_views"] == {"mine": False, "department": False}
+
+
 def test_claim_is_limited_to_open_unassigned_case():
     changes, event = _plan(
         _case(),

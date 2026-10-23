@@ -525,7 +525,17 @@ def list_cases(
     def _list(transaction_cursor: Any) -> dict[str, Any]:
         clauses: list[str] = []
         params: list[Any] = []
-        if user_role != "admin":
+        view = str(filters.get("view") or "accessible")
+        if view == "mine":
+            clauses.append("(created_by = %s OR owner_user_id = %s)")
+            params.extend([str(actor_id), str(actor_id)])
+        elif view == "department":
+            if manager_departments:
+                clauses.append("department_code = ANY(%s)")
+                params.append(manager_departments)
+            else:
+                clauses.append("FALSE")
+        elif user_role != "admin":
             scope_parts = ["created_by = %s", "owner_user_id = %s"]
             params.extend([str(actor_id), str(actor_id)])
             if manager_departments:
