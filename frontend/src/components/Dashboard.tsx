@@ -5,10 +5,11 @@ import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel, getRiskLevelLabel } from '../riskColors';
+import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel } from '../riskColors';
 import { useDashboard } from '../hooks';
 import { queryKeys } from '../query-keys';
 import type { Prediction } from '../types';
+import { monitorEvidencePresentation } from '../evidencePresentation';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -270,8 +271,11 @@ export default function Dashboard() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {rankedTargets.map((target, index) => {
                   const score = target.risk_score;
-                  const riskColor = score == null ? '#737373' : getRiskColor(score);
-                  const riskBg = score == null ? '#f5f5f4' : getRiskBg(score);
+                  const evidence = monitorEvidencePresentation(target);
+                  const historical = evidence.riskLabel.startsWith('历史评估');
+                  const riskColor = score == null || historical ? '#737373' : getRiskColor(score);
+                  const riskBg = score == null || historical ? '#f5f5f4' : getRiskBg(score);
+                  const actionClass = evidence.actionTone === 'danger' ? 'text-red-700' : evidence.actionTone === 'warning' ? 'text-amber-700' : 'text-gray-600';
                   const trendDelta = target.risk_change?.delta;
                   const trendText = target.risk_change?.label || '暂无数据';
                   return (
@@ -287,7 +291,7 @@ export default function Dashboard() {
                       </td>
                       <td className="px-3 py-3">
                         <span className="inline-flex rounded-full px-2 py-1 text-[11px] font-medium" style={{ color: riskColor, background: riskBg }}>
-                          {score == null ? '暂无快照' : `${getRiskLevelLabel(target.risk_level)} ${score}/100`}
+                          {evidence.riskLabel}
                         </span>
                       </td>
                       <td className="px-3 py-3 text-[var(--color-text-secondary)]">
@@ -297,8 +301,8 @@ export default function Dashboard() {
                         <span className="block truncate">{(target.data_coverage as { summary?: string } | undefined)?.summary || '覆盖情况未知'}</span>
                       </td>
                       <td className="max-w-[160px] px-3 py-3">
-                        <span className={`block truncate font-medium ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>
-                          {target.next_action?.label || '继续观察'}
+                        <span className={`block truncate font-medium ${actionClass}`} title={evidence.detail}>
+                          {evidence.actionLabel}
                         </span>
                       </td>
                     </tr>

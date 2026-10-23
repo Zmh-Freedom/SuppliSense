@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { queryKeys } from '../query-keys';
 import { useDashboard, useWatchlist } from '../hooks';
+import { isCurrentRiskEvidence, monitorEvidencePresentation } from '../evidencePresentation';
 import { getRiskLevelLabel } from '../riskColors';
 import type { MonitorIdentityResolution, MonitorIntake, MonitorIntakeConfirmation, MonitorReviewTask, MonitorRiskDetail, MonitorTarget } from '../types';
 import MonitoringWorkbench from './MonitoringWorkbench';
@@ -158,7 +159,9 @@ export default function MonitoringView() {
   const createTaskMutation = useMutation({
     mutationFn: (target: MonitorTarget) => api.post<MonitorReviewTask>('/alert/review-tasks', {
       monitor_target_id: target.monitor_target_id,
-      task_type: target.next_action?.code || 'review',
+      task_type: target.next_action?.code === 'continue_monitoring' && monitorEvidencePresentation(target).actionLabel === '核验状态未知'
+        ? 'review'
+        : target.next_action?.code || 'review',
       payload: {
         target_type: target.target_type,
         data_coverage: target.data_coverage,
@@ -348,10 +351,12 @@ function MonitoringTargetDetail({
 }) {
   const coverage = coverageOf(target);
   const action = target.next_action;
-  const riskText = target.risk_score == null ? '暂无快照' : `${getRiskLevelLabel(target.risk_level)} · ${target.risk_score}/100`;
-  const priorityTone = action?.priority === 'high'
+  const evidence = monitorEvidencePresentation(target);
+  const riskText = evidence.riskLabel;
+  const priority = evidence.actionTone === 'danger' ? 'high' : evidence.actionTone === 'warning' ? 'medium' : action?.priority;
+  const priorityTone = evidence.actionTone === 'danger'
     ? 'border-red-200 bg-red-50 text-red-950'
-    : action?.priority === 'medium'
+    : evidence.actionTone === 'warning'
       ? 'border-amber-200 bg-amber-50 text-amber-950'
       : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)]';
   return (
@@ -367,18 +372,18 @@ function MonitoringTargetDetail({
           </div>
           <div className="flex flex-wrap gap-2"><TaskActionButton target={target} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} /><button type="button" onClick={() => onAnalyze(target)} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-primary-bg)] hover:bg-[var(--color-surface-hover)]">Agent 复核</button><button type="button" onClick={onRefresh} disabled={isRefreshing} className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-[var(--color-text-secondary)] disabled:opacity-50">{isRefreshing ? '检查中…' : '重新检查'}</button></div>
         </div>
-        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-5"><DetailMetric label="首次复核" value={initialAssessmentLabel(target)} /><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={action?.label || '继续观察'} /></div>
+        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-4 md:grid-cols-5"><DetailMetric label="首次复核" value={initialAssessmentLabel(target)} /><DetailMetric label="当前风险" value={riskText} /><DetailMetric label="风险变化" value={target.risk_change?.label || '暂无数据'} /><DetailMetric label="数据覆盖" value={coverage.summary || '覆盖情况未知'} /><DetailMetric label="下一步" value={evidence.actionLabel} /></div>
       </section>
 
       <section className={`rounded-2xl border p-5 shadow-sm ${priorityTone}`} aria-label="采购优先级摘要">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.12em] opacity-70">采购优先级摘要</p>
-            <h2 className="mt-1 text-base font-semibold">下一步：{action?.label || '继续观察'}</h2>
+            <h2 className="mt-1 text-base font-semibold">下一步：{evidence.actionLabel}</h2>
           </div>
-          <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-medium">优先级：{priorityLabel(action?.priority)}</span>
+          <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-medium">优先级：{priorityLabel(priority)}</span>
         </div>
-        <p className="mt-3 text-sm leading-6">{action?.reason || '当前没有需要立即处理的变化，建议继续观察后续风险快照。'}</p>
+        <p className="mt-3 text-sm leading-6">{evidence.detail}</p>
         <div className="mt-4 grid gap-2 text-xs sm:grid-cols-3">
           <div className="rounded-lg bg-white/60 px-3 py-2"><span className="opacity-70">当前风险：</span>{riskText}</div>
           <div className="rounded-lg bg-white/60 px-3 py-2"><span className="opacity-70">风险变化：</span>{target.risk_change?.label || '暂无数据'}</div>
@@ -396,11 +401,11 @@ function MonitoringTargetDetail({
         isConfirming={isConfirmingIdentity}
       />
 
-      <RiskConclusionPanel detail={riskDetail} isLoading={isRiskDetailLoading} error={riskDetailError} />
+      <RiskConclusionPanel detail={riskDetail} isLoading={isRiskDetailLoading} error={riskDetailError} isCurrentEvidence={isCurrentRiskEvidence(target)} />
 
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><div className="mb-3 flex items-center justify-between gap-3"><h2 className="text-sm font-semibold text-[var(--color-text)]">数据覆盖与复核依据</h2><span className="text-xs text-gray-400">缺口不会被解释为稳定</span></div>{coverage.dimensions?.length ? <div className="divide-y divide-[var(--color-border)]">{coverage.dimensions.map(dimension => <div key={dimension.key} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><div><span className="font-medium text-[var(--color-text)]">{dimension.label}</span><span className="ml-2 text-xs text-gray-400">{dimension.detail}</span></div><span className={`rounded-full px-2 py-1 text-[11px] ${dimension.status === 'available' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{dimension.status === 'available' ? '可用' : '未覆盖'}</span></div>)}</div> : <p className="text-sm text-gray-400">暂无数据覆盖明细。</p>}</section>
 
-      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{action?.reason || '等待更多监控数据后再安排复核。'}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{action?.label || '继续观察'}</span><span>优先级：{priorityLabel(action?.priority)}</span></div></section>
+      <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">采购复核建议</h2><p className="mt-2 text-sm leading-6 text-amber-900">{evidence.detail}</p><div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-amber-800"><span>建议动作：{evidence.actionLabel}</span><span>优先级：{priorityLabel(priority)}</span></div></section>
 
       <ReviewTaskPanel target={target} task={task} onAction={onAction} onApprove={onApprove} onReject={onReject} onExecute={onExecuteTask} />
 
@@ -409,7 +414,7 @@ function MonitoringTargetDetail({
   );
 }
 
-function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRiskDetail; isLoading: boolean; error?: string }) {
+function RiskConclusionPanel({ detail, isLoading, error, isCurrentEvidence }: { detail?: MonitorRiskDetail; isLoading: boolean; error?: string; isCurrentEvidence: boolean }) {
   if (isLoading) return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-3 text-sm text-gray-400">正在读取本轮风险快照…</p></section>;
   if (error) return <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">风险结论与依据</h2><p className="mt-2 text-sm text-amber-900">风险快照暂时无法读取，请稍后重新检查。</p></section>;
   if (!detail?.has_snapshot || !detail.latest_snapshot) return <section className="rounded-2xl border border-amber-200 bg-amber-50 p-5"><h2 className="text-sm font-semibold text-amber-900">风险结论与依据</h2><p className="mt-2 text-sm text-amber-900">尚未完成首次风险评估，因此不能给出具体风险结论。</p></section>;
@@ -427,11 +432,15 @@ function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRis
       const score = typeof data['归一化'] === 'number' ? data['归一化'] : data['原始分'];
       const evidenceText = readableEvidence.toLowerCase();
       const missing = score == null || ['待补充', '未覆盖', '暂无', '缺少', '未取得'].some(token => evidenceText.includes(token));
+      const numericScore = Number(score);
+      const attention = isCurrentEvidence
+        ? missing ? '当前未覆盖' : numericScore > 0 ? '需关注' : '当前未见异常信号'
+        : missing ? '历史数据未覆盖' : numericScore > 0 ? '历史风险信号，需复核' : '历史信号待核验';
       return {
         dimension: RISK_DIMENSION_LABELS[dimension] || dimension,
         score: score == null ? '—' : String(score),
         evidence: readableEvidence,
-        attention: missing ? '当前未覆盖' : Number(score) > 0 ? '需关注' : '当前未见异常信号',
+        attention,
       };
     });
   const singleSnapshot = detail.history.length < 2;
@@ -439,14 +448,24 @@ function RiskConclusionPanel({ detail, isLoading, error }: { detail?: MonitorRis
   const judicialLabels: Record<string, string> = { executedPerson: '被执行人', dishonesty: '失信被执行人', courtAnnouncement: '开庭公告', consumptionRestriction: '限制消费' };
   const judicialCounts: Record<string, string> = { executedPerson: 'executed_count', dishonesty: 'dishonesty_count', courtAnnouncement: 'court_announcement_count', consumptionRestriction: 'consumption_restriction_count' };
   const judicialRows = Object.keys(judicialLabels).map(key => ({ label: judicialLabels[key], status: judicialStatus?.[key] || 'not_queried', count: snapshot.risk_detail?.[judicialCounts[key]] }));
+  const snapshotTimeLabel = isCurrentEvidence ? '本轮快照' : '历史评估时间';
+  const levelLabel = getRiskLevelLabel(snapshot.risk_level);
+  const riskScoreLabel = isCurrentEvidence
+    ? `${levelLabel} · ${snapshot.risk_score ?? '—'}/100`
+    : `历史评估：${levelLabel} · ${snapshot.risk_score ?? '—'}/100；当前待核验`;
+  const panelTone = isCurrentEvidence ? 'border-[var(--color-border)] bg-[var(--color-surface)]' : 'border-amber-200 bg-amber-50/60';
+  const singleSnapshotText = isCurrentEvidence
+    ? '目前仅有 1 条风险快照，因此系统只能展示本轮结论，尚不能判断风险是在改善、恶化还是保持稳定。'
+    : '目前仅有 1 条历史风险快照，只能说明当时评估结果，当前风险和变化趋势仍待核验。';
 
-  return <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-1 text-xs text-gray-400">本轮快照：{snapshot.checked_at ? new Date(snapshot.checked_at).toLocaleString('zh-CN', { hour12: false }) : '时间未知'} · 评分体系 {snapshot.scoring_version || '—'}</p></div><span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-700">{getRiskLevelLabel(snapshot.risk_level)} · {snapshot.risk_score ?? '—'}/100</span></div>
-    <p className="mt-4 text-sm leading-6 text-[var(--color-text-secondary)]">本轮结论基于已关联的公开财务、司法与内部供应商数据形成。评分较低不表示无需关注：下表列出本轮被识别到的风险信号及其原始依据。</p>
-    <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4" aria-label="风险信息层级"><Layer label="事实" value="本轮快照、报告期与查询状态" /><Layer label="信号" value="风险维度与司法数据状态" /><Layer label="推断" value="当前风险等级与维度判断" /><Layer label="建议" value="下一步采购复核动作" /></div>
-    <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-[var(--color-border)] text-xs text-gray-500"><tr><th className="pb-2 pr-4 font-medium">风险维度</th><th className="pb-2 pr-4 font-medium">本轮得分</th><th className="pb-2 pr-4 font-medium">判断</th><th className="pb-2 font-medium">依据</th></tr></thead><tbody className="divide-y divide-[var(--color-border)]">{rows.map(row => <tr key={row.dimension} className="align-top"><td className="py-3 pr-4 font-medium text-[var(--color-text)]">{row.dimension}</td><td className="py-3 pr-4 text-[var(--color-text-secondary)]">{row.score}</td><td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-[11px] ${row.attention === '需关注' ? 'bg-amber-50 text-amber-800' : row.attention === '当前未覆盖' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{row.attention}</span></td><td className="py-3 leading-5 text-[var(--color-text-secondary)]">{row.evidence}</td></tr>)}</tbody></table></div>
-    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3"><h3 className="text-xs font-semibold text-slate-700">司法数据覆盖</h3><div className="mt-2 grid gap-2 sm:grid-cols-2">{judicialRows.map(row => { const statusText = row.status === 'has_records' ? `有记录（${typeof row.count === 'number' ? row.count : 0}条）` : row.status === 'no_records' ? '明确无记录' : row.status === 'query_failed' ? '查询失败' : '暂无数据'; const tone = row.status === 'has_records' ? 'text-amber-700' : row.status === 'no_records' ? 'text-emerald-700' : 'text-gray-500'; return <div key={row.label} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs"><span className="text-slate-600">{row.label}</span><span className={tone}>{statusText}</span></div>; })}</div></div>
-    {singleSnapshot && <p className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">目前仅有 1 条风险快照，因此系统只能展示本轮结论，尚不能判断风险是在改善、恶化还是保持稳定。</p>}
+  return <section className={`rounded-2xl border p-5 shadow-sm ${panelTone}`}>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[var(--color-text)]">风险结论与依据</h2><p className="mt-1 text-xs text-gray-400">{snapshotTimeLabel}：{snapshot.checked_at ? new Date(snapshot.checked_at).toLocaleString('zh-CN', { hour12: false }) : '时间未知'} · 评分体系 {snapshot.scoring_version || '—'}</p></div><span className={`rounded-full px-2.5 py-1 text-xs ${isCurrentEvidence ? 'bg-gray-100 text-gray-700' : 'bg-amber-100 font-medium text-amber-900'}`}>{riskScoreLabel}</span></div>
+    {!isCurrentEvidence && <p className="mt-4 rounded-lg border border-amber-200 bg-white/70 px-3 py-2 text-sm leading-6 text-amber-900">此评分是历史快照，只能作为历史风险信号参考；当前风险结论待核验，历史零分或未发现记录不代表当前安全。</p>}
+    <p className="mt-4 text-sm leading-6 text-[var(--color-text-secondary)]">{isCurrentEvidence ? '本轮结论基于已关联的公开财务、司法与内部供应商数据形成。评分较低不表示无需关注：下表列出本轮被识别到的风险信号及其原始依据。' : '以下维度分数和司法状态来自历史评估时点，不能直接代表当前状态。历史风险信号仍需复核，缺失数据也不表示风险较低。'}</p>
+    <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4" aria-label="风险信息层级"><Layer label="事实" value={isCurrentEvidence ? '本轮快照、报告期与查询状态' : '历史快照、报告期与查询状态'} /><Layer label="信号" value="风险维度与司法数据状态" /><Layer label="推断" value={isCurrentEvidence ? '当前风险等级与维度判断' : '历史风险等级，当前待核验'} /><Layer label="建议" value="下一步采购复核动作" /></div>
+    <div className="mt-4 overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-[var(--color-border)] text-xs text-gray-500"><tr><th className="pb-2 pr-4 font-medium">风险维度</th><th className="pb-2 pr-4 font-medium">{isCurrentEvidence ? '本轮得分' : '历史得分'}</th><th className="pb-2 pr-4 font-medium">判断</th><th className="pb-2 font-medium">依据</th></tr></thead><tbody className="divide-y divide-[var(--color-border)]">{rows.map(row => { const tone = row.attention === '当前未见异常信号' ? 'bg-emerald-50 text-emerald-700' : row.attention === '历史风险信号，需复核' ? 'bg-red-50 text-red-700' : row.attention === '需关注' ? 'bg-amber-50 text-amber-800' : row.attention.includes('未覆盖') || row.attention === '历史信号待核验' ? 'bg-amber-50 text-amber-700' : 'bg-amber-50 text-amber-800'; return <tr key={row.dimension} className="align-top"><td className="py-3 pr-4 font-medium text-[var(--color-text)]">{row.dimension}</td><td className="py-3 pr-4 text-[var(--color-text-secondary)]">{row.score}</td><td className="py-3 pr-4"><span className={`rounded-full px-2 py-1 text-[11px] ${tone}`}>{row.attention}</span></td><td className="py-3 leading-5 text-[var(--color-text-secondary)]">{row.evidence}</td></tr>; })}</tbody></table></div>
+    <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/70 p-3"><h3 className="text-xs font-semibold text-slate-700">司法数据覆盖</h3><div className="mt-2 grid gap-2 sm:grid-cols-2">{judicialRows.map(row => { const count = typeof row.count === 'number' ? row.count : 0; const statusText = row.status === 'has_records' ? `${isCurrentEvidence ? '' : '历史'}有记录（${count}条）` : row.status === 'no_records' ? `${isCurrentEvidence ? '本轮' : '历史'}未发现记录` : row.status === 'query_failed' ? `${isCurrentEvidence ? '' : '历史'}查询失败` : '暂无数据'; const tone = row.status === 'has_records' ? 'text-amber-700' : row.status === 'no_records' && isCurrentEvidence ? 'text-emerald-700' : row.status === 'no_records' ? 'text-amber-700' : 'text-gray-500'; return <div key={row.label} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-xs"><span className="text-slate-600">{row.label}</span><span className={tone}>{statusText}</span></div>; })}</div></div>
+    {singleSnapshot && <p className={`mt-4 rounded-lg px-3 py-2 text-xs leading-5 ${isCurrentEvidence ? 'bg-slate-50 text-slate-600' : 'bg-amber-100/70 text-amber-900'}`}>{singleSnapshotText}</p>}
   </section>;
 }
 
@@ -535,7 +554,8 @@ function evidenceLabel(value?: string): string {
 
 function TaskActionButton({ target, onAction, onApprove, onReject, onExecute }: { target: MonitorTarget; onAction: (target: MonitorTarget) => void; onApprove: (target: MonitorTarget) => void; onReject: (target: MonitorTarget) => void; onExecute: (target: MonitorTarget) => void }) {
   const task = target.review_task;
-  if (!task || ['completed', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(task.status)) return <button type="button" onClick={() => onAction(target)} className="rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">{task ? '再次发起复核' : target.next_action?.label || '发起复核'}</button>;
+  const actionLabel = monitorEvidencePresentation(target).actionLabel;
+  if (!task || ['completed', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(task.status)) return <button type="button" onClick={() => onAction(target)} className="rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">{task ? '再次发起复核' : actionLabel}</button>;
   if (task.status === 'pending_approval') return <><button type="button" onClick={() => onApprove(target)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs text-white hover:bg-emerald-700">批准任务</button><button type="button" onClick={() => onReject(target)} className="rounded-lg border border-red-200 px-3 py-2 text-xs text-red-600 hover:bg-red-50">拒绝</button></>;
   if (task.status === 'approved') return <button type="button" onClick={() => onExecute(target)} className="rounded-lg bg-[var(--color-primary-bg)] px-3 py-2 text-xs text-white hover:bg-[var(--color-primary-hover)]">执行复核</button>;
   return <span className="rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs text-gray-500">{taskStatusLabel(task.status)}</span>;

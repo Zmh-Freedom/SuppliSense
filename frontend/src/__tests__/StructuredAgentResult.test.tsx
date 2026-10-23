@@ -129,6 +129,64 @@ it('does not create a green action signal from a completed historical score', ()
   expect(screen.getAllByText('历史规则待核验').length).toBeGreaterThan(0);
 });
 
+it('does not present unavailable screening as completed or procurement-ready', () => {
+  const unavailable: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: 'screening-unavailable', dimension: 'compliance',
+    provider: 'check_sanctions', source_type: 'screening_query', status: 'unavailable',
+    facts: { screening_status: 'unavailable', coverage_status: 'insufficient' },
+  };
+  const completedCompliance: AgentAnswer = {
+    ...answer, status: 'completed', summary: '已完成供应商名单筛查，未发现风险。', claims: [], evidence_refs: [],
+    action_proposals: [{ action_type: 'continue', label: '可按正常流程推进', reason: '旧筛查工具未发现命中' }],
+  };
+  render(<StructuredAgentResult answer={completedCompliance} evidence={[unavailable]} />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.queryByText('已完成供应商名单筛查，未发现风险。')).not.toBeInTheDocument();
+  expect(screen.queryByText('可按正常流程推进并持续关注指标变化。')).not.toBeInTheDocument();
+  expect(screen.queryByText('可按正常流程推进')).not.toBeInTheDocument();
+  expect(screen.getByText('名单核验后再确定采购动作')).toBeInTheDocument();
+  expect(screen.getByText('需采购人员处理')).toBeInTheDocument();
+});
+
+it('keeps a possible name match in manual review even if the answer status is completed', () => {
+  const possible: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: 'screening-possible', dimension: 'compliance',
+    provider: 'fixture-list', source_type: 'sanctions_list_match', status: 'available',
+    facts: { screening_status: 'possible_match', match_type: 'possible', record_name: '同名主体有限公司' },
+  };
+  const completedCompliance: AgentAnswer = {
+    ...answer, status: 'completed', summary: '名单筛查已完成。', claims: [], evidence_refs: [],
+  };
+  render(<StructuredAgentResult answer={completedCompliance} evidence={[possible]} />);
+
+  expect(screen.getAllByText('疑似名单线索，待核验').length).toBeGreaterThan(0);
+  expect(screen.queryByText('名单筛查已完成。')).not.toBeInTheDocument();
+  expect(screen.queryByText('可按正常流程推进并持续关注指标变化。')).not.toBeInTheDocument();
+  expect(screen.getByText('需采购人员处理')).toBeInTheDocument();
+});
+
+it('does not treat a legacy clean boolean as a current screening conclusion', () => {
+  const legacyClaim = {
+    ...answer.claims[0], claim_id: 'legacy-screening', dimension: 'compliance', fact_path: 'clean', value: true,
+    statement: '虚构甲供应链有限公司 合规筛查结果：未命中风险记录', evidence_refs: ['legacy-screening-evidence'],
+  };
+  const legacyEvidence: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: 'legacy-screening-evidence', dimension: 'compliance',
+    provider: 'check_sanctions', source_type: 'screening_query', status: 'available', facts: { clean: true },
+  };
+  const completedCompliance: AgentAnswer = {
+    ...answer, status: 'completed', summary: '已完成供应商名单筛查，未发现风险。', claims: [legacyClaim],
+    evidence_refs: ['legacy-screening-evidence'],
+  };
+  render(<StructuredAgentResult answer={completedCompliance} evidence={[legacyEvidence]} />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.queryByText('未见风险信号')).not.toBeInTheDocument();
+  expect(screen.queryByText('未命中风险记录')).not.toBeInTheDocument();
+  expect(screen.queryByText('可继续推进')).not.toBeInTheDocument();
+});
+
 it('identifies the subject period and scope of each metric and distinguishes source time', () => {
   const c = {...answer.claims[0],entity_id:'company:1',dimension:'quality',fact_path:'quality_rate',value:0.952,unit:'ratio',evidence_refs:['scoped']};
   const scoped: AgentEvidenceRecord = {...evidence[0],evidence_id:'scoped',entity_id:'company:1',dimension:'quality',

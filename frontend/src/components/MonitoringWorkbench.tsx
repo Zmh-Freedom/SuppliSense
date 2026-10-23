@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { MonitorTarget } from '../types';
-import { getRiskBg, getRiskBgForLevel, getRiskColor, getRiskColorForLevel, getRiskLevelLabel } from '../riskColors';
+import { getRiskBg, getRiskBgForLevel, getRiskColor, getRiskColorForLevel } from '../riskColors';
+import { monitorEvidencePresentation } from '../evidencePresentation';
 
 interface CoverageSummary {
   status?: string;
@@ -79,7 +80,8 @@ function formatCheckedAt(value?: string | null): string {
   return date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
-function riskTone(target: MonitorTarget): { color: string; background: string } {
+function riskTone(target: MonitorTarget, historical: boolean): { color: string; background: string } {
+  if (historical) return { color: '#737373', background: '#f5f5f4' };
   if (target.risk_score != null) {
     return { color: getRiskColor(target.risk_score), background: getRiskBg(target.risk_score) };
   }
@@ -97,6 +99,12 @@ function priorityRank(priority?: string): number {
   return ({ high: 0, medium: 1, low: 2 } as Record<string, number>)[priority || ''] ?? 3;
 }
 
+function effectivePriorityRank(target: MonitorTarget): number {
+  const evidence = monitorEvidencePresentation(target);
+  const priority = evidence.actionTone === 'danger' ? 'high' : evidence.actionTone === 'warning' ? 'medium' : target.next_action?.priority;
+  return priorityRank(priority);
+}
+
 function changeRank(status?: string): number {
   return ({ deteriorating: 0, no_data: 1, insufficient_data: 1, stable: 2, improving: 3 } as Record<string, number>)[status || ''] ?? 4;
 }
@@ -106,7 +114,7 @@ function priorityLabel(priority?: string): string {
 }
 
 function orderTargets(left: MonitorTarget, right: MonitorTarget): number {
-  const priority = priorityRank(left.next_action?.priority) - priorityRank(right.next_action?.priority);
+  const priority = effectivePriorityRank(left) - effectivePriorityRank(right);
   if (priority !== 0) return priority;
   const change = changeRank(left.risk_change?.status) - changeRank(right.risk_change?.status);
   if (change !== 0) return change;
@@ -139,9 +147,9 @@ export default function MonitoringWorkbench({
   const [open, setOpen] = useState(defaultOpen);
   const activeTargets = targets.filter(target => target.monitor_status !== 'removed');
   const orderedTargets = [...activeTargets].sort(orderTargets);
-  const reviewCount = activeTargets.filter(target => target.next_action?.priority === 'high').length;
+  const reviewCount = activeTargets.filter(target => monitorEvidencePresentation(target).actionTone === 'danger').length;
   const insufficientCount = activeTargets.filter(target => coverageOf(target).status !== 'complete').length;
-  const readyCount = activeTargets.filter(target => target.next_action?.priority === 'low').length;
+  const readyCount = activeTargets.filter(target => monitorEvidencePresentation(target).actionLabel === '继续观察').length;
 
   const submit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -227,8 +235,11 @@ export default function MonitoringWorkbench({
               <tbody className="divide-y divide-[var(--color-border)]">
                 {orderedTargets.map(target => {
                   const coverage = coverageOf(target);
-                  const risk = riskTone(target);
+                  const evidence = monitorEvidencePresentation(target);
+                  const risk = riskTone(target, evidence.riskLabel.startsWith('历史评估'));
                   const trend = trendTone(target.risk_change?.status);
+                  const priority = evidence.actionTone === 'danger' ? 'high' : evidence.actionTone === 'warning' ? 'medium' : target.next_action?.priority;
+                  const actionClass = evidence.actionTone === 'danger' ? 'text-red-700' : evidence.actionTone === 'warning' ? 'text-amber-700' : 'text-gray-600';
                   return (
                     <tr key={target.monitor_target_id} className="align-top hover:bg-[var(--color-surface-hover)]">
                       <td className="px-3 py-3">
@@ -256,7 +267,7 @@ export default function MonitoringWorkbench({
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-full px-2 py-1 text-[11px] font-medium" style={{ color: risk.color, background: risk.background }}>
-                            {target.risk_score != null ? `${getRiskLevelLabel(target.risk_level)} ${target.risk_score}/100` : '暂无风险快照'}
+                            {evidence.riskLabel}
                           </span>
                           <span className="rounded-full px-2 py-1 text-[11px]" style={{ color: trend.color, background: trend.background }}>
                             {target.risk_change?.label || '暂无数据'}{target.risk_change?.delta != null ? ` ${target.risk_change.delta > 0 ? '+' : ''}${target.risk_change.delta}` : ''}
@@ -268,8 +279,8 @@ export default function MonitoringWorkbench({
                         {coverage.missing_dimensions && coverage.missing_dimensions.length > 0 && <div className="mt-1 max-w-[150px] text-[10px] leading-4 text-gray-400">缺少：{coverage.missing_dimensions.slice(0, 2).join('、')}</div>}
                       </td>
                       <td className="px-3 py-3">
-                        <div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => onAction(target)} disabled={target.review_task?.status === 'pending_approval' || target.review_task?.status === 'executing'} className={`text-left text-xs font-medium hover:underline disabled:cursor-not-allowed disabled:no-underline ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>{target.next_action?.label || '继续观察'}</button><span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{priorityLabel(target.next_action?.priority)}</span></div>
-                        <div className="mt-1 max-w-[170px] text-[10px] leading-4 text-gray-400">{target.next_action?.reason || '等待更多监控数据'}</div>
+                        <div className="flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => onAction(target)} disabled={target.review_task?.status === 'pending_approval' || target.review_task?.status === 'executing'} className={`text-left text-xs font-medium hover:underline disabled:cursor-not-allowed disabled:no-underline ${actionClass}`}>{evidence.actionLabel}</button><span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">{priority ? priorityLabel(priority) : '待判断'}</span></div>
+                        <div className="mt-1 max-w-[170px] text-[10px] leading-4 text-gray-400" title={evidence.detail}>{evidence.detail}</div>
                       </td>
                       <td className="px-3 py-3">
                         <div className="flex flex-wrap items-center gap-1.5">

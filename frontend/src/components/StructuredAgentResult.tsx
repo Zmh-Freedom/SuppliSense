@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { presentRiskClaim } from '../claimPresentation';
 import { canonicalFactPath as canonicalizeFactPath } from '../factPaths';
+import { screeningEvidenceReview } from '../evidencePresentation';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import { EvidenceTable } from './ChatResultSections';
 import AgentTrendCharts from './AgentTrendCharts';
@@ -174,7 +175,7 @@ function readableFactLabel(path: string): string {
 function readableFactValue(path: string, value: unknown): string {
   const canonicalPath = canonicalFactPath(path);
   const leafPath = canonicalPath.split('.').pop() || canonicalPath;
-  if (leafPath === 'clean' && typeof value === 'boolean') return value ? '未命中风险记录' : '发现风险记录';
+  if (leafPath === 'clean' && typeof value === 'boolean') return value ? '范围内未发现匹配' : '发现风险记录';
   if (leafPath === 'supplier_spend_share' && typeof value === 'number') return `${(value * 100).toFixed(1)}%`;
   if (leafPath === 'settlement_share' && typeof value === 'number') {
     return value > 0 && value < 0.001 ? '<0.1%' : `${(value * 100).toFixed(1)}%`;
@@ -733,8 +734,9 @@ function reviewClaims(answer: AgentAnswer, paths: string[]): string[] {
     .map(readableClaimStatement);
 }
 
-function answerStatusMeta(answer: AgentAnswer, limitations: string[]) {
+function answerStatusMeta(answer: AgentAnswer, limitations: string[], screeningReview: ReturnType<typeof screeningEvidenceReview>) {
   const text = limitations.join(' ');
+  if (screeningReview) return { label: screeningReview.label, className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   if (text.includes('主体')) return { label: '主体待确认', className: 'border-violet-200 bg-violet-50 text-violet-700', icon: '?' };
   if (text.includes('权限')) return { label: '权限不足', className: 'border-red-200 bg-red-50 text-red-700', icon: '×' };
   if (text.includes('资料') || text.includes('财务')) return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
@@ -746,9 +748,10 @@ function answerStatusMeta(answer: AgentAnswer, limitations: string[]) {
 export default function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }) {
   if (!answer && (!evidence || evidence.length === 0)) return null;
   const limitations = answer?.limitations.map(readableLimitation).filter(Boolean) || [];
-  const status = answer ? answerStatusMeta(answer, limitations) : null;
+  const screeningReview = answer ? screeningEvidenceReview(evidence || [], answer.claims) : null;
+  const status = answer ? answerStatusMeta(answer, limitations, screeningReview) : null;
   const riskItems = buildRiskItems(answer, evidence || []);
-  const overview = answer ? analysisOverview(answer, limitations) : '';
+  const overview = answer ? screeningReview?.summary || analysisOverview(answer, limitations) : '';
   const watchlistClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && (
     claim.statement.startsWith('监控对象：') || (typeof claim.value === 'string' && /(?:有限公司|股份有限公司|集团)/.test(claim.value))
   )) || [];
@@ -766,7 +769,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const capabilityMeta = getAnswerCapabilityMeta(capability);
 
   return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 分析结果">
-    {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} />}
+    {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} evidence={evidence || []} />}
     {answer && <div className="bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-code-bg)]/60 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -808,13 +811,27 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {
             const claims = answer.claims.filter(claim => claimGroup(claim) === group && shouldShowClaim(claim));
             if (claims.length === 0) return null;
-            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => { const presentation = presentRiskClaim(claim, evidence || [], answer.claims, answer.status !== 'completed' || limitations.length > 0); const assessment = presentation ? { label: presentation.label, className: ({ neutral: 'border-stone-200 bg-stone-50 text-stone-700', positive: 'border-emerald-200 bg-emerald-50 text-emerald-700', warning: 'border-amber-200 bg-amber-50 text-amber-700', danger: 'border-red-200 bg-red-50 text-red-700' })[presentation.tone] } : claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0); return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{presentation?.value ?? readableClaimDetail(claim)}{presentation?.context && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{presentation.context}</p>}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>; })}</Fragment>;
+            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => {
+              const presentation = presentRiskClaim(claim, evidence || [], answer.claims, answer.status !== 'completed' || limitations.length > 0 || Boolean(screeningReview));
+              const isScreeningClaim = claim.dimension === 'compliance' || claim.fact_path?.split('.').at(-1) === 'clean';
+              const screeningClaimMeta = isScreeningClaim ? screeningReview || {
+                label: '范围内未发现匹配',
+                className: 'border-stone-200 bg-stone-50 text-stone-700',
+              } : null;
+              const assessment = screeningClaimMeta
+                ? { label: screeningClaimMeta.label, className: 'className' in screeningClaimMeta ? screeningClaimMeta.className : 'border-amber-200 bg-amber-50 text-amber-700' }
+                : presentation ? { label: presentation.label, className: ({ neutral: 'border-stone-200 bg-stone-50 text-stone-700', positive: 'border-emerald-200 bg-emerald-50 text-emerald-700', warning: 'border-amber-200 bg-amber-50 text-amber-700', danger: 'border-red-200 bg-red-50 text-red-700' })[presentation.tone] } : claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0);
+              const claimValue = screeningClaimMeta && screeningReview ? '旧筛查结果仅供历史参考' : presentation?.value ?? readableClaimDetail(claim);
+              return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{claimValue}{presentation?.context && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{presentation.context}</p>}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>;
+            })}</Fragment>;
           })}</tbody>
         </table>
       </div></EvidenceTable>}
       {answer.claims.length > 0 && !scopeQuery && <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-sm leading-6 text-violet-950" aria-label={capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}>
         <h4 className="font-semibold">{capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}</h4>
-        <p className="mt-1">{operationalReview
+        <p className="mt-1">{screeningReview
+          ? screeningReview.summary
+          : operationalReview
           ? '质量/交付指标仅用于核对来源事实；评级政策尚未确认，当前无法据此判断风险等级或形成采购放行建议。'
           : capability !== 'generic'
           ? capabilityMeta.suggestion

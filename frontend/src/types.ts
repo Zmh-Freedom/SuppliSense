@@ -816,6 +816,88 @@ export interface SanctionsResult {
   matches: SanctionsMatch[];
 }
 
+export type ScreeningStatus =
+  | 'no_match_in_scope'
+  | 'possible_match'
+  | 'confirmed_match'
+  | 'partial'
+  | 'stale'
+  | 'conflicting'
+  | 'not_queried'
+  | 'unavailable';
+
+export interface ScreeningSourceEvidence {
+  source?: string;
+  source_version?: string | null;
+  status?: string;
+  observed_at?: string | null;
+  collected_at?: string | null;
+  expires_at?: string | null;
+  scope?: string | null;
+  query_receipt?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ScreeningCoverageSource {
+  source: string;
+  required: boolean;
+  scope?: string | null;
+  evidence: ScreeningSourceEvidence;
+  validity: {
+    status: string;
+    observed_at?: string | null;
+    collected_at?: string | null;
+    expires_at?: string | null;
+    detail?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ScreeningDomesticFinding {
+  kind: string;
+  count: number | null;
+  source: string;
+  validity: {
+    status: string;
+    observed_at?: string | null;
+    collected_at?: string | null;
+    expires_at?: string | null;
+    detail?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ScreeningReadResult {
+  schema_version: 1;
+  company_name: string;
+  entity_id: string | null;
+  scope: string | null;
+  screening_status: ScreeningStatus;
+  coverage: {
+    status: string;
+    sources: ScreeningCoverageSource[];
+    required_sources: string[];
+  };
+  matches: Array<{
+    source: string;
+    record_id?: string;
+    record_name?: string;
+    match_type: 'possible' | 'confirmed' | string;
+    matched_on?: string;
+    validity: Record<string, unknown>;
+  }>;
+  domestic_findings: ScreeningDomesticFinding[];
+  limitations: string[];
+  checked_at: string;
+}
+
+export interface SupplierComplianceReadResult {
+  schema_version: 1;
+  screening: ScreeningReadResult;
+  domestic_findings: ScreeningDomesticFinding[];
+  limitations: string[];
+}
+
 // ---- Supplier Master Data ----
 
 export interface SupplierMasterData {
