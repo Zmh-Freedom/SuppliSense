@@ -267,6 +267,8 @@ def _create_case_with_cursor(
     values: dict[str, Any],
     actor_id: str,
     request_key: str,
+    *,
+    created_event_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     request_values = {"action": "create_case", "case": values}
     request_id, replay = _begin_request(cur, actor_id, request_key, request_values)
@@ -325,7 +327,10 @@ def _create_case_with_cursor(
         event_type="created",
         from_status=None,
         to_status="open",
-        payload={"reopened_from_case_id": previous_case_id},
+        payload={
+            "reopened_from_case_id": previous_case_id,
+            **(created_event_payload or {}),
+        },
         version=1,
         request_id=request_id,
     )
@@ -339,13 +344,24 @@ def create_or_get_case(
     request_key: str,
     *,
     cur: object | None = None,
+    created_event_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized = _normalise_case_values(values, actor_id)
     if cur is not None:
-        return _create_case_with_cursor(cur, normalized, actor_id, request_key)
+        return _create_case_with_cursor(
+            cur,
+            normalized,
+            actor_id,
+            request_key,
+            created_event_payload=created_event_payload,
+        )
     with get_cursor() as (_, transaction_cursor):
         return _create_case_with_cursor(
-            transaction_cursor, normalized, actor_id, request_key
+            transaction_cursor,
+            normalized,
+            actor_id,
+            request_key,
+            created_event_payload=created_event_payload,
         )
 
 

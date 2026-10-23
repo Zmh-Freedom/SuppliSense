@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { api, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
-import type { ProcurementCaseDetail, ProcurementCaseEvent, ProcurementClosureCategory } from '../types';
+import type { ProcurementCaseDetail, ProcurementCaseEvent, ProcurementCaseList, ProcurementClosureCategory } from '../types';
 
 function idempotencyHeaders(): Record<string, string> {
   const key = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -56,6 +56,13 @@ function formatDate(value?: string | null): string {
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false });
 }
 
+function toLocalDateTimeInput(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function eventDescription(event: ProcurementCaseEvent): string {
   const payload = event.payload || {};
   const summary = payload.summary || payload.reason;
@@ -70,6 +77,7 @@ function commandError(error: unknown): string {
 
 export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
   const queryClient = useQueryClient();
+  const user = getStoredUser();
   const detailQuery = useQuery({
     queryKey: queryKeys.procurementCase(caseId),
     queryFn: ({ signal }) => api.get<ProcurementCaseDetail>(`/procurement-cases/${encodeURIComponent(caseId)}`, undefined, signal),
@@ -82,9 +90,36 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
   const [reviewReason, setReviewReason] = useState('');
   const [reopenReason, setReopenReason] = useState('');
   const [ownerUserId, setOwnerUserId] = useState('');
+  const [transferReason, setTransferReason] = useState('');
+  const [deferReason, setDeferReason] = useState('');
+  const [nextReviewAt, setNextReviewAt] = useState<string | null>(null);
+  const [dueAt, setDueAt] = useState<string | null>(null);
+  const [duplicateCaseId, setDuplicateCaseId] = useState('');
   const [selectedReceiptIds, setSelectedReceiptIds] = useState<string[] | null>(null);
   const [isClosureFormOpen, setIsClosureFormOpen] = useState(false);
   const [actionError, setActionError] = useState('');
+  const detailCase = detailQuery.data?.case;
+  const duplicateTargetsQuery = useInfiniteQuery({
+    queryKey: queryKeys.procurementCases({
+      view: 'accessible',
+      monitor_target_id: detailCase?.monitor_target_id || '',
+      limit: '100',
+      actor: user?.username || '',
+    }),
+    queryFn: ({ signal, pageParam }) => api.get<ProcurementCaseList>(
+      '/procurement-cases',
+      {
+        view: 'accessible',
+        monitor_target_id: detailCase?.monitor_target_id || '',
+        limit: '100',
+        ...(pageParam ? { cursor: pageParam } : {}),
+      },
+      signal,
+    ),
+    initialPageParam: '',
+    getNextPageParam: page => page.next_cursor || undefined,
+    enabled: Boolean(isClosureFormOpen && closureCategory === 'duplicate' && detailCase?.monitor_target_id),
+  });
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['procurement-cases'] });
@@ -107,6 +142,14 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
       if (command.command === 'request_closure' || command.command === 'approve_closure' || command.command === 'reject_closure') {
         setIsClosureFormOpen(false);
       }
+      if (command.command === 'request_transfer') setTransferReason('');
+      if (command.command === 'defer') {
+        setDeferReason('');
+        setNextReviewAt(null);
+      }
+      if (command.command === 'set_due') setDueAt(null);
+      if (command.command === 'resume') setNextReviewAt(null);
+      if (command.command === 'request_closure') setDuplicateCaseId('');
       setReviewReason('');
       invalidate();
     },
@@ -174,10 +217,38 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
       receipt_ids: activeReceiptIds,
     };
     if (closureCategory === 'accepted_limitation') command.residual_limitations = residualLimitations;
+    if (closureCategory === 'duplicate') command.duplicate_case_id = duplicateCaseId;
     sendCommand('request_closure', command);
   };
   const decideClosure = (command: 'approve_closure' | 'reject_closure') => {
     sendCommand(command, { reason: reviewReason });
+  };
+  const canSetDue = Boolean((capabilities?.can_update || capabilities?.can_assign)
+    && item && ['open', 'in_progress', 'deferred'].includes(item.status));
+  const duplicateCases = (duplicateTargetsQuery.data?.pages || [])
+    .flatMap(page => page.items || [])
+    .map(entry => entry.case)
+    .filter(candidate => candidate.id !== item?.id
+      && candidate.monitor_target_id === item?.monitor_target_id
+      && Boolean(item?.scope_key)
+      && candidate.scope_key === item?.scope_key);
+  const dueInputValue = dueAt ?? toLocalDateTimeInput(item?.due_at);
+  const nextReviewInputValue = nextReviewAt ?? toLocalDateTimeInput(item?.next_review_at);
+  const submitTransfer = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    sendCommand('request_transfer', { reason: transferReason });
+  };
+  const submitDefer = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!nextReviewInputValue) return;
+    sendCommand('defer', {
+      reason: deferReason,
+      next_review_at: new Date(nextReviewInputValue).toISOString(),
+    });
+  };
+  const submitDue = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    sendCommand('set_due', { due_at: dueInputValue ? new Date(dueInputValue).toISOString() : null });
   };
 
   return (
@@ -201,6 +272,24 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
         {capabilities.can_assign && <form className="mt-4 flex flex-wrap items-end gap-2 border-t border-[var(--color-border)] pt-4" onSubmit={event => { event.preventDefault(); assignMutation.mutate(ownerUserId.trim()); }}><label className="min-w-[220px] flex-1 text-xs text-[var(--color-text-secondary)]">负责人账号 ID<input value={ownerUserId} onChange={event => setOwnerUserId(event.target.value)} className="mt-1 min-h-[40px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text)]" /></label><button type="submit" disabled={pending || !ownerUserId.trim()} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-text)] disabled:opacity-50">分派事项</button></form>}
       </section>
 
+      {capabilities.can_update && item.status === 'in_progress' && <section className="grid gap-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm md:grid-cols-2">
+        <form className="space-y-3" onSubmit={submitTransfer}>
+          <div><h2 className="text-sm font-semibold text-[var(--color-text)]">申请转交</h2><p className="mt-1 text-xs text-[var(--color-text-secondary)]">转交请求会记录原因，负责人变更仍由经理处理。</p></div>
+          <label className="block text-xs text-[var(--color-text-secondary)]">转交原因<textarea aria-label="转交原因" required maxLength={2000} value={transferReason} onChange={event => setTransferReason(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]" /></label>
+          <button type="submit" disabled={pending || !transferReason.trim()} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-sm text-[var(--color-primary-bg)] disabled:opacity-50">提交转交请求</button>
+        </form>
+        <form className="space-y-3" onSubmit={submitDefer}>
+          <div><h2 className="text-sm font-semibold text-[var(--color-text)]">搁置并安排复查</h2><p className="mt-1 text-xs text-[var(--color-text-secondary)]">搁置不会暂停事项原期限。</p></div>
+          <label className="block text-xs text-[var(--color-text-secondary)]">搁置原因<textarea aria-label="搁置原因" required maxLength={2000} value={deferReason} onChange={event => setDeferReason(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]" /></label>
+          <label className="block text-xs text-[var(--color-text-secondary)]">下次复查时间<input aria-label="下次复查时间" required type="datetime-local" value={nextReviewInputValue} onChange={event => setNextReviewAt(event.target.value)} className="mt-1 min-h-[40px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text)]" /></label>
+          <button type="submit" disabled={pending || !deferReason.trim() || !nextReviewInputValue} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-sm text-[var(--color-primary-bg)] disabled:opacity-50">搁置事项</button>
+        </form>
+      </section>}
+
+      {capabilities.can_update && item.status === 'deferred' && <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><h2 className="text-sm font-semibold text-[var(--color-text)]">恢复处理</h2><p className="mt-1 text-xs text-[var(--color-text-secondary)]">恢复后事项回到处理中，原期限继续有效。</p><button type="button" disabled={pending} onClick={() => sendCommand('resume')} className="mt-3 min-h-[40px] rounded-lg bg-[var(--color-primary-bg)] px-4 text-sm text-white disabled:opacity-50">恢复事项</button></section>}
+
+      {canSetDue && <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm"><h2 className="text-sm font-semibold text-[var(--color-text)]">设置事项期限</h2><form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={submitDue}><label className="min-w-[220px] flex-1 text-xs text-[var(--color-text-secondary)]">期限时间<input aria-label="事项期限" type="datetime-local" value={dueInputValue} onChange={event => setDueAt(event.target.value)} className="mt-1 min-h-[40px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text)]" /></label><button type="submit" disabled={pending} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-sm text-[var(--color-primary-bg)] disabled:opacity-50">保存期限</button></form></section>}
+
       {actionError && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{actionError}</div>}
 
       {capabilities.can_update && <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
@@ -220,9 +309,10 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
         {isClosureFormOpen && <form className="mt-4 space-y-3" onSubmit={requestClosure}>
           {receiptEvents.length > 0 && <fieldset className="space-y-2"><legend className="text-xs font-medium text-[var(--color-text-secondary)]">引用处理回执</legend>{receiptEvents.map(event => <label key={event.id} className="flex items-start gap-2 text-xs text-[var(--color-text)]"><input type="checkbox" checked={activeReceiptIds.includes(event.id)} onChange={change => setSelectedReceiptIds(change.target.checked ? [...activeReceiptIds, event.id] : activeReceiptIds.filter(id => id !== event.id))} /><span>{eventDescription(event)}</span></label>)}</fieldset>}
           <label className="block text-xs text-[var(--color-text-secondary)]">关闭类别<select aria-label="关闭类别" value={closureCategory} onChange={event => setClosureCategory(event.target.value as ProcurementClosureCategory)} className="mt-1 min-h-[40px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text)]"><option value="accepted_limitation">接受资料限制</option><option value="resolved">已解决</option><option value="withdrawn">撤回事项</option><option value="duplicate">重复事项</option></select></label>
+          {closureCategory === 'duplicate' && <div className="space-y-2"><label className="block text-xs text-[var(--color-text-secondary)]">重复的事项<select aria-label="重复的事项" required value={duplicateCaseId} onChange={event => setDuplicateCaseId(event.target.value)} className="mt-1 min-h-[40px] w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 text-sm text-[var(--color-text)]"><option value="">选择同对象、同范围的可见事项</option>{duplicateCases.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.title} · {candidate.id}</option>)}</select></label>{duplicateTargetsQuery.isLoading && <p className="text-xs text-[var(--color-text-secondary)]">正在读取可选事项…</p>}{duplicateTargetsQuery.error && <p role="alert" className="text-xs text-amber-800">可选事项暂时无法加载，请重试。</p>}{!duplicateTargetsQuery.isLoading && duplicateCases.length === 0 && !duplicateTargetsQuery.error && <p className="text-xs text-[var(--color-text-secondary)]">当前没有其他同对象、同事项范围的可见事项。</p>}{duplicateTargetsQuery.hasNextPage && <button type="button" disabled={duplicateTargetsQuery.isFetchingNextPage} onClick={() => void duplicateTargetsQuery.fetchNextPage()} className="min-h-[36px] rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-primary-bg)] disabled:opacity-50">{duplicateTargetsQuery.isFetchingNextPage ? '加载中…' : '加载更多事项'}</button>}</div>}
           <label className="block text-xs text-[var(--color-text-secondary)]">关闭摘要<textarea aria-label="关闭摘要" required maxLength={2000} value={closureSummary} onChange={event => setClosureSummary(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]" /></label>
           {closureCategory === 'accepted_limitation' && <label className="block text-xs text-[var(--color-text-secondary)]">残余限制<textarea aria-label="残余限制" required maxLength={2000} value={residualLimitations} onChange={event => setResidualLimitations(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]" /></label>}
-          <button type="submit" disabled={pending || !closureSummary.trim() || activeReceiptIds.length === 0 || (closureCategory === 'accepted_limitation' && !residualLimitations.trim())} className="min-h-[40px] rounded-lg bg-[var(--color-primary-bg)] px-4 text-sm text-white disabled:opacity-50">提交关闭申请</button>
+          <button type="submit" disabled={pending || !closureSummary.trim() || activeReceiptIds.length === 0 || (closureCategory === 'accepted_limitation' && !residualLimitations.trim()) || (closureCategory === 'duplicate' && (!duplicateCaseId || duplicateTargetsQuery.isLoading || Boolean(duplicateTargetsQuery.error)))} className="min-h-[40px] rounded-lg bg-[var(--color-primary-bg)] px-4 text-sm text-white disabled:opacity-50">提交关闭申请</button>
         </form>}
       </section>}
 

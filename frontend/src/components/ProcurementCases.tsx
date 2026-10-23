@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../api';
+import { api, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
 import type { ProcurementCase, ProcurementCaseList } from '../types';
 import ProcurementCasePanel from './ProcurementCasePanel';
 
-type CaseListView = 'mine' | 'department';
+type CaseListView = 'mine' | 'department' | 'accessible';
 
 function statusLabel(status: string): string {
   return ({
@@ -58,10 +58,11 @@ function CaseRow({ item }: { item: ProcurementCase }) {
 }
 
 function CaseList() {
-  const [view, setView] = useState<CaseListView>('mine');
+  const user = getStoredUser();
+  const [view, setView] = useState<CaseListView>(user?.role === 'admin' ? 'accessible' : 'mine');
   const filters = { view, limit: '50' };
   const casesQuery = useInfiniteQuery({
-    queryKey: queryKeys.procurementCases(filters),
+    queryKey: queryKeys.procurementCases({ ...filters, actor: user?.username || '' }),
     queryFn: ({ signal, pageParam }) => api.get<ProcurementCaseList>(
       '/procurement-cases',
       pageParam ? { ...filters, cursor: pageParam } : filters,
@@ -83,11 +84,12 @@ function CaseList() {
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="事项范围">
         {availableViews?.mine && <button type="button" role="tab" aria-selected={view === 'mine'} onClick={() => setView('mine')} className={`min-h-[40px] rounded-lg px-3 text-sm ${view === 'mine' ? 'bg-[var(--color-primary-bg)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'}`}>我的事项</button>}
         {availableViews?.department && <button type="button" role="tab" aria-selected={view === 'department'} onClick={() => setView('department')} className={`min-h-[40px] rounded-lg px-3 text-sm ${view === 'department' ? 'bg-[var(--color-primary-bg)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'}`}>本科室事项</button>}
+        {availableViews?.accessible && <button type="button" role="tab" aria-selected={view === 'accessible'} onClick={() => setView('accessible')} className={`min-h-[40px] rounded-lg px-3 text-sm ${view === 'accessible' ? 'bg-[var(--color-primary-bg)] text-white' : 'border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]'}`}>全部事项</button>}
       </div>
       {casesQuery.isLoading ? <p className="rounded-xl border border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">正在读取事项…</p> : null}
       {casesQuery.error ? <section role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">事项列表暂时无法加载，请重试。<button type="button" onClick={() => casesQuery.refetch()} className="ml-2 font-medium underline">重试</button></section> : null}
-      {casesQuery.data && !availableViews?.mine && !availableViews?.department ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">当前角色没有采购事项列表权限。</p> : null}
-      {!casesQuery.isLoading && !casesQuery.error && (availableViews?.mine || availableViews?.department) && items.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-sm text-[var(--color-text-secondary)]">当前范围内没有采购事项。</p> : null}
+      {casesQuery.data && !availableViews?.mine && !availableViews?.department && !availableViews?.accessible ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">当前角色没有采购事项列表权限。</p> : null}
+      {!casesQuery.isLoading && !casesQuery.error && (availableViews?.mine || availableViews?.department || availableViews?.accessible) && items.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--color-border)] p-8 text-center text-sm text-[var(--color-text-secondary)]">当前范围内没有采购事项。</p> : null}
       {items.length > 0 && <div className="space-y-3">{items.map(({ case: item }) => <CaseRow key={item.id} item={item} />)}</div>}
       {casesQuery.hasNextPage && <button type="button" onClick={() => casesQuery.fetchNextPage()} disabled={casesQuery.isFetchingNextPage} className="min-h-[40px] w-full rounded-lg border border-[var(--color-border)] text-sm text-[var(--color-primary-bg)] disabled:opacity-50">{casesQuery.isFetchingNextPage ? '加载中…' : '加载更多事项'}</button>}
     </main>

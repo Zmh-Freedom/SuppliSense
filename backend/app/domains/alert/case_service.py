@@ -63,6 +63,15 @@ def _as_datetime(value: Any, field: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _evidence_timestamp(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return _as_datetime(value, "collected_at")
+    except ValueError:
+        return None
+
+
 def _validate_command(command: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(command, dict):
         raise ValueError("命令格式无效")
@@ -171,7 +180,9 @@ def _validate_resolved_closure(
     case: dict[str, Any],
     request: dict[str, Any],
     receipts: list[dict[str, Any]],
-    current_evidence_ids: set[str],
+    current_evidence: dict[str, Any] | set[str],
+    *,
+    closure_baseline: dict[str, Any] | None = None,
 ) -> None:
     if request.get("category") != "resolved":
         return
@@ -187,11 +198,80 @@ def _validate_resolved_closure(
         for event in relevant_receipts
         for ref in (event.get("payload") or {}).get("refs", [])
     }
-    if not referenced.intersection(current_evidence_ids):
+    if isinstance(current_evidence, dict):
+        current_evidence_ids = set(current_evidence.get("evidence_ids") or set())
+        evidence_by_dimension = current_evidence.get("evidence_by_dimension") or {}
+    else:
+        current_evidence_ids = set(current_evidence)
+        evidence_by_dimension = {}
+    valid_references = referenced.intersection(current_evidence_ids)
+    if case.get("case_type") == "coverage_gap":
+        missing_dimensions = current_evidence.get("missing_dimensions") if isinstance(current_evidence, dict) else None
+        if (
+            not isinstance(current_evidence, dict)
+            or current_evidence.get("coverage_status") != "complete"
+            or not isinstance(missing_dimensions, list)
+            or missing_dimensions
+        ):
+            raise ValueError("当前数据覆盖仍不完整，不能以 resolved 关闭")
+        if not isinstance(closure_baseline, dict):
+            raise ValueError("缺少创建时覆盖缺口证据基线，不能以 resolved 关闭")
+        captured_at = _evidence_timestamp(closure_baseline.get("captured_at"))
+        missing_at_creation = closure_baseline.get("missing_dimension_keys")
+        baseline_by_dimension = closure_baseline.get("evidence_by_dimension")
+        if (
+            captured_at is None
+            or not isinstance(missing_at_creation, list)
+            or not missing_at_creation
+            or not isinstance(baseline_by_dimension, dict)
+        ):
+            raise ValueError("创建时没有可核验的原覆盖缺口，不能以 resolved 关闭")
+        collected_at_by_id = current_evidence.get("evidence_collected_at") or {}
+        if not isinstance(collected_at_by_id, dict):
+            collected_at_by_id = {}
+        for dimension in map(str, missing_at_creation):
+            current_ids = set(map(str, evidence_by_dimension.get(dimension) or []))
+            baseline_ids = set(map(str, baseline_by_dimension.get(dimension) or []))
+            new_valid_ids = {
+                evidence_id
+                for evidence_id in current_ids - baseline_ids
+                if (
+                    (collected_at := _evidence_timestamp(collected_at_by_id.get(evidence_id)))
+                    is not None
+                    and collected_at > captured_at
+                )
+            }
+            new_references = valid_references.intersection(new_valid_ids)
+            if not new_references:
+                raise ValueError(
+                    "resolved 关闭必须引用创建后取得的原缺口对应有效证据"
+                )
+            receipt_after_evidence = set()
+            for receipt in relevant_receipts:
+                receipt_at = _evidence_timestamp(receipt.get("created_at"))
+                if receipt_at is None:
+                    continue
+                receipt_refs = set(
+                    map(str, (receipt.get("payload") or {}).get("refs", []))
+                )
+                receipt_after_evidence.update(
+                    evidence_id
+                    for evidence_id in new_references.intersection(receipt_refs)
+                    if (
+                        (collected_at := _evidence_timestamp(collected_at_by_id.get(evidence_id)))
+                        is not None
+                        and collected_at <= receipt_at
+                    )
+                )
+            if not receipt_after_evidence:
+                raise ValueError("引用原缺口证据的处置回执时间早于证据采集时间")
+        return
+    if case.get("case_type") == "identity_review":
+        identity_evidence = set(evidence_by_dimension.get("identity") or set())
+        valid_references = referenced.intersection(identity_evidence)
+    if not valid_references:
         kind = "当前有效新证据或已核验主体记录"
-        if case.get("case_type") == "coverage_gap":
-            kind = "当前有效的数据覆盖证据"
-        elif case.get("case_type") == "identity_review":
+        if case.get("case_type") == "identity_review":
             kind = "当前已核验的主体记录"
         raise ValueError(f"resolved 关闭必须引用{kind}")
 
@@ -252,7 +332,8 @@ def _plan_case_command(
     *,
     now: datetime | None = None,
     receipts: list[dict[str, Any]] | None = None,
-    current_evidence_ids: set[str] | None = None,
+    current_evidence: dict[str, Any] | set[str] | None = None,
+    closure_baseline: dict[str, Any] | None = None,
     duplicate_lookup: Callable[[str], dict[str, Any] | None] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     del user_role
@@ -324,7 +405,11 @@ def _plan_case_command(
         request = _validate_closure_request(case, normalized, receipts or [])
         if request["category"] == "resolved":
             _validate_resolved_closure(
-                case, request, receipts or [], current_evidence_ids or set()
+                case,
+                request,
+                receipts or [],
+                current_evidence or set(),
+                closure_baseline=closure_baseline,
             )
         if request["category"] == "duplicate":
             duplicate_id = request["duplicate_case_id"]
@@ -348,7 +433,11 @@ def _plan_case_command(
         _validate_closure_request(case, request, receipts or [])
         if request.get("category") == "resolved":
             _validate_resolved_closure(
-                case, request, receipts or [], current_evidence_ids or set()
+                case,
+                request,
+                receipts or [],
+                current_evidence or set(),
+                closure_baseline=closure_baseline,
             )
         if request.get("category") == "duplicate":
             duplicate_id = str(request.get("duplicate_case_id") or "")
@@ -400,16 +489,25 @@ def _plan_case_command(
     return changes, event
 
 
-def _current_valid_evidence_ids(
+def _current_evidence_snapshot(
     case: dict[str, Any], user_id: str, user_role: str
-) -> set[str]:
-    """Collect identifiers only from coverage recomputed against current sources."""
+) -> dict[str, Any]:
+    """Collect current valid evidence identifiers, timestamps, and coverage state."""
     from app.domains.alert.service import get_watchlist_target_summaries
 
+    unavailable = {
+        "evidence_ids": set(),
+        "coverage_status": None,
+        "missing_dimensions": None,
+        "missing_dimension_keys": None,
+        "evidence_by_dimension": {},
+        "observed_evidence_by_dimension": {},
+        "evidence_collected_at": {},
+    }
     try:
         summaries = get_watchlist_target_summaries(user_id, user_role)
     except Exception:
-        return set()
+        return unavailable
     target_id = str(case.get("monitor_target_id") or "")
     summary = next(
         (
@@ -420,35 +518,104 @@ def _current_valid_evidence_ids(
         None,
     )
     if not summary:
-        return set()
+        return unavailable
     coverage = summary.get("data_coverage") or {}
-    references: set[str] = set()
+    evidence_by_dimension: dict[str, set[str]] = {}
+    observed_evidence_by_dimension: dict[str, set[str]] = {}
+    evidence_collected_at: dict[str, str] = {}
+    dimension_statuses: dict[str, str] = {}
+    evidence_reference_keys = {
+        "assessment_id",
+        "evidence_id",
+        "source_id",
+        "snapshot_id",
+        "source_version",
+    }
 
-    def collect(value: Any, key: str = "") -> None:
+    def source_timestamp(value: dict[str, Any]) -> datetime | None:
+        for field in ("collected_at", "checked_at", "synced_at"):
+            timestamp = _evidence_timestamp(value.get(field))
+            if timestamp is not None:
+                return timestamp
+        return None
+
+    def latest_collected_at(value: Any) -> datetime | None:
         if isinstance(value, dict):
+            timestamps = [
+                timestamp
+                for timestamp in (
+                    source_timestamp(value),
+                    *(latest_collected_at(child) for child in value.values()),
+                )
+                if timestamp is not None
+            ]
+            return max(timestamps) if timestamps else None
+        if isinstance(value, list):
+            timestamps = [
+                timestamp
+                for timestamp in (latest_collected_at(child) for child in value)
+                if timestamp is not None
+            ]
+            return max(timestamps) if timestamps else None
+        return None
+
+    def collect(value: Any, key: str = "", inherited_at: datetime | None = None) -> None:
+        if isinstance(value, dict):
+            collected_at = source_timestamp(value) or inherited_at
             for child_key, child in value.items():
-                collect(child, str(child_key))
+                child_key = str(child_key)
+                if child_key in evidence_reference_keys and child:
+                    evidence_id = str(child)
+                    references.add(evidence_id)
+                    previous = _evidence_timestamp(evidence_collected_at.get(evidence_id))
+                    if collected_at is not None and (previous is None or collected_at > previous):
+                        evidence_collected_at[evidence_id] = collected_at.isoformat()
+                else:
+                    collect(child, child_key, collected_at)
         elif isinstance(value, list):
             for child in value:
-                collect(child, key)
-        elif key in {"assessment_id", "evidence_id", "source_id", "snapshot_id"} and value:
-            references.add(str(value))
+                collect(child, key, inherited_at)
 
     for dimension in coverage.get("dimensions", []):
+        dimension_key = str(dimension.get("key") or "")
+        dimension_statuses[dimension_key] = str(dimension.get("status") or "unknown")
+        references: set[str] = set()
+        validity = dimension.get("validity") or {}
+        collect(validity)
+        collect(dimension.get("facts") or {}, inherited_at=latest_collected_at(validity))
+        if dimension_key == "identity" and summary.get("company_id"):
+            # Keep this for identity-review closure; coverage gaps exclude identity evidence.
+            references.add(str(summary["company_id"]))
+        observed_evidence_by_dimension[dimension_key] = references
         if dimension.get("status") == "available":
-            collect(dimension.get("validity") or {})
-            collect(dimension.get("facts") or {})
-    identity = next(
-        (
-            item
-            for item in coverage.get("dimensions", [])
-            if item.get("key") == "identity" and item.get("status") == "available"
-        ),
-        None,
+            evidence_by_dimension[dimension_key] = references
+    return {
+        "evidence_ids": set().union(*evidence_by_dimension.values()) if evidence_by_dimension else set(),
+        "coverage_status": coverage.get("status"),
+        "missing_dimensions": coverage.get("missing_dimensions"),
+        "missing_dimension_keys": [
+            key for key, status in dimension_statuses.items() if status != "available"
+        ],
+        "evidence_by_dimension": evidence_by_dimension,
+        "observed_evidence_by_dimension": observed_evidence_by_dimension,
+        "evidence_collected_at": evidence_collected_at,
+    }
+
+
+def _coverage_closure_baseline(snapshot: dict[str, Any]) -> dict[str, Any]:
+    evidence_by_dimension = (
+        snapshot.get("observed_evidence_by_dimension")
+        or snapshot.get("evidence_by_dimension")
+        or {}
     )
-    if identity and summary.get("company_id"):
-        references.add(str(summary["company_id"]))
-    return references
+    return {
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "missing_dimension_keys": snapshot.get("missing_dimension_keys"),
+        "evidence_by_dimension": {
+            str(dimension): sorted(map(str, evidence_ids or []))
+            for dimension, evidence_ids in evidence_by_dimension.items()
+        },
+    }
 
 
 def _can_read_case(case: dict[str, Any], user_id: str, user_role: str) -> dict[str, bool]:
@@ -530,7 +697,20 @@ def create_case(
         ),
         "next_review_at": None,
     }
-    created = case_repo.create_or_get_case(values, str(user_id), request_key)
+    created_event_payload = None
+    if case_type == "coverage_gap":
+        initial_evidence = _current_evidence_snapshot(
+            {"monitor_target_id": scope["target_id"]}, str(user_id), str(user_role)
+        )
+        created_event_payload = {
+            "closure_baseline": _coverage_closure_baseline(initial_evidence)
+        }
+    created = case_repo.create_or_get_case(
+        values,
+        str(user_id),
+        request_key,
+        created_event_payload=created_event_payload,
+    )
     return {
         "case": created,
         "capabilities": _can_read_case(created, user_id, user_role),
@@ -574,43 +754,67 @@ def list_cases(filters: dict[str, Any], user_id: str, user_role: str) -> dict[st
     limit = max(1, min(int(filters.get("limit", 20)), 100))
     cursor = _decode_cursor(filters.get("cursor"))
     manager_departments = case_access.current_manager_departments(str(user_id))
-    page = case_repo.list_cases(
-        {
-            **{
-                key: value
-                for key, value in filters.items()
-                if key in allowed_filters - {"limit", "cursor"}
-            },
-            "view": view,
+    repository_filters = {
+        **{
+            key: value
+            for key, value in filters.items()
+            if key in allowed_filters - {"limit", "cursor"}
         },
-        actor_id=str(user_id),
-        user_role=str(user_role),
-        manager_departments=manager_departments,
-        limit=limit,
-        cursor=cursor,
-    )
-    visible = []
-    for case in page["items"]:
-        capabilities = _can_read_case(case, user_id, user_role)
-        if capabilities.get("can_read"):
-            visible.append({"case": case, "capabilities": capabilities})
+        "view": view,
+    }
+    visible: list[dict[str, Any]] = []
+    scan_cursor = cursor
+    scan_limit = 100
+    # SQL applies a coarse owner/department filter; fill pages after current target-level checks.
+    while True:
+        page = case_repo.list_cases(
+            repository_filters,
+            actor_id=str(user_id),
+            user_role=str(user_role),
+            manager_departments=manager_departments,
+            limit=scan_limit,
+            cursor=scan_cursor,
+        )
+        for case in page["items"]:
+            capabilities = _can_read_case(case, user_id, user_role)
+            if capabilities.get("can_read"):
+                visible.append({"case": case, "capabilities": capabilities})
+                if len(visible) > limit:
+                    break
+        if len(visible) > limit or not page["items"] or not page["next_cursor"]:
+            break
+        next_scan_cursor = page["next_cursor"]
+        if next_scan_cursor == scan_cursor:
+            break
+        scan_cursor = next_scan_cursor
+
+    page_items = visible[:limit]
+    next_cursor = None
+    if len(visible) > limit and page_items:
+        last_case = page_items[-1]["case"]
+        updated_at = last_case["updated_at"]
+        next_cursor = _encode_cursor(
+            {
+                "updated_at": updated_at.isoformat()
+                if isinstance(updated_at, datetime)
+                else updated_at,
+                "id": str(last_case["id"]),
+            }
+        )
     can_list_cases = str(user_role) in case_access.PURCHASER_ROLES | {"admin"}
     return {
-        "items": visible,
-        "next_cursor": _encode_cursor(page["next_cursor"]),
+        "items": page_items,
+        "next_cursor": next_cursor,
         "available_views": {
             "mine": can_list_cases,
             "department": can_list_cases and bool(manager_departments),
+            "accessible": str(user_role) == "admin",
         },
     }
 
 
-def _case_receipts(case_id: str, *, cur: object) -> list[dict[str, Any]]:
-    return [
-        event
-        for event in case_repo.list_case_events(case_id, cur=cur)
-        if event.get("event_type") == "receipt_recorded"
-    ]
+def _case_events(case_id: str, *, cur: object) -> list[dict[str, Any]]:
+    return case_repo.list_case_events(case_id, cur=cur)
 
 
 def _require_assignable_user(
@@ -684,10 +888,18 @@ def handle_case_command(
             raise CaseConflictError("事项版本已变化，请刷新后重试")
         if normalized["command"] == "assign":
             _require_assignable_user(case, normalized["owner_user_id"], cur=cur)
-        receipts = _case_receipts(case_id, cur=cur)
-        current_evidence_ids: set[str] = set()
+        events = _case_events(case_id, cur=cur)
+        receipts = [
+            event for event in events if event.get("event_type") == "receipt_recorded"
+        ]
+        created_event = next(
+            (event for event in events if event.get("event_type") == "created"), None
+        )
+        created_payload = (created_event or {}).get("payload") or {}
+        closure_baseline = created_payload.get("closure_baseline")
+        current_evidence: dict[str, Any] = {}
         if normalized["command"] in {"request_closure", "approve_closure"}:
-            current_evidence_ids = _current_valid_evidence_ids(case, user_id, user_role)
+            current_evidence = _current_evidence_snapshot(case, user_id, user_role)
 
         def lookup_duplicate(duplicate_id: str) -> dict[str, Any] | None:
             target_case = case_repo.get_case(duplicate_id, cur=cur)
@@ -705,7 +917,8 @@ def handle_case_command(
             user_role,
             capabilities,
             receipts=receipts,
-            current_evidence_ids=current_evidence_ids,
+            current_evidence=current_evidence,
+            closure_baseline=closure_baseline,
             duplicate_lookup=lookup_duplicate,
         )
         event["request_id"] = request_id

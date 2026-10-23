@@ -169,6 +169,7 @@ export type ProcurementClosureCategory = 'resolved' | 'accepted_limitation' | 'd
 export interface ProcurementCase {
   id: string;
   monitor_target_id: string;
+  scope_key?: string;
   case_type: ProcurementCaseType;
   department_code?: string | null;
   title: string;
@@ -240,7 +241,7 @@ export interface ProcurementCaseDetail {
 export interface ProcurementCaseList {
   items: Array<{ case: ProcurementCase; capabilities: CaseCapabilities }>;
   next_cursor: string | null;
-  available_views?: { mine: boolean; department: boolean };
+  available_views?: { mine: boolean; department: boolean; accessible?: boolean };
 }
 
 export interface MonitorRiskDetail {

@@ -57,23 +57,33 @@ def _row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _authorize(row: dict[str, Any], user_id: str, user_role: str) -> None:
-    if user_role == "admin":
-        return
-    if str(row.get("requested_by") or "") != str(user_id):
-        raise PermissionError("无权访问该复核任务")
-
-
 def _authorize_case_task(
-    row: dict[str, Any], user_id: str, user_role: str, *, action: str = "read"
+    row: dict[str, Any],
+    user_id: str,
+    user_role: str,
+    *,
+    action: str = "read",
+    target: dict[str, Any] | None = None,
 ) -> None:
     """Apply current case capability checks to a task linked to a business case."""
     from app.domains.alert import case_access, case_repo
 
     cases = case_repo.list_linked_cases_for_task(str(row.get("id") or ""))
     if not cases:
-        _authorize(row, user_id, user_role)
-        return
+        if user_role == "admin":
+            return
+        if (
+            user_role in case_access.PURCHASER_ROLES
+            and str(row.get("requested_by") or "") == str(user_id)
+        ):
+            return
+        if (
+            user_role in case_access.PURCHASER_ROLES
+            and target
+            and case_access.is_current_manager_for_target(target, str(user_id))
+        ):
+            return
+        raise PermissionError("无权访问该复核任务")
     scoped = [
         (
             case,
@@ -108,8 +118,10 @@ def _authorize_case_task(
 def _authorize_task(
     row: dict[str, Any], user_id: str, user_role: str, *, action: str = "read"
 ) -> None:
-    _authorize_target_access(str(row.get("monitor_target_id") or ""), user_id, user_role)
-    _authorize_case_task(row, user_id, user_role, action=action)
+    target = _authorize_target_access(
+        str(row.get("monitor_target_id") or ""), user_id, user_role
+    )
+    _authorize_case_task(row, user_id, user_role, action=action, target=target)
 
 
 def _target(monitor_target_id: str) -> dict[str, Any] | None:
@@ -224,6 +236,33 @@ def get_latest_review_task(
     return task
 
 
+def _current_user_target_ids(user_id: str, user_role: str) -> list[str]:
+    """Find formal monitor targets in the user's current responsibility scope."""
+    from app.domains.alert.case_access import PURCHASER_ROLES
+
+    if user_role not in PURCHASER_ROLES:
+        return []
+    try:
+        from app.domains.supplier.access import list_assigned_supplier_ids
+
+        supplier_ids = list_assigned_supplier_ids(str(user_id), str(user_role))
+        if not supplier_ids:
+            return []
+        targets = get_db()["watchlist"].find(
+            {"supplier_id": {"$in": sorted(supplier_ids)}},
+            {"monitor_target_id": 1},
+        )
+        return sorted(
+            {
+                str(target["monitor_target_id"])
+                for target in targets
+                if target.get("monitor_target_id")
+            }
+        )
+    except Exception:
+        return []
+
+
 def list_review_tasks(
     monitor_target_id: str | None, user_id: str, user_role: str
 ) -> list[dict[str, Any]]:
@@ -238,17 +277,21 @@ def list_review_tasks(
         from app.domains.alert.case_access import current_manager_departments
 
         departments = current_manager_departments(user_id)
-        clauses.append(
-            "(requested_by = %s OR id IN ("
-            "SELECT link.task_id FROM procurement_case_tasks AS link "
+        target_ids = _current_user_target_ids(user_id, user_role)
+        case_clause = (
+            "id IN (SELECT link.task_id FROM procurement_case_tasks AS link "
             "JOIN procurement_cases AS cases ON cases.id = link.case_id "
             "WHERE cases.owner_user_id = %s OR cases.created_by = %s"
             + (" OR cases.department_code = ANY(%s)" if departments else "")
-            + "))"
+            + ")"
+        )
+        clauses.append(
+            f"(requested_by = %s OR {case_clause} OR monitor_target_id = ANY(%s))"
         )
         values.extend([user_id, user_id, user_id])
         if departments:
             values.append(departments)
+        values.append(target_ids)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_cursor() as (_, cur):
         cur.execute(
@@ -306,6 +349,10 @@ def create_review_task_with_cursor(cur: Any, values: dict[str, Any]) -> dict[str
     dedupe_across_requesters = bool(values.get("dedupe_across_requesters"))
     if task_type not in REVIEW_TASK_TYPES:
         raise ValueError("不支持的复核任务类型")
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+        (monitor_target_id, task_type),
+    )
     requester_clause = (
         "AND requested_by = %s"
         if user_role is not None and user_role != "admin" and not dedupe_across_requesters

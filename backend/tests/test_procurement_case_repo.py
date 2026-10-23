@@ -268,6 +268,33 @@ def test_case_list_applies_selected_view_scope_in_sql(view, required_scope, forb
     assert cursor.query.index("WHERE") < cursor.query.index("LIMIT %s")
 
 
+def test_admin_accessible_case_list_has_no_owner_or_department_restriction():
+    class ListCursor:
+        description = [("id",), ("updated_at",)]
+
+        def __init__(self) -> None:
+            self.query = ""
+
+        def execute(self, query: str, _params: tuple = ()) -> None:
+            self.query = query
+
+        def fetchall(self) -> list[tuple]:
+            return []
+
+    cursor = ListCursor()
+    case_repo.list_cases(
+        {"view": "accessible"},
+        actor_id="admin-1",
+        user_role="admin",
+        manager_departments=[],
+        cur=cursor,
+    )
+
+    assert "WHERE" not in cursor.query
+    assert "created_by = %s" not in cursor.query
+    assert "department_code = ANY(%s)" not in cursor.query
+
+
 def test_department_case_list_is_empty_without_current_manager_departments():
     class ListCursor:
         description = [("id",), ("updated_at",)]

@@ -85,6 +85,23 @@ def current_manager_departments(user_id: str) -> list[str]:
         return []
 
 
+def is_current_manager_for_target(target: dict[str, Any], user_id: str) -> bool:
+    """Check whether the active responsibility snapshot names this user as a target manager."""
+    supplier_id = str(target.get("supplier_id") or "")
+    if not supplier_id:
+        return False
+    try:
+        open_id = feishu_open_id_for_user(str(user_id))
+        if not open_id:
+            return False
+        return any(
+            str(row.get("manager_open_id") or "") == str(open_id)
+            for row in _current_supplier_assignments(supplier_id)
+        )
+    except Exception:
+        return False
+
+
 def _actor_assignments(
     assignments: list[dict[str, Any]], open_id: str
 ) -> list[dict[str, Any]]:

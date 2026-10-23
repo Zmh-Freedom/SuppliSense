@@ -103,6 +103,28 @@ def test_manager_scope_does_not_equal_supplier_visibility(monkeypatch: pytest.Mo
     assert manager_capabilities["can_assign"] is True
 
 
+def test_current_manager_for_target_uses_active_supplier_snapshot(monkeypatch: pytest.MonkeyPatch):
+    assignments = [
+        {
+            "department_code": "D1",
+            "purchaser_open_id": "ou-buyer",
+            "manager_open_id": "ou-manager",
+        }
+    ]
+    monkeypatch.setattr(case_access, "feishu_open_id_for_user", lambda _user_id: "ou-manager")
+    monkeypatch.setattr(
+        case_access,
+        "_current_supplier_assignments",
+        lambda _supplier_id: list(assignments),
+    )
+    target = {"monitor_target_id": "target-1", "supplier_id": "supplier-1"}
+
+    assert case_access.is_current_manager_for_target(target, "manager") is True
+
+    assignments.clear()
+    assert case_access.is_current_manager_for_target(target, "manager") is False
+
+
 def test_multiple_supplier_departments_require_explicit_selection(monkeypatch: pytest.MonkeyPatch):
     _install_scope_data(
         monkeypatch,
