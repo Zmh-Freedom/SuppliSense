@@ -166,6 +166,32 @@ it('keeps a possible name match in manual review even if the answer status is co
   expect(screen.getByText('需采购人员处理')).toBeInTheDocument();
 });
 
+it('renders the backend-generated screening fixture without turning a possible match green', async () => {
+  const fixture = (await import('./fixtures/screeningMonitoringAnswer.json')).default;
+  render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={fixture.evidence as AgentEvidenceRecord[]} />);
+
+  expect(screen.getAllByText('疑似名单线索，待核验').length).toBeGreaterThan(0);
+  expect(screen.getByText('名单核验后再确定采购动作')).toBeInTheDocument();
+  expect(screen.getByText('同名线索主体有限公司')).toBeInTheDocument();
+  expect(screen.queryByText('旧筛查结果仅供历史参考')).not.toBeInTheDocument();
+  expect(screen.queryByText(/可按正常流程推进|未命中风险记录|范围内未发现匹配/)).not.toBeInTheDocument();
+  expect(screen.queryByText(fixture.answer.summary)).not.toBeInTheDocument();
+});
+
+it('does not treat an expired screening claim as a current source fact', async () => {
+  const fixture = (await import('./fixtures/screeningMonitoringAnswer.json')).default;
+  const expiredEvidence = (fixture.evidence as AgentEvidenceRecord[]).map(record => ({
+    ...record,
+    status: 'stale',
+    facts: { ...record.facts, validity_status: 'stale', screening_status: 'stale' },
+  }));
+  render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={expiredEvidence} />);
+
+  expect(screen.getAllByText('名单依据已过期').length).toBeGreaterThan(0);
+  expect(screen.queryByText('同名线索主体有限公司')).not.toBeInTheDocument();
+  expect(screen.getByText('旧筛查结果仅供历史参考')).toBeInTheDocument();
+});
+
 it('does not treat a legacy clean boolean as a current screening conclusion', () => {
   const legacyClaim = {
     ...answer.claims[0], claim_id: 'legacy-screening', dimension: 'compliance', fact_path: 'clean', value: true,

@@ -900,7 +900,7 @@ def test_comprehensive_risk_summary_preserves_risk_as_primary_capability() -> No
     [
         ("查看测试供应商的财务数据", "query_financials", "financial", "net_profit_growth", -0.1, "财务分析"),
         ("分析测试供应商的舆情", "sentiment_analysis", "sentiment", "overall_sentiment", "neutral", "舆情分析"),
-        ("对测试供应商进行合规筛查", "check_sanctions", "compliance", "clean", True, "合规与制裁筛查"),
+        ("对测试供应商进行合规筛查", "check_sanctions", "compliance", "clean", True, "已核验的名单范围内"),
         ("评估测试供应商的 ESG 风险", "esg_assessment", "esg", "total_score", 20, "ESG 评估"),
         ("查看测试供应商最近 6 个月的风险趋势", "analyze_trend", "risk_trend", "trend", "稳定", "历史风险趋势分析"),
         ("查询测试供应商的司法风险", "lookup_legal_risk", "legal_risk", None, 2, "司法风险检索"),
