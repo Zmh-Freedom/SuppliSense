@@ -143,12 +143,12 @@ candidate/company/requirement/evidence refs/intent/status/consumed_turn_id。
 
 ## Task 5：跨页面旅程验收
 
-- [ ] **1. Agent E2E。** 新 `tests/test_sourcing_continuity_e2e.py` 标记agent_e2e：
+- [x] **1. Agent E2E。** 新 `tests/test_sourcing_continuity_e2e.py` 标记agent_e2e：
   混合候选→暂存未知→已确认调查→历史找回→受权交接→Harness返回可验证业务回执；
   固定虚构源，真实编排/工具/服务边界，禁止手写整套假答案替代实际链路。
-- [ ] **2. 数据库恢复及全门禁。** 独立PG运行Task2重启/重复投递，
+- [x] **2. 数据库恢复及全门禁。** 独立PG运行Task2重启/重复投递，
   后端离线门禁、前端test/typecheck/lint/build；记录灰度前置状态。
-- [ ] **3. 浏览器验收。** 两来源历史、部分继续、终态派生、浏览器刷新/后退、
+- [x] **3. 浏览器验收。** 两来源历史、部分继续、终态派生、浏览器刷新/后退、
   手工篡改交接ID、撤权和390px；验证写意图仍停在人工审批。
-- [ ] **4. 独立审查和提交。** 报告 `docs/reviews/2026-10-23-phase2b-sourcing-validation.md`，
+- [x] **4. 独立审查和提交。** 报告 `docs/reviews/2026-10-23-phase2b-sourcing-validation.md`，
   重要问题先记日志再修复，最终提交 `test: verify sourcing continuity across pages`，更新021/022。

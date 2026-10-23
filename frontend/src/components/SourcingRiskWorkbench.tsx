@@ -7,6 +7,7 @@ import { queryKeys } from '../query-keys';
 import type { SourcingCandidateDispositionState, SourcingRiskCandidate, SourcingRiskDecision, SourcingRiskEvidence, SourcingRiskRequirement } from '../types';
 import SourcingRiskApprovalCard from './SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from './SourcingRiskCandidateCard';
+import SourcingCandidateFollowup from './SourcingCandidateFollowup';
 import AgentExecutionTrace from './AgentExecutionTrace';
 
 const BUSINESS_PHASES = [
@@ -376,6 +377,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
   const { data: run, isLoading, isFetching, error, createRun, refresh, traceEvents } = useSourcingRiskRun(activeRunId);
   const isIdentityReview = run?.status === 'IDENTITY_REVIEW' || run?.next_action === 'identity_review_required';
   const isClarifying = run?.status === 'CLARIFYING' || run?.next_action === 'clarification_required';
+  const supportsCandidateFollowup = run?.status === 'PARTIAL' || run?.status === 'NEEDS_REVIEW';
   const proposals = (run?.proposals ?? run?.action_proposals ?? []).filter(
     proposal => proposal.action_type === 'add_watchlist',
   );
@@ -452,6 +454,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
       {isClarifying ? <ClarificationCard runId={runId} version={run.version} requirement={run.requirement} missingFields={run.missing_fields ?? []} /> : <>
         {isIdentityReview && <IdentityReviewCard runId={runId} version={run.version} candidates={run.candidates ?? []} onEditRequirement={editRequirement} />}
         {(run.candidates?.length ?? 0) > 0 || (run.decisions?.length ?? 0) > 0 ? <CandidateResults candidates={run.candidates ?? []} decisions={isIdentityReview ? [] : run.decisions ?? []} evidenceByCompanyId={run.evidence_by_company_id} actionsEnabled={!isIdentityReview} onContinueRisk={candidate => openChatForCandidate(candidate, 'risk')} onAddToWatchlist={candidate => openChatForCandidate(candidate, 'watchlist')} /> : !isIdentityReview && <CandidateEmptyState status={run.status} errorCode={run.error_code} />}
+        {supportsCandidateFollowup && runId && <SourcingCandidateFollowup runId={runId} candidates={run.candidates ?? []} />}
         {proposals.length > 0 && <section className="space-y-3"><h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">操作审批</h3>{proposals.map(proposal => <SourcingRiskApprovalCard key={proposal.id} proposal={proposal} runId={runId} runVersion={run.version} />)}</section>}
       </>}
     </>}

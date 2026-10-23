@@ -401,7 +401,7 @@ def test_terminal_followup_creates_child_without_mutating_parent(monkeypatch: py
     assert {key: value for key, value in result.items() if not key.startswith("_")} == {
         "parent_run_id": RUN_ID,
         "run_id": CHILD_RUN_ID,
-        "resume_url": f"/sourcing?run_id={CHILD_RUN_ID}",
+        "resume_url": f"/sourcing?run={CHILD_RUN_ID}",
     }
     assert result["_start_required"] is True
     assert created[0]["run"]["requirement"] == parent["requirement"]

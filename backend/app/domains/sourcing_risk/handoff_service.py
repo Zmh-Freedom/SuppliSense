@@ -310,7 +310,11 @@ def _confirmed_identity(source: dict[str, Any], user_message: str) -> tuple[str 
 def _evidence_references(
     items: list[dict[str, Any]], *, freshness_days: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    from app.domains.sourcing_risk.evidence_service import _freshness_status, _parse_timestamp
+    from app.domains.sourcing_risk.evidence_service import (
+        _freshness_status,
+        _parse_timestamp,
+        freshness_window_days,
+    )
 
     refs: list[dict[str, Any]] = []
     checked_at = datetime.now(timezone.utc)
@@ -325,7 +329,7 @@ def _evidence_references(
             else _freshness_status(
                 _parse_timestamp(item.get("observed_at")),
                 checked_at,
-                freshness_days.get(dimension) if isinstance(freshness_days, dict) else None,
+                freshness_window_days(freshness_days, dimension),
             )
         )
         refs.append({

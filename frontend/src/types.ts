@@ -663,6 +663,12 @@ export interface SourcingCandidateDispositionState {
   new_run_id: string | null;
 }
 
+export interface SourcingCandidateFollowupResponse {
+  parent_run_id: string;
+  run_id: string;
+  resume_url: string;
+}
+
 // ---- Sourcing Risk V2 agent runs ----
 export type AgentRunStatus =
   | 'CREATED'

@@ -863,7 +863,7 @@ def derive_candidate_followup(
         response = {
             "parent_run_id": run_id,
             "run_id": str(child["id"]),
-            "resume_url": f"/sourcing?run_id={child['id']}",
+            "resume_url": f"/sourcing?run={child['id']}",
         }
         append_event(
             str(child["id"]),
