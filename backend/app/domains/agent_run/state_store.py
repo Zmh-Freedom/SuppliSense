@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -83,6 +84,27 @@ class SessionStateStore:
             raise RuntimeError("Agent session 创建失败")
         return session
 
+    def create_session_with_cursor(
+        self,
+        user_id: str,
+        cur: PgCursor,
+        *,
+        state: dict[str, Any] | None = None,
+        status: SessionStatus = SessionStatus.ACTIVE,
+        session_id: str | None = None,
+    ) -> AgentSession:
+        """Insert an owned session in the caller's transaction."""
+        session_id = session_id or str(uuid.uuid4())
+        cur.execute(
+            """INSERT INTO agent_sessions (id,user_id,status,state)
+               VALUES (%s,%s,%s,%s) RETURNING *""",
+            (session_id, user_id, status.value, Json(state or {})),
+        )
+        session = _session_from_row(cur, cur.fetchone())
+        if session is None:
+            raise RuntimeError("Agent session 创建失败")
+        return session
+
     def start_harness_turn(
         self,
         session_id: str,
@@ -92,6 +114,7 @@ class SessionStateStore:
         request: dict[str, Any] | None = None,
         state: dict[str, Any] | None = None,
         run_type: str = "agent_harness",
+        handoff_id: str | None = None,
     ) -> dict[str, Any]:
         """Atomically create/update the control-plane records for one Chat turn."""
         if run_type not in {"agent_harness", "sourcing_risk_v2"}:
@@ -122,6 +145,57 @@ class SessionStateStore:
                 raise PermissionError("Agent 会话不属于当前用户")
             if session is None:
                 raise RuntimeError("Agent session 创建失败")
+
+            handoff = None
+            message_hash = hashlib.sha256(user_message.encode("utf-8")).hexdigest()
+            if handoff_id:
+                cur.execute(
+                    """SELECT id, actor_id, session_id, source_run_id, source_run_version,
+                              candidate_id, status, consumed_turn_id, consumed_message_hash, run_id
+                       FROM sourcing_handoffs
+                       WHERE id=%s AND session_id=%s AND actor_id=%s FOR UPDATE""",
+                    (handoff_id, session_id, user_id),
+                )
+                handoff = _row_to_dict(cur, cur.fetchone())
+                if handoff is None:
+                    raise PermissionError("寻源交接不存在或无权访问")
+                if str(handoff.get("status") or "") == "cancelled":
+                    raise ValueError("寻源交接已取消")
+                if str(handoff.get("status") or "") == "consumed":
+                    if str(handoff.get("consumed_message_hash") or "") != message_hash:
+                        raise ValueError("寻源交接已消费，请以普通聊天继续后续问题")
+                    cur.execute(
+                        "SELECT * FROM agent_turns WHERE id=%s AND session_id=%s",
+                        (handoff.get("consumed_turn_id"), session_id),
+                    )
+                    existing_turn = _turn_from_row(cur, cur.fetchone())
+                    cur.execute(
+                        "SELECT * FROM agent_runs WHERE id=%s AND session_id=%s",
+                        (handoff.get("run_id"), session_id),
+                    )
+                    existing_run = _run_from_row(cur, cur.fetchone())
+                    if existing_turn is None or existing_run is None:
+                        raise RuntimeError("已消费交接的原始任务记录缺失")
+                    return {
+                        "session": session,
+                        "turn": existing_turn,
+                        "run": existing_run,
+                        "idempotent_replay": True,
+                    }
+                cur.execute(
+                    """SELECT id FROM agent_runs
+                       WHERE id=%s AND user_id=%s AND run_type='sourcing_risk_v2'
+                         AND version=%s FOR UPDATE""",
+                    (handoff["source_run_id"], user_id, handoff["source_run_version"]),
+                )
+                if cur.fetchone() is None:
+                    raise ValueError("原寻源任务已更新或不可访问，请重新交接")
+                cur.execute(
+                    "SELECT id FROM agent_run_candidates WHERE id=%s AND run_id=%s FOR UPDATE",
+                    (handoff["candidate_id"], handoff["source_run_id"]),
+                )
+                if cur.fetchone() is None:
+                    raise ValueError("原候选已不可用，请重新选择候选")
 
             cur.execute(
                 """SELECT id FROM agent_runs WHERE session_id=%s
@@ -193,6 +267,16 @@ class SessionStateStore:
                 (run["id"], turn_id),
             )
             turn = _turn_from_row(cur, cur.fetchone())
+            if handoff is not None:
+                cur.execute(
+                    """UPDATE sourcing_handoffs
+                       SET status='consumed', consumed_turn_id=%s, consumed_message_hash=%s,
+                           run_id=%s, consumed_at=NOW(), updated_at=NOW()
+                       WHERE id=%s AND status='ready'""",
+                    (turn_id, message_hash, run["id"], handoff_id),
+                )
+                if cur.rowcount != 1:
+                    raise ValueError("寻源交接已被其他请求消费")
             cur.execute(
                 """
                 UPDATE agent_sessions
@@ -210,6 +294,7 @@ class SessionStateStore:
             "session": session,
             "turn": turn,
             "run": AgentRun.model_validate(run),
+            "idempotent_replay": False,
         }
 
     def get_execution_context(

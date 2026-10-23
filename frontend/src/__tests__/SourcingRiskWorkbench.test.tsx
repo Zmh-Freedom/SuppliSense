@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SourcingRiskApprovalCard from '../components/SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from '../components/SourcingRiskCandidateCard';
@@ -36,6 +36,11 @@ function renderWithQueryClient(node: React.ReactNode, initialEntries = ['/sourci
     defaultOptions: { queries: { retry: false } },
   });
   return render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={initialEntries}>{node}</MemoryRouter></QueryClientProvider>);
+}
+
+function CurrentRoute() {
+  const location = useLocation();
+  return <output data-testid="current-route">{`${location.pathname}${location.search}`}</output>;
 }
 
 afterEach(() => {
@@ -337,5 +342,36 @@ describe('SourcingRiskWorkbench', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.message).toContain('断开');
+  });
+
+  it('creates a version-bound handoff for a stable candidate instead of a q deep link', async () => {
+    const run = {
+      id: 'run-handoff', status: 'READY_FOR_REVIEW', version: 9,
+      requirement: { requirement_text: '采购工业相机' },
+      candidates: [{ id: 'candidate-handoff', company_id: 'company-1', supplier_name: '候选工厂', identity_status: 'exact', source: 'local' }],
+      decisions: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent-runs/run-handoff')) return Response.json(run);
+      if (url.endsWith('/sourcing-workspace/handoffs') && init?.method === 'POST') {
+        return Response.json({ handoff_id: 'handoff-1', session_id: 'session-1', chat_url: '/chat?handoff_id=handoff-1&session_id=session-1' });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithQueryClient(<><SourcingRiskWorkbench initialRunId="run-handoff" /><CurrentRoute /></>);
+    fireEvent.click(await screen.findByRole('button', { name: '继续风险核验' }));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sourcing-workspace/handoffs'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+        body: JSON.stringify({ run_id: 'run-handoff', candidate_key: 'candidate-handoff', expected_version: 9, intent: 'risk_review' }),
+      }),
+    ));
+    await vi.waitFor(() => expect(screen.getByTestId('current-route')).toHaveTextContent('/chat?handoff_id=handoff-1&session_id=session-1'));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chat?q='))).toBe(false);
   });
 });

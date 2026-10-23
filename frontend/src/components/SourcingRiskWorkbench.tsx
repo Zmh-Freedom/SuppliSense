@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { useSourcingRiskRun } from '../hooks/useSourcingRiskRun';
 import { queryKeys } from '../query-keys';
@@ -16,6 +16,19 @@ const BUSINESS_PHASES = [
   { key: 'recommend', label: '形成寻源建议', statuses: ['SCORING', 'READY_FOR_REVIEW', 'NEEDS_REVIEW'] },
   { key: 'action', label: '等待采购动作', statuses: ['ACTION_PENDING', 'ACTION_EXECUTING', 'COMPLETED', 'PARTIAL', 'ACTION_FAILED'] },
 ] as const;
+
+function handoffIdempotencyKey(runId: string, candidateKey: string, version: number, intent: string): string {
+  const storageKey = `sourcing_handoff:${runId}:${candidateKey}:${version}:${intent}`;
+  try {
+    const saved = sessionStorage.getItem(storageKey);
+    if (saved) return saved;
+  } catch { /* Continue with a fresh idempotency key. */ }
+  let requestKey = '';
+  try { requestKey = globalThis.crypto?.randomUUID?.() ?? ''; } catch { /* Use the local fallback below. */ }
+  if (!requestKey) requestKey = `handoff-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  try { sessionStorage.setItem(storageKey, requestKey); } catch { /* The server still enforces request uniqueness when storage is unavailable. */ }
+  return requestKey;
+}
 
 type StatusTone = 'info' | 'attention' | 'success' | 'danger' | 'neutral';
 
@@ -347,6 +360,7 @@ function CandidateEmptyState({ status, errorCode }: { status: string; errorCode?
 }
 
 export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?: string }) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const runParam = searchParams.get('run') ?? undefined;
   const hasMounted = useRef(false);
@@ -365,14 +379,24 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
   const proposals = (run?.proposals ?? run?.action_proposals ?? []).filter(
     proposal => proposal.action_type === 'add_watchlist',
   );
-  const openChatForCandidate = (candidate: SourcingRiskCandidate, action: 'risk' | 'watchlist') => {
-    const name = candidateName(candidate);
-    const prompt = action === 'risk'
-      ? `请核验候选供应商“${name}”的主体，并继续进行风险检查`
-      : `请将候选供应商“${name}”加入风险监控清单，先完成主体核验并在写入前请求审批`;
-    window.location.assign(`/chat?q=${encodeURIComponent(prompt)}`);
-  };
   const runId = run?.id ?? run?.run_id ?? activeRunId;
+  const handoffMutation = useMutation({
+    mutationFn: ({ candidate, action }: { candidate: SourcingRiskCandidate; action: 'risk' | 'watchlist' }) => {
+      const candidateKey = candidate.id ?? candidate.candidate_id;
+      if (!runId || !run || !candidateKey) return Promise.reject(new Error('当前寻源任务或稳定候选 ID 不可用'));
+      const intent = action === 'risk' ? 'risk_review' : 'monitor_proposal';
+      return api.post<{ handoff_id: string; session_id: string; chat_url: string }>(
+        '/sourcing-workspace/handoffs',
+        { run_id: runId, candidate_key: candidateKey, expected_version: run.version, intent },
+        undefined,
+        { 'Idempotency-Key': handoffIdempotencyKey(runId, candidateKey, run.version, intent) },
+      );
+    },
+    onSuccess: result => navigate(result.chat_url),
+  });
+  const openChatForCandidate = (candidate: SourcingRiskCandidate, action: 'risk' | 'watchlist') => {
+    handoffMutation.mutate({ candidate, action });
+  };
   const cancelRun = useMutation({
     mutationFn: () => {
       if (!runId || !run) return Promise.reject(new Error('当前任务不可用'));
@@ -418,6 +442,7 @@ export default function SourcingRiskWorkbench({ initialRunId }: { initialRunId?:
     </section>
     {isLoading && <p className="text-sm text-[var(--color-text-secondary)]">正在加载任务…</p>}
     {error && <p className="text-sm text-red-500">任务加载失败，请稍后重试。</p>}
+    {handoffMutation.isError && <p role="alert" className="text-sm text-red-600">创建候选交接失败，请刷新任务后重试。</p>}
     {run && runId && <>
       <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 space-y-4" aria-label="当前寻源任务"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold text-[var(--color-text)]">{run.requirement.requirement_text}</h3>{run.requirement.category && <p className="text-xs text-[var(--color-text-secondary)] mt-1">品类：{run.requirement.category}</p>}<p className="mt-2 text-xs text-[var(--color-text-secondary)]">任务已保存到当前地址，刷新页面后可以继续查看结果或补充条件。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => void refresh()} disabled={isFetching} className="min-h-[40px] rounded-lg border border-[var(--color-border)] px-3 text-xs text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] disabled:opacity-50">{isFetching ? '刷新中…' : '刷新任务'}</button>{canCancel && <button type="button" onClick={() => { if (window.confirm('确定停止当前寻源任务吗？已获取的结果会保留。')) cancelRun.mutate(); }} disabled={cancelRun.isPending} className="min-h-[40px] rounded-lg border border-red-200 px-3 text-xs text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50">{cancelRun.isPending ? '停止中…' : '停止任务'}</button>}</div></div>{cancelRun.isError && <p role="alert" className="text-xs text-red-600">停止任务失败，任务仍在运行，请刷新后重试。</p>}<ProcurementProgress status={run.status} nextAction={run.next_action} errorCode={run.error_code} /></section>
       <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">

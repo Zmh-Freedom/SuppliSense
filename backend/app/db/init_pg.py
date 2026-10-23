@@ -559,6 +559,34 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS sourcing_handoffs (
+        id UUID PRIMARY KEY,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id UUID NOT NULL UNIQUE REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        source_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+        source_run_version INTEGER NOT NULL CHECK (source_run_version > 0),
+        candidate_id UUID NOT NULL REFERENCES agent_run_candidates(id) ON DELETE RESTRICT,
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        candidate_snapshot JSONB NOT NULL,
+        requirement_snapshot JSONB NOT NULL,
+        evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+        intent VARCHAR(32) NOT NULL CHECK (intent IN ('risk_review','monitor_proposal')),
+        status VARCHAR(16) NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','consumed','cancelled')),
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        continue_message TEXT NOT NULL,
+        consumed_turn_id UUID REFERENCES agent_turns(id) ON DELETE SET NULL,
+        consumed_message_hash CHAR(64),
+        run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        consumed_at TIMESTAMPTZ,
+        UNIQUE (actor_id, request_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_handoffs_session_status ON sourcing_handoffs (session_id,status)",
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_handoffs_source_run ON sourcing_handoffs (source_run_id,candidate_id)",
+    """
     CREATE TABLE IF NOT EXISTS sourcing_candidate_review_events (
         event_id BIGSERIAL UNIQUE,
         batch_id UUID PRIMARY KEY,

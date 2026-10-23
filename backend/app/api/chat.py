@@ -581,7 +581,11 @@ def _optional_agent_user_id(request: Request) -> str:
         500: {"description": "服务器内部错误"},
     },
 )
-async def chat_stream_endpoint(req: ChatRequest, request: Request):
+async def chat_stream_endpoint(
+    req: ChatRequest,
+    request: Request,
+    sourcing_handoff_id: Annotated[str | None, Header(alias="X-Sourcing-Handoff-ID")] = None,
+):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
     user_id = getattr(request.state, "user_id", "") or _optional_agent_user_id(request)
@@ -700,6 +704,38 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 yield f"event: error\ndata: {json.dumps({'message': '会话上下文暂不可用，已停止执行，请稍后重试。'}, ensure_ascii=False)}\n\n"
                 return
             execution_context["agent_user_id"] = user_id
+            execution_context["agent_user_role"] = user_role
+            if sourcing_handoff_id:
+                from app.core.errors import DomainError
+                from app.domains.sourcing_risk.handoff_service import resolve_session_handoff
+
+                execution_context["_requested_handoff_id"] = sourcing_handoff_id
+                execution_context["_handoff_request_message"] = req.message
+                try:
+                    execution_context = await asyncio.to_thread(
+                        resolve_session_handoff, sid, user_id, execution_context,
+                    )
+                except DomainError as exc:
+                    yield f"event: error\ndata: {json.dumps({'code': exc.code, 'message': exc.message}, ensure_ascii=False)}\n\n"
+                    return
+                handoff = execution_context.get("sourcing_handoff") or {}
+                if handoff.get("requires_identity_confirmation"):
+                    candidate = handoff.get("candidate") or {}
+                    identity_candidates = list(handoff.get("identity_candidates") or [])
+                    candidate_name = str(candidate.get("supplier_name") or candidate.get("name") or "该候选")
+                    if identity_candidates:
+                        message = f"候选供应商“{candidate_name}”对应多个可能主体。请选择正式供应商主体后继续，避免误关联风险数据。"
+                    else:
+                        message = f"候选供应商“{candidate_name}”尚未确认正式主体。请补充或确认正式供应商全称后继续。"
+                    yield "event: clarification\ndata: " + json.dumps({
+                        "message": message,
+                        "missing": ["supplier_identity"],
+                        "missing_fields": ["supplier_identity"],
+                        "candidates": identity_candidates,
+                        "status": "stopped",
+                        "stage": "understand",
+                    }, ensure_ascii=False) + "\n\n"
+                    return
 
             # Programmatic clarification is only a fallback after structured state.
             from app.services.clarification import detect_clarification_needed
@@ -859,6 +895,7 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                         request={"mode": req.mode},
                         state={"execution_context": execution_context},
                         run_type="agent_harness" if stream_fn is _langgraph_harness_stream else "sourcing_risk_v2",
+                        handoff_id=sourcing_handoff_id,
                     )
                 except ValueError as exc:
                     yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
@@ -867,6 +904,13 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     "turn_id": str(control["turn"].id),
                     "run_id": str(control["run"].id),
                 }
+
+            if control is not None and control.get("idempotent_replay"):
+                run_id = str(control["run"].id)
+                yield f"event: run\ndata: {json.dumps({'run_id': run_id})}\n\n"
+                async for event in _stream_durable_harness_run(run_id, user_id, user_role):
+                    yield event
+                return
 
             # Stream the chat response
             try:

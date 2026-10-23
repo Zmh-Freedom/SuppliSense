@@ -6,6 +6,7 @@ import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowLifecycle, AgentWor
 import type { AgentStatus } from './AgentWorkflowPanel';
 import ChatMessageList, { type ChatStreamViewState } from './ChatMessageList';
 import StructuredAgentResult from './StructuredAgentResult';
+import SourcingHandoffPanel, { type SourcingHandoffDetail } from './SourcingHandoffPanel';
 
 const CAPABILITIES = [
   { label: '风险评估', desc: '全面分析企业风险状况', prompt: '对「公司名」进行全面的风险评估' },
@@ -208,9 +209,14 @@ function restoreConfirmedSupplierQuestion(
 
 export default function ChatView() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const handoffId = searchParams.get('handoff_id') ?? '';
+  const handoffSessionId = searchParams.get('session_id') ?? '';
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
-  const [activeSid, setActiveSid] = useState<string>(() => loadActiveSessionId(loadSessions()));
+  const [activeSid, setActiveSid] = useState<string>(() => handoffId && handoffSessionId ? handoffSessionId : loadActiveSessionId(loadSessions()));
+  const [consumedHandoffId, setConsumedHandoffId] = useState('');
+  const handoffConsumed = Boolean(handoffId && consumedHandoffId === handoffId);
   const [input, setInput] = useState<string>(() => {
+    if (searchParams.get('handoff_id')) return '';
     const queryInput = searchParams.get('q');
     if (queryInput) return queryInput;
     try { return localStorage.getItem(scopedKey('chat_input')) || ''; } catch { return ''; }
@@ -265,13 +271,25 @@ export default function ChatView() {
     setSessions(list);
   }, []);
 
-  const send = useCallback(async (msg?: string, forceNewSession = false, recovery?: PendingRun) => {
+  const send = useCallback(async (
+    msg?: string,
+    forceNewSession = false,
+    recovery?: PendingRun,
+    requestedHandoffId?: string,
+    sessionOverride?: string,
+  ) => {
     const text = (recovery?.messages.filter(item => item.role === 'user').at(-1)?.content ?? msg ?? inputRef.current?.value ?? input).trim();
     if (!text || loading) return;
     setInput('');
 
-    const isNewSession = forceNewSession || !activeSid;
-    const sid = isNewSession ? createSessionId() : activeSid;
+    const currentActiveSid = sessionOverride || activeSid;
+    const isUnstartedHandoffMessage = Boolean(
+      handoffId && !handoffConsumed && !requestedHandoffId && !recovery
+      && currentActiveSid === handoffSessionId,
+    );
+    const isNewSession = forceNewSession || !currentActiveSid || isUnstartedHandoffMessage;
+    const sid = isNewSession ? createSessionId() : currentActiveSid;
+    const handoffHeader = requestedHandoffId;
     if (isNewSession) setActiveSid(sid);
     saveActiveSessionId(sid);
 
@@ -304,6 +322,7 @@ export default function ChatView() {
     const streamCallbacks: StreamCallbacks = {
         onRun: (data) => {
           runId = data.run_id;
+          if (handoffHeader) setConsumedHandoffId(handoffId);
           savePendingRun(sid, { runId, lastEventId, messages: newMsgs });
         },
         onEventId: (eventId) => {
@@ -418,6 +437,7 @@ export default function ChatView() {
         },
         onDone: (data) => {
           receivedTerminalEvent = true;
+          if (handoffHeader) setConsumedHandoffId(handoffId);
           savePendingRun(sid, null);
           const pendingApproval = approvalAccRef.current;
           const contractStatus = agentAnswerAccRef.current?.status;
@@ -533,7 +553,8 @@ export default function ChatView() {
           },
         }, operation.controller.signal);
       } else {
-        await chatStream(text, sid, guarded, 'auto', operation.controller.signal);
+        if (handoffHeader) await chatStream(text, sid, guarded, 'auto', operation.controller.signal, handoffHeader);
+        else await chatStream(text, sid, guarded, 'auto', operation.controller.signal);
       }
       if (!isCurrent()) return;
       if (!receivedTerminalEvent) {
@@ -629,7 +650,33 @@ export default function ChatView() {
       setStreamState(null);
       setLoading(false);
     }
-  }, [input, loading, activeSid, msgs, persist]);
+  }, [input, loading, activeSid, msgs, persist, handoffId, handoffConsumed, handoffSessionId]);
+
+  const continueSourcingHandoff = useCallback(async (detail: SourcingHandoffDetail) => {
+    setActiveSid(detail.session_id);
+    saveActiveSessionId(detail.session_id);
+    if (!loadSessions().some(session => session.sid === detail.session_id)) {
+      persist(detail.session_id, [], true);
+    }
+    await send(detail.continue_message, false, undefined, detail.handoff_id, detail.session_id);
+  }, [persist, send]);
+
+  const restoreConsumedHandoff = useCallback((detail: SourcingHandoffDetail) => {
+    if (!detail.run_id) return;
+    setConsumedHandoffId(detail.handoff_id);
+    setActiveSid(detail.session_id);
+    saveActiveSessionId(detail.session_id);
+    const stored = loadSessions().find(session => session.sid === detail.session_id);
+    const messages = stored?.msgs?.length
+      ? stored.msgs
+      : [{ role: 'user' as const, content: detail.continue_message }];
+    if (!stored) persist(detail.session_id, messages, true);
+    savePendingRun(detail.session_id, {
+      runId: detail.run_id,
+      lastEventId: null,
+      messages,
+    });
+  }, [persist]);
 
   useEffect(() => {
     if (!activeSid || loading || operationRef.current) return;
@@ -646,10 +693,10 @@ export default function ChatView() {
   // so the button is an executable workflow rather than a prefilled draft.
   useEffect(() => {
     const query = searchParams.get('q')?.trim();
-    if (!query || autoSubmittedQueryRef.current) return;
+    if (!query || handoffId || autoSubmittedQueryRef.current) return;
     autoSubmittedQueryRef.current = true;
     void send(query, true);
-  }, [searchParams, send]);
+  }, [searchParams, send, handoffId]);
 
   const handleApproval = useCallback(async (approved: boolean) => {
     const persistedApprovalIndex = [...msgs].map((message, index) => ({ message, index })).reverse().find(
@@ -918,6 +965,14 @@ export default function ChatView() {
 
       {/* Main chat */}
       <div className="flex-1 flex flex-col min-w-0 w-full max-w-6xl mx-auto h-full">
+      {handoffId && <div className="shrink-0 px-4 pt-4">
+        <SourcingHandoffPanel
+          handoffId={handoffId}
+          sessionId={handoffSessionId}
+          onContinue={continueSourcingHandoff}
+          onConsumed={restoreConsumedHandoff}
+        />
+      </div>}
       {/* messages */}
       <div className="flex-1 overflow-auto px-4 space-y-6 py-6">
         {msgs.length === 0 && !loading && (
@@ -977,7 +1032,16 @@ export default function ChatView() {
           streamState={streamState}
           loading={loading}
           onAnalyzeReference={name => setInput(`继续分析 ${name} 的风险`)}
-          onConfirmSupplier={(candidate, originalMessage) => send(restoreConfirmedSupplierQuestion(originalMessage, candidate))}
+          onConfirmSupplier={(candidate, originalMessage) => {
+            const isBoundHandoffSession = Boolean(handoffId && !handoffConsumed && activeSid === handoffSessionId);
+            return send(
+              restoreConfirmedSupplierQuestion(originalMessage, candidate),
+              false,
+              undefined,
+              isBoundHandoffSession ? handoffId : undefined,
+              isBoundHandoffSession ? handoffSessionId : undefined,
+            );
+          }}
           onApproval={handleApproval}
           StructuredAgentResult={StructuredAgentResult}
         />

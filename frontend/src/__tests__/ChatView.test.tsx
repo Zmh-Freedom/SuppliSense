@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   chatRunEventStream: vi.fn(),
   chatStream: vi.fn(),
   resumeChat: vi.fn(),
+  handoffGet: vi.fn(),
+  handoffPost: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
@@ -20,6 +22,7 @@ vi.mock('../api', () => ({
     if (eventType === 'done') callbacks.onDone?.(data as { answer: string; status?: string })
   },
   resumeChat: mocks.resumeChat,
+  api: { get: mocks.handoffGet, post: mocks.handoffPost },
 }))
 
 const OLD_SESSION = {
@@ -69,6 +72,8 @@ describe('ChatView session lifecycle', () => {
     mocks.chatStream.mockReset()
     mocks.chatRunEventStream.mockReset()
     mocks.resumeChat.mockReset()
+    mocks.handoffGet.mockReset()
+    mocks.handoffPost.mockReset()
   })
 
   afterEach(() => {
@@ -584,6 +589,111 @@ describe('ChatView session lifecycle', () => {
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
     expect(mocks.chatStream.mock.calls[0][0]).toBe('请复核青岛三祥科技股份有限公司')
     expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
+  })
+
+  it('continues an authorized handoff only after the user clicks and keeps the bound session', async () => {
+    const detail = {
+      handoff_id: 'handoff-continue', session_id: 'session-bound', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'ready', continue_message: '请核验候选供应商“候选工厂”的主体，并继续进行风险检查',
+    }
+    mocks.handoffGet.mockResolvedValue(detail)
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已开始风险核验', status: 'completed' })
+      return '已开始风险核验'
+    })
+    renderChat(['/chat?handoff_id=handoff-continue&session_id=session-bound'])
+
+    await screen.findByText('候选工厂')
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+    await userEvent.setup().click(screen.getByRole('button', { name: '继续此候选' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][0]).toBe(detail.continue_message)
+    expect(mocks.chatStream.mock.calls[0][1]).toBe('session-bound')
+    expect(mocks.chatStream.mock.calls[0][5]).toBe('handoff-continue')
+    expect(mocks.handoffPost).not.toHaveBeenCalled()
+  })
+
+  it('keeps ordinary composer messages out of an unstarted handoff session', async () => {
+    mocks.handoffGet.mockResolvedValue({
+      handoff_id: 'handoff-pending', session_id: 'session-reserved', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'ready', continue_message: '请核验候选供应商“候选工厂”的主体，并继续进行风险检查',
+    })
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '普通聊天结果', status: 'completed' })
+      return '普通聊天结果'
+    })
+    const user = userEvent.setup()
+    renderChat(['/chat?handoff_id=handoff-pending&session_id=session-reserved'])
+
+    await screen.findByText('候选工厂')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请查看另一家供应商的情况')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][1]).not.toBe('session-reserved')
+    expect(mocks.chatStream.mock.calls[0]).toHaveLength(5)
+  })
+
+  it('refreshes a consumed handoff by replaying its original run without another submit', async () => {
+    mocks.handoffGet.mockResolvedValue({
+      handoff_id: 'handoff-consumed', session_id: 'session-consumed', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'consumed', continue_message: '请核验候选工厂并继续风险检查',
+      consumed_turn_id: 'turn-1', run_id: 'chat-run-original',
+    })
+    mocks.chatRunEventStream.mockImplementation(async (_runId: string, _cursor: number | null, handlers: { onEvent: (event: { eventType: string; data: unknown; eventId: number }) => void }) => {
+      handlers.onEvent({ eventType: 'done', data: { answer: '原交接任务已恢复', status: 'completed' }, eventId: 1 })
+    })
+    renderChat(['/chat?handoff_id=handoff-consumed&session_id=session-consumed'])
+
+    expect(await screen.findByText('原交接任务已恢复')).toBeInTheDocument()
+    expect(within(screen.getByLabelText('寻源交接')).getByRole('status')).toHaveTextContent('正在恢复原交接任务')
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('chat-run-original', null, expect.any(Object), expect.any(AbortSignal))
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+    expect(mocks.handoffPost).not.toHaveBeenCalled()
+  })
+
+  it('does not attach a handoff header when confirming identity in another chat session', async () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([
+      OLD_SESSION,
+      {
+        sid: 'other-session', title: '其他会话', updatedAt: 2,
+        msgs: [
+          { role: 'user', content: '请核验候选供应商主体并分析风险' },
+          {
+            role: 'assistant', content: '请选择正式主体',
+            identityCandidates: [{ supplier_id: 'supplier-1', supplier_name: '正式供应商有限公司' }],
+            clarificationMessage: '请核验候选供应商主体并分析风险',
+          },
+        ],
+      },
+    ]))
+    mocks.handoffGet.mockResolvedValue({
+      handoff_id: 'handoff-bound', session_id: 'bound-session', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'ready', continue_message: '请核验候选供应商“候选工厂”的主体，并继续进行风险检查',
+    })
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已确认身份', status: 'completed' })
+      return '已确认身份'
+    })
+    const user = userEvent.setup()
+    renderChat(['/chat?handoff_id=handoff-bound&session_id=bound-session'])
+
+    await screen.findByText('其他会话')
+    await user.click(screen.getByText('其他会话'))
+    await user.click(await screen.findByRole('button', { name: '正式供应商有限公司' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][1]).toBe('other-session')
+    expect(mocks.chatStream.mock.calls[0]).toHaveLength(5)
   })
 
   it('persists the completed Agent workflow summary with the answer', async () => {

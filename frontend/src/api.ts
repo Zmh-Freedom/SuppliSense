@@ -273,14 +273,17 @@ export async function chatStream(
   callbacks: StreamCallbacks,
   mode: string = 'auto',
   signal?: AbortSignal,
+  sourcingHandoffId?: string,
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CHAT_STREAM_TIMEOUT_MS);
 
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (sourcingHandoffId) headers['X-Sourcing-Handoff-ID'] = sourcingHandoffId;
     const res = await fetchWithAuthRetry(`${API_BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ message, session_id: sessionId, mode }),
       credentials: 'same-origin',
       signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
