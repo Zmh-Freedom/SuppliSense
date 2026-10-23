@@ -125,21 +125,21 @@ POST `/handoffs`、GET `/handoffs/{id}`；持久表sourcing_handoffs绑定user/s
 candidate/company/requirement/evidence refs/intent/status/consumed_turn_id。
 新session通过现有SessionStateStore创建；加同事务接口保障session+binding+幂等结果原子写入。
 
-- [ ] **1. 写失败测试。** `tests/test_sourcing_handoff.py`：换user/session/run/candidate被拒；
+- [x] **1. 写失败测试。** `tests/test_sourcing_handoff.py`：换user/session/run/candidate被拒；
   过期证据只作历史；候选身份冲突触发现有澄清，不自动选主体；
   parent run版本改变409要求重新交接；刷新不创建第二会话；执行前撤权拒绝。
   `tests/test_sourcing_handoff_harness.py`使用真实Registry/Executor/Harness，
   断言execution_context仅加载一次、只读走Harness、monitor_proposal无审批不得写入。
-- [ ] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_sourcing_handoff.py tests/test_sourcing_handoff_harness.py -q`。
-- [ ] **3. 实现handoff服务及加载边界。** 父任务证据仅ref，权限/新鲜度由服务端校验；
+- [x] **2. 验证RED。** backend `.venv/bin/python -m pytest tests/test_sourcing_handoff.py tests/test_sourcing_handoff_harness.py -q`。
+- [x] **3. 实现handoff服务及加载边界。** 父任务证据仅ref，权限/新鲜度由服务端校验；
   merge进入同一execution_context快照，不在图内重新load session。
   在start_harness_turn事务中认领binding并记consumed_turn_id；重复提交绑定返回原turn/run回执，
   中断可恢复但不再创建新turn。保持ChatRequest及事件格式，复用现有run状态/事件恢复端点。
-- [ ] **4. 前端实现并测试。** `SourcingHandoffPanel`加载受权详情，用户点击继续，
+- [x] **4. 前端实现并测试。** `SourcingHandoffPanel`加载受权详情，用户点击继续，
   消费后显示原run进度；清除q自动提交路径，旧q深链接仍兼容；
   新增 `SourcingHandoffPanel.test.tsx` 并扩展 `ChatView.test.tsx` 验证刷新无重复提交。
   跑后端专项、前端专项及typecheck。
-- [ ] **5. 提交。** `feat: bind sourcing handoffs to authorized Harness sessions`。
+- [x] **5. 提交。** `feat: bind sourcing handoffs to authorized Harness sessions`。
 
 ## Task 5：跨页面旅程验收
 

@@ -6088,7 +6088,7 @@
 
 ### ISS-20261022-022 寻源任务历史与跨页面候选上下文不连续
 
-- 发现日期：2026-10-22；状态：分阶段修复中（Task 1-3 已完成；Task 4-5 交接和跨页面验收待完成）；优先级：P2。
+- 发现日期：2026-10-22；状态：分阶段修复中（Task 1-4 已完成；Task 5 跨页面验收待完成）；优先级：P2。
 - 现象：推荐入口创建 `/agent-runs`，当前任务用 URL 保存，但页面历史列表来自兼容 `/sourcing/requests`；候选转聊天仅传企业名称文本。
 - 影响：离开任务地址后缺少统一入口找回推荐寻源任务；继续核验时原需求、候选 ID、已确认主体和来源证据不能由跳转参数稳定传递，可能重复确认。
 - 根因：两条产品入口使用不同任务资源，跨页面交接退化为自然语言。
@@ -6098,9 +6098,22 @@
 - 2026-10-23（Task 3 验证发现并修复）：灰度控制面读取不可用时，初版聚合器仍可能从另一可用来源发出游标，造成看似完整的跨来源分页；回归用例先失败后修复为来源标记 unavailable 且 `next_cursor=null`，要求重试本页。
 - 2026-10-23（Task 3 定向回归隔离发现）：既有 `test_search_suppliers_returns_no_cross_category_results` 未替换内部历史 Mongo 读取；同时寻源实现已改用 `discover_external_provider`，该测试仍 mock 旧 `search_external_provider` 包装器，导致真实只读发现请求进入回归测试。定向集在该用例停留 53 秒后手动中止，未观察到写调用。修复方案：离线服务夹具隔离内部历史读取和外部发现边界，并让用例替换当前实际调用的接口。
 - 2026-10-23（Task 3 实现复核）：计划要求历史状态提示仍有候选暂存组；当前历史组件把 `PARTIAL` / `NEEDS_REVIEW` 显示为通用状态，用户无法从列表判断是否还有候选待继续处理。修复方案：在不改变状态枚举或旧响应结构的前提下，为这两个已有状态加候选暂存提示并覆盖前端测试。
+- 2026-10-23（Task 4 修复前发现）：当前寻源候选的聊天入口只拼接自然语言 `q`，没有把登录用户、寻源 Run 版本、稳定 candidate_id、公司主体和证据引用绑定到唯一 Agent session；`SessionStateStore` 也没有在创建 session/turn/run 的同一事务中消费交接凭据。页面刷新可能重建会话或重复执行，候选/任务变更和撤权也无法在执行前重验。修复方案：新增 owner-scoped `sourcing_handoffs` 持久读写边界，以同一事务创建 session 和幂等绑定；Harness 请求只加载一次 execution_context，在 turn 创建事务认领绑定，重复请求返回既有 turn/run，并在执行前重验父 Run 版本、候选身份和供应商访问权限。身份含糊时只触发现有澄清，不自动选择主体；陈旧证据仅作为历史引用。
+- 2026-10-23（Task 4 RED）：新增交接 service/API 和 Harness 失败测试脚手架后，`tests/test_sourcing_handoff.py` 的初次运行为 8 failed、1 passed：创建接口由 501 scaffold 响应，用户/来源版本/会话绑定和执行授权拒绝均未实现，陈旧证据与身份澄清上下文也未合并。该结果验证了实现缺口；专项用例使用 mock，不连接或写入共享开发数据库。
+- 2026-10-23（Task 4 Harness 验证）：首轮实现后交接服务 9 项通过，但 Harness 一次快照用例被现有上下文契约提前拒绝；原因是测试夹具声明 `llm_intent.capability=risk`，却没有在 `current_task` 中提供匹配能力。修复方案：补齐离线用例的 `current_task.capability`，保留契约校验，不改产品路径。
+- 2026-10-23（Task 4 前端验证）：首轮前端专项 76 项通过，新增交接测试两处断言未通过：恢复页同时存在交接恢复提示和分析进度两个 `role=status`，测试需在交接卡片作用域内定位；jsdom 的 `window.location.assign` 为不可重定义属性，无法作为导航断言。修复方案：复用 React Router 的站内导航，并在测试中读取 MemoryRouter 当前路径；状态断言限定到交接面板。
+- 2026-10-23（Task 4 lint 验证）：功能专项 78 项和 TypeScript 检查通过；ESLint 指出新面板及 ChatView 在 effect 中同步重置状态，另一个回调 ref 在渲染期赋值。修复方案：面板 loading/error 从当前 handoff 请求结果派生；消费状态以 handoff_id 派生；移除仅为首屏同步 URL 会话而设的冗余 state effect，并为稳定回调声明依赖。
+- 2026-10-23（Task 4 持久读模型复核）：代码检查发现 PostgreSQL `sourcing_handoffs` 原始列名为 `id/actor_id/candidate_id`，service 的 owner/session resolver 使用 `handoff_id/user_id/candidate_key`；现有 mock 仅覆盖 service shape，未发现真实行映射缺口。修复方案：在 repo 边界统一别名，并用无数据库的 repo 契约测试验证 owner/session/candidate 字段映射。
+- 2026-10-23（Task 4 原子消费用例）：新增 start_harness_turn 离线事务夹具时，假 cursor 对现有 `insert_run` SQL 的返回行未正确装配，导致测试替身在创建 Run 后返回空值；产品路径未触发数据库。修复方案：根据实际 SQL/参数顺序修正 fake cursor 返回契约，再验证 turn/run/交接消费顺序。
+- 2026-10-23（Task 4 主体与会话复核）：静态检查发现已确认 disposition 的 company_id 可能对应候选快照中的一个法定名称，但 resolver 仍使用原外部别名；同时 ChatView 留在交接 URL 时切换到其他聊天，会把身份确认请求错误绑定回交接 session。修复方案：按所选 company_id 取 identity_candidates 中对应规范名；只有当前活动 session 等于绑定 session 时才携带交接头。
+- 2026-10-23（Task 4 交接入口复核）：ChatView 曾从当前 URL 为该会话的任意普通发送自动附加 handoff header，用户在输入框主动发起的新问题可能被误认为面板的继续动作并消费尚未使用的交接。修复方案：仅面板继续按钮和绑定会话内的身份确认显式传递 handoff_id；普通聊天发送不继承 URL 凭据。
+- 2026-10-23（Task 4 证据持久化复核）：handoff repo 初版从 `agent_evidence.evidence_snapshot` 整体复制证据，可能将 claim/value 等事实内容持久复制进交接；交接契约要求仅保留证据引用及服务端时效元数据。修复方案：repo 投影只返回 evidence_id、维度、来源引用、时效及时间字段，并用假 cursor 断言原始事实字段不会进入 handoff 读模型。
+- 2026-10-23（Task 4 最终复核发现）：证据快照中的 `freshness_status=fresh` 只代表采集时状态；交接可能在数月后仍将超过父 Run 冻结策略时效窗口的证据标为当前。修复方案：交接执行时读取父 Run 冻结策略并基于 `observed_at` 重新计算时效；缺少有效观察时间或策略窗口时按 unknown/历史处理，并增加已过期但快照仍标记 fresh 的回归用例。
+- 2026-10-23（Task 4 新增回归用例复核）：首次运行的时效用例意外通过，因为 resolver 使用的仓储 mock 仍返回默认 stale fixture，而新构造的“快照 fresh、观察时间过期”源未注入该边界。修复方案：将指定源显式注入 `read_handoff_source`，确认测试在现有实现下按预期失败后再修改实现。
+- 2026-10-23（Task 4 暂存差异检查）：新增 handoff schema 文件末尾存在空白行，`git diff --cached --check` 在提交前报告。修复方案：移除多余空白行并重跑暂存及工作区差异检查。
 - 修复方案：提供统一“我的寻源任务”；保留来源和适配边界；交接带 task/candidate/company ID 及需求快照，目的端重验权限。
-- 验证结果：Task 3 定向后端历史/授权/旧寻源服务共 28 passed，前端历史/工作台/legacy 深链接共 39 passed；前端 lint、typecheck、build，后端 compileall 与 `git diff --check` 通过。普通 Harness 聊天不进入寻源任务，来源部分失败不生成下一页游标，兼容详情和重搜均验证 owner/admin 边界。
-- 关联提交：`73d26d75`（统一任务历史、候选处置提示与兼容寻源授权）；Task 4-5 仍待完成。
+- 验证结果：Task 3 定向后端历史/授权/旧寻源服务共 28 passed，前端历史/工作台/legacy 深链接共 39 passed；前端 lint、typecheck、build，后端 compileall 与 `git diff --check` 通过。普通 Harness 聊天不进入寻源任务，来源部分失败不生成下一页游标，兼容详情和重搜均验证 owner/admin 边界。Task 4 最终后端交接/状态/上下文专项 36 passed；前端 27 个文件、215 tests passed，typecheck/lint/build、compileall 与 `git diff --check` 通过。新增用例先验证过期 freshness 快照在现有实现下失败，再确认按父 Run 冻结时效策略重算为 stale/historical；所有自动化验收均离线 mock，不连接或写入数据库。
+- 关联提交：`73d26d75`（统一任务历史、候选处置提示与兼容寻源授权）、`7e639f2d`（服务端受权交接、Harness 原子消费与前端恢复）；Task 5 跨页面验收仍待完成。
 
 ### ISS-20261022-023 监控覆盖摘要把历史记录存在当作当前可用
 
