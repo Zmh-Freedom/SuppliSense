@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { api, getStoredUser } from '../api';
 import { queryKeys } from '../query-keys';
 import type { ProcurementCaseDetail, ProcurementCaseEvent, ProcurementCaseList, ProcurementClosureCategory } from '../types';
@@ -77,7 +77,13 @@ function commandError(error: unknown): string {
 
 export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const user = getStoredUser();
+  const returnParams = new URLSearchParams(location.search);
+  const returnView = returnParams.get('workbench_view');
+  const returnTo = returnView === 'mine' || returnView === 'department'
+    ? `/${location.search}`
+    : '/cases';
   const detailQuery = useQuery({
     queryKey: queryKeys.procurementCase(caseId),
     queryFn: ({ signal }) => api.get<ProcurementCaseDetail>(`/procurement-cases/${encodeURIComponent(caseId)}`, undefined, signal),
@@ -123,6 +129,7 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ['procurement-cases'] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.procurementWorkbenchPrefix });
     void queryClient.invalidateQueries({ queryKey: queryKeys.procurementCase(caseId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.watchlist });
     void queryClient.invalidateQueries({ queryKey: queryKeys.dashboard });
@@ -190,8 +197,8 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
     onError: error => setActionError(commandError(error)),
   });
 
-  if (detailQuery.isLoading) return <main className="mx-auto max-w-4xl space-y-4 px-4 py-8"><Link to="/cases" className="text-sm text-[var(--color-primary-bg)]">← 返回采购事项</Link><p className="rounded-xl border border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">正在读取采购事项…</p></main>;
-  if (detailQuery.error || !detailQuery.data) return <main className="mx-auto max-w-4xl space-y-4 px-4 py-8"><Link to="/cases" className="text-sm text-[var(--color-primary-bg)]">← 返回采购事项</Link><section role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">采购事项当前不可用，可能不存在或你的访问权限已变化。<button type="button" onClick={() => detailQuery.refetch()} className="ml-2 underline">重试</button></section></main>;
+  if (detailQuery.isLoading) return <main className="mx-auto max-w-4xl space-y-4 px-4 py-8"><Link to={returnTo} className="text-sm text-[var(--color-primary-bg)]">← 返回采购事项</Link><p className="rounded-xl border border-[var(--color-border)] p-6 text-sm text-[var(--color-text-secondary)]">正在读取采购事项…</p></main>;
+  if (detailQuery.error || !detailQuery.data) return <main className="mx-auto max-w-4xl space-y-4 px-4 py-8"><Link to={returnTo} className="text-sm text-[var(--color-primary-bg)]">← 返回采购事项</Link><section role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">采购事项当前不可用，可能不存在或你的访问权限已变化。<button type="button" onClick={() => detailQuery.refetch()} className="ml-2 underline">重试</button></section></main>;
 
   const detail = detailQuery.data;
   const item = detail.case;
@@ -253,7 +260,7 @@ export default function ProcurementCasePanel({ caseId }: { caseId: string }) {
 
   return (
     <main className="mx-auto max-w-4xl space-y-5 px-4 py-6">
-      <Link to="/cases" className="inline-flex min-h-[40px] items-center text-sm text-[var(--color-primary-bg)] hover:underline">← 返回采购事项</Link>
+      <Link to={returnTo} className="inline-flex min-h-[40px] items-center text-sm text-[var(--color-primary-bg)] hover:underline">← 返回采购事项</Link>
       <section className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">

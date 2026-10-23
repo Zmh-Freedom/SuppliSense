@@ -40,11 +40,14 @@ export const queryKeys = {
   monitorIdentityCandidate: (id: string | undefined) => ['monitor-identity-candidates', id] as const,
   procurementCases: (filters: Record<string, string>) => ['procurement-cases', filters] as const,
   procurementCase: (id: string | undefined) => ['procurement-case', id] as const,
+  procurementWorkbench: (view: 'mine' | 'department', departmentCode?: string, actor?: string) =>
+    ['procurement-workbench', view, departmentCode || '', actor || ''] as const,
+  procurementWorkbenchPrefix: ['procurement-workbench'] as const,
 } as const;
 
 // Prefix keys include inactive variants, so reconnect also repairs pages
 // mounted later. API authorization is applied again on every refetch.
-const MONITOR_KEYS = [queryKeys.monitorRiskDetails, queryKeys.monitorReviewTasks, queryKeys.monitorIdentityCandidates, ['procurement-cases']] as const;
+const MONITOR_KEYS = [queryKeys.monitorRiskDetails, queryKeys.monitorReviewTasks, queryKeys.monitorIdentityCandidates, ['procurement-cases'], queryKeys.procurementWorkbenchPrefix] as const;
 const ALERT_KEYS = [queryKeys.watchlist, queryKeys.dashboard, queryKeys.alertHistory, queryKeys.predictions, ['trend'], ['notifications'], ...MONITOR_KEYS] as const;
 const RESULT_KEYS = [queryKeys.watchlist, queryKeys.dashboard, queryKeys.predictions, ['supplier'], ['trend'], ...MONITOR_KEYS] as const;
 export const REALTIME_QUERY_KEYS: Record<string, readonly (readonly unknown[])[]> = {

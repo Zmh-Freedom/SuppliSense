@@ -67,15 +67,15 @@ scope和capabilities由后端计算；view=department需当前经理能力，adm
 处置mutation失效事项/队列/监控缓存；WS只复用已有兼容事件，断线后重连触发已有resync。
 首页刷新并列请求原风险概览和新队列，分别处理失败；不产生自动外呼采集。
 
-- [ ] **1. 写组件失败测试。** mine/department切换不沿用上一范围数据；
+- [x] **1. 写组件失败测试。** mine/department切换不沿用上一范围数据；
   点击具体事项到/cases/:id，覆盖缺口到/assess/:targetId；
   API失败显示加载失败而非0；unknown图例及分母一致；
   旧高风险+覆盖过期显示历史边界；固定企业示例不进入待办。
-- [ ] **2. 验证RED。** frontend `npm test -- src/__tests__/WorkQueue.test.tsx src/__tests__/Dashboard.test.tsx`。
-- [ ] **3. 实现Dashboard/WorkQueue。** 首屏显示本人动作队列、经理科室视图和覆盖缺口；
+- [x] **2. 验证RED。** frontend `npm test -- src/__tests__/WorkQueue.test.tsx src/__tests__/Dashboard.test.tsx`。
+- [x] **3. 实现Dashboard/WorkQueue。** 首屏显示本人动作队列、经理科室视图和覆盖缺口；
   详情回跳保留筛选；独立错误/空/加载状态；列表计数避免把交叠coverage相加。
   历史快照分布标题注明口径，未知显式可见；原示例移至帮助折叠区域。
-- [ ] **4. 验证GREEN。** 前端全test/typecheck/lint/build；
+- [x] **4. 验证GREEN。** 前端全test/typecheck/lint/build；
   事项关闭后队列和数量同步刷新，切换账号清除前一用户数据。
 - [ ] **5. 提交。** `feat: prioritize real cases and unknown coverage on dashboard`。
 

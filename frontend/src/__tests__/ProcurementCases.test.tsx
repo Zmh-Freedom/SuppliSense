@@ -2,9 +2,10 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ProcurementCases from '../components/ProcurementCases';
 import { api, getStoredUser } from '../api';
+import { queryKeys } from '../query-keys';
 
 vi.mock('../api', () => ({
   api: { get: vi.fn(), post: vi.fn() },
@@ -75,6 +76,8 @@ function renderCases(initialEntry: string) {
 }
 
 describe('ProcurementCases', () => {
+  afterEach(() => vi.restoreAllMocks());
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getStoredUser).mockReturnValue({ username: 'buyer-1', role: 'purchaser' });
@@ -126,6 +129,7 @@ describe('ProcurementCases', () => {
 
   it('completes claim, receipt, accepted-limitation request, and independent manager approval', async () => {
     const user = userEvent.setup();
+    const invalidateSpy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
     let detailRead = 0;
     const snapshots = [
       detail({}, { can_claim: true }),
@@ -173,6 +177,7 @@ describe('ProcurementCases', () => {
     expect(await screen.findByText('已关闭')).toBeInTheDocument();
     expect(screen.getByText('资料缺口仍未解决')).toBeInTheDocument();
     expect(screen.getByText('公开财务域资料仍未覆盖')).toBeInTheDocument();
+    expect(invalidateSpy).toHaveBeenCalledWith(expect.objectContaining({ queryKey: queryKeys.procurementWorkbenchPrefix }));
     expect(api.post).toHaveBeenNthCalledWith(1, '/procurement-cases/case-1/commands', { command: 'claim', expected_version: 1 }, undefined, expect.objectContaining({ 'Idempotency-Key': expect.any(String) }));
   });
 
@@ -321,5 +326,19 @@ describe('ProcurementCases', () => {
     expect(await screen.findByText('执行完成')).toBeInTheDocument();
     expect(screen.getByText('事项处理中')).toBeInTheDocument();
     expect(screen.getByText('执行完成，但仍存在资料缺口')).toBeInTheDocument();
+  });
+
+  it('returns from a workbench case to the same dashboard scope', async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => path === '/procurement-cases/case-1'
+      ? Promise.resolve(detail())
+      : Promise.resolve({ items: [], next_cursor: null, available_views: { mine: true, department: false } }));
+
+    renderCases('/cases/case-1?workbench_view=department&department_code=D2');
+
+    expect(await screen.findByRole('heading', { name: '补齐数据覆盖缺口' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '← 返回采购事项' })).toHaveAttribute(
+      'href',
+      '/?workbench_view=department&department_code=D2',
+    );
   });
 });

@@ -244,6 +244,51 @@ export interface ProcurementCaseList {
   available_views?: { mine: boolean; department: boolean; accessible?: boolean };
 }
 
+export type ProcurementWorkbenchView = 'mine' | 'department';
+
+export interface ProcurementWorkbenchItem {
+  case_id: string;
+  target_id: string;
+  title: string;
+  group: 'pending_closure' | 'overdue' | 'due_review' | 'high' | 'normal';
+  status: string;
+  owner_user_id: string | null;
+  due_at: string | null;
+  next_review_at: string | null;
+  detail_url: string;
+}
+
+export interface ProcurementWorkbench {
+  scope: { view: ProcurementWorkbenchView; department_code: string | null };
+  capabilities: {
+    can_view_mine: boolean;
+    can_view_department: boolean;
+    can_choose_department: boolean;
+    department_codes: string[];
+  };
+  counts: Record<'pending_closure' | 'overdue' | 'due_review' | 'high' | 'normal', number | null>;
+  items: ProcurementWorkbenchItem[];
+  next_cursor: string | null;
+  coverage: {
+    target_total: number;
+    unknown_count: number;
+    stale_count: number;
+    failed_count: number;
+    targets: Array<{
+      target_id: string;
+      display_name: string;
+      missing_dimensions: string[];
+      unknown: boolean;
+      stale: boolean;
+      failed: boolean;
+    }>;
+  } | null;
+  sections: {
+    cases: { status: 'available' | 'unavailable'; count: number | null };
+    coverage: { status: 'available' | 'unavailable'; count: number | null };
+  };
+}
+
 export interface MonitorRiskDetail {
   monitor_target_id: string;
   company_name: string;
