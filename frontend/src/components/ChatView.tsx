@@ -36,6 +36,7 @@ interface PendingRun {
   runId: string;
   lastEventId: number | null;
   messages: ChatMessage[];
+  approvalResume?: boolean;
 }
 
 class StreamBuffer<T> {
@@ -304,7 +305,10 @@ export default function ChatView() {
     const agentAnswerAccRef = new StreamBuffer<AgentAnswer | undefined>(undefined);
     const evidenceAccRef = new StreamBuffer<AgentEvidenceRecord[]>([]);
     const workflowAccRef = new StreamBuffer(createWorkflowSnapshot());
-    const newMsgs: ChatMessage[] = recovery?.messages ?? [...msgs, { role: 'user', content: text }];
+    let newMsgs: ChatMessage[] = recovery?.messages ?? [...msgs, { role: 'user', content: text }];
+    const recoveryApproval = recovery?.approvalResume
+      ? [...newMsgs].reverse().find(message => message.role === 'assistant' && message.approval)?.approval
+      : undefined;
     persist(sid, newMsgs, isNewSession);
     setLoading(true);
     const initialWorkflow = createWorkflowSnapshot();
@@ -317,17 +321,46 @@ export default function ChatView() {
     evidenceAccRef.current = [];
 
     let runId: string | null = recovery?.runId ?? null;
-    let lastEventId: number | null = null;
+    let lastEventId: number | null = recovery?.approvalResume ? recovery.lastEventId : null;
     let receivedTerminalEvent = false;
+    let replayEventSeen = false;
+    let replaySawApproval = false;
+    let replaySawWaitingBoundary = Boolean(
+      recovery?.approvalResume
+      && recoveryApproval?.approval_event_id != null
+      && lastEventId !== null
+      && lastEventId > recoveryApproval.approval_event_id,
+    );
+    let replaySawResumedRun = Boolean(recoveryApproval?.resume_started);
     const streamCallbacks: StreamCallbacks = {
         onRun: (data) => {
           runId = data.run_id;
           if (handoffHeader) setConsumedHandoffId(handoffId);
-          savePendingRun(sid, { runId, lastEventId, messages: newMsgs });
+          if (recovery?.approvalResume && replaySawResumedRun) {
+            const approvalIndex = [...newMsgs].map((message, index) => ({ message, index })).reverse().find(
+              item => item.message.role === 'assistant' && item.message.approval,
+            )?.index;
+            const recoveryMessages = approvalIndex === undefined ? newMsgs : newMsgs.map((item, index) => index === approvalIndex ? {
+              ...item,
+              approval: item.approval ? {
+                ...item.approval,
+                run_id: runId,
+                last_event_id: lastEventId,
+                resume_started: true,
+              } : undefined,
+            } : item);
+            newMsgs = recoveryMessages;
+            persist(sid, recoveryMessages);
+            savePendingRun(sid, { runId, lastEventId, messages: recoveryMessages, approvalResume: true });
+          } else {
+            savePendingRun(sid, { runId, lastEventId, messages: newMsgs, approvalResume: recovery?.approvalResume });
+          }
         },
         onEventId: (eventId) => {
           lastEventId = eventId;
-          if (runId && !receivedTerminalEvent) savePendingRun(sid, { runId, lastEventId, messages: newMsgs });
+          if (runId && !receivedTerminalEvent && (!approvalAccRef.current || recovery?.approvalResume)) {
+            savePendingRun(sid, { runId, lastEventId, messages: newMsgs, approvalResume: recovery?.approvalResume });
+          }
         },
         onThinking: (data) => {
           setStreamState(prev => prev ? { ...prev, thinking: data.message } : null);
@@ -436,12 +469,31 @@ export default function ChatView() {
           } : null);
         },
         onDone: (data) => {
+          if (
+            recovery?.approvalResume
+            && data.status === 'waiting_approval'
+            && !replaySawResumedRun
+            && !replaySawApproval
+          ) {
+            // The cursor can still point at approval_required if the page was
+            // refreshed before the original waiting_approval done event arrived.
+            // That event closes the old stream, not the user's newer decision.
+            replaySawWaitingBoundary = true;
+            return;
+          }
           receivedTerminalEvent = true;
           if (handoffHeader) setConsumedHandoffId(handoffId);
           savePendingRun(sid, null);
           const pendingApproval = approvalAccRef.current;
+          const approvalResumeIndex = recovery?.approvalResume
+            ? [...newMsgs].map((message, index) => ({ message, index })).reverse().find(
+              item => item.message.role === 'assistant' && item.message.approval,
+            )?.index
+            : undefined;
+          const approvalBeingResumed = approvalResumeIndex === undefined ? undefined : newMsgs[approvalResumeIndex].approval;
           const contractStatus = agentAnswerAccRef.current?.status;
           const serverStatus = data.status || contractStatus || workflowAccRef.current.status;
+          const approvalWaitingAgain = Boolean(recovery?.approvalResume && serverStatus === 'waiting_approval');
           const rawAnswer = answerAccRef.current.trim()
             || data.answer?.trim()
             || agentAnswerAccRef.current?.summary?.trim()
@@ -450,12 +502,50 @@ export default function ChatView() {
           const hasServerTerminalStatus = ['completed', 'partial', 'needs_review', 'failed', 'rejected', 'cancelled'].includes(serverStatus);
           const finalWorkflow = {
             ...workflowAccRef.current,
-            status: pendingApproval ? 'waiting_approval' : (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
-            stage: pendingApproval ? 'approval' : hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
-            message: pendingApproval ? '分析已完成，等待人工确认写操作' : !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'cancelled' ? '本轮 Agent 工作流已取消' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
+            status: pendingApproval || approvalWaitingAgain ? 'waiting_approval' : (hasServerTerminalStatus ? serverStatus : 'failed') as AgentWorkflowLifecycle | string,
+            stage: pendingApproval || approvalWaitingAgain ? 'approval' : hasServerTerminalStatus && ['completed', 'partial'].includes(serverStatus) ? 'completed' : 'decision',
+            message: pendingApproval || approvalWaitingAgain ? '分析已完成，等待人工确认写操作' : !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'cancelled' ? '本轮 Agent 工作流已取消' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
-          const completedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow, approval: pendingApproval ? { ...pendingApproval, status: 'pending' } : undefined }];
+          const approvalDecision = approvalBeingResumed?.decision;
+          const resolvedApprovalStatus = approvalWaitingAgain
+            ? 'pending'
+            : serverStatus === 'rejected' || approvalDecision === 'rejected'
+              ? 'rejected'
+              : approvalDecision === 'approved' && ['completed', 'partial'].includes(serverStatus)
+                ? 'approved'
+                : 'failed';
+          const recoveredApproval = pendingApproval ? {
+            ...pendingApproval,
+            run_id: runId || pendingApproval.run_id,
+            last_event_id: lastEventId,
+            status: 'pending' as const,
+          } : undefined;
+          const completedMsgs: ChatMessage[] = recovery?.approvalResume && approvalResumeIndex !== undefined
+            ? newMsgs.map((item, index) => index === approvalResumeIndex ? {
+              ...item,
+              content: finalAnswer,
+              references: referencesAccRef.current,
+              agentAnswer: agentAnswerAccRef.current,
+              evidence: evidenceAccRef.current,
+              workflow: finalWorkflow,
+              approval: item.approval ? {
+                ...item.approval,
+                run_id: runId || item.approval.run_id,
+                last_event_id: lastEventId,
+                resume_started: replaySawResumedRun,
+                status: resolvedApprovalStatus,
+              } : undefined,
+            } : item)
+            : [...newMsgs, {
+              role: 'assistant',
+              content: finalAnswer,
+              references: referencesAccRef.current,
+              agentAnswer: agentAnswerAccRef.current,
+              evidence: evidenceAccRef.current,
+              workflow: finalWorkflow,
+              approval: recoveredApproval,
+            }];
           answerAccRef.current = '';
           persist(sid, completedMsgs);
           setStreamState(null);
@@ -473,6 +563,37 @@ export default function ChatView() {
           receivedTerminalEvent = true;
           savePendingRun(sid, null);
           console.error('Stream error:', data.message);
+          const approvalIndex = recovery?.approvalResume
+            ? [...newMsgs].map((message, index) => ({ message, index })).reverse().find(
+              item => item.message.role === 'assistant' && item.message.approval,
+            )?.index
+            : undefined;
+          if (approvalIndex !== undefined) {
+            const stillWaiting = replaySawApproval
+              || (!replaySawResumedRun && replaySawWaitingBoundary)
+              || (!replaySawResumedRun && !replayEventSeen);
+            const prior = newMsgs[approvalIndex];
+            const workflow = stillWaiting
+              ? { ...(prior.workflow || workflowAccRef.current), status: 'waiting_approval', stage: 'approval', message: '审批尚未恢复，可重新提交决定' }
+              : { ...(prior.workflow || workflowAccRef.current), status: 'needs_review', stage: 'decision', message: '审批恢复中断，结果需要人工复核' };
+            const recoveredMsgs = newMsgs.map((item, index) => index === approvalIndex ? {
+              ...item,
+              content: stillWaiting ? item.content : `审批恢复中断：${data.message}`,
+              workflow,
+              approval: item.approval ? {
+                ...item.approval,
+                run_id: runId || item.approval.run_id,
+                last_event_id: lastEventId,
+                resume_started: replaySawResumedRun,
+                status: stillWaiting ? 'pending' as const : 'failed' as const,
+                decision: stillWaiting ? undefined : item.approval.decision,
+              } : undefined,
+            } : item);
+            persist(sid, recoveredMsgs);
+            setStreamState(null);
+            setLoading(false);
+            return;
+          }
           const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
           workflowAccRef.current = failedWorkflow;
           const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: `错误：${data.message}`, workflow: failedWorkflow }];
@@ -499,23 +620,47 @@ export default function ChatView() {
           setLoading(false);
         },
         onApprovalRequired: (data) => {
-          receivedTerminalEvent = true;
-          approvalAccRef.current = { ...data, status: 'pending' };
+          if (recovery?.approvalResume && !replaySawResumedRun) return;
+          replaySawApproval = true;
+          const approval = {
+            ...data,
+            run_id: runId || data.run_id || workflowAccRef.current.runId,
+            last_event_id: lastEventId,
+            approval_event_id: lastEventId,
+            status: 'pending' as const,
+          };
+          approvalAccRef.current = approval;
           const waiting = { ...workflowAccRef.current, status: 'waiting_approval' as const, stage: 'approval', message: '等待人工确认后继续执行' };
           workflowAccRef.current = waiting;
           // Approval is a deliberate pause, not a failed stream. Persist the
           // approval card immediately because the supervisor stream ends
           // after approval_required and does not emit a normal done event.
           const approvalAnswer = normalizeApprovalAnswer(answerAccRef.current || data.message);
-          const approvalMsgs: ChatMessage[] = [...newMsgs, {
-            role: 'assistant',
-            content: approvalAnswer,
-            references: referencesAccRef.current,
-            agentAnswer: agentAnswerAccRef.current,
-            evidence: evidenceAccRef.current,
-            workflow: waiting,
-            approval: { ...data, status: 'pending' },
-          }];
+          const approvalMessageIndex = recovery?.approvalResume
+            ? [...newMsgs].map((message, index) => ({ message, index })).reverse().find(
+              item => item.message.role === 'assistant' && item.message.approval,
+            )?.index
+            : undefined;
+          const approvalMsgs: ChatMessage[] = approvalMessageIndex === undefined
+            ? [...newMsgs, {
+              role: 'assistant',
+              content: approvalAnswer,
+              references: referencesAccRef.current,
+              agentAnswer: agentAnswerAccRef.current,
+              evidence: evidenceAccRef.current,
+              workflow: waiting,
+              approval,
+            }]
+            : newMsgs.map((item, index) => index === approvalMessageIndex ? {
+              ...item,
+              content: approvalAnswer,
+              references: referencesAccRef.current,
+              agentAnswer: agentAnswerAccRef.current,
+              evidence: evidenceAccRef.current,
+              workflow: waiting,
+              approval,
+            } : item);
+          if (recovery?.approvalResume) newMsgs = approvalMsgs;
           persist(sid, approvalMsgs);
           answerAccRef.current = '';
           setStreamState(null);
@@ -545,11 +690,23 @@ export default function ChatView() {
     };
     try {
       if (recovery) {
-        // A fresh view has no accumulated chunks; rebuild from the beginning.
-        await chatRunEventStream(recovery.runId, null, {
+        // Approval recovery resumes after the last durable event from the
+        // original approval stream; ordinary chat recovery rebuilds from the start.
+        await chatRunEventStream(recovery.runId, recovery.approvalResume ? recovery.lastEventId : null, {
           onEvent: event => {
-            dispatchStreamEvent(event.eventType, event.data, guarded);
+            if (recovery.approvalResume && (recovery.lastEventId === null || event.eventId > recovery.lastEventId)) {
+              replayEventSeen = true;
+            }
+            if (recovery.approvalResume) {
+              if (event.eventType === 'done' && event.data?.status === 'waiting_approval') {
+                replaySawWaitingBoundary = true;
+              } else if (event.eventType === 'run' && replaySawWaitingBoundary) {
+                replaySawResumedRun = true;
+              }
+            }
             lastEventId = event.eventId;
+            dispatchStreamEvent(event.eventType, event.data, guarded);
+            if (recovery.approvalResume) guarded.onEventId?.(event.eventId);
           },
         }, operation.controller.signal);
       } else {
@@ -557,6 +714,45 @@ export default function ChatView() {
         else await chatStream(text, sid, guarded, 'auto', operation.controller.signal);
       }
       if (!isCurrent()) return;
+      if (!recovery?.approvalResume && approvalAccRef.current && !receivedTerminalEvent) {
+        savePendingRun(sid, null);
+        setStreamState(null);
+        setLoading(false);
+        return;
+      }
+      if (recovery?.approvalResume && !receivedTerminalEvent) {
+        const approvalIndex = [...newMsgs].map((message, index) => ({ message, index })).reverse().find(
+          item => item.message.role === 'assistant' && item.message.approval,
+        )?.index;
+        if (approvalIndex !== undefined) {
+          const isStillWaiting = replaySawApproval
+            || (!replaySawResumedRun && replaySawWaitingBoundary)
+            || (!replaySawResumedRun && !replayEventSeen);
+          const prior = newMsgs[approvalIndex];
+          const approval = prior.approval;
+          const workflow = isStillWaiting
+            ? { ...(prior.workflow || workflowAccRef.current), status: 'waiting_approval', stage: 'approval', message: '等待人工确认后继续执行' }
+            : { ...(prior.workflow || workflowAccRef.current), status: 'needs_review', stage: 'decision', message: '执行中断，结果需要人工复核' };
+          const recoveredMsgs = newMsgs.map((item, index) => index === approvalIndex ? {
+            ...item,
+            content: isStillWaiting ? item.content : '审批已提交，但执行结果需要人工复核。请查看服务端任务状态后再继续。',
+            workflow,
+            approval: approval ? {
+              ...approval,
+              run_id: runId || approval.run_id,
+              last_event_id: lastEventId,
+              resume_started: replaySawResumedRun,
+              status: isStillWaiting ? 'pending' as const : 'failed' as const,
+              decision: isStillWaiting ? undefined : approval.decision,
+            } : undefined,
+          } : item);
+          persist(sid, recoveredMsgs);
+        }
+        savePendingRun(sid, null);
+        setStreamState(null);
+        setLoading(false);
+        return;
+      }
       if (!receivedTerminalEvent) {
         if (runId) {
           try {
@@ -706,6 +902,14 @@ export default function ChatView() {
     const approval = streamState?.approval || persistedApproval;
     if (!approval || ['approved', 'rejected'].includes(approval.status || '')) return;
     const { session_id: approvalSid } = approval;
+    const persistedWorkflow = persistedApprovalIndex === undefined ? undefined : msgs[persistedApprovalIndex].workflow;
+    let resumeRunId = approval.run_id
+      || streamState?.workflowStatus.runId
+      || persistedWorkflow?.runId
+      || pendingRuns()[approvalSid]?.runId
+      || '';
+    let resumeLastEventId = approval.last_event_id ?? null;
+    let resumeStarted = false;
     operationRef.current?.controller.abort();
     const operation = { sid: approvalSid, controller: new AbortController() };
     operationRef.current = operation;
@@ -720,7 +924,14 @@ export default function ChatView() {
 
     // Persist the pending approval before resuming so a refresh does not lose
     // the only place where the user can confirm the write action.
-    const submittingApproval: ApprovalData = { ...approval, status: 'submitting' };
+    const submittingApproval: ApprovalData = {
+      ...approval,
+      run_id: resumeRunId || undefined,
+      last_event_id: resumeLastEventId,
+      resume_started: false,
+      decision: approved ? 'approved' : 'rejected',
+      status: 'submitting',
+    };
     let resumeMsgs: ChatMessage[];
     if (persistedApprovalIndex !== undefined) {
       resumeMsgs = msgs.map((item, index) => index === persistedApprovalIndex ? { ...item, approval: submittingApproval } : item);
@@ -733,6 +944,36 @@ export default function ChatView() {
       }];
     }
     persist(approvalSid, resumeMsgs);
+    const approvalMessageIndex = persistedApprovalIndex ?? resumeMsgs.length - 1;
+    const persistResumeProgress = () => {
+      if (!resumeRunId) return;
+      resumeMsgs = resumeMsgs.map((item, index) => index === approvalMessageIndex ? {
+        ...item,
+        approval: item.approval ? {
+          ...item.approval,
+          run_id: resumeRunId,
+          last_event_id: resumeLastEventId,
+          resume_started: resumeStarted,
+          decision: approved ? 'approved' : 'rejected',
+          status: 'submitting',
+        } : undefined,
+      } : item);
+      persist(approvalSid, resumeMsgs);
+      savePendingRun(approvalSid, {
+        runId: resumeRunId,
+        lastEventId: resumeLastEventId,
+        messages: resumeMsgs,
+        approvalResume: true,
+      });
+    };
+    if (resumeRunId) {
+      savePendingRun(approvalSid, {
+        runId: resumeRunId,
+        lastEventId: resumeLastEventId,
+        messages: resumeMsgs,
+        approvalResume: true,
+      });
+    }
     setLoading(true);
 
     // 保留审批内容并标记提交中，恢复 loading 状态继续流式输出
@@ -754,6 +995,16 @@ export default function ChatView() {
 
     try {
       const callbacks: StreamCallbacks = {
+        onRun: (data) => {
+          resumeRunId = data.run_id;
+          resumeStarted = true;
+          workflowAccRef.current = { ...workflowAccRef.current, runId: data.run_id };
+          persistResumeProgress();
+        },
+        onEventId: (eventId) => {
+          resumeLastEventId = eventId;
+          persistResumeProgress();
+        },
         onWorkflowStatus: (data) => {
           const previous = workflowAccRef.current;
           const next = {
@@ -770,6 +1021,10 @@ export default function ChatView() {
             completedToolCount: data.completed_tool_count ?? previous.completedToolCount,
           };
           workflowAccRef.current = next;
+          if (data.run_id) {
+            resumeRunId = data.run_id;
+            persistResumeProgress();
+          }
           setStreamState(prev => prev ? { ...prev, workflowStatus: next, approvalSubmitting: true } : null);
         },
         onThinking: (data) => {
@@ -810,6 +1065,7 @@ export default function ChatView() {
           } : null);
         },
         onDone: (data) => {
+          savePendingRun(approvalSid, null);
           const rawAnswer = answerAccRef.current || data.answer;
           const finalAnswer = normalizeApprovalAnswer(rawAnswer, approved);
           const contractStatus = agentAnswerAccRef.current?.status;
@@ -822,7 +1078,14 @@ export default function ChatView() {
             message: !hasServerTerminalStatus ? '服务端未返回有效终态，已停止显示为成功' : serverStatus === 'needs_review' ? '结果需要人工复核' : serverStatus === 'partial' ? '本轮 Agent 仅完成部分分析' : serverStatus === 'failed' ? '本轮 Agent 执行失败' : serverStatus === 'cancelled' ? '本轮 Agent 工作流已取消' : serverStatus === 'rejected' ? '操作已拒绝，未写入业务数据' : '本轮 Agent 工作流已完成',
           };
           workflowAccRef.current = finalWorkflow;
-          const resolvedApproval: ApprovalData = { ...approval, status: approved ? 'approved' : 'rejected' };
+          const resolvedApproval: ApprovalData = {
+            ...approval,
+            run_id: resumeRunId || approval.run_id,
+            last_event_id: resumeLastEventId,
+            resume_started: resumeStarted,
+            decision: approved ? 'approved' : 'rejected',
+            status: approved ? 'approved' : 'rejected',
+          };
           const completedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => {
             if (index !== (persistedApprovalIndex ?? resumeMsgs.length - 1)) return item;
             return { ...item, content: finalAnswer, references: referencesAccRef.current, agentAnswer: agentAnswerAccRef.current, evidence: evidenceAccRef.current, workflow: finalWorkflow, approval: resolvedApproval };
@@ -842,9 +1105,17 @@ export default function ChatView() {
           setStreamState(prev => prev ? { ...prev, evidence: data.records } : null);
         },
         onError: (data) => {
+          savePendingRun(approvalSid, null);
           const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
           workflowAccRef.current = failedWorkflow;
-          const failedApproval: ApprovalData = { ...approval, status: 'failed' };
+          const failedApproval: ApprovalData = {
+            ...approval,
+            run_id: resumeRunId || approval.run_id,
+            last_event_id: resumeLastEventId,
+            resume_started: resumeStarted,
+            decision: approved ? 'approved' : 'rejected',
+            status: 'failed',
+          };
           const failedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => index === (persistedApprovalIndex ?? resumeMsgs.length - 1)
             ? { ...item, content: `错误：${data.message}`, workflow: failedWorkflow, approval: failedApproval }
             : item);
@@ -857,12 +1128,42 @@ export default function ChatView() {
     } catch (err) {
       if (!isCurrent()) return;
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
-      const failedApproval: ApprovalData = { ...approval, status: 'failed' };
-      const failedMsgs: ChatMessage[] = resumeMsgs.map((item, index) => index === (persistedApprovalIndex ?? resumeMsgs.length - 1)
-        ? { ...item, content: isTimeout ? '请求超时，请重试' : '操作失败，请重试', approval: failedApproval }
+      const message = isTimeout ? '审批请求超时，正在核对服务端执行结果' : '审批连接中断，正在核对服务端执行结果';
+      const uncertainWorkflow = {
+        ...workflowAccRef.current,
+        status: 'needs_review' as const,
+        stage: 'decision',
+        message,
+      };
+      const uncertainApproval: ApprovalData = {
+        ...approval,
+        run_id: resumeRunId || approval.run_id,
+        last_event_id: resumeLastEventId,
+        resume_started: resumeStarted,
+        decision: approved ? 'approved' : 'rejected',
+        status: resumeRunId ? 'submitting' : 'pending',
+      };
+      const uncertainMsgs: ChatMessage[] = resumeMsgs.map((item, index) => index === approvalMessageIndex
+        ? { ...item, content: message, workflow: uncertainWorkflow, approval: uncertainApproval }
         : item);
-      persist(approvalSid, failedMsgs);
-      setStreamState(prev => prev ? { ...prev, error: isTimeout ? '请求超时，请重试' : '操作失败，请重试', approvalSubmitting: false } : null);
+      persist(approvalSid, uncertainMsgs);
+      if (resumeRunId) {
+        savePendingRun(approvalSid, {
+          runId: resumeRunId,
+          lastEventId: resumeLastEventId,
+          messages: uncertainMsgs,
+          approvalResume: true,
+        });
+      }
+      setStreamState(prev => prev ? {
+        ...prev,
+        error: message,
+        workflowStatus: uncertainWorkflow,
+        approval: uncertainApproval,
+        approvalSubmitting: Boolean(resumeRunId),
+      } : null);
+      operation.controller.abort();
+      if (operationRef.current === operation) operationRef.current = null;
       setLoading(false);
     }
   }, [streamState, msgs, persist]);

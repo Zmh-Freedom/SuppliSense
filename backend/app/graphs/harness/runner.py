@@ -80,13 +80,16 @@ async def stop_managed_runners() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def reconcile_interrupted_runs() -> None:
+async def reconcile_interrupted_runs(*, exclude_run_type: str | None = None) -> None:
     """Each API may scan; Run row locks make concurrent scans harmless."""
     from app.domains.agent_run.coordinator import run_coordinator
 
     while True:
         await asyncio.sleep(5)
         try:
-            await asyncio.to_thread(run_coordinator.reconcile_expired)
+            await asyncio.to_thread(
+                run_coordinator.reconcile_expired,
+                exclude_run_type=exclude_run_type,
+            )
         except Exception as exc:
             logger.warning("harness_reconciliation_failed", error=type(exc).__name__)

@@ -224,8 +224,20 @@ class RunCoordinator:
             if not execution or not execution.get("execution_input"):
                 raise ExecutionLost("历史任务缺少可核对的冻结输入，请取消后重新发起")
             if execution["execution_input"].get("runtime") == "harness":
-                cur.execute("SELECT COUNT(*) FROM agent_run_events WHERE run_id=%s AND event_type='tool_call'", (run_id,))
-                execution["reserved_tool_calls"] = int(cur.fetchone()[0])
+                cur.execute(
+                    """SELECT event_id,event_type,payload FROM agent_run_events
+                       WHERE run_id=%s AND event_type IN ('tool_call','tool_result')
+                       ORDER BY event_id""",
+                    (run_id,),
+                )
+                tool_events = [
+                    {"event_id": int(event_id), "event_type": event_type, "payload": payload or {}}
+                    for event_id, event_type, payload in cur.fetchall()
+                ]
+                execution["reserved_tool_calls"] = sum(
+                    event["event_type"] == "tool_call" for event in tool_events
+                )
+                execution["committed_tool_events"] = tool_events
             return {"run": run, **execution}
 
     def save_snapshot(self, permit: ExecutionPermit, snapshot: dict[str, Any]) -> None:
@@ -401,7 +413,12 @@ class RunCoordinator:
                 enqueue_event(cur, "agent.chat.completed", "agent_run", run_id, {"session_id": run["session_id"]})
         return updated
 
-    def reconcile_expired(self, batch_size: int = 100) -> list[str]:
+    def reconcile_expired(
+        self,
+        batch_size: int = 100,
+        *,
+        exclude_run_type: str | None = None,
+    ) -> list[str]:
         """Pause expired attempts without automatically replaying side effects.
 
         Safe to run on startup or via an operator command while other API
@@ -409,13 +426,18 @@ class RunCoordinator:
         """
         if batch_size < 1:
             raise ValueError("batch_size 必须大于 0")
+        run_type_filter = "AND r.run_type <> %s" if exclude_run_type else ""
+        params: tuple[Any, ...] = (batch_size,)
+        if exclude_run_type:
+            params = (exclude_run_type, batch_size)
         with get_cursor() as (_, cur):
             cur.execute(
-                """SELECT r.id,r.version FROM agent_runs r JOIN agent_run_executions e ON e.run_id=r.id
+                f"""SELECT r.id,r.version FROM agent_runs r JOIN agent_run_executions e ON e.run_id=r.id
                    WHERE e.state IN ('RUNNING','QUEUED') AND e.lease_until <= clock_timestamp()
                    AND r.status NOT IN ('COMPLETED','PARTIAL','NEEDS_REVIEW','ACTION_FAILED','FAILED','CANCELLED','ROLLBACK_FROZEN')
+                   {run_type_filter}
                    ORDER BY e.lease_until LIMIT %s FOR UPDATE OF r SKIP LOCKED""",
-                (batch_size,),
+                params,
             )
             expired = cur.fetchall()
             paused = []

@@ -137,6 +137,11 @@ export interface ApprovalData {
   args: Record<string, unknown>;
   session_id: string;
   status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
+  run_id?: string;
+  last_event_id?: number | null;
+  approval_event_id?: number | null;
+  resume_started?: boolean;
+  decision?: 'approved' | 'rejected';
 }
 
 export interface StreamCallbacks {
@@ -200,10 +205,10 @@ async function _parseSSEStream(
       const dataStr = line.slice(6);
       try {
         const data = JSON.parse(dataStr);
+        if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
         dispatchStreamEvent(currentEvent, data, callbacks, (text) => {
           fullAnswer += text;
         });
-        if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
         currentEvent = '';
         currentEventId = null;
       } catch {

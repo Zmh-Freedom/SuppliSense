@@ -161,9 +161,9 @@ async def lifespan(app: FastAPI):
     ensure_pg_schema()
     from app.domains.agent_run.coordinator import run_coordinator
 
-    inline_runner = settings.AGENT_EXECUTION_MODE == "inline"
-    if inline_runner:
-        await asyncio.to_thread(run_coordinator.reconcile_expired)
+    worker_runner = settings.AGENT_EXECUTION_MODE == "worker"
+    reconciliation_options = {"exclude_run_type": "agent_harness"} if worker_runner else {}
+    await asyncio.to_thread(run_coordinator.reconcile_expired, **reconciliation_options)
     create_default_admin()
     if settings.AGENT_RUN_V2_ENABLED:
         await get_sourcing_risk_checkpointer()
@@ -172,10 +172,9 @@ async def lifespan(app: FastAPI):
     logger.info("application_started")
     from app.graphs.harness.runner import reconcile_interrupted_runs, stop_managed_runners
 
-    reconciler = (
-        asyncio.create_task(reconcile_interrupted_runs(), name="harness-reconciler")
-        if inline_runner
-        else None
+    reconciler = asyncio.create_task(
+        reconcile_interrupted_runs(**reconciliation_options),
+        name="agent-run-reconciler",
     )
     try:
         yield
