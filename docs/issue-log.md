@@ -6637,3 +6637,14 @@
 - 修复方案：根据本次创建的 `target_id` 动态构造 schedule_id，再验证写入字段和重复执行 no-op。
 - 验证结果：查询已改为使用本次随机 target ID；本地未对共享开发库运行该集成测试，待 PR 隔离数据库门禁验证。
 - 关联提交：`1930b192`；发现于 PR #2 后续 CI 运行 `40254990376` 和 `40254987474`。
+
+
+### ISS-20261026-005 持久化 Supervisor 审批集成在等待审批前进入复核暂停
+
+- 发现日期：2026-10-26；状态：待修复；优先级：P1。
+- 现象：PR #2 的 Run 生命周期隔离门禁中，`test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_results` 的 6 个审批分支均未收到 `waiting_approval`，而收到 `stopped` 和“执行已暂停，请核对操作回执后恢复”。
+- 影响：暂停/恢复集成门禁失败，后续 Outbox、调度、Delivery 和 Agent E2E 门禁未运行；Supervisor 写操作审批链路可能无法进入人工确认状态。
+- 根因：待 CI 兼容环境复现定位；当前确认 `stream_managed_supervisor` 进入通用异常恢复分支，并把 Run 暂停为 `needs_review`，但 SSE 只返回通用错误，未记录原始异常。本地按 CI 完整生命周期测试命令运行时 78 项通过；本地依赖版本低于 CI（LangGraph 1.2.5/PG checkpoint 3.1.2 vs CI 1.2.17/3.2.0，Pydantic 2.13.4 vs 2.14.1），优先验证依赖版本差异。
+- 修复方案：在隔离的 `run_lifecycle_test` 数据范围复现并捕获实际异常，修正审批启动链路并验证六种决定/失效分支。
+- 验证结果：本机旧依赖组合下隔离 `run_lifecycle_test` 完整门禁 78 passed；CI 依赖组合下单独 `approve` 分支 1 passed，均未复现 CI 失败。已在异常恢复入口增加堆栈日志，待最新 PR CI 验证完整顺序并捕获 CI 专属异常。
+- 关联提交：待修复后补充；发现于 PR #2 CI 运行 `40255720095`。

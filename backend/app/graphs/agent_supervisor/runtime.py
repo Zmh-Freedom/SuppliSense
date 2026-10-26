@@ -7,12 +7,15 @@ from uuid import uuid4
 
 from langgraph.types import Command
 
+from app.core.logging import get_logger
 from app.domains.agent_run.coordinator import ExecutionLost, execution_scope, run_coordinator
 from app.domains.agent_run.state_store import session_state_store
 from app.graphs.checkpoint_recovery import checkpoint_proof, input_digest, validate_checkpoint
 from app.graphs.harness.runner import managed_stream
 
 HEARTBEAT_SECONDS = 5
+logger = get_logger(__name__)
+
 
 async def stream_managed_supervisor(
     graph: Any, run_id: str, user_id: str, *, approved: bool | None = None,
@@ -134,6 +137,11 @@ async def _produce(graph, run_id, user_id, approved, interrupt_claim):
         if interrupt_claim:
             await asyncio.to_thread(ack_chat_interrupt, session_id, interrupt_claim)
     except (Exception, asyncio.CancelledError) as exc:
+        logger.exception(
+            "managed_supervisor_execution_failed",
+            run_id=run_id,
+            error=type(exc).__name__,
+        )
         if worker and not worker.done():
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
