@@ -6626,3 +6626,14 @@
 - 修复方案：在该单测中将路由决策替身固定为 `v2`，保持生产灰度开关行为不变，并重跑失败用例。
 - 验证结果：原失败用例单独运行 1 passed；后端离线门禁选择集 1385 passed、1 skipped、231 deselected。因本机未安装 `pytest-cov`，覆盖率参数未在本机运行，留待 GitHub CI 覆盖率门禁验证。
 - 关联提交：`a88275ed`；发现于 PR #2 提交 `a91aaa86`。
+
+
+### ISS-20261026-004 寻源迁移集成测试使用错误的计划 ID 查询
+
+- 发现日期：2026-10-26；状态：修复中；优先级：P2。
+- 现象：PR #2 的两组后端 CI 都在 `test_watchlist_migration_writes_once_then_reports_noop` 失败，迁移返回成功后读取到空计划列表并触发 `IndexError`。
+- 影响：集成门禁中断，后续隔离运行生命周期、Outbox、调度器和 Agent E2E 步骤被跳过。
+- 根因：测试为 watchlist target 生成随机 `target_id`，查询持久化计划时却硬编码了 `migration-target-1`，与 migration 按 target_id 构造的真实 schedule_id 不一致。
+- 修复方案：根据本次创建的 `target_id` 动态构造 schedule_id，再验证写入字段和重复执行 no-op。
+- 验证结果：查询已改为使用本次随机 target ID；本地未对共享开发库运行该集成测试，待 PR 隔离数据库门禁验证。
+- 关联提交：待修复后补充；发现于 PR #2 后续 CI 运行 `40254990376` 和 `40254987474`。

@@ -237,7 +237,7 @@ def test_watchlist_migration_writes_once_then_reports_noop(monkeypatch):
     result = migration.apply_watchlist_migration(plan)
     assert result["count"] == 1
     from app.domains.scheduling import repo as scheduling_repo
-    rows = scheduling_repo.list_schedules(schedule_id="watchlist-financial:migration-target-1")
+    rows = scheduling_repo.list_schedules(schedule_id=f"watchlist-financial:{target_id}")
     assert rows[0]["actor_kind"] == "service"
     assert rows[0]["actor_id"] == "scheduler:watchlist-monitor"
     assert rows[0]["scope"]["supplier_id"] == "supplier-1"
