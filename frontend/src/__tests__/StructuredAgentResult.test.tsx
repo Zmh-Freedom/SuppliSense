@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import StructuredAgentResult from '../components/StructuredAgentResult';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
+
+afterEach(() => vi.restoreAllMocks());
 
 const answer: AgentAnswer = {
   status: 'completed',
@@ -167,6 +169,7 @@ it('keeps a possible name match in manual review even if the answer status is co
 });
 
 it('renders the backend-generated screening fixture without turning a possible match green', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-23T12:00:00Z'));
   const fixture = (await import('./fixtures/screeningMonitoringAnswer.json')).default;
   render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={fixture.evidence as AgentEvidenceRecord[]} />);
 

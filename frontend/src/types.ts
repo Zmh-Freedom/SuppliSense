@@ -409,6 +409,11 @@ export interface ChatMessage {
     args: Record<string, unknown>;
     session_id: string;
     status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
+    run_id?: string | null;
+    last_event_id?: number | null;
+    approval_event_id?: number | null;
+    resume_started?: boolean;
+    decision?: 'approved' | 'rejected';
   };
 }
 

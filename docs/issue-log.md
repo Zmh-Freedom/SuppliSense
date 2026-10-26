@@ -6593,3 +6593,36 @@
 - 修复方案：无产品代码修改。测试说明中将引用填为内部处理记录；不要求用户上传外部资料。
 - 验证结果：补充内部记录引用后按钮启用，回执成功写入隔离事项并生成 v3 时间线事件；后续 D2 同样以内部验收引用通过回执。未读取或创建外部来源证据。
 - 关联提交：无（验收观察已澄清）。
+
+
+### ISS-20261026-001 PR 前端类型检查未覆盖持久化审批元数据
+
+- 发现日期：2026-10-26；状态：已修复；优先级：P1。
+- 现象：PR #2 的前端 Type check 在 `ChatView.tsx` 报错，`ChatMessage.approval` 类型缺少 `run_id`、`last_event_id`、`approval_event_id`、`resume_started` 和 `decision` 字段；SSE 使用的 `ApprovalData` 已包含这些字段。
+- 影响：前端 CI 类型检查退出码 2，后续 lint、Vitest 和 build 未执行，PR 检查未通过。
+- 根因：聊天消息持久化审批类型与 SSE 审批数据类型未同步扩展；恢复数据中的 `run_id` 还允许为 null，需与前端类型一致。
+- 修复方案：为 `ChatMessage.approval` 补齐可选的审批恢复元数据，并运行前端类型检查。
+- 验证结果：`npx tsc -b`、`npm run lint`、`npm run build` 通过；前端 Vitest 28 个文件、225 项通过。
+- 关联提交：待修复后补充；发现于 PR #2 提交 `a91aaa86`。
+
+
+### ISS-20261026-003 合规名单测试 fixture 已过期导致前端回归失败
+
+- 发现日期：2026-10-26；状态：已修复；优先级：P2。
+- 现象：运行前端 Vitest 时，`renders the backend-generated screening fixture without turning a possible match green` 未找到名单主体名称；fixture 的名单证据 `valid_until` 为 2026-10-24，测试运行日期为 2026-10-26。
+- 影响：名单证据被正确降为历史参考，测试期望与 fixture 有效期不一致，前端 Vitest 失败（1 failed、224 passed）。
+- 根因：后端生成的测试 fixture 和其测试场景固定在 2026-10-23，前端回归断言却使用运行时当前日期；超过 fixture 的 2026-10-24 有效期后，验证规则正确将线索判为历史证据。
+- 修复方案：在前端该回归用例中冻结日期为 fixture 生成时点，保留后端生成 fixture 原样及过期证据测试对 stale 行为的独立覆盖。
+- 验证结果：将前端测试时钟固定在 fixture 生成时点后，相关测试及前端 Vitest 全量通过（28 个文件、225 项）。
+- 关联提交：待修复后补充；发现于 PR #2 提交 `a91aaa86` 后的本地完整前端测试。
+
+
+### ISS-20261026-002 PR 后端寻源工作台失败用例未固定灰度路由
+
+- 发现日期：2026-10-26；状态：已修复；优先级：P2。
+- 现象：PR #2 的后端离线测试中，`test_list_sourcing_tasks_marks_partial_source_failure_and_requires_page_retry` 预期返回智能寻源 Run，但得到空列表。
+- 影响：后端 CI 单测门禁失败（1384 passed、1 failed、1 skipped），阻断 PR 检查。
+- 根因：用例伪造了灰度快照和 Run 查询结果，却没有固定 `agent_run_v2_route`；CI 默认 `AGENT_RUN_V2_ENABLED=false`，生产路由因此返回 `legacy`，Run 查询未执行。
+- 修复方案：在该单测中将路由决策替身固定为 `v2`，保持生产灰度开关行为不变，并重跑失败用例。
+- 验证结果：原失败用例单独运行 1 passed；后端离线门禁选择集 1385 passed、1 skipped、231 deselected。因本机未安装 `pytest-cov`，覆盖率参数未在本机运行，留待 GitHub CI 覆盖率门禁验证。
+- 关联提交：待修复后补充；发现于 PR #2 提交 `a91aaa86`。

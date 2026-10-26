@@ -125,6 +125,7 @@ def test_list_sourcing_tasks_marks_partial_source_failure_and_requires_page_retr
 
     run_row = _task("agent_run", RUN_ID, datetime(2026, 10, 23, tzinfo=timezone.utc))
     monkeypatch.setattr(workspace_service, "get_rollout_state_snapshot", lambda: {"state": "active", "stage": "default"})
+    monkeypatch.setattr(workspace_service, "agent_run_v2_route", lambda *_args, **_kwargs: "v2")
     monkeypatch.setattr(workspace_service, "list_sourcing_risk_runs_with_cursor", lambda **_kwargs: [run_row])
     monkeypatch.setattr(workspace_service, "list_requests_with_cursor", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("mongo unavailable")))
 
