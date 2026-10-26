@@ -6641,10 +6641,10 @@
 
 ### ISS-20261026-005 持久化 Supervisor 审批集成在等待审批前进入复核暂停
 
-- 发现日期：2026-10-26；状态：待验证；优先级：P1。
+- 发现日期：2026-10-26；状态：待 CI 验证；优先级：P1。
 - 现象：PR #2 的 Run 生命周期隔离门禁中，`test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_results` 的 6 个审批分支均未收到 `waiting_approval`，而收到 `stopped` 和“执行已暂停，请核对操作回执后恢复”。
 - 影响：暂停/恢复集成门禁失败，后续 Outbox、调度、Delivery 和 Agent E2E 门禁未运行；Supervisor 写操作审批链路可能无法进入人工确认状态。
 - 根因：`test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_results` 只 mock 了 `plan_agent_task`，没有 mock `plan_task` 前置调用的 `parse_requirement`。用户消息“生成报告”无法在无 LLM 条件下确定性解析，于是进入 `requirement_service.extract_requirement()` 并创建 OpenAI 客户端；CI 没有 LLM 凭据，抛出 `OpenAIError: Missing credentials`，Supervisor 通用异常恢复再把 Run 暂停为 `needs_review`。本机 `.env` 配有 LLM 凭据，所以本地完整门禁误通过。
 - 修复方案：在该隔离集成测试中 mock `parse_requirement` 返回固定、可供计划器使用的结构化解析结果；继续保留计划器和 Agent 结果 mock，让测试全程离线，并验证六种审批分支。
-- 验证结果：本机旧依赖组合下隔离 `run_lifecycle_test` 完整门禁 78 passed；CI 依赖组合下将 `LLM_API_KEY` 和 `OPENAI_API_KEY` 置空后，修复后的 `approve` 分支 1 passed。完整六分支及 PR CI 待验证。
+- 验证结果：本机旧依赖组合下隔离 `run_lifecycle_test` 完整门禁 78 passed；CI 依赖组合下将 `LLM_API_KEY` 和 `OPENAI_API_KEY` 置空后，六个审批分支 6 passed（204.91s）。PR #2 最新 CI 待验证。
 - 关联提交：`1fc3db61`（异常堆栈诊断）、`a148f92f`（离线 mock 需求解析）；发现于 PR #2 CI 运行 `40255720095`。
