@@ -155,6 +155,7 @@ async def test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_resu
     from app.graphs.agent_supervisor.runtime import stream_managed_supervisor
     from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer, close_sourcing_risk_checkpointer
     from app.domains.sourcing_risk import action_service
+    from app.domains.sourcing_risk import requirement_service
     _, user, session, store = run_factory
     with get_cursor() as (_, cur):
         cur.execute("UPDATE users SET role='purchaser' WHERE id=%s", (user,))
@@ -162,6 +163,11 @@ async def test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_resu
     run = str(control["run"].id)
     reads, writes = [], []
     monkeypatch.setattr(supervisor, "plan_agent_task", lambda *_: TaskPlan(tasks=[PlannerTask(task_id="sourcing", agent="sourcing")]))
+    monkeypatch.setattr(
+        requirement_service,
+        "parse_requirement",
+        lambda *_: {"status": "clarification_required", "missing": ["category", "specification"]},
+    )
     async def ready(*args):
         reads.append("read")
         return {"sourcing": AgentResult(agent="sourcing", status="completed", summary="已有资料", recommended_actions=[{"action_type": "export_report", "target": {"company_name": "甲公司"}, "reason": "用户请求", "impact": "生成报告"}])}
