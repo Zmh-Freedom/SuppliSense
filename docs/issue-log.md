@@ -6614,7 +6614,7 @@
 - 根因：该测试契约和证据生成场景固定在 2026-10-23，但前端验证使用 `Date.now()`，后端 `EvidenceLedger.validate_claim()` 使用真实 `datetime.now()`；sanctions service 的 `_utc_now` 替身未覆盖 EvidenceLedger 的验证时钟。
 - 修复方案：前后端回归测试都冻结在 fixture 生成时点，保留后端生成 fixture 原样及过期证据测试对 stale 行为的独立覆盖。
 - 验证结果：前端时钟冻结后完整 Vitest 28 个文件、225 项通过；EvidenceLedger 校验时钟固定后，后端 `test_screening_monitoring_harness.py` 8 passed。
-- 关联提交：`a88275ed`；发现于 PR #2 提交 `a91aaa86` 后的本地完整前端测试。
+- 关联提交：`a88275ed`、`5c59b15d`；发现于 PR #2 提交 `a91aaa86` 后的本地完整前端测试及后续后端覆盖率门禁。
 
 
 ### ISS-20261026-002 PR 后端寻源工作台失败用例未固定灰度路由
