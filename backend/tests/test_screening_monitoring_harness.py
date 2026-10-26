@@ -2,6 +2,7 @@
 
 import asyncio
 from copy import deepcopy
+from datetime import datetime
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -341,6 +342,19 @@ def test_screening_api_uses_real_service_with_memory_source(monkeypatch):
 
 def public_screening_fixture(monkeypatch) -> dict:
     """Generate the frontend contract from a real Harness run, not by hand."""
+    from app.graphs.agent_core.evidence_ledger import Claim, ClaimValidationResult, EvidenceLedger
+
+    validate_claim = EvidenceLedger.validate_claim
+
+    def validate_claim_at_fixture_time(
+        self: EvidenceLedger,
+        claim: Claim,
+        *,
+        now: datetime | None = None,
+    ) -> ClaimValidationResult:
+        return validate_claim(self, claim, now=now or NOW)
+
+    monkeypatch.setattr(EvidenceLedger, "validate_claim", validate_claim_at_fixture_time)
     result = run_screening_harness(monkeypatch, scenario="possible")
     evidence = deepcopy(result["evidence_records"])
     for record in evidence:

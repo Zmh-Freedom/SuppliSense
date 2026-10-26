@@ -6606,14 +6606,14 @@
 - 关联提交：`a88275ed`；发现于 PR #2 提交 `a91aaa86`。
 
 
-### ISS-20261026-003 合规名单测试 fixture 已过期导致前端回归失败
+### ISS-20261026-003 合规名单测试 fixture 时间固定但回归门禁使用墙钟
 
 - 发现日期：2026-10-26；状态：已修复；优先级：P2。
-- 现象：运行前端 Vitest 时，`renders the backend-generated screening fixture without turning a possible match green` 未找到名单主体名称；fixture 的名单证据 `valid_until` 为 2026-10-24，测试运行日期为 2026-10-26。
-- 影响：名单证据被正确降为历史参考，测试期望与 fixture 有效期不一致，前端 Vitest 失败（1 failed、224 passed）。
-- 根因：后端生成的测试 fixture 和其测试场景固定在 2026-10-23，前端回归断言却使用运行时当前日期；超过 fixture 的 2026-10-24 有效期后，验证规则正确将线索判为历史证据。
-- 修复方案：在前端该回归用例中冻结日期为 fixture 生成时点，保留后端生成 fixture 原样及过期证据测试对 stale 行为的独立覆盖。
-- 验证结果：将前端测试时钟固定在 fixture 生成时点后，相关测试及前端 Vitest 全量通过（28 个文件、225 项）。
+- 现象：名单 fixture 的 `valid_until` 固定为 2026-10-24；2026-10-26 运行前端 Vitest 时，可能命中用例按墙钟将其判为历史证据；后端 Harness 合约 fixture 测试也在覆盖率门禁中因过期而移除 Claim，导致生成契约与 fixture 不一致。
+- 影响：前端 Vitest 首次失败（1 failed、224 passed）；修复前端日期后，后端 targeted Harness coverage gate 暴露第二处日期敏感失败，阻止后续集成门禁。
+- 根因：该测试契约和证据生成场景固定在 2026-10-23，但前端验证使用 `Date.now()`，后端 `EvidenceLedger.validate_claim()` 使用真实 `datetime.now()`；sanctions service 的 `_utc_now` 替身未覆盖 EvidenceLedger 的验证时钟。
+- 修复方案：前后端回归测试都冻结在 fixture 生成时点，保留后端生成 fixture 原样及过期证据测试对 stale 行为的独立覆盖。
+- 验证结果：前端时钟冻结后完整 Vitest 28 个文件、225 项通过；EvidenceLedger 校验时钟固定后，后端 `test_screening_monitoring_harness.py` 8 passed。
 - 关联提交：`a88275ed`；发现于 PR #2 提交 `a91aaa86` 后的本地完整前端测试。
 
 
