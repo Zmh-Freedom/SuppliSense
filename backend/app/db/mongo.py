@@ -163,6 +163,12 @@ def ensure_indexes() -> None:
         db["agent_report_exports"].create_index(
             [("agent_action_key", 1)], unique=True, sparse=True, background=True
         )
+        db["scheduled_reports"].create_index(
+            [("agent_action_key", 1)], unique=True, sparse=True, background=True
+        )
+        db["scheduled_reports"].create_index(
+            [("owner_user_id", 1), ("task_id", 1)], background=True
+        )
         db["agent_evidence_payloads"].create_index(
             [("raw_payload_ref", 1)], unique=True, sparse=True, background=True
         )

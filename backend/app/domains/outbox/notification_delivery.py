@@ -12,9 +12,21 @@ from app.db.mongo import get_db
 from app.db.postgres import get_cursor
 from app.domains.outbox.repo import _row_to_dict, enqueue_event
 
+MAX_PROVIDER_ATTEMPTS = 3
+
 
 def _json(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str, ensure_ascii=False))
+
+
+def _send_with_explicit_retry(open_id: str, text: str) -> bool:
+    """Retry only explicit non-delivery; an unknown result must not be resent."""
+    from app.services.feishu import send_user_message
+
+    for _ in range(MAX_PROVIDER_ATTEMPTS):
+        if send_user_message(open_id, text, raise_on_unknown=True):
+            return True
+    return False
 
 
 def _read(cur, notification_id: str) -> dict[str, Any]:
@@ -106,10 +118,10 @@ def deliver_notification(event: dict) -> None:
     if row["status"] != "SENDING" or str(row.get("attempt_id")) != attempt:
         _project(row)
         return
-    from app.services.feishu import send_user_message
-
     try:
-        sent = send_user_message(row["recipient"].get("recipient_open_id", ""), row["message_text"], raise_on_unknown=True)
+        sent = _send_with_explicit_retry(
+            row["recipient"].get("recipient_open_id", ""), row["message_text"]
+        )
         status, diagnostic = ("SENT", None) if sent else ("FAILED", "provider_rejected")
     except Exception:
         status, diagnostic = "NEEDS_REVIEW", "external_result_unknown"

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+
+import pytest
 
 from app.graphs.agent_core import adapter
 from app.graphs.streaming import stream_harness_graph
@@ -46,6 +49,57 @@ def test_load_execution_context_prefers_postgres_snapshot_over_mongo(
     active_supplier = context["conversation_state"]["active_suppliers"][0]
     assert active_supplier["name"] == "甲公司有限公司"
     assert active_supplier["supplier_id"] == "supplier-1"
+
+
+def test_load_execution_context_rejects_foreign_session_before_mongo_fallback(
+    monkeypatch,
+) -> None:
+    foreign = SimpleNamespace(user_id="other-user", state={})
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.get_session",
+        lambda *_args: foreign,
+    )
+    monkeypatch.setattr(
+        "app.services.agent._load_conversation_context",
+        lambda _session_id: pytest.fail("Mongo fallback must not read a foreign session"),
+    )
+
+    with pytest.raises(PermissionError, match="不属于当前用户"):
+        adapter.load_execution_context(
+            "00000000-0000-4000-8000-000000000011",
+            "这家供应商怎么样？",
+            "00000000-0000-4000-8000-000000000012",
+        )
+
+
+@pytest.mark.parametrize(
+    "user_id",
+    ["00000000-0000-4000-8000-000000000012", None],
+)
+def test_load_execution_context_does_not_read_unowned_legacy_mongo_history(
+    monkeypatch, user_id: str | None
+) -> None:
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.get_session",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.services.agent._load_conversation_context",
+        lambda _session_id: pytest.fail("unowned legacy Mongo history must not be read"),
+    )
+    monkeypatch.setattr(
+        "app.graphs.agent_core.intent_extractor.extract_conversation_intent",
+        lambda *_args, **_kwargs: None,
+    )
+
+    context = adapter.load_execution_context(
+        "00000000-0000-4000-8000-000000000013",
+        "分析这家供应商的风险",
+        user_id,
+    )
+
+    assert context["history"] == []
+    assert context["references"] == []
 
 
 def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch) -> None:

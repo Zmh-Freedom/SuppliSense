@@ -84,7 +84,11 @@ def make_evidence(
     digest = canonical_hash(payload)
     now = datetime.now(timezone.utc)
     observed = _timestamp(observed_at)
-    if observed and now - observed > timedelta(
+    invalid_observation = observed_at not in (None, "") and observed is None
+    future_observation = observed is not None and observed > now
+    if invalid_observation or future_observation:
+        status = "unavailable"
+    elif observed and now - observed > timedelta(
         days=policy["freshness_days"][dimension]
     ):
         status = "stale"
@@ -102,11 +106,11 @@ def make_evidence(
         "observed_at": observed.isoformat() if observed else None,
         "collected_at": now.isoformat(),
         "freshness": "fresh"
-        if observed and status != "stale"
+        if observed and status in {"available", "empty"}
         else "stale"
         if status == "stale"
         else "unknown",
-        "coverage_partial": coverage_partial or observed is None,
+        "coverage_partial": coverage_partial or observed is None or future_observation or invalid_observation,
         "conflict": "conflicting" if status == "conflicting" else "none",
         "query_receipt": query_receipt or {},
     }

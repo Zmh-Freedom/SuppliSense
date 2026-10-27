@@ -37,11 +37,10 @@ from app.domains.alert.service import (
     get_watchlist_targets,
     resolve_watchlist_identity,
     confirm_watchlist_identity,
-    refresh_company,
     remove_from_watchlist,
     validate_watchlist_add_access,
 )
-from app.services.scheduler import run_financial_check, run_refresh_all
+from app.services.scheduler import run_financial_check, run_refresh_all, run_refresh_for_target
 
 async def _assessment_request_scope(user: UserInDB = Depends(get_current_user)):
     from app.domains.risk.assessment_contracts import assessment_scope
@@ -104,6 +103,27 @@ def _preflight_watchlist_adds(
             user_id=user_id,
             user_role=user_role,
         )
+
+
+def _verified_refresh_targets(targets: list[dict]) -> list[dict]:
+    """Keep only targets whose canonical company identity matches their name."""
+    from app.domains.company.service import search_identity
+
+    verified: list[dict] = []
+    for target in targets:
+        company_id = str(target.get("company_id") or "")
+        company_name = str(target.get("company_name") or "").strip()
+        if not company_id or not company_name or target.get("identity_status") != "verified":
+            continue
+        resolution = search_identity(company_name)
+        exact = resolution.get("exact") if resolution.get("resolution") == "exact" else None
+        if (
+            isinstance(exact, dict)
+            and str(exact.get("company_id") or "") == company_id
+            and exact.get("verification_status") == "verified"
+        ):
+            verified.append(target)
+    return verified
 
 
 class CompanyRequest(BaseModel):
@@ -992,13 +1012,30 @@ async def refresh_alert(
         "alert.paid_refresh_requested", request, current_user,
         resource_type="company", resource_id=req.company_name,
     )
+    visible_targets = await asyncio.to_thread(
+        get_watchlist_targets, current_user.id, current_user.role.value
+    )
+    targets = await asyncio.to_thread(_verified_refresh_targets, visible_targets)
+    requested_name = req.company_name.strip().casefold()
+    matching_targets = [
+        target
+        for target in targets
+        if str(target.get("company_name") or "").strip().casefold() == requested_name
+        and target.get("company_id")
+    ]
+    if not matching_targets:
+        raise HTTPException(status_code=404, detail="未找到当前用户可访问且已核验的监控对象")
+    if len(matching_targets) > 1:
+        raise HTTPException(status_code=409, detail="企业名称匹配多个监控对象，请通过监控对象入口刷新")
     try:
         await asyncio.to_thread(reserve_paid_refresh, current_user.id, 1)
     except PaidQuotaExceeded as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except PaidQuotaUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    result = await asyncio.to_thread(refresh_company, req.company_name)
+    result = await asyncio.to_thread(
+        run_refresh_for_target, matching_targets[0], current_user.id
+    )
     await asyncio.to_thread(
         log_action, "alert.paid_refresh", user_id=current_user.id,
         resource_type="company", resource_id=req.company_name,
@@ -1025,14 +1062,20 @@ async def refresh_all_watched(
         "alert.paid_refresh_all_requested", request, current_user,
         resource_type="watchlist",
     )
-    targets = await asyncio.to_thread(get_watchlist_targets)
-    try:
-        await asyncio.to_thread(reserve_paid_refresh, current_user.id, max(1, len(targets)))
-    except PaidQuotaExceeded as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
-    except PaidQuotaUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    result = await asyncio.to_thread(run_refresh_all)
+    visible_targets = await asyncio.to_thread(
+        get_watchlist_targets, current_user.id, current_user.role.value
+    )
+    targets = await asyncio.to_thread(_verified_refresh_targets, visible_targets)
+    if targets:
+        try:
+            await asyncio.to_thread(reserve_paid_refresh, current_user.id, len(targets))
+        except PaidQuotaExceeded as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except PaidQuotaUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    result = await asyncio.to_thread(
+        run_refresh_all, targets=targets, actor_id=current_user.id
+    )
     await asyncio.to_thread(
         log_action, "alert.paid_refresh_all", user_id=current_user.id,
         resource_type="watchlist", ip_address=request.client.host if request.client else None,

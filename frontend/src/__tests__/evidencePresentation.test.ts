@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { monitorEvidencePresentation, screeningPresentation } from '../evidencePresentation';
+import { monitorEvidencePresentation, screeningEvidenceReview, screeningPresentation } from '../evidencePresentation';
 import { queryKeys } from '../query-keys';
 import type { MonitorTarget, ScreeningReadResult, ScreeningStatus } from '../types';
 
@@ -81,6 +81,47 @@ describe('screeningPresentation', () => {
     expect(result.label).toBe(label);
     expect(result.tone).toBe(tone);
     expect(result.label).not.toMatch(/正常|无风险/);
+  });
+});
+
+describe('screeningEvidenceReview', () => {
+  const record = (
+    screeningStatus: string,
+    overrides: Partial<import('../types').AgentEvidenceRecord> = {},
+  ): import('../types').AgentEvidenceRecord => ({
+    evidence_id: 'screening-evidence',
+    entity_id: 'company-1',
+    dimension: 'compliance',
+    provider: 'screening-fixture',
+    source_type: 'sanctions_list',
+    status: 'available',
+    data_mode: 'formal',
+    collected_at: '2026-10-27T00:00:00Z',
+    facts: { validity_status: 'available', screening_status: screeningStatus },
+    ...overrides,
+  });
+
+  it.each(['confirmed_match', 'no_match_in_scope'])(
+    'does not use synthetic %s as a current result', (status) => {
+      const result = screeningEvidenceReview([
+        record(status, { data_mode: 'synthetic' }),
+      ]);
+
+      expect(result?.status).toBe('unavailable');
+      expect(result?.label).toBe('名单核验状态未知');
+    },
+  );
+
+  it('keeps a formal available screening result', () => {
+    expect(screeningEvidenceReview([record('confirmed_match')])?.status).toBe('confirmed_match');
+  });
+
+  it('does not let an unavailable record claim a confirmed match', () => {
+    const result = screeningEvidenceReview([
+      record('confirmed_match', { status: 'unavailable' }),
+    ]);
+
+    expect(result?.status).toBe('unavailable');
   });
 });
 

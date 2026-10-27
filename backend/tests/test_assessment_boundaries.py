@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from app.domains.alert import service as alerts
 from app.services import scheduler
 from app.schemas import FinancialMetrics
@@ -45,6 +47,122 @@ def test_change_comparison_rejects_different_policy_or_scope():
         assert not alerts._comparable_snapshots(first, {**first, **changed})
     assert alerts._comparable_snapshots(first, dict(first))
     assert not alerts._comparable_snapshots(first, {"risk_score": 90})
+
+
+@pytest.mark.parametrize(
+    ("target_identity", "requested_company_id"),
+    [
+        ({"identity_status": "candidate"}, "unrelated-company"),
+        (
+            {"identity_status": "candidate", "company_id": "candidate-company"},
+            "candidate-company",
+        ),
+        (
+            {"identity_status": "verified", "company_id": "candidate-company"},
+            "candidate-company",
+        ),
+    ],
+)
+def test_assessment_rejects_binding_unverified_target_to_other_company(
+    monkeypatch, target_identity, requested_company_id
+):
+    from app.core.errors import DomainError
+    from app.domains.alert import service as alert_service
+    from app.domains.risk import assessment_service
+    from app.domains.supplier import access
+
+    monkeypatch.setattr(
+        alert_service,
+        "_find_watchlist_target",
+        lambda **_kwargs: {
+            "monitor_target_id": "candidate-target",
+            "target_type": "external_candidate",
+            "candidate_id": "candidate-1",
+            "company_name": "候选供应商",
+            **target_identity,
+        },
+    )
+    monkeypatch.setattr(alert_service, "_can_access_target", lambda *_args: True)
+    monkeypatch.setattr(
+        assessment_service.company_service,
+        "get_company",
+        lambda company_id: {
+            "id": company_id,
+            "legal_name": "无关已核验企业",
+            "verification_status": "verified",
+        },
+    )
+    monkeypatch.setattr(
+        assessment_service.company_service,
+        "search_identity",
+        lambda _name: {
+            "resolution": "exact",
+            "exact": {
+                "company_id": "name-matched-company",
+                "verification_status": "verified",
+            },
+        },
+    )
+    monkeypatch.setattr(access, "formal_supplier_id_by_name", lambda _name: None)
+
+    with pytest.raises(DomainError) as exc:
+        assessment_service.resolve_identity(
+            "无关已核验企业",
+            company_id=requested_company_id,
+            monitor_target_id="candidate-target",
+            actor_id="owner",
+            actor_role="purchaser",
+            dimensions=["financial"],
+        )
+
+    assert exc.value.code == "ASSESSMENT_IDENTITY_REQUIRED"
+    assert exc.value.status_code == 409
+
+
+def test_assessment_accepts_verified_target_with_matching_canonical_identity(monkeypatch):
+    from app.domains.alert import service as alert_service
+    from app.domains.risk import assessment_service
+    from app.domains.supplier import access
+
+    target = {
+        "monitor_target_id": "verified-target",
+        "target_type": "formal_supplier",
+        "identity_status": "verified",
+        "company_id": "verified-company",
+        "company_name": "已核验供应商有限公司",
+    }
+    canonical = {
+        "id": "verified-company",
+        "legal_name": "已核验供应商有限公司",
+        "verification_status": "verified",
+    }
+    monkeypatch.setattr(alert_service, "_find_watchlist_target", lambda **_kwargs: target)
+    monkeypatch.setattr(alert_service, "_can_access_target", lambda *_args: True)
+    monkeypatch.setattr(assessment_service.company_service, "get_company", lambda _id: canonical)
+    monkeypatch.setattr(
+        assessment_service.company_service,
+        "search_identity",
+        lambda _name: {
+            "resolution": "exact",
+            "exact": {
+                "company_id": "verified-company",
+                "verification_status": "verified",
+            },
+        },
+    )
+    monkeypatch.setattr(access, "formal_supplier_id_by_name", lambda _name: None)
+
+    identity = assessment_service.resolve_identity(
+        "已核验供应商有限公司",
+        company_id="verified-company",
+        monitor_target_id="verified-target",
+        actor_id="owner",
+        actor_role="purchaser",
+        dimensions=["financial"],
+    )
+
+    assert identity["company_id"] == "verified-company"
+    assert identity["monitor_target_id"] == "verified-target"
 
 
 def test_financial_refresh_preserves_aggregate_assessment(monkeypatch):
@@ -94,6 +212,26 @@ def test_financial_refresh_preserves_aggregate_assessment(monkeypatch):
     ]
     assert document["previous_assessment_id"] == "original"
     assert "risk_score" not in document and "assessed_at" not in document
+
+
+def test_paid_refresh_batch_uses_injected_user_scope_and_actor(monkeypatch):
+    targets = [{"company_name": "甲公司", "monitor_target_id": "target-1"}]
+    calls = []
+    monkeypatch.setattr(
+        scheduler,
+        "get_watchlist_targets",
+        lambda: pytest.fail("explicitly scoped refresh must not reload global targets"),
+    )
+    monkeypatch.setattr(
+        scheduler,
+        "run_refresh_for_target",
+        lambda target, actor_id: calls.append((target, actor_id)) or {"company": target["company_name"]},
+    )
+
+    result = scheduler.run_refresh_all(targets=targets, actor_id="user-1")
+
+    assert calls == [(targets[0], "user-1")]
+    assert result == {"checked": 1, "channel": "paid", "alerts": [{"company": "甲公司"}]}
 
 
 def test_trend_tool_uses_pg_scope_and_safety_direction(monkeypatch):

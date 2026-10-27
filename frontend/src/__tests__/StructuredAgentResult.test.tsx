@@ -216,6 +216,100 @@ it('does not treat a legacy clean boolean as a current screening conclusion', ()
   expect(screen.queryByText('可继续推进')).not.toBeInTheDocument();
 });
 
+it('does not present synthetic screening claims as current evidence', () => {
+  const synthetic: AgentEvidenceRecord = {
+    ...evidence[0],
+    evidence_id: 'synthetic-screening',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    provider: 'demo-list',
+    source_type: 'sanctions_list_match',
+    status: 'available',
+    data_mode: 'synthetic',
+    valid_until: '2026-12-31T00:00:00Z',
+    facts: {
+      validity_status: 'available',
+      screening_status: 'confirmed_match',
+      confirmed_match: true,
+      record_name: '演示名单主体',
+    },
+  };
+  const syntheticClaim: AgentAnswer['claims'][number] = {
+    ...answer.claims[0],
+    claim_id: 'synthetic-screening-claim',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    fact_path: 'confirmed_match',
+    value: true,
+    statement: '演示名单主体命中',
+    evidence_refs: ['synthetic-screening'],
+  };
+
+  render(<StructuredAgentResult
+    answer={{ ...answer, summary: '演示筛查发现名单命中。', claims: [syntheticClaim] }}
+    evidence={[synthetic]}
+  />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.getByText('旧筛查结果仅供历史参考')).toBeInTheDocument();
+  expect(screen.queryByText('名单命中，待人工复核')).not.toBeInTheDocument();
+  expect(screen.queryByText('演示名单主体命中')).not.toBeInTheDocument();
+});
+
+it('does not let formal no-match evidence validate an unrelated synthetic screening claim', () => {
+  const formalNoMatch: AgentEvidenceRecord = {
+    ...evidence[0],
+    evidence_id: 'formal-no-match',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    provider: 'formal-registry',
+    source_type: 'sanctions_list',
+    status: 'confirmed_empty',
+    data_mode: 'formal',
+    facts: {
+      validity_status: 'empty',
+      screening_status: 'no_match_in_scope',
+    },
+  };
+  const synthetic: AgentEvidenceRecord = {
+    ...evidence[0],
+    evidence_id: 'synthetic-screening',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    provider: 'demo-list',
+    source_type: 'sanctions_list_match',
+    status: 'available',
+    data_mode: 'synthetic',
+    valid_until: '2026-12-31T00:00:00Z',
+    facts: {
+      validity_status: 'available',
+      screening_status: 'confirmed_match',
+      confirmed_match: true,
+      record_name: '演示名单主体',
+    },
+  };
+  const syntheticClaim: AgentAnswer['claims'][number] = {
+    ...answer.claims[0],
+    claim_id: 'synthetic-screening-claim',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    fact_path: 'confirmed_match',
+    value: true,
+    statement: '演示名单主体命中',
+    evidence_refs: ['synthetic-screening'],
+  };
+
+  render(<StructuredAgentResult
+    answer={{ ...answer, summary: '演示筛查发现名单命中。', claims: [syntheticClaim] }}
+    evidence={[formalNoMatch, synthetic]}
+  />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.getByText('旧筛查结果仅供历史参考')).toBeInTheDocument();
+  expect(screen.queryByText('范围内未发现匹配')).not.toBeInTheDocument();
+  expect(screen.queryByText('演示名单主体命中')).not.toBeInTheDocument();
+});
+
 it('identifies the subject period and scope of each metric and distinguishes source time', () => {
   const c = {...answer.claims[0],entity_id:'company:1',dimension:'quality',fact_path:'quality_rate',value:0.952,unit:'ratio',evidence_refs:['scoped']};
   const scoped: AgentEvidenceRecord = {...evidence[0],evidence_id:'scoped',entity_id:'company:1',dimension:'quality',

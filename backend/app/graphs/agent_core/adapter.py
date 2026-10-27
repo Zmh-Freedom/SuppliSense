@@ -321,7 +321,7 @@ def load_execution_context(
     user_message: str,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    """Load control-plane facts first, using Mongo only for legacy bootstrap."""
+    """Load only user-owned control-plane facts into the execution context."""
     from app.graphs.agent_core.intent_extractor import extract_conversation_intent
 
     context: dict[str, Any] | None = None
@@ -330,13 +330,10 @@ def load_execution_context(
 
         context = session_state_store.get_execution_context(session_id, user_id)
     if context is None:
-        from app.services.agent import _load_conversation_context
-
-        legacy = _load_conversation_context(session_id)
         context = {
-            "history": legacy.get("history", []),
-            "references": legacy.get("references", []),
-            "state": legacy.get("state", {}),
+            "history": [],
+            "references": [],
+            "state": {},
         }
     execution_context = build_execution_context(
         session_id=session_id,

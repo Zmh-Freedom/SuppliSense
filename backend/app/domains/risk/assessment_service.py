@@ -44,6 +44,7 @@ def resolve_identity(
     purchase_scope: str = "",
 ) -> dict:
     target = {}
+    target_company = None
     if monitor_target_id:
         from app.domains.alert.service import _find_watchlist_target, _can_access_target
 
@@ -59,14 +60,44 @@ def resolve_identity(
         ):
             raise DomainError("ASSESSMENT_FORBIDDEN", "无权访问该监控对象", 403)
         if (
-            company_id
-            and target.get("company_id")
-            and company_id != target["company_id"]
+            not target.get("company_id")
+            or target.get("identity_status") != "verified"
         ):
-            raise ValueError("监控对象与评估主体不一致")
-        company_id = company_id or target.get("company_id")
+            raise DomainError(
+                "ASSESSMENT_IDENTITY_REQUIRED",
+                "监控对象尚未核验企业主体，不能关联风险评估",
+                409,
+            )
+        target_company = company_service.get_company(str(target["company_id"]))
+        if not target_company or target_company.get("verification_status") != "verified":
+            raise DomainError(
+                "ASSESSMENT_IDENTITY_REQUIRED",
+                "监控对象对应企业主体尚未核验，不能关联风险评估",
+                409,
+            )
+        target_name = str(
+            target.get("company_name") or target.get("display_name") or company_name or ""
+        ).strip()
+        resolution = company_service.search_identity(target_name) if target_name else {}
+        exact = resolution.get("exact") if resolution.get("resolution") == "exact" else None
+        canonical_target_id = str(target_company["id"])
+        if (
+            not isinstance(exact, dict)
+            or str(exact.get("company_id") or "") != canonical_target_id
+            or exact.get("verification_status") != "verified"
+        ):
+            raise DomainError(
+                "ASSESSMENT_IDENTITY_REQUIRED",
+                "监控对象名称与已核验企业主体不匹配，不能关联风险评估",
+                409,
+            )
+        if company_id:
+            requested_company = company_service.get_company(str(company_id))
+            if not requested_company or str(requested_company["id"]) != canonical_target_id:
+                raise ValueError("监控对象与评估主体不一致")
+        company_id = canonical_target_id
     if company_id:
-        company = company_service.get_company(company_id)
+        company = target_company or company_service.get_company(company_id)
     else:
         resolution = company_service.search_identity(company_name)
         exact = resolution.get("exact") or {}

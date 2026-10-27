@@ -303,9 +303,14 @@ class SessionStateStore:
         user_id: str,
     ) -> dict[str, Any] | None:
         """Return the last committed execution context for the owned session."""
-        session = self.get_session(session_id, user_id)
+        # Distinguish a genuinely legacy session from an existing session
+        # owned by someone else.  Returning None for both would let callers
+        # fall back to the unscoped Mongo conversation store.
+        session = self.get_session(session_id)
         if session is None:
             return None
+        if str(session.user_id or "") != user_id:
+            raise PermissionError("Agent 会话不属于当前用户")
         context = session.state.get("execution_context")
         return context if isinstance(context, dict) else None
 

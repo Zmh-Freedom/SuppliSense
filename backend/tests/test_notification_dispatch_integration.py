@@ -94,14 +94,15 @@ def test_unknown_provider_result_is_retained_for_review(notification, monkeypatc
     assert get_db()["notifications"].find_one({"_id": row["id"]})["delivery_status"] == "needs_review"
 
 
-def test_known_rejection_is_failed_without_automatic_resend(notification, monkeypatch):
+def test_known_rejection_retries_three_times_then_stops(notification, monkeypatch):
     delivery, _, _, calls = notification
     row = queued(notification)
     monkeypatch.setattr("app.services.feishu.send_user_message", lambda *a, **kw: calls.append(a) or False)
     event = {"payload": {"notification_id": row["id"]}}
     delivery.deliver_notification(event)
+    assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS
     delivery.deliver_notification(event)
-    assert len(calls) == 1
+    assert len(calls) == delivery.MAX_PROVIDER_ATTEMPTS
     assert get_db()["notifications"].find_one({"_id": row["id"]})["delivery_status"] == "failed"
 
 

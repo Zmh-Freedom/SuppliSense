@@ -3,6 +3,8 @@
 from typing import Any
 from uuid import uuid4
 
+from psycopg2.extras import Json
+
 from app.db.postgres import PgCursor, get_cursor
 from app.domains.agent_run.coordinator import (
     PUBLIC_TERMINAL,
@@ -108,27 +110,57 @@ def _pause_recovery_limit(
     run: dict[str, Any],
     execution: dict[str, Any],
 ) -> None:
+    run_id = str(run["id"])
+    message = "执行恢复次数达到上限，任务已暂停；请核对已有结果后重新发起。"
     cur.execute(
         """UPDATE agent_run_executions
            SET state='PAUSED', pause_reason='recovery_limit_exceeded',
                fencing_token=fencing_token+1, owner_id=NULL, lease_until=NULL,
                updated_at=clock_timestamp()
            WHERE run_id=%s""",
-        (run["id"],),
+        (run_id,),
+    )
+    updated_run = update_run_status(
+        run_id,
+        int(run["version"]),
+        "NEEDS_REVIEW",
+        "AGENT_WORKER_RECOVERY_LIMIT",
+        cur=cur,
+    )
+    if updated_run is None:
+        raise RuntimeError("Agent Run 恢复上限状态提交失败")
+    turn_response = {
+        "status": "needs_review",
+        "answer": message,
+        "run_id": run_id,
+    }
+    cur.execute(
+        """UPDATE agent_turns
+           SET status='failed', response=%s, assistant_message=%s, completed_at=NOW()
+           WHERE run_id=%s AND status IN ('running','waiting_approval')""",
+        (Json(turn_response), message, run_id),
+    )
+    event_version = int(updated_run["version"])
+    append_event_with_cursor(
+        cur,
+        run_id,
+        event_version,
+        "workflow_status",
+        {
+            "run_id": run_id,
+            "status": "needs_review",
+            "stage": "recovery",
+            "message": message,
+        },
     )
     append_event_with_cursor(
         cur,
-        str(run["id"]),
-        int(run["version"]),
-        "workflow_status",
-        {
-            "run_id": str(run["id"]),
-            "status": "stopped",
-            "stage": "decision",
-            "message": "执行恢复次数超过上限，已保留结果，需要人工核对",
-        },
+        run_id,
+        event_version,
+        "done",
+        turn_response,
     )
-    finish_job_with_cursor(cur, str(run["id"]), "FAILED", error="recovery_limit_exceeded")
+    finish_job_with_cursor(cur, run_id, "FAILED", error="recovery_limit_exceeded")
 
 
 def claim_job(

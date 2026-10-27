@@ -386,6 +386,65 @@ def test_worker_setup_failure_commits_a_terminal_run(job_factory, monkeypatch):
         assert "checkpoint unavailable" in error
 
 
+def test_recovery_limit_closes_run_turn_and_stream(job_factory):
+    from app.domains.agent_run.chat_interrupt_repo import has_chat_interrupt
+    from app.domains.agent_run.repo import get_run
+
+    create, _, session_id = job_factory
+    run_id = create()
+    first = claim_job("worker-a", lease_seconds=30)
+    assert first is not None
+
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """UPDATE agent_execution_jobs
+               SET recoveries=max_recoveries, lease_until=clock_timestamp()-INTERVAL '1 second'
+               WHERE run_id=%s""",
+            (run_id,),
+        )
+        cur.execute(
+            "UPDATE agent_run_executions SET lease_until=clock_timestamp()-INTERVAL '1 second' WHERE run_id=%s",
+            (run_id,),
+        )
+
+    assert claim_job("worker-b", lease_seconds=30) is None
+
+    run = get_run(run_id)
+    assert run["status"] == "NEEDS_REVIEW"
+    assert run["error_code"] == "AGENT_WORKER_RECOVERY_LIMIT"
+    with get_cursor() as (_, cur):
+        cur.execute(
+            "SELECT status,completed_at FROM agent_turns WHERE run_id=%s",
+            (run_id,),
+        )
+        turn_status, completed_at = cur.fetchone()
+        cur.execute(
+            "SELECT state,pause_reason FROM agent_run_executions WHERE run_id=%s",
+            (run_id,),
+        )
+        execution = cur.fetchone()
+        cur.execute(
+            "SELECT status,last_error FROM agent_execution_jobs WHERE run_id=%s",
+            (run_id,),
+        )
+        job = cur.fetchone()
+    assert turn_status == "failed" and completed_at is not None
+    assert execution == ("PAUSED", "recovery_limit_exceeded")
+    assert job == ("FAILED", "recovery_limit_exceeded")
+    assert not has_chat_interrupt(session_id)
+    events = list_events_after(run_id)
+    assert any(
+        event["event_type"] == "workflow_status"
+        and event["payload"].get("status") == "needs_review"
+        for event in events
+    )
+    assert any(
+        event["event_type"] == "done"
+        and event["payload"].get("status") == "needs_review"
+        for event in events
+    )
+
+
 def test_worker_mode_resume_endpoint_requeues_without_running_the_graph(job_factory, monkeypatch):
     import asyncio
     from types import SimpleNamespace

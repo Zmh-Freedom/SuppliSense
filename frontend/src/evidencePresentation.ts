@@ -94,12 +94,38 @@ export function screeningEvidenceReview(evidence: AgentEvidenceRecord[], claims:
     'confirmed_match', 'possible_match', 'conflicting', 'stale', 'partial', 'not_queried', 'unavailable',
   ];
   const statuses = new Set<ScreeningStatus>();
-  let hasStructuredScreeningStatus = false;
+  let hasFormalStructuredScreeningStatus = false;
+  let hasSyntheticScreeningStatus = false;
   for (const record of evidence) {
     if (record.dimension !== 'compliance') continue;
     const value = record.facts?.screening_status;
-    if (typeof value === 'string' && value in SCREENING_LABELS) {
-      hasStructuredScreeningStatus = true;
+    const hasScreeningStatus = typeof value === 'string' && value in SCREENING_LABELS;
+    if (record.data_mode !== 'formal' || record.status === 'synthetic') {
+      hasSyntheticScreeningStatus ||= hasScreeningStatus;
+      continue;
+    }
+
+    if (record.status === 'stale'
+      || (record.valid_until
+        && (!Number.isFinite(Date.parse(record.valid_until))
+          || Date.parse(record.valid_until) < Date.now()))) {
+      hasFormalStructuredScreeningStatus = true;
+      statuses.add('stale');
+      continue;
+    }
+    if (record.status === 'conflicting') {
+      hasFormalStructuredScreeningStatus = true;
+      statuses.add('conflicting');
+      continue;
+    }
+    if (record.status === 'unavailable' || record.status === 'missing') {
+      hasFormalStructuredScreeningStatus = true;
+      statuses.add('unavailable');
+      continue;
+    }
+    if (!['available', 'confirmed_empty'].includes(record.status)) continue;
+    if (hasScreeningStatus) {
+      hasFormalStructuredScreeningStatus = true;
       if (value in SCREENING_REVIEW) statuses.add(value as ScreeningStatus);
     }
   }
@@ -108,7 +134,8 @@ export function screeningEvidenceReview(evidence: AgentEvidenceRecord[], claims:
     const hasLegacyScreeningClaim = claims.some(claim =>
       claim.dimension === 'compliance' || claim.fact_path?.split('.').at(-1) === 'clean',
     );
-    if (!hasLegacyScreeningClaim || hasStructuredScreeningStatus) return null;
+    if ((!hasLegacyScreeningClaim && !hasSyntheticScreeningStatus)
+      || hasFormalStructuredScreeningStatus) return null;
     return {
       status: 'unavailable',
       ...SCREENING_REVIEW.unavailable!,

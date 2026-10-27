@@ -59,6 +59,62 @@ def test_expired_source_is_marked_stale_before_scoring():
     assert entry["status"] == "stale"
 
 
+def test_future_observation_is_unavailable_and_never_marked_fresh(monkeypatch):
+    from app.domains.risk import assessment_evidence as evidence
+
+    now = datetime(2026, 10, 27, 4, 0, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now if tz else now.replace(tzinfo=None)
+
+    monkeypatch.setattr(evidence, "datetime", FrozenDatetime)
+    row = {
+        "id": "assessment",
+        "company_id": "company",
+        "run_id": None,
+        "collector_token": "owner",
+    }
+
+    entry, _ = evidence.make_evidence(
+        row,
+        "judicial",
+        {"count": 5},
+        status="available",
+        source="provider",
+        policy=current_policy(),
+        observed_at=now + timedelta(minutes=1),
+    )
+
+    assert entry["status"] == "unavailable"
+    assert entry["freshness"] == "unknown"
+    assert entry["coverage_partial"] is True
+
+
+def test_unparseable_observation_is_unavailable_not_scoreable():
+    row = {
+        "id": "assessment",
+        "company_id": "company",
+        "run_id": None,
+        "collector_token": "owner",
+    }
+
+    entry, _ = make_evidence(
+        row,
+        "judicial",
+        {"count": 5},
+        status="available",
+        source="provider",
+        policy=current_policy(),
+        observed_at="not-a-timestamp",
+    )
+
+    assert entry["status"] == "unavailable"
+    assert entry["freshness"] == "unknown"
+    assert entry["coverage_partial"] is True
+
+
 def test_missing_source_timestamp_does_not_hide_known_staleness(monkeypatch):
     from datetime import timedelta
     from unittest.mock import MagicMock

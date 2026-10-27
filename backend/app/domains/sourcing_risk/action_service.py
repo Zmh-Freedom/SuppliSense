@@ -63,7 +63,7 @@ def create_action_proposal(
         _require_managed_owner(cur, run)
         _require_expected_version(run, expected_version)
         persisted_payload = _bind_action_target(
-            cur, run_id, action_type, candidate_id, payload
+            cur, run_id, action_type, candidate_id, payload, run=run
         )
         existing = get_action_proposal_for_idempotency_key(cur, normalized_key)
         if existing is not None:
@@ -276,6 +276,12 @@ def execute_sourcing_risk_action(event: dict) -> dict[str, Any] | None:
     result: dict[str, Any] | None = None
     if proposal["action_type"] in {"add_watchlist", "remove_watchlist"}:
         result = _execute_watchlist_action(event, proposal, action_payload)
+    elif proposal["action_type"] == "manage_scheduled_report":
+        run = get_run(run_id)
+        owner_user_id = str((run or {}).get("user_id") or "")
+        if not owner_user_id:
+            raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "定时报告缺少所属用户", 409)
+        _execute_action(proposal["action_type"], action_payload, owner_user_id=owner_user_id)
     else:
         _execute_action(proposal["action_type"], action_payload)
     mark_action_succeeded(run_id, proposal_id)
@@ -372,7 +378,9 @@ def export_report(payload: dict[str, Any]) -> str:
     return key
 
 
-def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
+def manage_scheduled_report_action(
+    payload: dict[str, Any], *, owner_user_id: str | None = None
+) -> dict[str, Any]:
     """Create/list/delete a scheduled report after durable approval."""
     from app.domains.risk.scheduled_report import (
         create_scheduled_report,
@@ -380,6 +388,9 @@ def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
         list_scheduled_reports,
     )
 
+    if not isinstance(owner_user_id, str) or not owner_user_id.strip():
+        raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "定时报告缺少所属用户", 409)
+    owner_user_id = owner_user_id.strip()
     action = str(payload.get("action") or "create")
     company_names = list(payload.get("company_names") or [])
     if action == "create":
@@ -389,18 +400,23 @@ def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
                 company_names = [company_name.strip()]
         if not company_names:
             raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定企业", 422)
+        idempotency_key = _require_idempotency_key(
+            _required_event_value(payload, "idempotency_key")
+        )
         return create_scheduled_report(
             company_names,
             cron=str(payload.get("cron") or "weekly"),
             report_type=str(payload.get("report_type") or "excel"),
+            owner_user_id=owner_user_id,
+            idempotency_key=idempotency_key,
         )
     if action == "list":
-        return {"reports": list_scheduled_reports()}
+        return {"reports": list_scheduled_reports(owner_user_id=owner_user_id)}
     if action == "delete":
         task_id = str(payload.get("task_id") or (company_names[0] if company_names else ""))
         if not task_id:
             raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "删除定时报告必须指定任务", 422)
-        return delete_scheduled_report(task_id)
+        return delete_scheduled_report(task_id, owner_user_id=owner_user_id)
     raise DomainError("AGENT_ACTION_PAYLOAD_INVALID", "定时报告操作类型无效", 422)
 
 
@@ -460,6 +476,8 @@ def _bind_action_target(
     action_type: str,
     candidate_id: str | None,
     payload: dict[str, Any],
+    *,
+    run: dict[str, Any],
 ) -> dict[str, Any]:
     """Bind every writable target to this Run before it becomes approvable."""
     if action_type == "import_external_supplier":
@@ -496,11 +514,29 @@ def _bind_action_target(
 
     if action_type == "manage_scheduled_report":
         action = str(payload.get("action") or "create")
-        if action == "create" and not (
-            isinstance(payload.get("company_name"), str)
-            or payload.get("company_names")
-        ):
-            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定当前任务企业", 422)
+        if action == "create":
+            company_names = [
+                value.strip()
+                for value in (payload.get("company_names") or [])
+                if isinstance(value, str) and value.strip()
+            ] if isinstance(payload.get("company_names"), list) else []
+            company_name = payload.get("company_name")
+            if not company_names and isinstance(company_name, str) and company_name.strip():
+                company_names = [company_name.strip()]
+            if not company_names:
+                raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定当前任务企业", 422)
+            allowed_names = _run_target_company_names(run)
+            if candidate_id is not None:
+                candidate = get_action_candidate_for_update(cur, candidate_id)
+                if candidate is None or candidate["run_id"] != run_id:
+                    raise DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)
+                snapshot = candidate.get("candidate_snapshot") or {}
+                candidate_name = snapshot.get("company_name") or snapshot.get("name")
+                if isinstance(candidate_name, str) and candidate_name.strip():
+                    allowed_names.add(candidate_name.strip().casefold())
+            if any(name.casefold() not in allowed_names for name in company_names):
+                raise DomainError("AGENT_ACTION_TARGET_NOT_FOUND", "定时报告目标不属于当前任务", 404)
+            payload = {**dict(payload), "company_names": company_names}
 
     if candidate_id is not None:
         candidate = get_action_candidate_for_update(cur, candidate_id)
@@ -532,6 +568,48 @@ def _bind_action_target(
         if cur.fetchone() is None:
             raise DomainError("AGENT_ACTION_COMPANY_NOT_FOUND", "企业不属于任务", 404)
     return dict(payload)
+
+
+def _run_target_company_names(run: dict[str, Any]) -> set[str]:
+    """Read target names only from the Run's frozen request/context snapshot."""
+    requirement = run.get("requirement")
+    if not isinstance(requirement, dict):
+        return set()
+    execution_context = requirement.get("execution_context")
+    execution_context = execution_context if isinstance(execution_context, dict) else {}
+    contexts = [
+        requirement,
+        requirement.get("intent"),
+        execution_context,
+        execution_context.get("current_task"),
+        execution_context.get("conversation_state"),
+    ]
+    names: set[str] = set()
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        for field in ("company_name", "supplier_name"):
+            value = context.get(field)
+            if isinstance(value, str) and value.strip():
+                names.add(value.strip().casefold())
+        for field in ("company_names", "supplier_names", "target_supplier_names", "selected_supplier_names"):
+            values = context.get(field)
+            if isinstance(values, list):
+                names.update(
+                    value.strip().casefold()
+                    for value in values
+                    if isinstance(value, str) and value.strip()
+                )
+        for field in ("references", "supplier_references", "active_suppliers"):
+            references = context.get(field)
+            if isinstance(references, list):
+                names.update(
+                    str(reference.get("name") or reference.get("company_name") or "").strip().casefold()
+                    for reference in references
+                    if isinstance(reference, dict)
+                    and (reference.get("name") or reference.get("company_name"))
+                )
+    return names
 
 
 def _is_same_proposal_request(
@@ -630,15 +708,21 @@ def _mark_run_action_failed_after_dead_letter(run_id: str) -> None:
             )
 
 
-def _execute_action(action_type: str, payload: dict[str, Any]) -> Any:
+def _execute_action(
+    action_type: str,
+    payload: dict[str, Any],
+    *,
+    owner_user_id: str | None = None,
+) -> Any:
     _require_action_type(action_type)
+    if action_type == "manage_scheduled_report":
+        return manage_scheduled_report_action(payload, owner_user_id=owner_user_id)
     handlers = {
         "import_external_supplier": import_external_supplier,
         "add_watchlist": add_watchlist,
         "remove_watchlist": remove_watchlist,
         "submit_access_application": submit_access_application,
         "export_report": export_report,
-        "manage_scheduled_report": manage_scheduled_report_action,
     }
     return handlers[action_type](payload)
 
@@ -849,6 +933,13 @@ def _execute_managed_action(event: dict, run_id: str, proposal_id: str) -> dict[
     try:
         if proposal["action_type"] in {"add_watchlist", "remove_watchlist"}:
             result = _execute_watchlist_action(event, proposal, payload)
+        elif proposal["action_type"] == "manage_scheduled_report":
+            owner_user_id = str(run.get("user_id") or "")
+            if not owner_user_id:
+                raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "定时报告缺少所属用户", 409)
+            result = _execute_action(
+                proposal["action_type"], payload, owner_user_id=owner_user_id
+            )
         else:
             result = _execute_action(proposal["action_type"], payload)
         receipt = {"proposal_id": proposal_id, "action_type": proposal["action_type"], "status": "succeeded", "result": result}

@@ -185,9 +185,11 @@ def run_refresh_for_target(target: dict, actor_id: str) -> dict:
     }
 
 
-def run_refresh_all() -> dict:
+def run_refresh_all(
+    *, targets: list[dict] | None = None, actor_id: str | None = None
+) -> dict:
     """Paid: call Tianyancha API for all watched companies."""
-    targets = get_watchlist_targets()
+    targets = get_watchlist_targets() if targets is None else targets
     if not targets:
         return {"checked": 0, "alerts": []}
 
@@ -197,7 +199,8 @@ def run_refresh_all() -> dict:
         try:
             results.append(
                 run_refresh_for_target(
-                    target, target.get("owner_user_id") or "system:scheduler"
+                    target,
+                    actor_id or target.get("owner_user_id") or "system:scheduler",
                 )
             )
         except Exception as e:
