@@ -6747,3 +6747,14 @@
 - 修复方案：筛查摘要只接受正式证据；无正式有效证据而仅有合成数据时统一显示核验状态未知；每条名单 claim 只有正式当前证据匹配时才可显示未命中标签和值，否则显示待核验/历史提示；增加合成命中、合成未命中、混合正式未命中加合成 claim 及正式证据对照回归。
 - 验证结果：前端完整 Vitest 28 files/231 tests passed；ESLint 与 TypeScript/Vite production build passed。混合正式未命中证据和无正式支撑合成 claim 的专项回归已验证未知/历史提示。
 - 关联提交：`3d23229a`。
+
+
+### ISS-20261028-001 GitHub Actions 后端 job 未能启动 MongoDB 容器
+
+- 发现日期：2026-10-28；状态：已解决；优先级：P2。
+- 现象：PR #2 新 head `7202fea3` 的两次 backend job 都在测试开始前报告 `Failed to initialize container mongo:8` 和 `One or more containers failed to start`；frontend 与 commit-message job 通过。
+- 影响：远端 backend CI 无法验证本次提交，PR 暂不能合并。
+- 根因：当前证据指向 GitHub Actions runner 的 Mongo service container 启动失败，尚无证据表明是代码测试失败。
+- 修复方案：只重跑失败的 backend jobs；若再次失败，继续检查 runner/container 启动日志后决定是否为环境阻塞，不修改业务代码掩盖环境错误。
+- 验证结果：CI run `40538148640` 的失败 backend jobs 重跑后通过，容器初始化、单测/覆盖率、数据库集成、Run 生命周期、Outbox、调度、Delivery、评估门禁及 Agent E2E 均通过；frontend 和 commit-message jobs 通过。
+- 关联提交：`7202fea3`。
