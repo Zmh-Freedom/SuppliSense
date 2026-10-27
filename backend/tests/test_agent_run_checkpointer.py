@@ -14,6 +14,7 @@ def reset_checkpointer() -> None:
     """Keep the module-level lifecycle state isolated between contracts."""
     checkpointer._checkpointer = None
     checkpointer._checkpointer_context = None
+    checkpointer._checkpointer_schema_ready = False
 
 
 def test_checkpointer_setup_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:

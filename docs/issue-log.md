@@ -6758,3 +6758,157 @@
 - 修复方案：只重跑失败的 backend jobs；若再次失败，继续检查 runner/container 启动日志后决定是否为环境阻塞，不修改业务代码掩盖环境错误。
 - 验证结果：CI run `40538148640` 的失败 backend jobs 重跑后通过，容器初始化、单测/覆盖率、数据库集成、Run 生命周期、Outbox、调度、Delivery、评估门禁及 Agent E2E 均通过；frontend 和 commit-message jobs 通过。
 - 关联提交：`7202fea3`。
+
+
+### ISS-20261028-002 3D worker 启动未校验数据库 schema/index 迁移版本
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：PostgreSQL schema 目前由 API lifespan 直接调用无版本历史的 `ensure_pg_schema()`；MongoDB `ensure_indexes()` 失败时只记录 warning，且 Agent、Scheduler、Scheduled Worker、Delivery 启动前未验证 PostgreSQL 与 MongoDB 的 schema/index 版本。
+- 影响：worker 可能在部分 DDL/index 失败或版本不匹配时进入消费循环，导致任务持续失败或错误接管；无法通过独立部署步骤确认数据库已准备就绪。
+- 根因：3A–3C 沿用既有应用启动初始化，3D 独立迁移和 worker readiness gate 尚未实现。
+- 修复方案：新增可重入、版本化并校验 checksum 的 PostgreSQL/MongoDB worker migration/status 命令；迁移步骤严格传播 DDL/index 错误；worker 仅做只读版本检查，未通过即失败退出，不在启动时执行 DDL。
+- 验证结果：隔离库 `worker_3d_20261028_test` 的迁移从缺失到 ready、重复运行保持版本/checksum，并通过缺失标记 worker 失败关闭演练；`tests/test_worker_migrations.py` 属于 86 项 worker 专项通过集，完整离线套件最终 1432 passed、1 skipped、232 deselected。
+- 关联提交：待补。
+
+
+### ISS-20261028-003 3D Agent Worker 迁移门禁未覆盖 LangGraph checkpointer schema
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：Agent Worker 通过通用 worker migration gate 后，在首次执行任务时仍会调用 checkpointer getter；该 getter 隐式创建 checkpoint schema 并运行 LangGraph `setup()`。
+- 影响：checkpointer DDL 失败会发生在任务领取后；版本迁移状态不能证明 Agent Worker 的全部 PostgreSQL 依赖已就绪，也无法做到启动前失败关闭。
+- 根因：3A Agent Worker 沿用 API 进程的 checkpointer 惰性初始化契约，3D 数据库版本迁移尚未纳入 checkpoint schema。
+- 修复方案：将 checkpointer schema/setup 纳入 PostgreSQL 版本迁移和 checksum；Agent Worker 通过只连接模式使用已迁移的 schema，不在消费阶段执行 DDL。
+- 验证结果：LangGraph checkpointer schema/setup 纳入 PostgreSQL migration checksum；Agent Worker 以 `setup_schema=False` 连接，缺失 Mongo/PG migration marker 均在 claim 前失败；worker 专项与完整离线验证通过。
+- 关联提交：待补。
+
+
+### ISS-20261028-004 3D 独立 Delivery 缺少强制测试发送端
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：现有通知 Consumer 默认调用 Feishu 用户消息提供方；Compose 的 dedicated Delivery profile 没有测试 sink 配置。
+- 影响：预生产演练误启角色时可能触发真实外发，与 3D “不外发真实通知”的边界冲突。
+- 根因：3C 的 provider substitute 是测试注入点，3D 还没有独立角色级 sender mode。
+- 修复方案：增加仅在 dedicated Delivery Compose profile 启用的测试 sink，写入隔离 MongoDB 回执；worker 角色配置不为 test 时拒绝启动。
+- 验证结果：dedicated Delivery Compose profile 强制 `test` sink；隔离 Mongo 回执验证未含 Open ID，演练记录 `provider_calls=0`；隔离库 Delivery `--once` 无待处理项并正常退出，worker 专项与完整离线验证通过。
+- 关联提交：待补。
+
+
+### ISS-20261028-005 3D 迁移命令未拒绝共享数据库目标
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：versioned worker migration CLI 复用运行时 PG/Mongo 配置，若直接使用默认/开发 `.env.docker`，目标会是共享数据库 `sra`/`tianyancha`。
+- 影响：操作失误可能在共享业务库执行 schema/index 写入，违背本阶段只在隔离非生产库演练的约束。
+- 根因：迁移入口缺少独立于连接凭据的数据库目标保护。
+- 修复方案：迁移应用函数在建立连接前拒绝共享库和非 `_test`/`_preprod` 数据库名；worker status/probe 仍保持只读。
+- 验证结果：迁移目标单测覆盖共享库/不符合 `_test`/`_preprod` 名称拒绝；真实迁移只在 `worker_3d_20261028_test` 执行并通过。
+- 关联提交：待补。
+
+
+### ISS-20261028-006 worker 子进程信号测试未隔离新增 schema gate
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P2。
+- 现象：既有 Agent Worker、Scheduler、Scheduled Worker 与 Delivery CLI 信号测试直接启动真实入口；Agent 使用默认 `inline` 模式，Delivery 使用默认 provider sink，测试均未 stub 新增的只读迁移 gate，故在进入信号生命周期前退出。
+- 影响：原本只验证 SIGTERM/SIGINT 与 drain deadline 的测试受运行环境数据库影响，无法继续证明退出行为。
+- 根因：子进程测试未设置 worker role 配置或 stub schema readiness，未把配置/数据库门禁和进程信号两个测试边界隔离。
+- 修复方案：仅在信号生命周期测试的子进程脚本中设置正确的 worker role 并替换 `assert_worker_schema_ready` 为已就绪 stub；数据库/角色门禁由独立测试覆盖。
+- 验证结果：Agent Worker、Scheduler、Scheduled Worker、Delivery 信号测试均 stub schema gate 并使用安全 role 配置；`test_delivery_shutdown.py` 在 worker 专项组合通过，完整离线套件 1431 passed。
+- 关联提交：待补。
+
+
+### ISS-20261028-007 worker schema gate 未拒绝数据库中的未知更高版本
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：迁移状态只检查当前代码已知的 migration versions，没有检查历史表/集合中的未知版本。
+- 影响：较旧 worker 可能在数据库已应用更新 schema 的环境继续启动。
+- 根因：初版 migration gate 仅按已知清单验证 checksum，未把数据库版本集合与代码支持版本清单比较。
+- 修复方案：PG/Mongo 状态读取全部版本，未知版本标记 `version_mismatch`；迁移在任何 DDL 前拒绝未知版本。
+- 验证结果：未知版本被 worker migration status 标为 `version_mismatch`、迁移前拒绝；相关单测通过，隔离库最终状态为当前 `worker-runtime-001` ready。
+- 关联提交：待补。
+
+
+### ISS-20261028-008 worker gate 演练脚本输出错误中断恢复步骤
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P2。
+- 现象：首次真实缺失标记演练在 Agent Worker 失败关闭后，脚本拼接字符串与布尔值时报 `TypeError`，没有继续执行标记恢复步骤。
+- 影响：本次演练只删除了新建隔离 MongoDB `worker_3d_20261028_test` 中的 migration 标记；Agent Worker 在 claim 任务前已失败退出，未触及业务数据或共享库。
+- 根因：演练脚本日志格式化错误，恢复步骤没有放入 `finally`。
+- 修复方案：先执行并核验迁移恢复；后续演练脚本将把恢复放入 `finally`，并在只读 status 返回 ready 后结束。
+- 验证结果：隔离 Mongo marker 已通过重复迁移恢复；UUID-safe 复核确认三条 backlog job 均 SUCCEEDED 且 drill schedules disabled；SIGKILL 接管、test sink `provider_calls=0` 与 API cron 回滚检查随后完成。所有演练数据均在隔离库。
+- 关联提交：待补。
+
+
+### ISS-20261028-009 3D scheduler 配置可同时停掉未迁移 API cron
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：3D 预生产 scheduler role guard 在 `SCHEDULER_ROLE_ENABLED=false` 时允许独立 Scheduler 启动，即使 `SCHEDULER_MIGRATED_KINDS` 为空。
+- 影响：未迁移的 digest、refresh、sentiment、notify 等 API cron 会同时停止，违反逐类交接边界。
+- 根因：通用 3B role guard 允许 API cron 完全关闭；3D 预生产的安全策略没有额外要求 API 继续拥有未迁移类型。
+- 修复方案：仅在 3D 专用 worker entrypoint 要求 API cron 角色开启、迁移列表恰为已验证的 `financial_check`；保留通用 scheduler 所有权冲突契约。
+- 验证结果：错误配置启动失败关闭；`financial_check` 单类迁移时 API cron 跳过该类且保留其他免费 cron，付费开关关闭时 legacy `full_refresh` 不注册；清空迁移列表可恢复 `financial_check`。role-switch 专项和完整离线验证通过。
+- 关联提交：待补。
+
+
+### ISS-20261028-011 全量离线集包含依赖未配置 PostgreSQL 的用例
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P2。
+- 现象：本轮全量离线命令未加载项目连接配置，若干未标记 integration 的 API、执行权限、scheduler leader 与工具测试尝试连接 `localhost:5432` 并被拒绝。
+- 影响：1,431 项离线选择集中有 10 项失败、1 项 setup error；已确认的失败连接没有成功建立，未发生数据库写入。
+- 根因：隔离 worktree 不含 ignored `.env`，该测试集仍包含需要 PostgreSQL 的用例但未显式配置专用库。
+- 修复方案：在只读确认 SSH 隧道可达后，用新建的 `worker_3d_20261028_test` 及独立 Redis channel 重跑；任何共享库名均不用于测试。
+- 验证结果：隔离数据库定向重跑相关 PostgreSQL 用例 52 passed；完整离线集在最终 scheduler 代码下 1432 passed、1 skipped、232 deselected。第一次隔离全量运行的唯一失败来自测试环境关闭飞书测试开关，确认对应测试用 fake `httpx.post`，用空 provider 凭证重跑后通过。初始 localhost PostgreSQL 连接失败未建立连接，也未写入共享数据库。
+- 关联提交：待补。
+
+
+### ISS-20261028-012 SCM/PWMS/TMS 真实字段说明与脱敏样本缺失
+
+- 发现日期：2026-10-28；状态：BLOCKED；优先级：P1。
+- 现象：仓库及开发配置中未找到 SCM、PWMS、TMS 真实字段说明、跨源关联键字典或有界脱敏样本；当前连接的 Notion/文档搜索均返回 `UNAUTHORIZED`，无法读取业务来源材料。
+- 影响：无法验证订单行/交付窗口/数量/状态、PWMS 实收数量与时间、TMS 确认状态/ETA/更新时间、重复/取消/部分收货/迟到更正/单位时区及 ETA 新鲜度；不得选择试点对象或将合成记录作为替代。
+- 根因：来源材料未在项目工作区提供，且连接器需重新认证；SCM/PWMS/TMS 数据责任人尚未明确。
+- 修复方案：由 SCM/PWMS/TMS 数据所有者提供只读字段说明、关联键/状态/时区口径及有界脱敏样本，或恢复获授权文档连接；随后按交付风险数据核验方案完成字段映射、重复/取消/部分收货/更正/时效与源记录追溯检查。
+- 验证结果：仓库代码/文档搜索无 SCM/PWMS/TMS 接口字段说明或真实样本，`.env` 无对应来源连接配置；Notion 与已连接来源查询均因重新认证被拒绝。没有执行来源查询或写入业务数据库；试点对象未选择。
+- 关联提交：待补。
+
+
+### ISS-20261028-013 Compose 配置的 Redis 实时频道环境覆盖核查（误报）
+
+- 发现日期：2026-10-28；状态：已关闭（误报）；优先级：P1。
+- 现象：配置字段在源码中有硬编码默认值，初步怀疑 Compose 环境变量会被忽略。
+- 影响：若判断成立，隔离预生产事件可能进入默认 Redis 频道；因此在完成运行时确认前不将频道隔离记作通过。
+- 根因：将 `BaseSettings` 的字段默认值误判为不会应用同名环境变量覆盖。
+- 修复方案：无需运行时代码变更；增加独立进程回归，验证 `REALTIME_CHANNEL` 能从环境变量进入 `settings` 并成为实时发布频道。
+- 验证结果：`python -m pytest -q tests/test_realtime.py::test_realtime_channel_can_be_overridden_for_isolated_deployments` 1 passed；子进程使用 `codex:3d:channel-test`，`settings.REALTIME_CHANNEL` 与 `realtime.CHANNEL` 均匹配。
+- 关联提交：待补。
+
+
+### ISS-20261028-014 Agent Worker Mongo 连接池上限缺失（误报）
+
+- 发现日期：2026-10-28；状态：已关闭（误报）；优先级：P2。
+- 现象：首次只读 Compose 片段时误以为 Agent Worker 没有覆盖 Mongo pool 上限。
+- 影响：若属实，会使连接预算与 `.env.docker` 的继承上限不一致，因此在核对完整服务配置前暂不完成预算结论。
+- 根因：检查输出截取/注意范围不完整，漏看 Agent Worker 环境段的后续两行。
+- 修复方案：无需代码变更；使用完整带行号服务块和 Compose 展开验证各角色最终池上限。
+- 验证结果：完整配置已含 Agent Worker `MONGO_MIN_POOL_SIZE=1`、`MONGO_MAX_POOL_SIZE=10`。显式展开 `worker-migrations`、`dedicated-agent`、`dedicated-scheduler`、`dedicated-delivery` 后，backend/各 worker 的 PG 与 Mongo 最大池值均与预算表一致，Delivery sink 为 `test`；Compose config 验证通过，临时 `.env.docker` 已删除。
+- 关联提交：待补。
+
+
+### ISS-20261028-015 legacy API cron 未遵守付费执行关闭开关
+
+- 发现日期：2026-10-28；状态：已关闭；优先级：P1。
+- 现象：旧 API scheduler 在 `SCHEDULER_ROLE_ENABLED=true` 时始终注册 `full_refresh` cron，只按 `SCHEDULER_MIGRATED_KINDS` 决定跳过；`SCHEDULER_PAID_EXECUTION_ENABLED=false` 仅门禁 durable worker executor。
+- 影响：3D 逐类交接要求 API 继续运行未迁移免费 cron，但付费 `full_refresh` 保持关闭；当前组合可能在预生产运行旧 paid cron。
+- 根因：付费执行开关只在新 durable scheduling executor 校验，legacy APScheduler 注册路径未应用同一策略。
+- 修复方案：legacy scheduler 仅在 `SCHEDULER_PAID_EXECUTION_ENABLED=true` 时注册 `full_refresh`；补充回归以验证关闭时跳过 paid cron，其他未迁移 cron 仍保留；显式启用时保持兼容。
+- 验证结果：legacy `_add_business_jobs` 在 paid execution false 时跳过 `full_refresh` 并记录为 disabled；显式 true 时仍可注册。隔离 scheduler/migration 组合 46 passed，完整后端离线集 1432 passed、1 skipped、232 deselected；没有启动旧 cron 或执行付费请求。
+- 关联提交：待补。
+
+
+### ISS-20261028-016 评审稿 Markdown 换行空格触发 diff whitespace 检查
+
+- 发现日期：2026-10-28；状态：处理中；优先级：P3。
+- 现象：两份新评审稿用行尾双空格表示 Markdown 硬换行，`git diff --check` 将其报告为 trailing whitespace。
+- 影响：提交前差异检查失败，文档变更无法通过仓库 whitespace 门禁。
+- 根因：使用依赖尾空格的 Markdown 行内换行格式。
+- 修复方案：改为显式 `<br>`，移除尾随空格后重新检查 staged diff。
+- 验证结果：待完成。
+- 关联提交：待修复。

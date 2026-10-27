@@ -10,7 +10,9 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.db.worker_migrations import assert_worker_schema_ready
 from app.domains.scheduling import repo
+from app.workers.role_config import assert_scheduler_preproduction_safe
 
 logger = get_logger(__name__)
 
@@ -110,6 +112,8 @@ def _assert_role_available() -> None:
 
 def main() -> None:
     _assert_role_available()
+    assert_scheduler_preproduction_safe()
+    assert_worker_schema_ready()
     parser = argparse.ArgumentParser(description="Durable schedule enqueue worker")
     parser.add_argument("--once", action="store_true", help="scan one batch and exit")
     parser.add_argument("--poll-seconds", type=float, default=5.0)

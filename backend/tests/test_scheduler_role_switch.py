@@ -78,8 +78,23 @@ def test_migrated_kind_is_skipped_by_the_legacy_api_cron(monkeypatch):
     calls = []
     monkeypatch.setattr(scheduler_service, "_add_job", lambda func, cron, job_id: calls.append(job_id))
     monkeypatch.setattr(scheduler_service.settings, "SCHEDULER_MIGRATED_KINDS", "financial_check")
+    monkeypatch.setattr(scheduler_service.settings, "SCHEDULER_PAID_EXECUTION_ENABLED", False)
     monkeypatch.setattr(scheduler_service.settings, "FEISHU_BITABLE_ENABLED", False)
     scheduler_service._add_business_jobs()
+    assert "financial_check" not in calls
+    assert "daily_digest" in calls
+    assert "full_refresh" not in calls
+
+
+def test_legacy_full_refresh_requires_paid_execution_enabled(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scheduler_service, "_add_job", lambda func, cron, job_id: calls.append(job_id))
+    monkeypatch.setattr(scheduler_service.settings, "SCHEDULER_MIGRATED_KINDS", "financial_check")
+    monkeypatch.setattr(scheduler_service.settings, "SCHEDULER_PAID_EXECUTION_ENABLED", True)
+    monkeypatch.setattr(scheduler_service.settings, "FEISHU_BITABLE_ENABLED", False)
+
+    scheduler_service._add_business_jobs()
+
     assert "financial_check" not in calls
     assert "daily_digest" in calls
     assert "full_refresh" in calls

@@ -11,6 +11,7 @@ def _isolate_scheduler_role(monkeypatch: pytest.MonkeyPatch) -> None:
     """Developer .env must not change the legacy scheduler contract tests."""
     monkeypatch.setattr(settings, "SCHEDULER_ROLE_ENABLED", True)
     monkeypatch.setattr(settings, "SCHEDULER_MIGRATED_KINDS", "")
+    monkeypatch.setattr(settings, "SCHEDULER_PAID_EXECUTION_ENABLED", False)
 
 
 class _FakeScheduler:
@@ -63,7 +64,6 @@ def test_scheduler_registers_one_stable_interval_outbox_job_when_enabled(
     assert list(fake.jobs) == [
         "financial_check",
         "daily_digest",
-        "full_refresh",
         "sentiment_check",
         "alert_notify",
         "proactive_agent",

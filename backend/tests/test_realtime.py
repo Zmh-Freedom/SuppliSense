@@ -2,12 +2,33 @@
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from app.services import realtime
 from app.services.ws_manager import WSManager, ws_manager
+
+
+def test_realtime_channel_can_be_overridden_for_isolated_deployments():
+    channel = "codex:3d:channel-test"
+    source = (
+        "from app.core.config import settings; "
+        "from app.services import realtime; "
+        f"assert settings.REALTIME_CHANNEL == {channel!r}; "
+        f"assert realtime.CHANNEL == {channel!r}"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", source],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "REALTIME_CHANNEL": channel},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture

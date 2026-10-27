@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     MONGO_PASSWORD: str = os.getenv("MONGO_PASSWORD", "")
     MONGO_AUTH_SOURCE: str = os.getenv("MONGO_AUTH_SOURCE", "admin")
     MONGO_DB: str = os.getenv("MONGO_DB", "tianyancha")
+    MONGO_MAX_POOL_SIZE: int = Field(default=int(os.getenv("MONGO_MAX_POOL_SIZE", "50")), ge=1)
+    MONGO_MIN_POOL_SIZE: int = Field(default=int(os.getenv("MONGO_MIN_POOL_SIZE", "5")), ge=0)
 
     # Tianyancha
     TIANYANCHA_TOKEN: str = os.getenv("TIANYANCHA_TOKEN", "")
@@ -148,6 +150,9 @@ class Settings(BaseSettings):
     # API owns Outbox delivery by default. Set False only when a dedicated
     # delivery worker is deployed, to keep a single delivery owner.
     DELIVERY_ROLE_ENABLED: bool = True
+    OUTBOX_DELIVERY_SINK: Literal["provider", "test"] = os.getenv(
+        "OUTBOX_DELIVERY_SINK", "provider"
+    )
     REALTIME_CHANNEL: str = "supplisense:realtime:events"
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)
     OUTBOX_BATCH_SIZE: int = Field(default=50, ge=1)

@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover - exercised in deployments missing the o
 _checkpointer: AsyncPostgresSaver | None = None
 _checkpointer_context: AbstractAsyncContextManager[AsyncPostgresSaver] | None = None
 _checkpointer_loop: asyncio.AbstractEventLoop | None = None
+_checkpointer_schema_ready = False
 _SCHEMA_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
@@ -58,12 +59,29 @@ async def _ensure_checkpoint_schema(saver: AsyncPostgresSaver) -> None:
     await saver.conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{schema}"')
 
 
-async def get_sourcing_risk_checkpointer() -> AsyncPostgresSaver:
+async def migrate_checkpoint_schema() -> None:
+    """Create LangGraph checkpoint tables during the explicit migration phase."""
+    if AsyncPostgresSaver is None:
+        raise RuntimeError(
+            "LangGraph PostgreSQL checkpoint support is unavailable; "
+            "install langgraph-checkpoint-postgres and psycopg[binary]."
+        )
+    context = AsyncPostgresSaver.from_conn_string(_connection_string())
+    async with context as saver:
+        await _ensure_checkpoint_schema(saver)
+        await saver.setup()
+
+
+async def get_sourcing_risk_checkpointer(*, setup_schema: bool = True) -> AsyncPostgresSaver:
     """Return the process-wide, initialized persistent checkpoint saver."""
-    global _checkpointer, _checkpointer_context, _checkpointer_loop
+    global _checkpointer, _checkpointer_context, _checkpointer_loop, _checkpointer_schema_ready
 
     current_loop = asyncio.get_running_loop()
     if _checkpointer is not None and _checkpointer_loop is current_loop:
+        if setup_schema and not _checkpointer_schema_ready:
+            await _ensure_checkpoint_schema(_checkpointer)
+            await _checkpointer.setup()
+            _checkpointer_schema_ready = True
         return _checkpointer
 
     if _checkpointer is not None and _checkpointer_loop is not current_loop:
@@ -73,17 +91,20 @@ async def get_sourcing_risk_checkpointer() -> AsyncPostgresSaver:
         _checkpointer = None
         _checkpointer_context = None
         _checkpointer_loop = None
+        _checkpointer_schema_ready = False
 
     saver = await _new_checkpointer()
     try:
-        await _ensure_checkpoint_schema(saver)
-        await saver.setup()
+        if setup_schema:
+            await _ensure_checkpoint_schema(saver)
+            await saver.setup()
     except Exception:
         await close_sourcing_risk_checkpointer()
         raise
 
     _checkpointer = saver
     _checkpointer_loop = current_loop
+    _checkpointer_schema_ready = setup_schema
     return saver
 
 
@@ -110,11 +131,12 @@ def compile_sourcing_risk_graph(graph: Any, checkpointer: AsyncPostgresSaver | N
 
 async def close_sourcing_risk_checkpointer() -> None:
     """Release the dedicated psycopg3 connection held by the saver."""
-    global _checkpointer, _checkpointer_context, _checkpointer_loop
+    global _checkpointer, _checkpointer_context, _checkpointer_loop, _checkpointer_schema_ready
 
     context = _checkpointer_context
     _checkpointer = None
     _checkpointer_context = None
     _checkpointer_loop = None
+    _checkpointer_schema_ready = False
     if context is not None:
         await context.__aexit__(None, None, None)

@@ -11,9 +11,11 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.db.worker_migrations import assert_worker_schema_ready
 from app.domains.agent_run import execution_jobs
 from app.domains.agent_run.coordinator import ExecutionLost, RunCoordinator, run_coordinator
 from app.domains.agent_run.repo import get_run
+from app.workers.role_config import assert_agent_worker_enabled
 
 logger = get_logger(__name__)
 
@@ -26,7 +28,7 @@ async def _get_checkpointer():
     """Resolve the persistent saver lazily so the worker loop owns its event loop."""
     from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
 
-    return await get_sourcing_risk_checkpointer()
+    return await get_sourcing_risk_checkpointer(setup_schema=False)
 
 
 async def _prepare_resume(
@@ -445,6 +447,8 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="claim and run at most one job")
     parser.add_argument("--worker-id", default="")
     args = parser.parse_args()
+    assert_agent_worker_enabled()
+    assert_worker_schema_ready()
     worker_id = args.worker_id or _default_worker_id()
     if args.once:
         result = run_worker_once(worker_id)

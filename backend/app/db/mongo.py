@@ -24,8 +24,8 @@ def get_db() -> Database:
             password=settings.MONGO_PASSWORD,
             authSource=settings.MONGO_AUTH_SOURCE,
             serverSelectionTimeoutMS=5000,
-            maxPoolSize=50,
-            minPoolSize=5,
+            maxPoolSize=settings.MONGO_MAX_POOL_SIZE,
+            minPoolSize=settings.MONGO_MIN_POOL_SIZE,
             maxIdleTimeMS=30000,
         )
     return _client[settings.MONGO_DB]
@@ -45,8 +45,8 @@ def get_async_db() -> AsyncDatabase:
             password=settings.MONGO_PASSWORD,
             authSource=settings.MONGO_AUTH_SOURCE,
             serverSelectionTimeoutMS=5000,
-            maxPoolSize=50,
-            minPoolSize=5,
+            maxPoolSize=settings.MONGO_MAX_POOL_SIZE,
+            minPoolSize=settings.MONGO_MIN_POOL_SIZE,
             maxIdleTimeMS=30000,
         )
     return _async_client[settings.MONGO_DB]
@@ -64,8 +64,8 @@ def close_db() -> None:
     logger.info("MongoDB connections closed")
 
 
-def ensure_indexes() -> None:
-    """创建常用查询索引（幂等操作）。"""
+def ensure_indexes(*, strict: bool = False) -> None:
+    """创建常用查询索引（幂等操作）。严格模式供版本化迁移失败关闭使用。"""
     try:
         db = get_db()
 
@@ -213,7 +213,8 @@ def ensure_indexes() -> None:
             try:
                 db[col].create_index([("name", 1)], background=True)
             except Exception:
-                pass
+                if strict:
+                    raise
         # alerts: stable monitoring target + time; company_name remains a compatibility field
         db["alerts"].create_index([("monitor_target_id", 1), ("created_at", -1)], background=True)
         db["alerts"].create_index([("company_name", 1), ("created_at", -1)], background=True)
@@ -222,3 +223,5 @@ def ensure_indexes() -> None:
         logger.info("MongoDB indexes ensured")
     except Exception as e:
         logger.warning("Failed to ensure indexes: %s", e)
+        if strict:
+            raise RuntimeError(f"MongoDB index migration failed: {e}") from e

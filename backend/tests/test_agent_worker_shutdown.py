@@ -18,6 +18,8 @@ def test_worker_exits_within_drain_deadline_even_if_provider_thread_is_blocked(s
 import asyncio, time
 from app.workers import agent_worker as worker
 worker.DRAIN_TIMEOUT_SECONDS = .5
+worker.settings.AGENT_EXECUTION_MODE = "worker"
+worker.assert_worker_schema_ready = lambda: None
 async def checkpointer(): return None
 async def blocked_job(worker_id):
     print('READY', flush=True)

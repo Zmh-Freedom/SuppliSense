@@ -80,7 +80,9 @@ from app.workers import scheduler
 def batch(batch_size=20):
     print('READY', flush=True)
     return {'scanned': 0, 'created': 0, 'existing': 0, 'blocked': 0, 'errors': 0}
-scheduler.settings.SCHEDULER_ROLE_ENABLED = False
+scheduler.settings.SCHEDULER_ROLE_ENABLED = True
+scheduler.settings.SCHEDULER_MIGRATED_KINDS = "financial_check"
+scheduler.assert_worker_schema_ready = lambda: None
 scheduler.run_scheduler_once = batch
 scheduler.main()
 """
@@ -149,6 +151,9 @@ def test_scheduled_worker_cli_exits_within_deadline(signal_number):
 import asyncio
 from app.workers import scheduled_worker
 scheduled_worker.DRAIN_TIMEOUT_SECONDS = .5
+scheduled_worker.settings.SCHEDULER_ROLE_ENABLED = True
+scheduled_worker.settings.SCHEDULER_MIGRATED_KINDS = "financial_check"
+scheduled_worker.assert_worker_schema_ready = lambda: None
 async def stuck(worker_id=None):
     print('READY', flush=True)
     await asyncio.sleep(60)
