@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import time
 import uuid
 from typing import Any, AsyncGenerator
 
@@ -19,6 +20,14 @@ _SUPERVISOR_STAGE_MESSAGES = {
     "build_decision": "正在生成综合决策...",
     "approval_gate": "正在检查待审批操作...",
     "finalize": "正在整理最终回答...",
+}
+
+_LIVE_SOURCING_MAX_DURATION_SECONDS = 105
+_SOURCING_CANDIDATE_TOOLS = {
+    "discover_supplier_candidates",
+    "search_suppliers",
+    "find_alternatives",
+    "list_formal_suppliers",
 }
 
 
@@ -71,8 +80,36 @@ async def stream_harness_graph(
     turn_id: str | None = None,
     run_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
+    """Subscribe to a producer whose lifetime is independent of this HTTP call."""
+    from app.graphs.harness.runner import managed_stream
+
+    subscription = managed_stream(run_id or str(uuid.uuid4()), lambda: _produce_harness_events(
+        user_message, session_id, execution_context, user_id=user_id,
+        run_config=run_config, checkpointer=checkpointer, turn_id=turn_id, run_id=run_id,
+    ))
+    try:
+        async for event in subscription:
+            yield event
+    finally:
+        await subscription.aclose()
+
+
+async def _produce_harness_events(
+    user_message: str,
+    session_id: str,
+    execution_context: dict[str, Any],
+    *,
+    user_id: str = "",
+    run_config: dict[str, Any] | None = None,
+    checkpointer: Any = None,
+    turn_id: str | None = None,
+    run_id: str | None = None,
+    resume_permit: Any = None,
+    resume_state: dict[str, Any] | None = None,
+) -> AsyncGenerator[str, None]:
     """Run the unified Harness and publish durable progress as it happens."""
     from app.graphs.harness import run_harness
+    from app.domains.agent_run.coordinator import ExecutionLost, run_coordinator
 
     config = dict(run_config or {})
     configurable = dict(config.get("configurable") or {})
@@ -80,11 +117,19 @@ async def stream_harness_graph(
     # A checkpoint thread is execution state, not session state. Reusing the
     # session thread lets an earlier task_specs list override this run's task.
     configurable["thread_id"] = active_run_id
-    configurable.setdefault("checkpoint_ns", "chat:harness")
+    configurable["checkpoint_ns"] = ""
     config["configurable"] = configurable
     active_turn_id = turn_id or str(uuid.uuid4())
     control_context = dict(execution_context)
     control_context.pop("_control_plane", None)
+    current_task = control_context.get("current_task") or {}
+    requirement = current_task.get("requirement") if isinstance(current_task, dict) else None
+    request_id = requirement.get("request_id") if isinstance(requirement, dict) else None
+    is_live_sourcing = (
+        isinstance(current_task, dict)
+        and current_task.get("task_type") == "sourcing"
+        and not str(request_id or "").strip()
+    )
     state = {
         "session_id": session_id,
         "turn_id": active_turn_id,
@@ -92,9 +137,21 @@ async def stream_harness_graph(
         "user_id": user_id or None,
         "user_message": user_message,
         "execution_context": control_context,
-        "current_task": control_context.get("current_task") or {},
+        "current_task": current_task,
     }
+    if is_live_sourcing:
+        # Leave a margin before the browser's stream timeout so a bounded
+        # external lookup can emit and persist a needs_review terminal state.
+        state["budget"] = {"max_duration_seconds": _LIVE_SOURCING_MAX_DURATION_SECONDS}
 
+    permit = resume_permit or (await asyncio.to_thread(run_coordinator.claim, active_run_id, f"api:{uuid.uuid4()}") if run_id and user_id else None)
+    if permit:
+        from app.graphs.checkpoint_recovery import input_digest
+
+        record = await asyncio.to_thread(run_coordinator.recovery_record, active_run_id, user_id)
+        state["input_digest"] = input_digest(record["execution_input"])
+    if resume_state is not None:
+        state = resume_state
     queue: asyncio.Queue[tuple[str, dict[str, Any], int | None]] = asyncio.Queue()
     progress_seen = False
 
@@ -115,6 +172,7 @@ async def stream_harness_graph(
                     active_run_id,
                     event_type,
                     payload,
+                    permit=permit,
                 )
                 event_id = int(event["event_id"])
         await queue.put((event_type, payload, event_id))
@@ -132,6 +190,16 @@ async def stream_harness_graph(
             return
         if event_type == "tool_result":
             await publish("tool_result", snapshot)
+            result = snapshot.get("result")
+            tool_name = str(snapshot.get("tool") or "")
+            if isinstance(result, dict) and tool_name in _SOURCING_CANDIDATE_TOOLS:
+                from app.graphs.agent_core.adapter import collect_supplier_references
+
+                references = collect_supplier_references(
+                    [], result.get("data") or {}, "Harness 寻源候选"
+                )
+                if references:
+                    await publish("references", {"items": references})
             return
 
         status = str(snapshot.get("status") or "running")
@@ -189,14 +257,8 @@ async def stream_harness_graph(
                 "loop_exit_reason": snapshot.get("loop_exit_reason"),
             })
         elif event_type == "render_answer":
-            answer = snapshot.get("answer") or {}
-            await publish("agent_answer", answer)
-            await publish("evidence", {
-                "run_id": active_run_id,
-                "records": snapshot.get("evidence_records", []),
-                "coverage": snapshot.get("evidence_coverage") or {},
-            })
-            await publish("answer_chunk", {"text": _render_harness_answer(answer)})
+            # Publish the definitive answer with the terminal in one transaction.
+            return
         elif event_type == "persist_turn":
             await publish("workflow_status", {
                 **run_details,
@@ -215,29 +277,66 @@ async def stream_harness_graph(
                 active_run_id,
                 event_type,
                 snapshot,
+                permit=permit,
             )
 
-    yield _workflow_status("running", "understand", "正在解析结构化任务上下文")
     if run_id and user_id:
         await publish("run", {"run_id": active_run_id, "turn_id": active_turn_id})
+    input_understanding = (
+        control_context.get("conversation_state", {}).get("input_understanding")
+        if isinstance(control_context.get("conversation_state"), dict)
+        else None
+    ) or control_context.get("llm_intent")
+    await publish("workflow_status", {
+        "run_id": active_run_id,
+        "status": "running",
+        "stage": "understand",
+        "message": "正在解析结构化任务上下文",
+        **({"input_understanding": input_understanding} if isinstance(input_understanding, dict) else {}),
+    })
     try:
+        async def control() -> None:
+            if permit:
+                await asyncio.to_thread(run_coordinator.check, permit)
+
         async def run_graph() -> Any:
-            from app.graphs.agent_core.narrator import narrate_answer
+            from app.graphs.agent_core.narrator import (
+                answer_general_supplier_knowledge,
+                narrate_answer,
+                translate_user_text,
+            )
 
             return await run_harness(
                 state,
+                **({"resume": True} if resume_state is not None else {}),
                 checkpointer=checkpointer,
                 config=config,
                 persist=persist,
                 progress=progress,
+                control=control if permit else None,
                 narrate=lambda answer, message: asyncio.to_thread(
                     narrate_answer, answer, message
                 ),
+                answer_general_knowledge=lambda message: asyncio.to_thread(
+                    answer_general_supplier_knowledge, message
+                ),
+                answer_translation=lambda message: asyncio.to_thread(
+                    translate_user_text, message
+                ),
             )
 
-        runner = asyncio.create_task(run_graph())
+        from app.domains.agent_run.coordinator import execution_scope
+        from contextlib import nullcontext
+
+        with execution_scope(permit) if permit else nullcontext():
+            runner = asyncio.create_task(run_graph())
+        last_heartbeat = time.monotonic()
         try:
             while not runner.done() or not queue.empty():
+                if permit and time.monotonic() - last_heartbeat >= 5:
+                    if not await asyncio.to_thread(run_coordinator.heartbeat, permit):
+                        raise ExecutionLost("执行许可已失效")
+                    last_heartbeat = time.monotonic()
                 if queue.empty():
                     try:
                         event_type, data, event_id = await asyncio.wait_for(queue.get(), timeout=0.1)
@@ -250,6 +349,7 @@ async def stream_harness_graph(
         finally:
             if not runner.done():
                 runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
         if not progress_seen:
             # Compatibility fallback for injected test runners and old callers.
             task_specs = result.get("task_specs", [])
@@ -263,10 +363,7 @@ async def stream_harness_graph(
                     tool_name = str(outcome.get("tool_name") or "unknown")
                     await publish("tool_call", {"tool": tool_name, "args": outcome.get("input", {})}, durable=False)
                     await publish("tool_result", {"tool": tool_name, "result": outcome}, durable=False)
-            await publish("evidence", {"records": result.get("evidence_records", []), "coverage": result.get("evidence_coverage") or {}}, durable=False)
             answer = result.get("answer") or {"status": "failed", "summary": "Harness 未生成结构化回答。", "claims": [], "limitations": ["缺少 AgentAnswer"], "evidence_refs": []}
-            await publish("agent_answer", answer, durable=False)
-            await publish("answer_chunk", {"text": _render_harness_answer(answer)}, durable=False)
         else:
             answer = result.get("answer") or {}
         outcomes = result.get("tool_outcomes", [])
@@ -298,6 +395,7 @@ async def stream_harness_graph(
                 if isinstance(initial_task, dict) and isinstance(initial_task.get("requirement"), dict)
                 else None
             )
+        next_context = None
         if run_id and user_id:
             from app.domains.agent_run.state_store import session_state_store
 
@@ -322,44 +420,78 @@ async def stream_harness_graph(
                 next_state = dict(next_context.get("conversation_state") or {})
                 next_state["current_requirement"] = current_requirement
                 next_context["conversation_state"] = next_state
-            await asyncio.to_thread(
-                session_state_store.update_execution_context,
-                session_id,
-                user_id,
-                next_context,
-            )
-        if sourcing_candidates or current_requirement:
-            save_execution_turn(
-                session_id,
-                user_message,
-                answer_text,
-                references,
-                sourcing_candidates,
-                current_requirement,
-            )
-        else:
-            save_execution_turn(session_id, user_message, answer_text, references)
-        if references:
-            await publish("references", {"items": references})
+        projection = {
+            "run_id": active_run_id, "session_id": session_id,
+            "user_message": user_message, "answer": answer_text,
+            "references": references, "sourcing_candidates": sourcing_candidates,
+            "current_requirement": current_requirement,
+        }
+        if not permit:
+            args = [session_id, user_message, answer_text, references]
+            if sourcing_candidates or current_requirement:
+                args.extend([sourcing_candidates, current_requirement])
+            await asyncio.to_thread(save_execution_turn, *args)
         final_status = str(answer.get("status") or "failed")
         final_stage = "completed" if final_status in {"completed", "partial"} else "decision"
-        await publish("workflow_status", {
+        final_events = [
+            ("agent_answer", answer),
+            ("evidence", {"run_id": active_run_id, "records": result.get("evidence_records", []), "coverage": result.get("evidence_coverage") or {}}),
+            ("answer_chunk", {"text": answer_text}),
+        ]
+        if references:
+            final_events.append(("references", {"items": references}))
+        final_events.append(("workflow_status", {
             "run_id": active_run_id,
             "status": final_status,
             "stage": final_stage,
             "message": "本轮 Harness 工作流已完成",
             "loop_exit_reason": result.get("loop_exit_reason"),
-        })
-        await publish("done", {"run_id": active_run_id, "status": final_status, "answer": answer_text})
+        }))
+        final_events.append(("done", {"run_id": active_run_id, "status": final_status, "answer": answer_text}))
+        if permit:
+            committed = await asyncio.to_thread(
+                run_coordinator.finish, permit,
+                snapshot={**state, **result, "references": references}, answer_text=answer_text, events=final_events,
+                next_context=next_context, projection=projection,
+            )
+            for event in committed:
+                await queue.put((event["event_type"], event["payload"], int(event["event_id"])))
+        else:
+            for event_type, payload in final_events:
+                await publish(event_type, payload, durable=False)
         while not queue.empty():
             event_type, data, event_id = queue.get_nowait()
             yield _sse_event(event_type, data, event_id)
+    except ExecutionLost:
+        from app.domains.agent_run.repo import list_events_after
+
+        # Cancellation may have committed on another API process. Deliver its
+        # durable final marker; never turn ownership loss into a new failure.
+        events = await asyncio.to_thread(list_events_after, active_run_id)
+        for event in events:
+            if event["event_type"] in {"done", "error"}:
+                yield _sse_event(event["event_type"], event["payload"], int(event["event_id"]))
     except Exception as exc:
         from app.graphs import format_llm_error
 
         message = format_llm_error(exc)
-        await publish("workflow_status", {"run_id": active_run_id, "status": "failed", "stage": "decision", "message": "Harness 工作流执行失败"})
-        await publish("error", {"run_id": active_run_id, "message": message})
+        failures = [
+            ("workflow_status", {"run_id": active_run_id, "status": "failed", "stage": "decision", "message": "Harness 工作流执行失败"}),
+            ("error", {"run_id": active_run_id, "message": message}),
+        ]
+        if permit:
+            try:
+                committed = await asyncio.to_thread(
+                    run_coordinator.finish, permit, snapshot={**state, "status": "failed"},
+                    answer_text=message, events=failures,
+                )
+            except ExecutionLost:
+                return
+            for event in committed:
+                await queue.put((event["event_type"], event["payload"], int(event["event_id"])))
+        else:
+            for event_type, payload in failures:
+                await publish(event_type, payload, durable=False)
         while not queue.empty():
             event_type, data, event_id = queue.get_nowait()
             yield _sse_event(event_type, data, event_id)
@@ -467,7 +599,19 @@ async def stream_agent_supervisor_graph(
     final_status = "completed"
     discovered_references: list[dict] = []
 
-    yield _workflow_status("running", "understand", "正在分析组合寻源与风险任务...")
+    context = execution_context if isinstance(execution_context, dict) else {}
+    conversation_state = context.get("conversation_state")
+    input_understanding = (
+        conversation_state.get("input_understanding")
+        if isinstance(conversation_state, dict)
+        else None
+    ) or context.get("llm_intent")
+    yield _workflow_status(
+        "running",
+        "understand",
+        "正在分析组合寻源与风险任务...",
+        **({"input_understanding": input_understanding} if isinstance(input_understanding, dict) else {}),
+    )
     yield _sse_event("thinking", {"message": "正在分析组合寻源与风险任务..."})
 
     try:

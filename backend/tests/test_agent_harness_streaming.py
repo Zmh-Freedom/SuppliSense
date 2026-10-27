@@ -42,7 +42,20 @@ def test_harness_stream_emits_contract_events(monkeypatch):
             stream_harness_graph(
                 "分析甲公司风险",
                 "session-1",
-                {"current_task": {"target_supplier_names": ["甲公司"]}},
+                {
+                    "current_task": {"target_supplier_names": ["甲公司"]},
+                    "llm_intent": {
+                        "task_type": "analysis",
+                        "capability": "risk",
+                        "target_supplier_names": ["甲公司"],
+                        "analysis_dimensions": ["risk"],
+                        "field_sources": {
+                            "target_supplier_names": "explicit",
+                            "analysis_dimensions": "explicit",
+                        },
+                        "confidence": 0.93,
+                    },
+                },
             )
         )
     )
@@ -53,6 +66,8 @@ def test_harness_stream_emits_contract_events(monkeypatch):
     assert '"status": "needs_review"' in events
     assert "event: evidence" in events
     assert "event: done" in events
+    assert '"input_understanding"' in events
+    assert '"field_sources": {"target_supplier_names": "explicit"' in events
     assert saved_turns == [("session-1", "分析甲公司风险", "证据不足\n- 甲公司风险数据暂未形成确定结论", [])]
     answer_chunk = next(line for line in events.splitlines() if line.startswith('data: {"text":'))
     assert "evidence:internal-secret" not in answer_chunk
@@ -92,6 +107,40 @@ def test_harness_stream_publishes_progress_before_runner_finishes(monkeypatch):
     assert event_names.index("tool_call") < event_names.index("tool_result")
     assert event_names.index("tool_result") < event_names.index("agent_answer")
     assert '"status": "completed"' in events
+
+
+def test_harness_stream_publishes_sourcing_references_before_terminal_event(monkeypatch):
+    async def fake_run_harness(*_args, **kwargs):
+        progress = kwargs["progress"]
+        await progress("tool_result", {
+            "run_id": "run-1",
+            "task_id": "sourcing-1",
+            "tool": "discover_supplier_candidates",
+            "result": {
+                "tool_name": "discover_supplier_candidates",
+                "status": "success",
+                "data": {
+                    "external_candidates": [{
+                        "supplier_name": "外部候选有限公司",
+                        "candidate_id": "external-1",
+                        "candidate_type": "external",
+                        "source": "web_search",
+                    }],
+                },
+            },
+        }, False)
+        return {
+            "answer": {"status": "needs_review", "summary": "等待人工复核", "claims": [], "limitations": [], "evidence_refs": []},
+            "tool_outcomes": [],
+        }
+
+    monkeypatch.setattr("app.graphs.harness.run_harness", fake_run_harness)
+
+    events = asyncio.run(_collect(stream_harness_graph("寻找工业相机供应商", "session-1", {})))
+
+    assert "event: references" in events
+    assert "外部候选有限公司" in events
+    assert events.index("event: references") < events.index("event: done")
 
 
 async def _collect(stream):

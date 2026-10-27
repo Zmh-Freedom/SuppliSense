@@ -1,14 +1,17 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StreamCallbacks } from '../api'
+import type { AgentAnswer } from '../types'
 import ChatView from '../components/ChatView'
 
 const mocks = vi.hoisted(() => ({
   chatRunEventStream: vi.fn(),
   chatStream: vi.fn(),
   resumeChat: vi.fn(),
+  handoffGet: vi.fn(),
+  handoffPost: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
@@ -19,6 +22,7 @@ vi.mock('../api', () => ({
     if (eventType === 'done') callbacks.onDone?.(data as { answer: string; status?: string })
   },
   resumeChat: mocks.resumeChat,
+  api: { get: mocks.handoffGet, post: mocks.handoffPost },
 }))
 
 const OLD_SESSION = {
@@ -68,16 +72,92 @@ describe('ChatView session lifecycle', () => {
     mocks.chatStream.mockReset()
     mocks.chatRunEventStream.mockReset()
     mocks.resumeChat.mockReset()
+    mocks.handoffGet.mockReset()
+    mocks.handoffPost.mockReset()
   })
 
   afterEach(() => {
     vi.clearAllMocks()
   })
 
+  it('ignores late callbacks from A while B is still running', async () => {
+    const pending: Array<{ handlers: StreamCallbacks; resolve: (answer: string) => void }> = []
+    mocks.chatStream.mockImplementation((_message: string, _sid: string, handlers: StreamCallbacks) =>
+      new Promise<string>(resolve => pending.push({ handlers, resolve })),
+    )
+    const user = userEvent.setup()
+    renderChat()
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析甲公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析乙公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    expect(pending).toHaveLength(2)
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '下一条草稿')
+    await act(async () => {
+      pending[0].handlers.onAnswerChunk?.({ text: '甲公司的旧结果' })
+      pending[0].handlers.onDone?.({ answer: '甲公司的旧结果', status: 'completed' })
+      pending[0].resolve('甲公司的旧结果')
+    })
+    expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled()
+    await act(async () => {
+      pending[1].handlers.onAnswerChunk?.({ text: '乙公司的独立结果' })
+      pending[1].handlers.onDone?.({ answer: '乙公司的独立结果', status: 'completed' })
+      pending[1].resolve('乙公司的独立结果')
+    })
+    expect(await screen.findByText('乙公司的独立结果')).toBeInTheDocument()
+    expect(screen.queryByText('甲公司的旧结果')).not.toBeInTheDocument()
+  })
+
+  it('restores a saved run after remount without starting another analysis', async () => {
+    localStorage.setItem('chat_runs', JSON.stringify({ 'old-session': {
+      runId: 'saved-run', lastEventId: 5,
+      messages: [{ role: 'user', content: '分析甲公司' }],
+    } }))
+    mocks.chatRunEventStream.mockImplementation(async (_run: string, _cursor: number | null, handlers: { onEvent: (event: { eventType: string; data: unknown; eventId: number }) => void }) => {
+      handlers.onEvent({ eventType: 'answer_chunk', data: { text: '刷新后恢复的结果' }, eventId: 6 })
+      handlers.onEvent({ eventType: 'done', data: { answer: '刷新后恢复的结果', status: 'completed' }, eventId: 7 })
+    })
+    renderChat()
+    expect(await screen.findByText('刷新后恢复的结果')).toBeInTheDocument()
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('saved-run', null, expect.any(Object), expect.any(AbortSignal))
+    expect(JSON.parse(localStorage.getItem('chat_runs') || '{}')).toEqual({})
+  })
+
+  it('keeps B running when the aborted replay for A rejects', async () => {
+    let rejectReplay: (error: Error) => void = () => {};
+    let finishB: (answer: string) => void = () => {};
+    let callbacksB: StreamCallbacks = {};
+    mocks.chatStream.mockImplementationOnce(async (_text: string, _sid: string, handlers: StreamCallbacks) => {
+      handlers.onRun?.({ run_id: 'run-a' });
+      throw new Error('disconnected');
+    }).mockImplementationOnce((_text: string, _sid: string, handlers: StreamCallbacks) => {
+      callbacksB = handlers;
+      return new Promise<string>(resolve => { finishB = resolve; });
+    });
+    mocks.chatRunEventStream.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectReplay = reject; }));
+    const user = userEvent.setup();
+    renderChat();
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析甲公司');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await waitFor(() => expect(mocks.chatRunEventStream).toHaveBeenCalledOnce());
+    await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0]);
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析乙公司');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '下一条草稿');
+    await act(async () => { rejectReplay(new Error('aborted replay')); });
+    expect(screen.getByRole('button', { name: '处理中…' })).toBeDisabled();
+    await act(async () => {
+      callbacksB.onDone?.({ answer: '乙公司的完成结果', status: 'completed' });
+      finishB('乙公司的完成结果');
+    });
+  })
+
   it('uses the outer composer focus state without an inner input ring', () => {
     renderChat()
 
-    const input = screen.getByLabelText('向采购助手提问')
+    const input = screen.getByLabelText('向 AI 采购助手提问')
     expect(input).toHaveClass('focus-visible:ring-0')
     expect(input).not.toHaveClass('focus-visible:ring-2')
   })
@@ -86,12 +166,80 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    const input = screen.getByLabelText('向采购助手提问')
+    const input = screen.getByLabelText('向 AI 采购助手提问')
     const send = screen.getByRole('button', { name: '发送' })
     expect(send).toBeDisabled()
     await user.type(input, ' \u3000\n\t ')
     expect(send).toBeDisabled()
     expect(mocks.chatStream).not.toHaveBeenCalled()
+  })
+
+  it('uses the structured answer summary when the done event has no text', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed',
+        summary: '宁德时代综合风险分析结果',
+        claims: [],
+        limitations: [],
+        action_proposals: [],
+        action_receipts: [],
+        evidence_refs: [],
+      } satisfies AgentAnswer)
+      handlers.onDone?.({ answer: '', status: 'completed' })
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析宁德时代的风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ msgs: Array<{ role: string; content: string }> }>
+      expect(storedSessions[0].msgs.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '宁德时代综合风险分析结果',
+      })
+    })
+  })
+
+  it('persists a visible status when the stream closes without a terminal event', async () => {
+    mocks.chatStream.mockResolvedValue('')
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText(/连接已结束，但服务端没有返回最终结果/)).toBeInTheDocument()
+  })
+
+  it('replays a persisted terminal answer after a clean stream close', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onRun?.({ run_id: 'run-replay' })
+      return ''
+    })
+    mocks.chatRunEventStream.mockImplementation(async (_runId: string, _lastEventId: number | null, handlers: { onEvent: (event: { eventType: string; data: unknown; eventId: number }) => void }) => {
+      handlers.onEvent({
+        eventType: 'done',
+        data: { answer: '从事件回放恢复的回答', status: 'completed' },
+        eventId: 3,
+      })
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ msgs: Array<{ role: string; content: string }> }>
+      expect(storedSessions[0].msgs.at(-1)).toMatchObject({
+        role: 'assistant',
+        content: '从事件回放恢复的回答',
+      })
+    })
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-replay', null, expect.any(Object), expect.any(AbortSignal))
   })
 
   it('offers a canonical supplier choice after a short-name clarification', async () => {
@@ -110,7 +258,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析网易云音乐的风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析网易云音乐的风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
     const candidate = await screen.findByRole('button', { name: /杭州网易云音乐科技有限公司.*网易云/ })
     await user.click(candidate)
@@ -135,7 +283,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '查找一下青岛三祥科技股份有限公司的风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '查找一下青岛三祥科技股份有限公司的风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await user.click(await screen.findByRole('button', { name: /青岛三祥科技股份有限公司.*青岛三祥/ }))
 
@@ -148,29 +296,30 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析旧会话')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析旧会话')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
 
     await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
     await completeStream()
 
-    expect(screen.getByText('采购助手')).toBeInTheDocument()
+    expect(screen.getByText('AI 采购助手')).toBeInTheDocument()
   })
 
   it('labels the assistant consistently and uses the network-risk quick capability prompt', async () => {
     renderChat()
 
-    expect(screen.getByText('采购助手')).toBeInTheDocument()
+    expect(screen.getByText('AI 采购助手')).toBeInTheDocument()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: /关系图谱.*供应链关系与传染风险/ }))
 
-    expect(screen.getByLabelText('向采购助手提问')).toHaveValue('分析青岛三祥科技股份有限公司的供应链关系和传染风险')
+    expect(screen.getByLabelText('向 AI 采购助手提问')).toHaveValue('分析青岛三祥科技股份有限公司的供应链关系和传染风险')
   })
 
   it('does not load another account\'s legacy or scoped chat history', () => {
     localStorage.setItem('session', JSON.stringify({ username: 'xiaoli.meng', role: 'purchaser' }))
     localStorage.setItem('chat_sessions:minhao.zhou', JSON.stringify([OLD_SESSION]))
+    localStorage.setItem('chat_active_session:minhao.zhou', OLD_SESSION.sid)
 
     renderChat()
 
@@ -178,12 +327,114 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('暂无会话')).toBeInTheDocument()
   })
 
+  it('restores the most recently updated session after reload', () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([
+      {
+        sid: 'newer-session',
+        title: '最新会话',
+        msgs: [{ role: 'user', content: '最新会话里的问题' }],
+        updatedAt: 20,
+      },
+      {
+        sid: 'older-session',
+        title: '较旧会话',
+        msgs: [{ role: 'user', content: '旧会话里的问题' }],
+        updatedAt: 10,
+      },
+    ]))
+
+    renderChat()
+
+    expect(screen.getByText('最新会话里的问题')).toBeInTheDocument()
+    expect(screen.queryByText('旧会话里的问题')).not.toBeInTheDocument()
+  })
+
+  it('restores the explicitly selected session even when another session was updated later', () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([
+      {
+        sid: 'recently-updated',
+        title: '最近更新',
+        msgs: [{ role: 'user', content: '最近更新的内容' }],
+        updatedAt: 20,
+      },
+      {
+        sid: 'active-session',
+        title: '当前会话',
+        msgs: [{ role: 'user', content: '当前会话内容' }],
+        updatedAt: 10,
+      },
+    ]))
+    localStorage.setItem('chat_active_session', 'active-session')
+
+    renderChat()
+
+    expect(screen.getByText('当前会话内容')).toBeInTheDocument()
+    expect(screen.queryByText('最近更新的内容')).not.toBeInTheDocument()
+  })
+
+  it('keeps the newest session when trimming history to fifty sessions', async () => {
+    const existingSessions = Array.from({ length: 51 }, (_, index) => ({
+      sid: `session-${index}`,
+      title: `会话 ${index}`,
+      msgs: [{ role: 'user', content: `历史问题 ${index}` }],
+      updatedAt: 100 - index,
+    }))
+    localStorage.setItem('chat_sessions', JSON.stringify(existingSessions))
+    localStorage.setItem('chat_active_session', 'session-0')
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '本轮已完成', status: 'completed' })
+      return '本轮已完成'
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '追加一轮分析')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ sid: string }>
+      expect(storedSessions).toHaveLength(50)
+      expect(storedSessions.some(session => session.sid === 'session-0')).toBe(true)
+      expect(storedSessions.some(session => session.sid === 'session-50')).toBe(false)
+    })
+  })
+
+  it('removes the conversational switch prefix when confirming a supplier candidate', async () => {
+    const submittedMessages: string[] = []
+    let calls = 0
+    mocks.chatStream.mockImplementation(async (message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      submittedMessages.push(message)
+      calls += 1
+      if (calls === 1) {
+        handlers.onClarification?.({
+          message: '请确认正式供应商',
+          missing: ['supplier_identity'],
+          candidates: [{ supplier_id: 'supplier:kaizhong', supplier_name: '上海凯众材料科技股份有限公司', short_name: '上海凯众材料' }],
+        })
+      } else {
+        handlers.onDone?.({ answer: '财务分析完成', status: 'completed' })
+      }
+      return ''
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '那改看上海凯众材料科技股份有限公司，分析近三个月的财务情况')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await user.click(await screen.findByRole('button', { name: /上海凯众材料科技股份有限公司/ }))
+
+    await waitFor(() => expect(submittedMessages).toHaveLength(2))
+    expect(submittedMessages[1]).not.toContain('那改看')
+    expect(submittedMessages[1]).toContain('上海凯众材料科技股份有限公司')
+    expect(submittedMessages[1]).toContain('近三个月的财务情况')
+  })
+
   it('does not recreate a deleted session when its stream completes', async () => {
     const completeStream = createPendingStream()
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析旧会话')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析旧会话')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
 
@@ -202,7 +453,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '查找钢材供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '查找钢材供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     const supplierDetails = await screen.findByText('本轮识别供应商（1 家）')
@@ -227,11 +478,27 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '复核供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '复核供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('已从持久化事件恢复结果。')).toBeInTheDocument()
-    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object))
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('run-1', null, expect.any(Object), expect.any(AbortSignal))
+  })
+
+  it('persists a needs_review terminal result when external sourcing times out', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onReferences?.({ items: [{ name: '外部候选有限公司', kind: 'supplier', source: 'web_search' }] })
+      throw new DOMException('aborted', 'AbortError')
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '我想采购工业相机，请给我候选供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText(/外部寻源在受限时间内未完成/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：需要人工复核')).toBeInTheDocument()
   })
 
   it('sends the current input value when Chinese IME composition has not updated React state', async () => {
@@ -241,7 +508,7 @@ describe('ChatView session lifecycle', () => {
     })
     const user = userEvent.setup()
     renderChat()
-    const input = screen.getByLabelText('向采购助手提问') as HTMLInputElement
+    const input = screen.getByLabelText('向 AI 采购助手提问') as HTMLInputElement
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
     setter?.call(input, '复核青岛三祥科技股份有限公司')
     fireEvent.compositionStart(input)
@@ -268,6 +535,7 @@ describe('ChatView session lifecycle', () => {
       expect.any(String),
       expect.any(Object),
       'auto',
+      expect.any(AbortSignal),
     )
     expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
   })
@@ -284,7 +552,7 @@ describe('ChatView session lifecycle', () => {
     renderChat()
     await user.click(screen.getAllByRole('button', { name: '+ 新对话' })[0])
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '复核青岛三祥科技股份有限公司')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '复核青岛三祥科技股份有限公司')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
@@ -323,6 +591,111 @@ describe('ChatView session lifecycle', () => {
     expect(mocks.chatStream.mock.calls[0][1]).not.toBe('old-session')
   })
 
+  it('continues an authorized handoff only after the user clicks and keeps the bound session', async () => {
+    const detail = {
+      handoff_id: 'handoff-continue', session_id: 'session-bound', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'ready', continue_message: '请核验候选供应商“候选工厂”的主体，并继续进行风险检查',
+    }
+    mocks.handoffGet.mockResolvedValue(detail)
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已开始风险核验', status: 'completed' })
+      return '已开始风险核验'
+    })
+    renderChat(['/chat?handoff_id=handoff-continue&session_id=session-bound'])
+
+    await screen.findByText('候选工厂')
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+    await userEvent.setup().click(screen.getByRole('button', { name: '继续此候选' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][0]).toBe(detail.continue_message)
+    expect(mocks.chatStream.mock.calls[0][1]).toBe('session-bound')
+    expect(mocks.chatStream.mock.calls[0][5]).toBe('handoff-continue')
+    expect(mocks.handoffPost).not.toHaveBeenCalled()
+  })
+
+  it('keeps ordinary composer messages out of an unstarted handoff session', async () => {
+    mocks.handoffGet.mockResolvedValue({
+      handoff_id: 'handoff-pending', session_id: 'session-reserved', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'ready', continue_message: '请核验候选供应商“候选工厂”的主体，并继续进行风险检查',
+    })
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '普通聊天结果', status: 'completed' })
+      return '普通聊天结果'
+    })
+    const user = userEvent.setup()
+    renderChat(['/chat?handoff_id=handoff-pending&session_id=session-reserved'])
+
+    await screen.findByText('候选工厂')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请查看另一家供应商的情况')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][1]).not.toBe('session-reserved')
+    expect(mocks.chatStream.mock.calls[0]).toHaveLength(5)
+  })
+
+  it('refreshes a consumed handoff by replaying its original run without another submit', async () => {
+    mocks.handoffGet.mockResolvedValue({
+      handoff_id: 'handoff-consumed', session_id: 'session-consumed', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'consumed', continue_message: '请核验候选工厂并继续风险检查',
+      consumed_turn_id: 'turn-1', run_id: 'chat-run-original',
+    })
+    mocks.chatRunEventStream.mockImplementation(async (_runId: string, _cursor: number | null, handlers: { onEvent: (event: { eventType: string; data: unknown; eventId: number }) => void }) => {
+      handlers.onEvent({ eventType: 'done', data: { answer: '原交接任务已恢复', status: 'completed' }, eventId: 1 })
+    })
+    renderChat(['/chat?handoff_id=handoff-consumed&session_id=session-consumed'])
+
+    expect(await screen.findByText('原交接任务已恢复')).toBeInTheDocument()
+    expect(within(screen.getByLabelText('寻源交接')).getByRole('status')).toHaveTextContent('正在恢复原交接任务')
+    expect(mocks.chatRunEventStream).toHaveBeenCalledWith('chat-run-original', null, expect.any(Object), expect.any(AbortSignal))
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+    expect(mocks.handoffPost).not.toHaveBeenCalled()
+  })
+
+  it('does not attach a handoff header when confirming identity in another chat session', async () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([
+      OLD_SESSION,
+      {
+        sid: 'other-session', title: '其他会话', updatedAt: 2,
+        msgs: [
+          { role: 'user', content: '请核验候选供应商主体并分析风险' },
+          {
+            role: 'assistant', content: '请选择正式主体',
+            identityCandidates: [{ supplier_id: 'supplier-1', supplier_name: '正式供应商有限公司' }],
+            clarificationMessage: '请核验候选供应商主体并分析风险',
+          },
+        ],
+      },
+    ]))
+    mocks.handoffGet.mockResolvedValue({
+      handoff_id: 'handoff-bound', session_id: 'bound-session', source_run_id: 'source-run',
+      source_run_version: 3, candidate_key: 'candidate-1', candidate: { supplier_name: '候选工厂' },
+      requirement: { requirement_text: '采购工业相机' }, evidence_refs: [], intent: 'risk_review',
+      status: 'ready', continue_message: '请核验候选供应商“候选工厂”的主体，并继续进行风险检查',
+    })
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onDone?.({ answer: '已确认身份', status: 'completed' })
+      return '已确认身份'
+    })
+    const user = userEvent.setup()
+    renderChat(['/chat?handoff_id=handoff-bound&session_id=bound-session'])
+
+    await screen.findByText('其他会话')
+    await user.click(screen.getByText('其他会话'))
+    await user.click(await screen.findByRole('button', { name: '正式供应商有限公司' }))
+
+    await waitFor(() => expect(mocks.chatStream).toHaveBeenCalledOnce())
+    expect(mocks.chatStream.mock.calls[0][1]).toBe('other-session')
+    expect(mocks.chatStream.mock.calls[0]).toHaveLength(5)
+  })
+
   it('persists the completed Agent workflow summary with the answer', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onWorkflowStatus?.({ status: 'completed', stage: 'completed', message: '本轮 Agent 工作流已完成', target_suppliers: ['华东钢材供应有限公司'], sources: ['local_snapshot'], evidence_status: '证据充分', loop_exit_reason: 'evidence_sufficient' })
@@ -332,11 +705,11 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    await user.click(await screen.findByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：已完成')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：本轮查询已完成')).toBeInTheDocument()
     expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
   })
 
@@ -357,13 +730,13 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(screen.getAllByText('业务结论').length).toBeGreaterThan(0)
     expect(screen.getByText('数据说明').closest('details')).not.toHaveAttribute('open')
-    await user.click(await screen.findByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：需人工复核')).toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：需要人工复核')).toBeInTheDocument()
     await user.click(screen.getByText('数据说明'))
     expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
   })
@@ -382,7 +755,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '请复核并加入监控')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请复核并加入监控')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
@@ -403,7 +776,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '请加入监控')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请加入监控')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
@@ -432,7 +805,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '请复核并加入监控')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '请复核并加入监控')
     await user.click(screen.getByRole('button', { name: '发送' }))
     await user.click(await screen.findByRole('button', { name: '批准动作' }))
 
@@ -517,7 +890,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(screen.getByText('86/100')).toBeInTheDocument()
@@ -561,7 +934,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '寻找制动系统供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '寻找制动系统供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findAllByText('供应商名称')).length).toBeGreaterThan(0)
@@ -603,7 +976,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '找一下蓄电池供应商')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '找一下蓄电池供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('历史合作供应商（1）')).toBeInTheDocument()
@@ -633,7 +1006,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析华东钢材供应有限公司的财务情况')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析华东钢材供应有限公司的财务情况')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findAllByRole('heading', { name: '财务分析' })).length).toBe(2)
@@ -667,7 +1040,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析青岛三祥科技股份有限公司的供应链关系和传染风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析青岛三祥科技股份有限公司的供应链关系和传染风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect((await screen.findAllByRole('heading', { name: '供应链关系与传染风险' })).length).toBe(2)
@@ -715,7 +1088,7 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '复核上海汽车制动系统有限公司')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '复核上海汽车制动系统有限公司')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('采购复核结论')).toBeInTheDocument()
@@ -756,11 +1129,11 @@ describe('ChatView session lifecycle', () => {
     const user = userEvent.setup()
     renderChat()
 
-    await user.type(screen.getByLabelText('向采购助手提问'), '分析供应商风险')
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    await user.click(await screen.findByRole('button', { name: '执行详情' }))
-    expect(await screen.findByText('当前状态：部分完成')).toBeInTheDocument()
-    expect(screen.queryByText('当前状态：已完成')).not.toBeInTheDocument()
+    await user.click(await screen.findByRole('button', { name: '查看执行详情' }))
+    expect(await screen.findByText('当前状态：部分结果待复核')).toBeInTheDocument()
+    expect(screen.queryByText('当前状态：本轮查询已完成')).not.toBeInTheDocument()
   })
 })

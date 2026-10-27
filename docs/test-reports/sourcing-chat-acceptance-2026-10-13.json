@@ -1,0 +1,3083 @@
+{
+  "case_count": 6,
+  "passed_count": 6,
+  "pass_rate": 1.0,
+  "passed": true,
+  "wrong_tool_call_cases": [],
+  "wrong_clarification_cases": [],
+  "constraint_mismatches": [],
+  "irrelevant_answer_cases": [],
+  "candidate_result_mismatches": [],
+  "cases": [
+    {
+      "id": "SCA-001-camera-full",
+      "route": "execute",
+      "passed": true,
+      "mismatches": {},
+      "event_types": [
+        "session",
+        "workflow_status",
+        "workflow_status",
+        "workflow_status",
+        "plan",
+        "workflow_status",
+        "tool_call",
+        "tool_result",
+        "references",
+        "workflow_status",
+        "evidence",
+        "workflow_status",
+        "agent_answer",
+        "evidence",
+        "answer_chunk",
+        "workflow_status",
+        "references",
+        "workflow_status",
+        "done"
+      ]
+    },
+    {
+      "id": "SCA-002-bolt-quantity-delivery",
+      "route": "execute",
+      "passed": true,
+      "mismatches": {},
+      "event_types": [
+        "session",
+        "workflow_status",
+        "workflow_status",
+        "workflow_status",
+        "plan",
+        "workflow_status",
+        "tool_call",
+        "tool_result",
+        "references",
+        "workflow_status",
+        "evidence",
+        "workflow_status",
+        "agent_answer",
+        "evidence",
+        "answer_chunk",
+        "workflow_status",
+        "references",
+        "workflow_status",
+        "done"
+      ]
+    },
+    {
+      "id": "SCA-003-wiring-qualification",
+      "route": "execute",
+      "passed": true,
+      "mismatches": {},
+      "event_types": [
+        "session",
+        "workflow_status",
+        "workflow_status",
+        "workflow_status",
+        "plan",
+        "workflow_status",
+        "tool_call",
+        "tool_result",
+        "workflow_status",
+        "evidence",
+        "workflow_status",
+        "agent_answer",
+        "evidence",
+        "answer_chunk",
+        "workflow_status",
+        "workflow_status",
+        "done"
+      ]
+    },
+    {
+      "id": "SCA-004-underspecified",
+      "route": "clarify",
+      "passed": true,
+      "mismatches": {},
+      "event_types": [
+        "session",
+        "clarification"
+      ]
+    },
+    {
+      "id": "SCA-005-camera-no-match",
+      "route": "execute",
+      "passed": true,
+      "mismatches": {},
+      "event_types": [
+        "session",
+        "workflow_status",
+        "workflow_status",
+        "workflow_status",
+        "plan",
+        "workflow_status",
+        "tool_call",
+        "tool_result",
+        "workflow_status",
+        "evidence",
+        "workflow_status",
+        "agent_answer",
+        "evidence",
+        "answer_chunk",
+        "workflow_status",
+        "workflow_status",
+        "done"
+      ]
+    },
+    {
+      "id": "SCA-006-material-number-history",
+      "route": "execute",
+      "passed": true,
+      "mismatches": {},
+      "event_types": [
+        "session",
+        "workflow_status",
+        "workflow_status",
+        "workflow_status",
+        "plan",
+        "workflow_status",
+        "tool_call",
+        "tool_result",
+        "references",
+        "workflow_status",
+        "evidence",
+        "workflow_status",
+        "agent_answer",
+        "evidence",
+        "answer_chunk",
+        "workflow_status",
+        "references",
+        "workflow_status",
+        "done"
+      ]
+    }
+  ],
+  "model": "MiniMax-M3",
+  "traces": [
+    {
+      "id": "SCA-001-camera-full",
+      "http_status": 200,
+      "events": [
+        {
+          "event": "session",
+          "data": {
+            "value": "06986df0-97e5-4846-b199-705dd73b0481"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "running",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文",
+            "input_understanding": {
+              "target_supplier_names": [],
+              "analysis_dimensions": [],
+              "provider_capabilities": [],
+              "capability": "sourcing",
+              "scope": "product_category",
+              "sourcing_requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "200万像素，GigE接口",
+                "region": "华东",
+                "supply_region": "华东",
+                "budget": "50万元",
+                "qualifications": "IATF 16949",
+                "candidate_count": 5,
+                "must_have": [
+                  "200万像素",
+                  "GigE接口",
+                  "IATF 16949认证"
+                ],
+                "optional_conditions": [
+                  "优先华东地区"
+                ]
+              },
+              "task_type": "sourcing",
+              "requested_action": "none",
+              "confidence": 0.95,
+              "interpretation_summary": "寻找5家华东地区、预算50万元、支持IATF 16949、规格为200万像素GigE接口的工业相机供应商。",
+              "ambiguities": [],
+              "missing_fields": [],
+              "needs_clarification": false,
+              "field_sources": {
+                "sourcing_requirement": "explicit"
+              }
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "loaded",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "turn_resolved",
+            "stage": "understand",
+            "message": "已完成会话与当前任务解析"
+          }
+        },
+        {
+          "event": "plan",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "steps": [
+              {
+                "tool": "discover_supplier_candidates",
+                "args": {
+                  "requirement": {
+                    "category": "工业相机",
+                    "product": "工业相机",
+                    "specification": "200万像素，GigE接口",
+                    "region": "华东",
+                    "budget": "50万元",
+                    "qualifications": "IATF 16949",
+                    "candidate_count": 5,
+                    "must_have": [
+                      "200万像素",
+                      "GigE接口",
+                      "IATF 16949认证"
+                    ],
+                    "optional_conditions": [
+                      "优先华东地区"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "planned",
+            "stage": "planning",
+            "message": "已生成受预算约束的任务计划"
+          }
+        },
+        {
+          "event": "tool_call",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "args": {
+              "requirement": {
+                "category": "工业相机",
+                "product": "工业相机",
+                "specification": "200万像素，GigE接口",
+                "region": "华东",
+                "budget": "50万元",
+                "qualifications": "IATF 16949",
+                "candidate_count": 5,
+                "must_have": [
+                  "200万像素",
+                  "GigE接口",
+                  "IATF 16949认证"
+                ],
+                "optional_conditions": [
+                  "优先华东地区"
+                ]
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "input_hash": "6bef1175ba4bb547c40b26fa0465e448185d192dd9067f18f08cc08a5d6b5d77",
+              "started_at": "2026-10-13T03:52:55.185134+00:00"
+            }
+          }
+        },
+        {
+          "event": "tool_result",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "result": {
+              "schema_version": 1,
+              "call_id": "b9a7c9a8-f894-496c-9290-79114a405d16",
+              "tool_name": "discover_supplier_candidates",
+              "tool_version": "1.0",
+              "status": "success",
+              "data": {
+                "status": "success",
+                "success": null,
+                "error": null,
+                "message": "验收候选结果",
+                "evidence_refs": [],
+                "evidence_records": [
+                  {
+                    "evidence_id": "live-sourcing-evidence-0",
+                    "entity_id": "sourcing",
+                    "monitor_target_id": null,
+                    "dimension": "sourcing",
+                    "provider": "internal_history",
+                    "source_type": "internal",
+                    "endpoint": null,
+                    "query": {},
+                    "status": "available",
+                    "collected_at": "2026-01-01T00:00:00Z",
+                    "valid_until": null,
+                    "data_mode": "formal",
+                    "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                    "raw_payload_ref": null,
+                    "facts": {
+                      "supplier_name": "测试历史合作供应商有限公司",
+                      "candidate_type": "historical",
+                      "source": "internal_history",
+                      "source_type": "internal",
+                      "categories": [
+                        "测试寻源品类"
+                      ],
+                      "main_products": "测试供货产品",
+                      "regions": [
+                        "华东"
+                      ],
+                      "match_reasons": [
+                        "品类与规格匹配"
+                      ],
+                      "website_url": "https://example.test/supplier",
+                      "source_title": null,
+                      "source_reference": null
+                    }
+                  },
+                  {
+                    "evidence_id": "live-sourcing-evidence-1",
+                    "entity_id": "sourcing",
+                    "monitor_target_id": null,
+                    "dimension": "sourcing",
+                    "provider": "web_search",
+                    "source_type": "external",
+                    "endpoint": null,
+                    "query": {},
+                    "status": "available",
+                    "collected_at": "2026-01-01T00:00:00Z",
+                    "valid_until": null,
+                    "data_mode": "formal",
+                    "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                    "raw_payload_ref": null,
+                    "facts": {
+                      "supplier_name": "测试外部候选供应商有限公司",
+                      "candidate_type": "external",
+                      "source": "web_search",
+                      "source_type": "external",
+                      "categories": [
+                        "测试寻源品类"
+                      ],
+                      "main_products": "测试供货产品",
+                      "regions": [
+                        "华东"
+                      ],
+                      "match_reasons": [
+                        "品类与规格匹配"
+                      ],
+                      "website_url": "https://example.test/supplier",
+                      "source_title": "验收环境中的候选摘要",
+                      "source_reference": "https://example.test/source"
+                    }
+                  }
+                ],
+                "claims": [
+                  {
+                    "claim_id": "live-sourcing-claim-0",
+                    "entity_id": "sourcing",
+                    "dimension": "sourcing",
+                    "statement": "测试历史合作供应商有限公司 是本轮检索到的候选。",
+                    "value": "测试历史合作供应商有限公司",
+                    "fact_path": "supplier_name",
+                    "evidence_refs": [
+                      "live-sourcing-evidence-0"
+                    ],
+                    "confidence": 0.95
+                  },
+                  {
+                    "claim_id": "live-sourcing-claim-1",
+                    "entity_id": "sourcing",
+                    "dimension": "sourcing",
+                    "statement": "测试外部候选供应商有限公司 是本轮检索到的候选。",
+                    "value": "测试外部候选供应商有限公司",
+                    "fact_path": "supplier_name",
+                    "evidence_refs": [
+                      "live-sourcing-evidence-1"
+                    ],
+                    "confidence": 0.95
+                  }
+                ],
+                "source": "local_and_external",
+                "source_order": [
+                  "local_history",
+                  "web_search"
+                ],
+                "requirement": {
+                  "category": "工业相机",
+                  "product": "工业相机",
+                  "specification": "200万像素，GigE接口",
+                  "region": "华东",
+                  "budget": "50万元",
+                  "qualifications": "IATF 16949",
+                  "candidate_count": 5,
+                  "must_have": [
+                    "200万像素",
+                    "GigE接口",
+                    "IATF 16949认证"
+                  ],
+                  "optional_conditions": [
+                    "优先华东地区"
+                  ]
+                },
+                "candidates": [
+                  {
+                    "candidate_id": "acceptance-local",
+                    "supplier_name": "测试历史合作供应商有限公司",
+                    "candidate_type": "historical",
+                    "source": "internal_history",
+                    "source_type": "internal",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": null,
+                    "source_reference": null
+                  },
+                  {
+                    "candidate_id": "acceptance-external",
+                    "supplier_name": "测试外部候选供应商有限公司",
+                    "candidate_type": "external",
+                    "source": "web_search",
+                    "source_type": "external",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": "验收环境中的候选摘要",
+                    "source_reference": "https://example.test/source"
+                  }
+                ],
+                "local_candidates": [
+                  {
+                    "candidate_id": "acceptance-local",
+                    "supplier_name": "测试历史合作供应商有限公司",
+                    "candidate_type": "historical",
+                    "source": "internal_history",
+                    "source_type": "internal",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": null,
+                    "source_reference": null
+                  }
+                ],
+                "external_candidates": [
+                  {
+                    "candidate_id": "acceptance-external",
+                    "supplier_name": "测试外部候选供应商有限公司",
+                    "candidate_type": "external",
+                    "source": "web_search",
+                    "source_type": "external",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": "验收环境中的候选摘要",
+                    "source_reference": "https://example.test/source"
+                  }
+                ],
+                "local_status": "success",
+                "local_failure_reason": null,
+                "external_status": "success",
+                "external_stop_reason": "candidate_count_reached",
+                "external_failure_reasons": [],
+                "external_loop": {}
+              },
+              "evidence_refs": [],
+              "error": null,
+              "side_effect_receipt": null,
+              "metrics": {
+                "attempts": 1,
+                "duration_ms": 0
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "call_id": "b9a7c9a8-f894-496c-9290-79114a405d16",
+              "tool_version": "1.0",
+              "duration_ms": 0
+            }
+          }
+        },
+        {
+          "event": "references",
+          "data": {
+            "items": [
+              {
+                "name": "测试历史合作供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 寻源候选",
+                "discovery_source": "internal_history",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "historical",
+                "candidate_id": "acceptance-local"
+              },
+              {
+                "name": "测试外部候选供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 寻源候选",
+                "discovery_source": "web_search",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "external",
+                "candidate_id": "acceptance-external"
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "blocked",
+            "stage": "executing",
+            "message": "正在通过统一 ToolExecutor 执行任务",
+            "tool_call_count": 1,
+            "completed_tool_count": 1
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "records": [
+              {
+                "evidence_id": "live-sourcing-evidence-0",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "internal_history",
+                "source_type": "internal",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试历史合作供应商有限公司",
+                  "candidate_type": "historical",
+                  "source": "internal_history",
+                  "source_type": "internal",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": null,
+                  "source_reference": null
+                }
+              },
+              {
+                "evidence_id": "live-sourcing-evidence-1",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "web_search",
+                "source_type": "external",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试外部候选供应商有限公司",
+                  "candidate_type": "external",
+                  "source": "web_search",
+                  "source_type": "external",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": "验收环境中的候选摘要",
+                  "source_reference": "https://example.test/source"
+                }
+              }
+            ],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [
+                "sourcing"
+              ],
+              "missing_dimensions": [],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [
+                "sourcing:sourcing:*"
+              ],
+              "missing_items": [],
+              "coverage_ratio": 1.0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "evidence_validated",
+            "stage": "evidence",
+            "message": "正在校验证据覆盖度与 Claim 引用",
+            "evidence_status": "1/1 已覆盖",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "agent_answer",
+          "data": {
+            "status": "completed",
+            "summary": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：工业相机；目标候选数：5家；优先地区：华东；预算：50万元；规格：200万像素，GigE接口；资质：IATF 16949。下面按来源分组展示匹配品类、主营产品和下一步核验事项。",
+            "claims": [
+              {
+                "claim_id": "live-sourcing-claim-0",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": "测试历史合作供应商有限公司 是本轮检索到的候选。",
+                "value": "测试历史合作供应商有限公司",
+                "fact_path": "supplier_name",
+                "operator": "eq",
+                "unit": null,
+                "evidence_refs": [
+                  "live-sourcing-evidence-0"
+                ],
+                "confidence": 0.95,
+                "validation_status": "supported",
+                "validation_reasons": []
+              },
+              {
+                "claim_id": "live-sourcing-claim-1",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": "测试外部候选供应商有限公司 是本轮检索到的候选。",
+                "value": "测试外部候选供应商有限公司",
+                "fact_path": "supplier_name",
+                "operator": "eq",
+                "unit": null,
+                "evidence_refs": [
+                  "live-sourcing-evidence-1"
+                ],
+                "confidence": 0.95,
+                "validation_status": "supported",
+                "validation_reasons": []
+              }
+            ],
+            "limitations": [],
+            "action_proposals": [],
+            "action_receipts": [],
+            "evidence_refs": [
+              "live-sourcing-evidence-0",
+              "live-sourcing-evidence-1"
+            ]
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "records": [
+              {
+                "evidence_id": "live-sourcing-evidence-0",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "internal_history",
+                "source_type": "internal",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试历史合作供应商有限公司",
+                  "candidate_type": "historical",
+                  "source": "internal_history",
+                  "source_type": "internal",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": null,
+                  "source_reference": null
+                }
+              },
+              {
+                "evidence_id": "live-sourcing-evidence-1",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "web_search",
+                "source_type": "external",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试外部候选供应商有限公司",
+                  "candidate_type": "external",
+                  "source": "web_search",
+                  "source_type": "external",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": "验收环境中的候选摘要",
+                  "source_reference": "https://example.test/source"
+                }
+              }
+            ],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [
+                "sourcing"
+              ],
+              "missing_dimensions": [],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [
+                "sourcing:sourcing:*"
+              ],
+              "missing_items": [],
+              "coverage_ratio": 1.0
+            }
+          }
+        },
+        {
+          "event": "answer_chunk",
+          "data": {
+            "text": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：工业相机；目标候选数：5家；优先地区：华东；预算：50万元；规格：200万像素，GigE接口；资质：IATF 16949。下面按来源分组展示匹配品类、主营产品和下一步核验事项。\n- 测试历史合作供应商有限公司 是本轮检索到的候选。\n- 测试外部候选供应商有限公司 是本轮检索到的候选。"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "completed",
+            "stage": "decision",
+            "message": "正在整理最终回答",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "references",
+          "data": {
+            "items": [
+              {
+                "name": "测试历史合作供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 工具结果",
+                "discovery_source": "internal_history",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "historical",
+                "candidate_id": "acceptance-local"
+              },
+              {
+                "name": "测试外部候选供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 工具结果",
+                "discovery_source": "web_search",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "external",
+                "candidate_id": "acceptance-external"
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "completed",
+            "stage": "completed",
+            "message": "本轮 Harness 工作流已完成",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "run_id": "18309c12-3abd-490a-a41d-ccc1473dfaad",
+            "status": "completed",
+            "answer": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：工业相机；目标候选数：5家；优先地区：华东；预算：50万元；规格：200万像素，GigE接口；资质：IATF 16949。下面按来源分组展示匹配品类、主营产品和下一步核验事项。\n- 测试历史合作供应商有限公司 是本轮检索到的候选。\n- 测试外部候选供应商有限公司 是本轮检索到的候选。"
+          }
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "discover_supplier_candidates",
+          "requirement": {
+            "category": "工业相机",
+            "product": "工业相机",
+            "specification": "200万像素，GigE接口",
+            "region": "华东",
+            "budget": "50万元",
+            "qualifications": "IATF 16949",
+            "candidate_count": 5,
+            "must_have": [
+              "200万像素",
+              "GigE接口",
+              "IATF 16949认证"
+            ],
+            "optional_conditions": [
+              "优先华东地区"
+            ]
+          }
+        }
+      ],
+      "mismatches": {}
+    },
+    {
+      "id": "SCA-002-bolt-quantity-delivery",
+      "http_status": 200,
+      "events": [
+        {
+          "event": "session",
+          "data": {
+            "value": "84a49328-85b0-4685-8aac-2ad09afb36fb"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "running",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文",
+            "input_understanding": {
+              "target_supplier_names": [],
+              "analysis_dimensions": [],
+              "provider_capabilities": [],
+              "capability": "sourcing",
+              "scope": "product_category",
+              "sourcing_requirement": {
+                "category": "紧固件",
+                "product": "不锈钢螺栓",
+                "material": "不锈钢",
+                "specification": "M8×30",
+                "quantity": 1000,
+                "budget": "含税不超过2万元",
+                "delivery": "苏州",
+                "must_have": [
+                  "规格M8×30",
+                  "数量1000件",
+                  "含税预算不超过2万元",
+                  "交付至苏州"
+                ],
+                "optional_conditions": []
+              },
+              "task_type": "sourcing",
+              "requested_action": "none",
+              "confidence": 0.95,
+              "interpretation_summary": "您希望寻源满足M8×30不锈钢螺栓、1000件、含税≤2万元、交付苏州的供应商。",
+              "ambiguities": [],
+              "missing_fields": [],
+              "needs_clarification": false,
+              "field_sources": {
+                "sourcing_requirement": "explicit"
+              }
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "loaded",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "turn_resolved",
+            "stage": "understand",
+            "message": "已完成会话与当前任务解析"
+          }
+        },
+        {
+          "event": "plan",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "steps": [
+              {
+                "tool": "discover_supplier_candidates",
+                "args": {
+                  "requirement": {
+                    "category": "螺栓",
+                    "product": "不锈钢螺栓",
+                    "material": "不锈钢",
+                    "specification": "M8×30",
+                    "supply_region": "苏州",
+                    "quantity": 1000,
+                    "budget": "含税不超过2万元",
+                    "delivery": "苏州",
+                    "must_have": [
+                      "规格M8×30",
+                      "数量1000件",
+                      "含税预算不超过2万元",
+                      "交付至苏州"
+                    ],
+                    "optional_conditions": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "planned",
+            "stage": "planning",
+            "message": "已生成受预算约束的任务计划"
+          }
+        },
+        {
+          "event": "tool_call",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "args": {
+              "requirement": {
+                "category": "螺栓",
+                "product": "不锈钢螺栓",
+                "material": "不锈钢",
+                "specification": "M8×30",
+                "supply_region": "苏州",
+                "quantity": 1000,
+                "budget": "含税不超过2万元",
+                "delivery": "苏州",
+                "must_have": [
+                  "规格M8×30",
+                  "数量1000件",
+                  "含税预算不超过2万元",
+                  "交付至苏州"
+                ],
+                "optional_conditions": []
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "input_hash": "799ab74fea1e847239aa602fffa3eb328eadf9c9d87ac87058e9622cd40f624c",
+              "started_at": "2026-10-13T03:52:58.634337+00:00"
+            }
+          }
+        },
+        {
+          "event": "tool_result",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "result": {
+              "schema_version": 1,
+              "call_id": "1c503e7c-6fef-45b5-9c18-6a137cf178da",
+              "tool_name": "discover_supplier_candidates",
+              "tool_version": "1.0",
+              "status": "success",
+              "data": {
+                "status": "success",
+                "success": null,
+                "error": null,
+                "message": "验收候选结果",
+                "evidence_refs": [],
+                "evidence_records": [
+                  {
+                    "evidence_id": "live-sourcing-evidence-0",
+                    "entity_id": "sourcing",
+                    "monitor_target_id": null,
+                    "dimension": "sourcing",
+                    "provider": "internal_history",
+                    "source_type": "internal",
+                    "endpoint": null,
+                    "query": {},
+                    "status": "available",
+                    "collected_at": "2026-01-01T00:00:00Z",
+                    "valid_until": null,
+                    "data_mode": "formal",
+                    "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                    "raw_payload_ref": null,
+                    "facts": {
+                      "supplier_name": "测试历史合作供应商有限公司",
+                      "candidate_type": "historical",
+                      "source": "internal_history",
+                      "source_type": "internal",
+                      "categories": [
+                        "测试寻源品类"
+                      ],
+                      "main_products": "测试供货产品",
+                      "regions": [
+                        "华东"
+                      ],
+                      "match_reasons": [
+                        "品类与规格匹配"
+                      ],
+                      "website_url": "https://example.test/supplier",
+                      "source_title": null,
+                      "source_reference": null
+                    }
+                  },
+                  {
+                    "evidence_id": "live-sourcing-evidence-1",
+                    "entity_id": "sourcing",
+                    "monitor_target_id": null,
+                    "dimension": "sourcing",
+                    "provider": "web_search",
+                    "source_type": "external",
+                    "endpoint": null,
+                    "query": {},
+                    "status": "available",
+                    "collected_at": "2026-01-01T00:00:00Z",
+                    "valid_until": null,
+                    "data_mode": "formal",
+                    "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                    "raw_payload_ref": null,
+                    "facts": {
+                      "supplier_name": "测试外部候选供应商有限公司",
+                      "candidate_type": "external",
+                      "source": "web_search",
+                      "source_type": "external",
+                      "categories": [
+                        "测试寻源品类"
+                      ],
+                      "main_products": "测试供货产品",
+                      "regions": [
+                        "华东"
+                      ],
+                      "match_reasons": [
+                        "品类与规格匹配"
+                      ],
+                      "website_url": "https://example.test/supplier",
+                      "source_title": "验收环境中的候选摘要",
+                      "source_reference": "https://example.test/source"
+                    }
+                  }
+                ],
+                "claims": [
+                  {
+                    "claim_id": "live-sourcing-claim-0",
+                    "entity_id": "sourcing",
+                    "dimension": "sourcing",
+                    "statement": "测试历史合作供应商有限公司 是本轮检索到的候选。",
+                    "value": "测试历史合作供应商有限公司",
+                    "fact_path": "supplier_name",
+                    "evidence_refs": [
+                      "live-sourcing-evidence-0"
+                    ],
+                    "confidence": 0.95
+                  },
+                  {
+                    "claim_id": "live-sourcing-claim-1",
+                    "entity_id": "sourcing",
+                    "dimension": "sourcing",
+                    "statement": "测试外部候选供应商有限公司 是本轮检索到的候选。",
+                    "value": "测试外部候选供应商有限公司",
+                    "fact_path": "supplier_name",
+                    "evidence_refs": [
+                      "live-sourcing-evidence-1"
+                    ],
+                    "confidence": 0.95
+                  }
+                ],
+                "source": "local_and_external",
+                "source_order": [
+                  "local_history",
+                  "web_search"
+                ],
+                "requirement": {
+                  "category": "螺栓",
+                  "product": "不锈钢螺栓",
+                  "material": "不锈钢",
+                  "specification": "M8×30",
+                  "supply_region": "苏州",
+                  "quantity": 1000,
+                  "budget": "含税不超过2万元",
+                  "delivery": "苏州",
+                  "must_have": [
+                    "规格M8×30",
+                    "数量1000件",
+                    "含税预算不超过2万元",
+                    "交付至苏州"
+                  ],
+                  "optional_conditions": []
+                },
+                "candidates": [
+                  {
+                    "candidate_id": "acceptance-local",
+                    "supplier_name": "测试历史合作供应商有限公司",
+                    "candidate_type": "historical",
+                    "source": "internal_history",
+                    "source_type": "internal",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": null,
+                    "source_reference": null
+                  },
+                  {
+                    "candidate_id": "acceptance-external",
+                    "supplier_name": "测试外部候选供应商有限公司",
+                    "candidate_type": "external",
+                    "source": "web_search",
+                    "source_type": "external",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": "验收环境中的候选摘要",
+                    "source_reference": "https://example.test/source"
+                  }
+                ],
+                "local_candidates": [
+                  {
+                    "candidate_id": "acceptance-local",
+                    "supplier_name": "测试历史合作供应商有限公司",
+                    "candidate_type": "historical",
+                    "source": "internal_history",
+                    "source_type": "internal",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": null,
+                    "source_reference": null
+                  }
+                ],
+                "external_candidates": [
+                  {
+                    "candidate_id": "acceptance-external",
+                    "supplier_name": "测试外部候选供应商有限公司",
+                    "candidate_type": "external",
+                    "source": "web_search",
+                    "source_type": "external",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": "验收环境中的候选摘要",
+                    "source_reference": "https://example.test/source"
+                  }
+                ],
+                "local_status": "success",
+                "local_failure_reason": null,
+                "external_status": "success",
+                "external_stop_reason": "candidate_count_reached",
+                "external_failure_reasons": [],
+                "external_loop": {}
+              },
+              "evidence_refs": [],
+              "error": null,
+              "side_effect_receipt": null,
+              "metrics": {
+                "attempts": 1,
+                "duration_ms": 0
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "call_id": "1c503e7c-6fef-45b5-9c18-6a137cf178da",
+              "tool_version": "1.0",
+              "duration_ms": 0
+            }
+          }
+        },
+        {
+          "event": "references",
+          "data": {
+            "items": [
+              {
+                "name": "测试历史合作供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 寻源候选",
+                "discovery_source": "internal_history",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "historical",
+                "candidate_id": "acceptance-local"
+              },
+              {
+                "name": "测试外部候选供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 寻源候选",
+                "discovery_source": "web_search",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "external",
+                "candidate_id": "acceptance-external"
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "blocked",
+            "stage": "executing",
+            "message": "正在通过统一 ToolExecutor 执行任务",
+            "tool_call_count": 1,
+            "completed_tool_count": 1
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "records": [
+              {
+                "evidence_id": "live-sourcing-evidence-0",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "internal_history",
+                "source_type": "internal",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试历史合作供应商有限公司",
+                  "candidate_type": "historical",
+                  "source": "internal_history",
+                  "source_type": "internal",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": null,
+                  "source_reference": null
+                }
+              },
+              {
+                "evidence_id": "live-sourcing-evidence-1",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "web_search",
+                "source_type": "external",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试外部候选供应商有限公司",
+                  "candidate_type": "external",
+                  "source": "web_search",
+                  "source_type": "external",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": "验收环境中的候选摘要",
+                  "source_reference": "https://example.test/source"
+                }
+              }
+            ],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [
+                "sourcing"
+              ],
+              "missing_dimensions": [],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [
+                "sourcing:sourcing:*"
+              ],
+              "missing_items": [],
+              "coverage_ratio": 1.0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "evidence_validated",
+            "stage": "evidence",
+            "message": "正在校验证据覆盖度与 Claim 引用",
+            "evidence_status": "1/1 已覆盖",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "agent_answer",
+          "data": {
+            "status": "completed",
+            "summary": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：螺栓；产品：不锈钢螺栓；物料号：不锈钢；采购数量：1000；交付地区：苏州；预算：含税不超过2万元；规格：M8×30；交付要求：苏州。下面按来源分组展示匹配品类、主营产品和下一步核验事项。",
+            "claims": [
+              {
+                "claim_id": "live-sourcing-claim-0",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": "测试历史合作供应商有限公司 是本轮检索到的候选。",
+                "value": "测试历史合作供应商有限公司",
+                "fact_path": "supplier_name",
+                "operator": "eq",
+                "unit": null,
+                "evidence_refs": [
+                  "live-sourcing-evidence-0"
+                ],
+                "confidence": 0.95,
+                "validation_status": "supported",
+                "validation_reasons": []
+              },
+              {
+                "claim_id": "live-sourcing-claim-1",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": "测试外部候选供应商有限公司 是本轮检索到的候选。",
+                "value": "测试外部候选供应商有限公司",
+                "fact_path": "supplier_name",
+                "operator": "eq",
+                "unit": null,
+                "evidence_refs": [
+                  "live-sourcing-evidence-1"
+                ],
+                "confidence": 0.95,
+                "validation_status": "supported",
+                "validation_reasons": []
+              }
+            ],
+            "limitations": [],
+            "action_proposals": [],
+            "action_receipts": [],
+            "evidence_refs": [
+              "live-sourcing-evidence-0",
+              "live-sourcing-evidence-1"
+            ]
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "records": [
+              {
+                "evidence_id": "live-sourcing-evidence-0",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "internal_history",
+                "source_type": "internal",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试历史合作供应商有限公司",
+                  "candidate_type": "historical",
+                  "source": "internal_history",
+                  "source_type": "internal",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": null,
+                  "source_reference": null
+                }
+              },
+              {
+                "evidence_id": "live-sourcing-evidence-1",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "web_search",
+                "source_type": "external",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试外部候选供应商有限公司",
+                  "candidate_type": "external",
+                  "source": "web_search",
+                  "source_type": "external",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": "验收环境中的候选摘要",
+                  "source_reference": "https://example.test/source"
+                }
+              }
+            ],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [
+                "sourcing"
+              ],
+              "missing_dimensions": [],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [
+                "sourcing:sourcing:*"
+              ],
+              "missing_items": [],
+              "coverage_ratio": 1.0
+            }
+          }
+        },
+        {
+          "event": "answer_chunk",
+          "data": {
+            "text": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：螺栓；产品：不锈钢螺栓；物料号：不锈钢；采购数量：1000；交付地区：苏州；预算：含税不超过2万元；规格：M8×30；交付要求：苏州。下面按来源分组展示匹配品类、主营产品和下一步核验事项。\n- 测试历史合作供应商有限公司 是本轮检索到的候选。\n- 测试外部候选供应商有限公司 是本轮检索到的候选。"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "completed",
+            "stage": "decision",
+            "message": "正在整理最终回答",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "references",
+          "data": {
+            "items": [
+              {
+                "name": "测试历史合作供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 工具结果",
+                "discovery_source": "internal_history",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "historical",
+                "candidate_id": "acceptance-local"
+              },
+              {
+                "name": "测试外部候选供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 工具结果",
+                "discovery_source": "web_search",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "external",
+                "candidate_id": "acceptance-external"
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "completed",
+            "stage": "completed",
+            "message": "本轮 Harness 工作流已完成",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "run_id": "6949754c-17fd-4b08-a0e2-626099cf8161",
+            "status": "completed",
+            "answer": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：螺栓；产品：不锈钢螺栓；物料号：不锈钢；采购数量：1000；交付地区：苏州；预算：含税不超过2万元；规格：M8×30；交付要求：苏州。下面按来源分组展示匹配品类、主营产品和下一步核验事项。\n- 测试历史合作供应商有限公司 是本轮检索到的候选。\n- 测试外部候选供应商有限公司 是本轮检索到的候选。"
+          }
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "discover_supplier_candidates",
+          "requirement": {
+            "category": "螺栓",
+            "product": "不锈钢螺栓",
+            "material": "不锈钢",
+            "specification": "M8×30",
+            "supply_region": "苏州",
+            "quantity": 1000,
+            "budget": "含税不超过2万元",
+            "delivery": "苏州",
+            "must_have": [
+              "规格M8×30",
+              "数量1000件",
+              "含税预算不超过2万元",
+              "交付至苏州"
+            ],
+            "optional_conditions": []
+          }
+        }
+      ],
+      "mismatches": {}
+    },
+    {
+      "id": "SCA-003-wiring-qualification",
+      "http_status": 200,
+      "events": [
+        {
+          "event": "session",
+          "data": {
+            "value": "5a900a33-791e-4def-b15e-e875f9a4b284"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "running",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文",
+            "input_understanding": {
+              "target_supplier_names": [],
+              "analysis_dimensions": [],
+              "provider_capabilities": [],
+              "capability": "sourcing",
+              "scope": "product_category",
+              "sourcing_requirement": {
+                "category": "汽车零部件",
+                "product": "汽车线束",
+                "specification": "支持800V高压平台",
+                "region": "华南",
+                "supply_region": "华南",
+                "qualifications": "IATF 16949",
+                "must_have": [
+                  "IATF 16949资质",
+                  "支持800V高压平台",
+                  "华南地区"
+                ],
+                "optional_conditions": []
+              },
+              "task_type": "sourcing",
+              "requested_action": "none",
+              "confidence": 0.92,
+              "interpretation_summary": "在华南地区寻找具备IATF 16949资质且支持800V高压平台的汽车线束供应商。",
+              "ambiguities": [],
+              "missing_fields": [],
+              "needs_clarification": false,
+              "field_sources": {
+                "sourcing_requirement": "explicit"
+              }
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "loaded",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "turn_resolved",
+            "stage": "understand",
+            "message": "已完成会话与当前任务解析"
+          }
+        },
+        {
+          "event": "plan",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "steps": [
+              {
+                "tool": "discover_supplier_candidates",
+                "args": {
+                  "requirement": {
+                    "category": "汽车线束",
+                    "product": "汽车线束",
+                    "specification": "支持800V高压平台",
+                    "region": "华南",
+                    "qualifications": "IATF 16949",
+                    "must_have": [
+                      "IATF 16949资质",
+                      "支持800V高压平台",
+                      "华南地区"
+                    ],
+                    "optional_conditions": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "planned",
+            "stage": "planning",
+            "message": "已生成受预算约束的任务计划"
+          }
+        },
+        {
+          "event": "tool_call",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "args": {
+              "requirement": {
+                "category": "汽车线束",
+                "product": "汽车线束",
+                "specification": "支持800V高压平台",
+                "region": "华南",
+                "qualifications": "IATF 16949",
+                "must_have": [
+                  "IATF 16949资质",
+                  "支持800V高压平台",
+                  "华南地区"
+                ],
+                "optional_conditions": []
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "input_hash": "ad494e798af0a2468ff6ad37d0bc45d8164138b47bdf5f017ddfcaa41183f834",
+              "started_at": "2026-10-13T03:53:01.068049+00:00"
+            }
+          }
+        },
+        {
+          "event": "tool_result",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "result": {
+              "schema_version": 1,
+              "call_id": "c7bd28e9-b711-4bce-a472-0549c6f169d1",
+              "tool_name": "discover_supplier_candidates",
+              "tool_version": "1.0",
+              "status": "not_found",
+              "data": {
+                "status": "not_found",
+                "success": null,
+                "error": null,
+                "message": "当前条件下没有匹配候选",
+                "evidence_refs": [],
+                "evidence_records": [],
+                "claims": [],
+                "source": "local_and_external",
+                "source_order": [
+                  "local_history",
+                  "web_search"
+                ],
+                "requirement": {
+                  "category": "汽车线束",
+                  "product": "汽车线束",
+                  "specification": "支持800V高压平台",
+                  "region": "华南",
+                  "qualifications": "IATF 16949",
+                  "must_have": [
+                    "IATF 16949资质",
+                    "支持800V高压平台",
+                    "华南地区"
+                  ],
+                  "optional_conditions": []
+                },
+                "candidates": [],
+                "local_candidates": [],
+                "external_candidates": [],
+                "local_status": "not_found",
+                "local_failure_reason": null,
+                "external_status": "not_found",
+                "external_stop_reason": "no_candidates",
+                "external_failure_reasons": [],
+                "external_loop": {}
+              },
+              "evidence_refs": [],
+              "error": null,
+              "side_effect_receipt": null,
+              "metrics": {
+                "attempts": 1,
+                "duration_ms": 0
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "call_id": "c7bd28e9-b711-4bce-a472-0549c6f169d1",
+              "tool_version": "1.0",
+              "duration_ms": 0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "blocked",
+            "stage": "executing",
+            "message": "正在通过统一 ToolExecutor 执行任务",
+            "tool_call_count": 1,
+            "completed_tool_count": 1
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "records": [],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [],
+              "missing_dimensions": [
+                "sourcing"
+              ],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [],
+              "missing_items": [
+                "sourcing:sourcing:*"
+              ],
+              "coverage_ratio": 0.0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "evidence_incomplete",
+            "stage": "evidence",
+            "message": "正在校验证据覆盖度与 Claim 引用",
+            "evidence_status": "0/1 已覆盖",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "agent_answer",
+          "data": {
+            "status": "needs_review",
+            "summary": "已按“汽车线束”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。 检索条件：品类：汽车线束；优先地区：华南；规格：支持800V高压平台；资质：IATF 16949。",
+            "claims": [],
+            "limitations": [
+              "缺少 sourcing 维度的正式证据",
+              "工具结果未提供可验证 Claim"
+            ],
+            "action_proposals": [],
+            "action_receipts": [],
+            "evidence_refs": []
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "records": [],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [],
+              "missing_dimensions": [
+                "sourcing"
+              ],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [],
+              "missing_items": [
+                "sourcing:sourcing:*"
+              ],
+              "coverage_ratio": 0.0
+            }
+          }
+        },
+        {
+          "event": "answer_chunk",
+          "data": {
+            "text": "已按“汽车线束”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。 检索条件：品类：汽车线束；优先地区：华南；规格：支持800V高压平台；资质：IATF 16949。"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "needs_review",
+            "stage": "decision",
+            "message": "正在整理最终回答",
+            "loop_exit_reason": "no_remediation_spec"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "needs_review",
+            "stage": "decision",
+            "message": "本轮 Harness 工作流已完成",
+            "loop_exit_reason": "no_remediation_spec"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "run_id": "272d06e8-c76f-4fc4-84aa-eb897ee41d4b",
+            "status": "needs_review",
+            "answer": "已按“汽车线束”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。 检索条件：品类：汽车线束；优先地区：华南；规格：支持800V高压平台；资质：IATF 16949。"
+          }
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "discover_supplier_candidates",
+          "requirement": {
+            "category": "汽车线束",
+            "product": "汽车线束",
+            "specification": "支持800V高压平台",
+            "region": "华南",
+            "qualifications": "IATF 16949",
+            "must_have": [
+              "IATF 16949资质",
+              "支持800V高压平台",
+              "华南地区"
+            ],
+            "optional_conditions": []
+          }
+        }
+      ],
+      "mismatches": {}
+    },
+    {
+      "id": "SCA-004-underspecified",
+      "http_status": 200,
+      "events": [
+        {
+          "event": "session",
+          "data": {
+            "value": "9f313ac2-975f-4446-bd9c-db4881579fdd"
+          }
+        },
+        {
+          "event": "clarification",
+          "data": {
+            "message": "您要找的供应商具体是供应哪一类产品或物料？方便再补充一下数量、交付区域或资质等关键要求吗？",
+            "missing": [
+              "sourcing_requirement"
+            ],
+            "missing_fields": [
+              "sourcing_requirement"
+            ],
+            "status": "stopped",
+            "stage": "understand"
+          }
+        }
+      ],
+      "tool_calls": [],
+      "mismatches": {}
+    },
+    {
+      "id": "SCA-005-camera-no-match",
+      "http_status": 200,
+      "events": [
+        {
+          "event": "session",
+          "data": {
+            "value": "411ec6f9-474f-49d3-a7ac-0ab75015a85b"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "running",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文",
+            "input_understanding": {
+              "target_supplier_names": [],
+              "analysis_dimensions": [],
+              "provider_capabilities": [],
+              "capability": "sourcing",
+              "scope": "product_category",
+              "sourcing_requirement": {
+                "category": "工业连接器",
+                "product": "耐高温工业连接器",
+                "specification": "工作温度 -40℃ ~ 125℃",
+                "supply_region": "华北",
+                "candidate_count": 3,
+                "must_have": [
+                  "工作温度 -40℃ ~ 125℃"
+                ],
+                "optional_conditions": [
+                  "优先华北地区供应商"
+                ]
+              },
+              "task_type": "sourcing",
+              "requested_action": "none",
+              "confidence": 0.88,
+              "interpretation_summary": "用户要求寻源 3 家耐高温工业连接器供应商，工作温度 -40℃ 到 125℃，优先华北地区。",
+              "ambiguities": [],
+              "missing_fields": [],
+              "needs_clarification": false,
+              "field_sources": {
+                "sourcing_requirement": "explicit"
+              }
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "loaded",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "turn_resolved",
+            "stage": "understand",
+            "message": "已完成会话与当前任务解析"
+          }
+        },
+        {
+          "event": "plan",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "steps": [
+              {
+                "tool": "discover_supplier_candidates",
+                "args": {
+                  "requirement": {
+                    "category": "工业连接器",
+                    "product": "耐高温工业连接器",
+                    "specification": "工作温度 -40℃ ~ 125℃",
+                    "region": "华北",
+                    "candidate_count": 3,
+                    "must_have": [
+                      "工作温度 -40℃ ~ 125℃"
+                    ],
+                    "optional_conditions": [
+                      "优先华北地区供应商"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "planned",
+            "stage": "planning",
+            "message": "已生成受预算约束的任务计划"
+          }
+        },
+        {
+          "event": "tool_call",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "args": {
+              "requirement": {
+                "category": "工业连接器",
+                "product": "耐高温工业连接器",
+                "specification": "工作温度 -40℃ ~ 125℃",
+                "region": "华北",
+                "candidate_count": 3,
+                "must_have": [
+                  "工作温度 -40℃ ~ 125℃"
+                ],
+                "optional_conditions": [
+                  "优先华北地区供应商"
+                ]
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "input_hash": "95864ca73a18d7fb0f45406f6deb91149781fcae97386e24a821d1b888c44869",
+              "started_at": "2026-10-13T03:53:11.057783+00:00"
+            }
+          }
+        },
+        {
+          "event": "tool_result",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "result": {
+              "schema_version": 1,
+              "call_id": "b37905bd-614e-4747-badf-4d56879b200d",
+              "tool_name": "discover_supplier_candidates",
+              "tool_version": "1.0",
+              "status": "not_found",
+              "data": {
+                "status": "not_found",
+                "success": null,
+                "error": null,
+                "message": "当前条件下没有匹配候选",
+                "evidence_refs": [],
+                "evidence_records": [],
+                "claims": [],
+                "source": "local_and_external",
+                "source_order": [
+                  "local_history",
+                  "web_search"
+                ],
+                "requirement": {
+                  "category": "工业连接器",
+                  "product": "耐高温工业连接器",
+                  "specification": "工作温度 -40℃ ~ 125℃",
+                  "region": "华北",
+                  "candidate_count": 3,
+                  "must_have": [
+                    "工作温度 -40℃ ~ 125℃"
+                  ],
+                  "optional_conditions": [
+                    "优先华北地区供应商"
+                  ]
+                },
+                "candidates": [],
+                "local_candidates": [],
+                "external_candidates": [],
+                "local_status": "not_found",
+                "local_failure_reason": null,
+                "external_status": "not_found",
+                "external_stop_reason": "no_candidates",
+                "external_failure_reasons": [],
+                "external_loop": {}
+              },
+              "evidence_refs": [],
+              "error": null,
+              "side_effect_receipt": null,
+              "metrics": {
+                "attempts": 1,
+                "duration_ms": 0
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "call_id": "b37905bd-614e-4747-badf-4d56879b200d",
+              "tool_version": "1.0",
+              "duration_ms": 0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "blocked",
+            "stage": "executing",
+            "message": "正在通过统一 ToolExecutor 执行任务",
+            "tool_call_count": 1,
+            "completed_tool_count": 1
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "records": [],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [],
+              "missing_dimensions": [
+                "sourcing"
+              ],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [],
+              "missing_items": [
+                "sourcing:sourcing:*"
+              ],
+              "coverage_ratio": 0.0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "evidence_incomplete",
+            "stage": "evidence",
+            "message": "正在校验证据覆盖度与 Claim 引用",
+            "evidence_status": "0/1 已覆盖",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "agent_answer",
+          "data": {
+            "status": "needs_review",
+            "summary": "已按“工业连接器”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。 检索条件：品类：工业连接器；产品：耐高温工业连接器；目标候选数：3家；优先地区：华北；规格：工作温度 -40℃ ~ 125℃。",
+            "claims": [],
+            "limitations": [
+              "缺少 sourcing 维度的正式证据",
+              "工具结果未提供可验证 Claim"
+            ],
+            "action_proposals": [],
+            "action_receipts": [],
+            "evidence_refs": []
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "records": [],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [],
+              "missing_dimensions": [
+                "sourcing"
+              ],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [],
+              "missing_items": [
+                "sourcing:sourcing:*"
+              ],
+              "coverage_ratio": 0.0
+            }
+          }
+        },
+        {
+          "event": "answer_chunk",
+          "data": {
+            "text": "已按“工业连接器”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。 检索条件：品类：工业连接器；产品：耐高温工业连接器；目标候选数：3家；优先地区：华北；规格：工作温度 -40℃ ~ 125℃。"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "needs_review",
+            "stage": "decision",
+            "message": "正在整理最终回答",
+            "loop_exit_reason": "no_remediation_spec"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "needs_review",
+            "stage": "decision",
+            "message": "本轮 Harness 工作流已完成",
+            "loop_exit_reason": "no_remediation_spec"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "run_id": "8c5074d5-dd28-45ae-9654-ebd136ac3067",
+            "status": "needs_review",
+            "answer": "已按“工业连接器”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。 检索条件：品类：工业连接器；产品：耐高温工业连接器；目标候选数：3家；优先地区：华北；规格：工作温度 -40℃ ~ 125℃。"
+          }
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "discover_supplier_candidates",
+          "requirement": {
+            "category": "工业连接器",
+            "product": "耐高温工业连接器",
+            "specification": "工作温度 -40℃ ~ 125℃",
+            "region": "华北",
+            "candidate_count": 3,
+            "must_have": [
+              "工作温度 -40℃ ~ 125℃"
+            ],
+            "optional_conditions": [
+              "优先华北地区供应商"
+            ]
+          }
+        }
+      ],
+      "mismatches": {}
+    },
+    {
+      "id": "SCA-006-material-number-history",
+      "http_status": 200,
+      "events": [
+        {
+          "event": "session",
+          "data": {
+            "value": "0ff23cc1-ecac-4589-be4d-43c4eba6f8ed"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "running",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文",
+            "input_understanding": {
+              "target_supplier_names": [],
+              "analysis_dimensions": [],
+              "provider_capabilities": [],
+              "capability": "sourcing",
+              "scope": "none",
+              "sourcing_requirement": {
+                "category": "物料号寻源",
+                "product": "23748163",
+                "material": "23748163",
+                "specification": "23748163",
+                "must_have": [],
+                "optional_conditions": []
+              },
+              "task_type": "sourcing",
+              "requested_action": "none",
+              "confidence": 0.0,
+              "interpretation_summary": "",
+              "ambiguities": [],
+              "missing_fields": [],
+              "needs_clarification": false,
+              "field_sources": {
+                "sourcing_requirement": "explicit"
+              }
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "loaded",
+            "stage": "understand",
+            "message": "正在解析结构化任务上下文"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "turn_resolved",
+            "stage": "understand",
+            "message": "已完成会话与当前任务解析"
+          }
+        },
+        {
+          "event": "plan",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "steps": [
+              {
+                "tool": "discover_supplier_candidates",
+                "args": {
+                  "requirement": {
+                    "category": "物料号寻源",
+                    "material": "23748163",
+                    "product": "23748163",
+                    "specification": "23748163",
+                    "must_have": [],
+                    "optional_conditions": []
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "planned",
+            "stage": "planning",
+            "message": "已生成受预算约束的任务计划"
+          }
+        },
+        {
+          "event": "tool_call",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "args": {
+              "requirement": {
+                "category": "物料号寻源",
+                "material": "23748163",
+                "product": "23748163",
+                "specification": "23748163",
+                "must_have": [],
+                "optional_conditions": []
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "input_hash": "47a0515a452eda68ae3624b93bdb99d9241709ba26d0eca106a74434dd10d532",
+              "started_at": "2026-10-13T03:53:36.957746+00:00"
+            }
+          }
+        },
+        {
+          "event": "tool_result",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "task_id": "current-task:sourcing",
+            "tool": "discover_supplier_candidates",
+            "result": {
+              "schema_version": 1,
+              "call_id": "3921338b-dad5-4072-bba9-125a741288de",
+              "tool_name": "discover_supplier_candidates",
+              "tool_version": "1.0",
+              "status": "success",
+              "data": {
+                "status": "success",
+                "success": null,
+                "error": null,
+                "message": "验收候选结果",
+                "evidence_refs": [],
+                "evidence_records": [
+                  {
+                    "evidence_id": "live-sourcing-evidence-0",
+                    "entity_id": "sourcing",
+                    "monitor_target_id": null,
+                    "dimension": "sourcing",
+                    "provider": "internal_history",
+                    "source_type": "internal",
+                    "endpoint": null,
+                    "query": {},
+                    "status": "available",
+                    "collected_at": "2026-01-01T00:00:00Z",
+                    "valid_until": null,
+                    "data_mode": "formal",
+                    "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                    "raw_payload_ref": null,
+                    "facts": {
+                      "supplier_name": "测试历史合作供应商有限公司",
+                      "candidate_type": "historical",
+                      "source": "internal_history",
+                      "source_type": "internal",
+                      "categories": [
+                        "测试寻源品类"
+                      ],
+                      "main_products": "测试供货产品",
+                      "regions": [
+                        "华东"
+                      ],
+                      "match_reasons": [
+                        "品类与规格匹配"
+                      ],
+                      "website_url": "https://example.test/supplier",
+                      "source_title": null,
+                      "source_reference": null
+                    }
+                  },
+                  {
+                    "evidence_id": "live-sourcing-evidence-1",
+                    "entity_id": "sourcing",
+                    "monitor_target_id": null,
+                    "dimension": "sourcing",
+                    "provider": "web_search",
+                    "source_type": "external",
+                    "endpoint": null,
+                    "query": {},
+                    "status": "available",
+                    "collected_at": "2026-01-01T00:00:00Z",
+                    "valid_until": null,
+                    "data_mode": "formal",
+                    "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                    "raw_payload_ref": null,
+                    "facts": {
+                      "supplier_name": "测试外部候选供应商有限公司",
+                      "candidate_type": "external",
+                      "source": "web_search",
+                      "source_type": "external",
+                      "categories": [
+                        "测试寻源品类"
+                      ],
+                      "main_products": "测试供货产品",
+                      "regions": [
+                        "华东"
+                      ],
+                      "match_reasons": [
+                        "品类与规格匹配"
+                      ],
+                      "website_url": "https://example.test/supplier",
+                      "source_title": "验收环境中的候选摘要",
+                      "source_reference": "https://example.test/source"
+                    }
+                  }
+                ],
+                "claims": [
+                  {
+                    "claim_id": "live-sourcing-claim-0",
+                    "entity_id": "sourcing",
+                    "dimension": "sourcing",
+                    "statement": "测试历史合作供应商有限公司 是本轮检索到的候选。",
+                    "value": "测试历史合作供应商有限公司",
+                    "fact_path": "supplier_name",
+                    "evidence_refs": [
+                      "live-sourcing-evidence-0"
+                    ],
+                    "confidence": 0.95
+                  },
+                  {
+                    "claim_id": "live-sourcing-claim-1",
+                    "entity_id": "sourcing",
+                    "dimension": "sourcing",
+                    "statement": "测试外部候选供应商有限公司 是本轮检索到的候选。",
+                    "value": "测试外部候选供应商有限公司",
+                    "fact_path": "supplier_name",
+                    "evidence_refs": [
+                      "live-sourcing-evidence-1"
+                    ],
+                    "confidence": 0.95
+                  }
+                ],
+                "source": "local_and_external",
+                "source_order": [
+                  "local_history",
+                  "web_search"
+                ],
+                "requirement": {
+                  "category": "物料号寻源",
+                  "material": "23748163",
+                  "product": "23748163",
+                  "specification": "23748163",
+                  "must_have": [],
+                  "optional_conditions": []
+                },
+                "candidates": [
+                  {
+                    "candidate_id": "acceptance-local",
+                    "supplier_name": "测试历史合作供应商有限公司",
+                    "candidate_type": "historical",
+                    "source": "internal_history",
+                    "source_type": "internal",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": null,
+                    "source_reference": null
+                  },
+                  {
+                    "candidate_id": "acceptance-external",
+                    "supplier_name": "测试外部候选供应商有限公司",
+                    "candidate_type": "external",
+                    "source": "web_search",
+                    "source_type": "external",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": "验收环境中的候选摘要",
+                    "source_reference": "https://example.test/source"
+                  }
+                ],
+                "local_candidates": [
+                  {
+                    "candidate_id": "acceptance-local",
+                    "supplier_name": "测试历史合作供应商有限公司",
+                    "candidate_type": "historical",
+                    "source": "internal_history",
+                    "source_type": "internal",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": null,
+                    "source_reference": null
+                  }
+                ],
+                "external_candidates": [
+                  {
+                    "candidate_id": "acceptance-external",
+                    "supplier_name": "测试外部候选供应商有限公司",
+                    "candidate_type": "external",
+                    "source": "web_search",
+                    "source_type": "external",
+                    "categories": [
+                      "测试寻源品类"
+                    ],
+                    "main_products": "测试供货产品",
+                    "regions": [
+                      "华东"
+                    ],
+                    "match_reasons": [
+                      "品类与规格匹配"
+                    ],
+                    "website_url": "https://example.test/supplier",
+                    "source_title": "验收环境中的候选摘要",
+                    "source_reference": "https://example.test/source"
+                  }
+                ],
+                "local_status": "success",
+                "local_failure_reason": null,
+                "external_status": "success",
+                "external_stop_reason": "candidate_count_reached",
+                "external_failure_reasons": [],
+                "external_loop": {}
+              },
+              "evidence_refs": [],
+              "error": null,
+              "side_effect_receipt": null,
+              "metrics": {
+                "attempts": 1,
+                "duration_ms": 0
+              }
+            },
+            "trace": {
+              "task_id": "current-task:sourcing",
+              "call_id": "3921338b-dad5-4072-bba9-125a741288de",
+              "tool_version": "1.0",
+              "duration_ms": 0
+            }
+          }
+        },
+        {
+          "event": "references",
+          "data": {
+            "items": [
+              {
+                "name": "测试历史合作供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 寻源候选",
+                "discovery_source": "internal_history",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "historical",
+                "candidate_id": "acceptance-local"
+              },
+              {
+                "name": "测试外部候选供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 寻源候选",
+                "discovery_source": "web_search",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "external",
+                "candidate_id": "acceptance-external"
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "blocked",
+            "stage": "executing",
+            "message": "正在通过统一 ToolExecutor 执行任务",
+            "tool_call_count": 1,
+            "completed_tool_count": 1
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "records": [
+              {
+                "evidence_id": "live-sourcing-evidence-0",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "internal_history",
+                "source_type": "internal",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试历史合作供应商有限公司",
+                  "candidate_type": "historical",
+                  "source": "internal_history",
+                  "source_type": "internal",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": null,
+                  "source_reference": null
+                }
+              },
+              {
+                "evidence_id": "live-sourcing-evidence-1",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "web_search",
+                "source_type": "external",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试外部候选供应商有限公司",
+                  "candidate_type": "external",
+                  "source": "web_search",
+                  "source_type": "external",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": "验收环境中的候选摘要",
+                  "source_reference": "https://example.test/source"
+                }
+              }
+            ],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [
+                "sourcing"
+              ],
+              "missing_dimensions": [],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [
+                "sourcing:sourcing:*"
+              ],
+              "missing_items": [],
+              "coverage_ratio": 1.0
+            }
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "evidence_validated",
+            "stage": "evidence",
+            "message": "正在校验证据覆盖度与 Claim 引用",
+            "evidence_status": "1/1 已覆盖",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "agent_answer",
+          "data": {
+            "status": "completed",
+            "summary": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：物料号寻源；物料号：23748163；规格：23748163。下面按来源分组展示匹配品类、主营产品和下一步核验事项。",
+            "claims": [
+              {
+                "claim_id": "live-sourcing-claim-0",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": "测试历史合作供应商有限公司 是本轮检索到的候选。",
+                "value": "测试历史合作供应商有限公司",
+                "fact_path": "supplier_name",
+                "operator": "eq",
+                "unit": null,
+                "evidence_refs": [
+                  "live-sourcing-evidence-0"
+                ],
+                "confidence": 0.95,
+                "validation_status": "supported",
+                "validation_reasons": []
+              },
+              {
+                "claim_id": "live-sourcing-claim-1",
+                "entity_id": "sourcing",
+                "dimension": "sourcing",
+                "statement": "测试外部候选供应商有限公司 是本轮检索到的候选。",
+                "value": "测试外部候选供应商有限公司",
+                "fact_path": "supplier_name",
+                "operator": "eq",
+                "unit": null,
+                "evidence_refs": [
+                  "live-sourcing-evidence-1"
+                ],
+                "confidence": 0.95,
+                "validation_status": "supported",
+                "validation_reasons": []
+              }
+            ],
+            "limitations": [],
+            "action_proposals": [],
+            "action_receipts": [],
+            "evidence_refs": [
+              "live-sourcing-evidence-0",
+              "live-sourcing-evidence-1"
+            ]
+          }
+        },
+        {
+          "event": "evidence",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "records": [
+              {
+                "evidence_id": "live-sourcing-evidence-0",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "internal_history",
+                "source_type": "internal",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "50a4a09dda8fd38e4e244cb444847201112af2a42adf182a298e90387cf820ae",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试历史合作供应商有限公司",
+                  "candidate_type": "historical",
+                  "source": "internal_history",
+                  "source_type": "internal",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": null,
+                  "source_reference": null
+                }
+              },
+              {
+                "evidence_id": "live-sourcing-evidence-1",
+                "entity_id": "sourcing",
+                "monitor_target_id": null,
+                "dimension": "sourcing",
+                "provider": "web_search",
+                "source_type": "external",
+                "endpoint": null,
+                "query": {},
+                "status": "available",
+                "collected_at": "2026-01-01T00:00:00Z",
+                "valid_until": null,
+                "data_mode": "formal",
+                "content_hash": "f824c454240f5d34f60c893d200db794b83d6925c6e3a4abdf96e1292cbfc297",
+                "raw_payload_ref": null,
+                "facts": {
+                  "supplier_name": "测试外部候选供应商有限公司",
+                  "candidate_type": "external",
+                  "source": "web_search",
+                  "source_type": "external",
+                  "categories": [
+                    "测试寻源品类"
+                  ],
+                  "main_products": "测试供货产品",
+                  "regions": [
+                    "华东"
+                  ],
+                  "match_reasons": [
+                    "品类与规格匹配"
+                  ],
+                  "website_url": "https://example.test/supplier",
+                  "source_title": "验收环境中的候选摘要",
+                  "source_reference": "https://example.test/source"
+                }
+              }
+            ],
+            "coverage": {
+              "required_dimensions": [
+                "sourcing"
+              ],
+              "covered_dimensions": [
+                "sourcing"
+              ],
+              "missing_dimensions": [],
+              "required_items": [
+                "sourcing:sourcing:*"
+              ],
+              "covered_items": [
+                "sourcing:sourcing:*"
+              ],
+              "missing_items": [],
+              "coverage_ratio": 1.0
+            }
+          }
+        },
+        {
+          "event": "answer_chunk",
+          "data": {
+            "text": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：物料号寻源；物料号：23748163；规格：23748163。下面按来源分组展示匹配品类、主营产品和下一步核验事项。\n- 测试历史合作供应商有限公司 是本轮检索到的候选。\n- 测试外部候选供应商有限公司 是本轮检索到的候选。"
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "completed",
+            "stage": "decision",
+            "message": "正在整理最终回答",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "references",
+          "data": {
+            "items": [
+              {
+                "name": "测试历史合作供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 工具结果",
+                "discovery_source": "internal_history",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "historical",
+                "candidate_id": "acceptance-local"
+              },
+              {
+                "name": "测试外部候选供应商有限公司",
+                "kind": "supplier",
+                "source": "Harness 工具结果",
+                "discovery_source": "web_search",
+                "website_url": "https://example.test/supplier",
+                "candidate_type": "external",
+                "candidate_id": "acceptance-external"
+              }
+            ]
+          }
+        },
+        {
+          "event": "workflow_status",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "completed",
+            "stage": "completed",
+            "message": "本轮 Harness 工作流已完成",
+            "loop_exit_reason": "all_tasks_processed"
+          }
+        },
+        {
+          "event": "done",
+          "data": {
+            "run_id": "4e492872-1ce4-4abd-b111-d247dfffc573",
+            "status": "completed",
+            "answer": "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。 检索条件：品类：物料号寻源；物料号：23748163；规格：23748163。下面按来源分组展示匹配品类、主营产品和下一步核验事项。\n- 测试历史合作供应商有限公司 是本轮检索到的候选。\n- 测试外部候选供应商有限公司 是本轮检索到的候选。"
+          }
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "discover_supplier_candidates",
+          "requirement": {
+            "category": "物料号寻源",
+            "material": "23748163",
+            "product": "23748163",
+            "specification": "23748163",
+            "must_have": [],
+            "optional_conditions": []
+          }
+        }
+      ],
+      "mismatches": {}
+    }
+  ]
+}

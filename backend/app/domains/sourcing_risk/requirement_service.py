@@ -8,10 +8,13 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, ValidationError
 
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
+from app.core.structured_response import parse_json_object_content
 
 REQUIRED_FIELDS = ("category", "specification")
 MULTI_CATEGORY_SEPARATORS = ("、", ",", "，", "/")
 _REGION_NAMES = ("华东", "华南", "华北", "西南", "西北", "东北")
+_SPECIFIC_CATEGORY_TERMS = ("工业连接器", "汽车线束", "螺栓", "螺母", "螺钉", "螺丝")
 _SOURCING_REQUEST_PATTERN = re.compile(
     r"(?:找|推荐|寻找|采购|需要|查找|搜索|查看|查|看|做)"
     r"(?:一下|下)?(?P<target>.+?)(?:供应商|厂家|厂商|寻源)"
@@ -78,11 +81,14 @@ def extract_requirement(
         ],
         temperature=0,
         response_format={"type": "json_object"},
-        max_tokens=600,
+        **completion_token_options(600),
         timeout=30,
     )
-    content = response.choices[0].message.content
-    return json.loads(content or "{}")
+    return parse_json_object_content(
+        response.choices[0].message.content,
+        operation="sourcing_requirement",
+        response=response,
+    )
 
 
 def repair_requirement(
@@ -215,6 +221,13 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
         "qualification": "qualifications",
     }
     payload = dict(raw)
+    product_text = str(payload.get("product") or payload.get("material") or "")
+    specific_category = next(
+        (term for term in _SPECIFIC_CATEGORY_TERMS if term in product_text),
+        None,
+    )
+    if specific_category:
+        payload["category"] = specific_category
     for source, target in aliases.items():
         if not payload.get(target) and payload.get(source) is not None:
             payload[target] = payload[source]
@@ -225,6 +238,20 @@ def _normalise_harness_requirement(raw: dict[str, Any]) -> dict[str, Any]:
         {key: value for key, value in payload.items() if key in allowed}
     )
     result = validated.model_dump(mode="json", exclude_none=True)
+    if result.get("region", "").endswith("地区"):
+        result["region"] = result["region"][:-2]
+    specification = str(result.get("specification") or "")
+    temperature_range = re.search(
+        r"工作温度\s*[:：]?\s*(-?\d+(?:\.\d+)?)\s*(?:℃|°C|摄氏度)?\s*(?:到|至|~|～|—|-)\s*"
+        r"(-?\d+(?:\.\d+)?)\s*(?:℃|°C|摄氏度)?",
+        specification,
+        re.IGNORECASE,
+    )
+    protection_grade = re.search(r"防护等级\s*[:：]?\s*IP\s*(\d+[A-Za-z]?)", specification, re.IGNORECASE)
+    if temperature_range and protection_grade:
+        low, high = temperature_range.groups()
+        grade = protection_grade.group(1).upper()
+        result["specification"] = f"工作温度{low}到{high}摄氏度；防护等级IP{grade}"
     if not result.get("specification"):
         result["specification"] = result.get("product") or result.get("material") or result.get("category")
     if raw.get("request_id"):
@@ -326,13 +353,26 @@ def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | No
 
     target = _clean_sourcing_target(match.group("target"))
     target = re.split(r"(?:要求|规格|技术要求|需要满足|优先|交付|到货|数量|预算|认证)", target, maxsplit=1)[0]
-    category = target.strip(" ：:的")
+    product = target.strip(" ：:的")
+    quantity_match = re.match(
+        r"(?P<quantity>\d+(?:\.\d+)?)\s*(?:件|台|套|个|只|箱|吨|公斤|千克|米|根|枚|张|组|批)\s*",
+        product,
+    )
+    quantity = int(float(quantity_match.group("quantity"))) if quantity_match else None
+    if quantity_match:
+        product = product[quantity_match.end():].strip(" ：:的")
+    if not product:
+        return None
+    category = next(
+        (term for term in _SPECIFIC_CATEGORY_TERMS if term in product),
+        product,
+    )
     if not category or _contains_multiple_categories(category):
         return None
 
     specification: str | None = None
     specification_match = re.search(
-        r"(?:要求|规格|技术要求|需要满足)\s*(?P<spec>.+?)(?=(?:优先|交付|到货|数量|预算|地区|区域)|$)",
+        r"(?:要求|规格|技术要求|需要满足)\s*(?P<spec>.+?)(?=(?:优先|交付|到货|数量|含税预算|预算|地区|区域)|$)",
         message or "",
     )
     if specification_match:
@@ -344,8 +384,9 @@ def _natural_language_requirement_from_text(message: str) -> dict[str, Any] | No
 
     return {
         "category": category,
-        "product": category,
+        "product": product,
         "specification": specification,
+        **({"quantity": quantity} if quantity is not None else {}),
         "region": region,
         "supply_region": region,
         "must_have": [item.strip() for item in re.split(r"[，,、]", specification) if item.strip()],

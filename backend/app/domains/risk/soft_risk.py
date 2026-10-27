@@ -9,6 +9,11 @@ from openai import OpenAI
 
 from app.core.cache import cache_client
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
+from app.core.structured_response import (
+    StructuredResponseError,
+    parse_json_object_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +51,15 @@ def score_soft_risks(company_name: str, context: dict[str, Any] | None = None) -
         {"dimensions": {...}, "summary": "...", "scored_at": "..."}
     """
     # Check cache
-    cache_key = f"{_CACHE_PREFIX}:{company_name}"
+    from app.domains.risk.assessment_contracts import canonical_hash
+
+    cache_key = f"{_CACHE_PREFIX}:evidence-v1:{canonical_hash([company_name, context or {}, settings.LLM_MODEL, 'soft-evidence-1'])}"
     try:
         cached = cache_client.get(cache_key)
         if cached:
-            return json.loads(cached)
+            value = json.loads(cached)
+            if value.get("status") == "available":
+                return value
     except Exception:
         pass
 
@@ -58,16 +67,37 @@ def score_soft_risks(company_name: str, context: dict[str, Any] | None = None) -
     if result is None:
         # LLM 调用失败返回空评分
         return {
-            "dimensions": {dim: {"score": 0, "reason": "LLM 不可用"} for dim in SOFT_DIMENSIONS},
+            "status": "unavailable",
+            "dimensions": {
+                dim: {"status": "unavailable", "reason": "LLM 不可用"}
+                for dim in SOFT_DIMENSIONS
+            },
             "summary": "",
             "scored_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    dimensions = result.get("dimensions") or {}
+    for dim in SOFT_DIMENSIONS:
+        if dim not in dimensions:
+            dimensions[dim] = {"status": "unavailable", "reason": "未分析"}
+        elif "score" in dimensions[dim]:
+            dimensions[dim]["status"] = "available"
+    result["status"] = (
+        "available"
+        if all(item.get("status") == "available" for item in dimensions.values())
+        else "partial"
+    )
+    result["dimensions"] = dimensions
+    result["model"] = settings.LLM_MODEL
+    result["prompt_version"] = "soft-evidence-1"
+    result["context_hash"] = canonical_hash(context or {})
     result["scored_at"] = datetime.now(timezone.utc).isoformat()
 
     # Save cache
     try:
-        cache_client.setex(cache_key, _CACHE_TTL, json.dumps(result, ensure_ascii=False))
+        cache_client.setex(
+            cache_key, _CACHE_TTL, json.dumps(result, ensure_ascii=False)
+        )
     except Exception:
         pass
 
@@ -106,28 +136,59 @@ def _call_llm(company_name: str, context: dict[str, Any] | None) -> dict | None:
 输出格式：
 {{"dimensions": {{"舆情风险": {{"score": 整数, "reason": "理由"}}, "ESG风险": ..., "宏观风险": ..., "管理风险": ...}}, "summary": "一句话总结主要风险点"}}"""
 
-    try:
-        response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            response_format={"type": "json_object"},
-            max_tokens=600,
-            timeout=30,
-        )
-        content = response.choices[0].message.content
-        if not content:
+    for attempt in range(2):
+        request_prompt = prompt
+        if attempt:
+            request_prompt += "\n上一轮响应为空或不是合法 JSON。请只返回完整 JSON 对象，不要代码围栏、解释或截断。"
+        try:
+            response = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=[{"role": "user", "content": request_prompt}],
+                temperature=0,
+                response_format={"type": "json_object"},
+                **completion_token_options(600),
+                timeout=30,
+            )
+            result = parse_json_object_content(
+                response.choices[0].message.content,
+                operation="soft_risk",
+                response=response,
+            )
+            dimensions = result.get("dimensions")
+            if not isinstance(dimensions, dict) or not isinstance(
+                result.get("summary"), str
+            ):
+                raise StructuredResponseError("missing_required_fields")
+            for dim in SOFT_DIMENSIONS:
+                item = dimensions.get(dim)
+                if item is None:
+                    continue
+                if not isinstance(item, dict):
+                    raise StructuredResponseError("invalid_dimension")
+                score = item.get("score")
+                reason = item.get("reason")
+                if (
+                    not isinstance(score, int)
+                    or isinstance(score, bool)
+                    or not 0 <= score <= SOFT_DIMENSIONS[dim]["max_score"]
+                    or not isinstance(reason, str)
+                ):
+                    raise StructuredResponseError("invalid_dimension")
+            return result
+        except StructuredResponseError as exc:
+            logger.warning(
+                "soft_risk_llm_invalid company=%s attempt=%s reason=%s",
+                company_name,
+                attempt + 1,
+                exc.kind,
+            )
+            if attempt == 0:
+                continue
+        except Exception as exc:
+            # This module uses the standard-library logger; pass context through
+            # the message arguments instead of structlog-style keyword fields.
+            logger.warning(
+                "soft_risk_llm_failed company=%s error=%s", company_name, str(exc)
+            )
             return None
-        result = json.loads(content)
-        # Validate structure
-        if "dimensions" not in result or "summary" not in result:
-            return None
-        for dim in SOFT_DIMENSIONS:
-            if dim not in result["dimensions"]:
-                result["dimensions"][dim] = {"score": 0, "reason": "未分析"}
-        return result
-    except Exception as e:
-        # This module uses the standard-library logger; pass context through
-        # the message arguments instead of structlog-style keyword fields.
-        logger.warning("soft_risk_llm_failed company=%s error=%s", company_name, str(e))
-        return None
+    return None

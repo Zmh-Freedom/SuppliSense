@@ -7,7 +7,6 @@
 运行频率：默认每 2 小时一次（PROACTIVE_AGENT_CRON 环境变量配置）
 """
 
-import asyncio
 import json
 import os
 
@@ -189,10 +188,10 @@ def _push_results(results: list[dict], targets: list[dict]) -> bool:
         status = _create_and_deliver(db, item["target"], item["recipient"], notification_type="proactive_analysis", text=text, results=[entry["result"] for entry in items])
         pushed = pushed or status == "success"
         try:
-            from app.services.ws_manager import ws_manager
+            from app.services.realtime import publish
 
             recipient_ids = {str(entry["recipient"].get("recipient_open_id")) for entry in items if entry["recipient"].get("recipient_open_id")}
-            asyncio.run(ws_manager.broadcast("proactive_analysis", {"results": [entry["result"] for entry in items], "count": len(items)}, recipient_ids))
+            publish("proactive_analysis", {"results": [entry["result"] for entry in items], "count": len(items)}, recipient_ids)
             pushed = True
         except Exception as exc:
             logger.error("proactive_agent_ws_error", error=str(exc)[:200])

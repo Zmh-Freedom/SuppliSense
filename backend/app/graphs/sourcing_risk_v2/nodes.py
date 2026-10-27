@@ -75,7 +75,7 @@ async def load_run(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Initialize graph fields without mutating a run record directly."""
     run_id = state["run_id"]
     await _event(run_id, "stage", {"stage": "load_run"}, "CREATED")
-    return {
+    update = {
         "status": "CREATED",
         "requirement_id": state.get("requirement_id") or run_id,
         "candidate_ids": list(state.get("candidate_ids", [])),
@@ -83,6 +83,13 @@ async def load_run(state: SourcingRiskGraphState) -> dict[str, Any]:
         "event_cursor": state.get("event_cursor", 0),
         "error_code": None,
     }
+    followup_context = await asyncio.to_thread(
+        agent_run_service.get_sourcing_candidate_followup_context, run_id
+    )
+    if followup_context is not None:
+        update["candidate_followup_context"] = followup_context
+        update["candidates"] = list(followup_context.get("candidates") or [])
+    return update
 
 
 async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any]:
@@ -118,16 +125,34 @@ async def parse_requirement_node(state: SourcingRiskGraphState) -> dict[str, Any
 
 
 async def lock_policy(state: SourcingRiskGraphState) -> dict[str, Any]:
-    """Freeze the policy once for this durable run."""
-    policy = await asyncio.to_thread(freeze_policy_snapshot, state["run_id"], state["requirement"]["category"])
-    await _event(state["run_id"], "policy_locked", {"checksum": policy["checksum"]}, "POLICY_LOCKED")
+    """Freeze and persist the policy once, or reuse the parent's policy for a follow-up."""
+    followup_context = state.get("candidate_followup_context")
+    if followup_context is not None:
+        policy_snapshot = _thaw_policy_value(followup_context["policy_snapshot"])
+        policy_snapshot_id = str(followup_context["policy_snapshot_id"])
+    else:
+        policy = await asyncio.to_thread(
+            freeze_policy_snapshot,
+            state["run_id"],
+            state["requirement"]["category"],
+        )
+        persisted = await asyncio.to_thread(
+            agent_run_service.persist_sourcing_policy_snapshot,
+            state["run_id"],
+            _thaw_policy_value(policy),
+        )
+        policy_snapshot = _thaw_policy_value(persisted.get("policy") or policy)
+        policy_snapshot_id = str(persisted["id"])
+    await _event(
+        state["run_id"],
+        "policy_locked",
+        {"checksum": policy_snapshot.get("checksum"), "policy_snapshot_id": policy_snapshot_id},
+        "POLICY_LOCKED",
+    )
     return {
         "status": "POLICY_LOCKED",
-        # ``freeze_policy_snapshot`` intentionally returns immutable nested
-        # MappingProxy/tuple values. LangGraph's Postgres serializer requires
-        # ordinary JSON-compatible containers at the checkpoint boundary.
-        "policy_snapshot": _thaw_policy_value(policy),
-        "policy_snapshot_id": state.get("policy_snapshot_id") or policy["checksum"],
+        "policy_snapshot": policy_snapshot,
+        "policy_snapshot_id": policy_snapshot_id,
     }
 
 
@@ -136,7 +161,10 @@ async def local_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
     candidates = state.get("candidates")
     local_status = "ok"
     local_failure_reason: str | None = None
-    if candidates is None:
+    is_followup = state.get("candidate_followup_context") is not None
+    if is_followup:
+        candidates = list(candidates or [])
+    elif candidates is None:
         try:
             candidates = await asyncio.to_thread(discover_local_candidates, state["requirement"], state["policy_snapshot"])
             if not isinstance(candidates, list):
@@ -147,7 +175,9 @@ async def local_discovery(state: SourcingRiskGraphState) -> dict[str, Any]:
             local_failure_reason = f"{type(exc).__name__}: 本地供应商库不可用"
             await _event(state["run_id"], "provider_failed", {"provider": "local_supplier_library", "error": type(exc).__name__}, "LOCAL_SEARCHING")
     candidates = _with_candidate_keys(candidates)
-    sufficient = is_candidate_supply_sufficient(candidates, state["requirement"], state["policy_snapshot"])
+    sufficient = is_followup or is_candidate_supply_sufficient(
+        candidates, state["requirement"], state["policy_snapshot"]
+    )
     await _snapshot_event(
         state["run_id"], "LOCAL_SEARCHING", "discovery",
         {"source": "local", "source_stage": "local_history_or_feishu_formal", "count": len(candidates), "sufficient": sufficient, "local_status": local_status, "failure_reason": local_failure_reason},
@@ -211,33 +241,80 @@ async def identity_resolution(state: SourcingRiskGraphState) -> dict[str, Any]:
             pending.append(_review_id(candidate, identity))
         resolved.append(item)
     if pending:
-        await _snapshot_event(state["run_id"], "IDENTITY_RESOLVING", "identity_resolving", {"count": len(resolved)}, candidates=resolved)
-        await _snapshot_event(state["run_id"], "IDENTITY_REVIEW", "identity_review", {"pending_review_ids": pending}, candidates=resolved)
+        resolving_snapshot = await _snapshot_event(
+            state["run_id"], "IDENTITY_RESOLVING", "identity_resolving",
+            {"count": len(resolved)}, candidates=resolved,
+        )
+        resolved = _attach_persisted_candidate_ids(resolved, resolving_snapshot)
+        await _snapshot_event(
+            state["run_id"], "IDENTITY_REVIEW", "identity_review",
+            {"pending_review_ids": pending}, candidates=resolved,
+        )
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
-    await _snapshot_event(state["run_id"], "IDENTITY_RESOLVING", "identity_resolved", {"count": len(resolved)}, candidates=resolved)
+    snapshot = await _snapshot_event(
+        state["run_id"], "IDENTITY_RESOLVING", "identity_resolved",
+        {"count": len(resolved)}, candidates=resolved,
+    )
+    resolved = _attach_persisted_candidate_ids(resolved, snapshot)
     return {"status": "IDENTITY_RESOLVING", "next_action": None, "pending_review_ids": [], "candidates": resolved, "candidate_ids": _candidate_ids(resolved)}
 
 
 async def identity_review(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Durably pause for human identity confirmation using LangGraph interrupts."""
     review = interrupt({"next_action": "identity_review_required", "pending_review_ids": state.get("pending_review_ids", [])})
+    batch_id = review.get("candidate_review_batch_id") if isinstance(review, Mapping) else None
+    if isinstance(batch_id, str) and batch_id:
+        groups = await asyncio.to_thread(
+            agent_run_service.get_candidate_review_groups_for_batch, batch_id
+        )
+        all_candidates = list(groups["all_candidates"])
+        snapshot = await _snapshot_event(
+            state["run_id"],
+            "IDENTITY_RESOLVING",
+            "candidate_review_resumed",
+            {
+                "batch_id": batch_id,
+                "eligible_count": len(groups["eligible"]),
+                "deferred_count": len(groups["deferred"]),
+                "excluded_count": len(groups["excluded"]),
+            },
+            candidates=all_candidates,
+        )
+        all_candidates = _attach_persisted_candidate_ids(all_candidates, snapshot)
+        by_key = {str(item.get("candidate_id") or item.get("id")): item for item in all_candidates}
+        eligible = [by_key.get(str(item.get("candidate_id") or item.get("id")), item) for item in groups["eligible"]]
+        deferred = [by_key.get(str(item.get("candidate_id") or item.get("id")), item) for item in groups["deferred"]]
+        excluded = [by_key.get(str(item.get("candidate_id") or item.get("id")), item) for item in groups["excluded"]]
+        return {
+            "status": "IDENTITY_RESOLVING",
+            "next_action": None,
+            "pending_review_ids": [],
+            "candidate_review_batch_id": batch_id,
+            "candidates": eligible,
+            "eligible_candidates": eligible,
+            "deferred_candidates": deferred,
+            "excluded_candidates": excluded,
+            "candidate_ids": _candidate_ids(eligible),
+        }
     resolutions = review.get("identity_resolutions", {}) if isinstance(review, Mapping) else {}
     resolved, pending = _apply_identity_resolutions(state.get("candidates", []), resolutions)
     if pending:
         return {"status": "IDENTITY_REVIEW", "next_action": "identity_review_required", "pending_review_ids": pending, "candidates": resolved}
-    await _snapshot_event(
+    snapshot = await _snapshot_event(
         state["run_id"], "IDENTITY_RESOLVING", "identity_resolved", {"count": len(resolved)},
         candidates=resolved,
     )
+    resolved = _attach_persisted_candidate_ids(resolved, snapshot)
     return {"status": "IDENTITY_RESOLVING", "next_action": None, "pending_review_ids": [], "candidates": resolved, "candidate_ids": _candidate_ids(resolved)}
 
 
 async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Gather independent provider evidence with isolated failures."""
-    evidence, failures = await investigate_candidates(state.get("candidates", []))
+    eligible = list(state.get("eligible_candidates", state.get("candidates", [])))
+    evidence, failures = await investigate_candidates(eligible)
     normalized_evidence: dict[str, list[dict[str, Any]]] = {}
     raw_payloads: list[dict[str, Any]] = []
-    for candidate in state.get("candidates", []):
+    for candidate in eligible:
         company_id = candidate.get("company_id")
         if not company_id:
             continue
@@ -246,7 +323,7 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
         )
         raw_payloads.extend(candidate_raw_payloads)
     failures = sorted(set([*state.get("provider_failures", []), *failures]))
-    candidates = _mark_sanctions_failures_for_review(state.get("candidates", []), normalized_evidence)
+    candidates = _mark_sanctions_failures_for_review(eligible, normalized_evidence)
     await _snapshot_event(
         state["run_id"], "INVESTIGATING", "investigation", {"failed_dimensions": failures},
         candidates=candidates, evidence_by_company_id=normalized_evidence, raw_payloads=raw_payloads,
@@ -254,6 +331,7 @@ async def investigate_parallel(state: SourcingRiskGraphState) -> dict[str, Any]:
     return {
         "status": "INVESTIGATING",
         "candidates": candidates,
+        "eligible_candidates": candidates,
         "evidence_by_company_id": normalized_evidence,
         "provider_failures": failures,
     }
@@ -304,12 +382,13 @@ async def validate_evidence(state: SourcingRiskGraphState) -> dict[str, Any]:
 
 async def score_candidates(state: SourcingRiskGraphState) -> dict[str, Any]:
     """Delegate deterministic scoring to the decision service."""
-    decisions = decide_candidates(state["requirement"], state["policy_snapshot"], state.get("candidates", []), state.get("evidence_by_company_id", {}))
+    eligible = list(state.get("eligible_candidates", state.get("candidates", [])))
+    decisions = decide_candidates(state["requirement"], state["policy_snapshot"], eligible, state.get("evidence_by_company_id", {}))
     await _snapshot_event(
         state["run_id"], "SCORING", "decision", {"count": len(decisions)},
-        candidates=state.get("candidates", []), decisions=decisions,
+        candidates=eligible, decisions=decisions,
     )
-    return {"status": "SCORING", "decisions": decisions}
+    return {"status": "SCORING", "candidates": eligible, "eligible_candidates": eligible, "decisions": decisions}
 
 
 async def ready_for_review(state: SourcingRiskGraphState) -> dict[str, Any]:
@@ -317,10 +396,23 @@ async def ready_for_review(state: SourcingRiskGraphState) -> dict[str, Any]:
     decisions = state.get("decisions", [])
     failures = state.get("provider_failures", [])
     has_review = any(item.get("group") == "needs_review" for item in decisions)
-    status = "NEEDS_REVIEW" if has_review else "PARTIAL" if failures else "READY_FOR_REVIEW"
+    deferred = list(state.get("deferred_candidates", []))
+    excluded = list(state.get("excluded_candidates", []))
+    has_paused_candidates = bool(deferred or excluded)
+    status = "NEEDS_REVIEW" if has_review else "PARTIAL" if has_paused_candidates or failures else "READY_FOR_REVIEW"
     next_action = "evidence_review_required" if has_review else "review_required"
-    await _event(state["run_id"], "ready_for_review", {"provider_failures": failures}, status)
-    return {"status": status, "next_action": next_action}
+    await _event(
+        state["run_id"], "ready_for_review",
+        {"provider_failures": failures, "deferred_count": len(deferred), "excluded_count": len(excluded)},
+        status,
+    )
+    return {
+        "status": status,
+        "next_action": next_action,
+        "eligible_candidates": list(state.get("eligible_candidates", state.get("candidates", []))),
+        "deferred_candidates": deferred,
+        "excluded_candidates": excluded,
+    }
 
 
 def route_after_requirement(state: SourcingRiskGraphState) -> str:
@@ -329,6 +421,14 @@ def route_after_requirement(state: SourcingRiskGraphState) -> str:
 
 def route_after_discovery(state: SourcingRiskGraphState) -> str:
     return "external_discovery" if state.get("next_action") == "external_discovery_required" else "identity_resolution"
+
+
+def route_after_identity_review(state: SourcingRiskGraphState) -> str:
+    """Never investigate the original unresolved population after an interrupt."""
+    if state.get("status") == "IDENTITY_REVIEW":
+        return "end"
+    candidates = state.get("eligible_candidates", state.get("candidates", []))
+    return "investigate_parallel" if candidates else "end"
 
 
 async def investigate_candidates(candidates: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
@@ -470,6 +570,32 @@ def _review_id(candidate: Mapping[str, Any], identity: Mapping[str, Any]) -> str
 
 def _candidate_ids(candidates: list[dict[str, Any]]) -> list[str]:
     return [str(candidate["company_id"]) for candidate in candidates if candidate.get("company_id")]
+
+
+def _attach_persisted_candidate_ids(
+    candidates: list[dict[str, Any]], snapshot: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Carry PostgreSQL candidate UUIDs into checkpoints and later snapshots."""
+    if not isinstance(snapshot, Mapping):
+        return candidates
+    persisted_by_key: dict[str, str] = {}
+    for persisted in snapshot.get("candidates", []):
+        candidate_snapshot = persisted.get("candidate_snapshot") or {}
+        key = candidate_snapshot.get("candidate_key")
+        candidate_id = persisted.get("candidate_id") or persisted.get("id")
+        if key and candidate_id:
+            persisted_by_key[str(key)] = str(candidate_id)
+    return [
+        {
+            **candidate,
+            **(
+                {"candidate_id": persisted_by_key[str(candidate.get("candidate_key"))]}
+                if str(candidate.get("candidate_key")) in persisted_by_key
+                else {}
+            ),
+        }
+        for candidate in candidates
+    ]
 
 
 def _thaw_policy_value(value: Any) -> Any:

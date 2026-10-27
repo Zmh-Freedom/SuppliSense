@@ -75,7 +75,7 @@ class WSManager:
         dead = []
         for cid, ws in list(self._connections.items()):
             identity = self._identities.get(cid, {})
-            if recipients and identity.get("open_id") not in recipients:
+            if recipient_open_ids is not None and identity.get("open_id") not in recipients:
                 continue
             try:
                 await ws.send_text(message)

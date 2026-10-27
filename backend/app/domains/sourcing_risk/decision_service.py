@@ -6,7 +6,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID
 
-from app.domains.sourcing_risk.evidence_service import validate_evidence_set
+from app.domains.sourcing_risk.evidence_service import (
+    EVIDENCE_FRESHNESS_POLICY_DIMENSIONS,
+    validate_evidence_set,
+)
 
 
 GROUP_ORDER = {"recommended": 0, "alternative": 1, "needs_review": 2, "rejected": 3}
@@ -197,11 +200,11 @@ def _stale_dimensions(candidate: dict, evidence: list[dict]) -> set[str]:
         for name in candidate.get("stale_dimensions", [])
         if isinstance(name, str)
     }
-    evidence_dimension_map = {"financial": "risk", "continuity": "capacity"}
     stale.update(
-        evidence_dimension_map[item["dimension"]]
+        EVIDENCE_FRESHNESS_POLICY_DIMENSIONS[item["dimension"]]
         for item in evidence
-        if item.get("freshness_status") == "stale" and item.get("dimension") in evidence_dimension_map
+        if item.get("freshness_status") == "stale"
+        and item.get("dimension") in EVIDENCE_FRESHNESS_POLICY_DIMENSIONS
     )
     return stale
 

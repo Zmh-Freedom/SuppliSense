@@ -162,6 +162,133 @@ export interface MonitorTarget {
   };
 }
 
+export type ProcurementCaseStatus = 'open' | 'in_progress' | 'deferred' | 'pending_closure' | 'closed' | string;
+export type ProcurementCaseType = 'risk_review' | 'coverage_gap' | 'identity_review';
+export type ProcurementClosureCategory = 'resolved' | 'accepted_limitation' | 'duplicate' | 'withdrawn';
+
+export interface ProcurementCase {
+  id: string;
+  monitor_target_id: string;
+  scope_key?: string;
+  case_type: ProcurementCaseType;
+  department_code?: string | null;
+  title: string;
+  priority: 'high' | 'normal' | string;
+  status: ProcurementCaseStatus;
+  version: number;
+  created_by: string;
+  owner_user_id?: string | null;
+  due_at?: string | null;
+  next_review_at?: string | null;
+  closure_request?: {
+    category?: ProcurementClosureCategory;
+    summary?: string;
+    receipt_ids?: string[];
+    residual_limitations?: string;
+    requested_by?: string;
+    requested_at?: string;
+    reviewed_by?: string;
+    reviewed_at?: string;
+    review_reason?: string;
+  } | null;
+  closed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CaseCapabilities {
+  can_read: boolean;
+  can_claim: boolean;
+  can_assign: boolean;
+  can_update: boolean;
+  can_request_closure: boolean;
+  can_decide_closure: boolean;
+  can_reopen: boolean;
+}
+
+export interface ProcurementCaseEvent {
+  id: string;
+  case_id?: string;
+  version?: number;
+  event_type: string;
+  actor_id?: string;
+  payload?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ProcurementCaseTask {
+  id: string;
+  task_type: string;
+  status: string;
+  version?: number;
+  result?: {
+    summary?: string;
+    status?: string;
+    missing_dimensions?: string[];
+    [key: string]: unknown;
+  } | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ProcurementCaseDetail {
+  case: ProcurementCase;
+  events: ProcurementCaseEvent[];
+  linked_tasks: ProcurementCaseTask[];
+  capabilities: CaseCapabilities;
+}
+
+export interface ProcurementCaseList {
+  items: Array<{ case: ProcurementCase; capabilities: CaseCapabilities }>;
+  next_cursor: string | null;
+  available_views?: { mine: boolean; department: boolean; accessible?: boolean };
+}
+
+export type ProcurementWorkbenchView = 'mine' | 'department';
+
+export interface ProcurementWorkbenchItem {
+  case_id: string;
+  target_id: string;
+  title: string;
+  group: 'pending_closure' | 'overdue' | 'due_review' | 'high' | 'normal';
+  status: string;
+  owner_user_id: string | null;
+  due_at: string | null;
+  next_review_at: string | null;
+  detail_url: string;
+}
+
+export interface ProcurementWorkbench {
+  scope: { view: ProcurementWorkbenchView; department_code: string | null };
+  capabilities: {
+    can_view_mine: boolean;
+    can_view_department: boolean;
+    can_choose_department: boolean;
+    department_codes: string[];
+  };
+  counts: Record<'pending_closure' | 'overdue' | 'due_review' | 'high' | 'normal', number | null>;
+  items: ProcurementWorkbenchItem[];
+  next_cursor: string | null;
+  coverage: {
+    target_total: number;
+    unknown_count: number;
+    stale_count: number;
+    failed_count: number;
+    targets: Array<{
+      target_id: string;
+      display_name: string;
+      missing_dimensions: string[];
+      unknown: boolean;
+      stale: boolean;
+      failed: boolean;
+    }>;
+  } | null;
+  sections: {
+    cases: { status: 'available' | 'unavailable'; count: number | null };
+    coverage: { status: 'available' | 'unavailable'; count: number | null };
+  };
+}
+
 export interface MonitorRiskDetail {
   monitor_target_id: string;
   company_name: string;
@@ -282,6 +409,11 @@ export interface ChatMessage {
     args: Record<string, unknown>;
     session_id: string;
     status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
+    run_id?: string | null;
+    last_event_id?: number | null;
+    approval_event_id?: number | null;
+    resume_started?: boolean;
+    decision?: 'approved' | 'rejected';
   };
 }
 
@@ -318,6 +450,14 @@ export interface AgentAnswer {
   evidence_refs: string[];
 }
 
+export interface ClaimPresentation {
+  metric: string;
+  value: string;
+  label: string;
+  tone: 'neutral' | 'positive' | 'warning' | 'danger';
+  context?: string;
+}
+
 export interface AgentEvidenceRecord {
   evidence_id: string;
   entity_id: string;
@@ -328,6 +468,7 @@ export interface AgentEvidenceRecord {
   status: string;
   data_mode: 'formal' | 'synthetic';
   collected_at: string;
+  valid_until?: string | null;
   facts?: Record<string, unknown>;
 }
 
@@ -341,6 +482,24 @@ export type AgentWorkflowLifecycle =
   | 'clarifying'
   | 'stopped';
 
+export interface AgentInputUnderstanding {
+  task_type?: string;
+  capability?: string;
+  scope?: string;
+  target_supplier_names?: string[];
+  analysis_dimensions?: string[];
+  sourcing_requirement?: Record<string, unknown> | null;
+  requested_action?: string;
+  time_range?: string;
+  confidence?: number;
+  interpretation_summary?: string;
+  ambiguities?: string[];
+  missing_fields?: string[];
+  needs_clarification?: boolean;
+  clarification_question?: string | null;
+  field_sources?: Record<string, string>;
+}
+
 export interface AgentWorkflowSnapshot {
   status: AgentWorkflowLifecycle | string;
   stage?: string;
@@ -352,6 +511,7 @@ export interface AgentWorkflowSnapshot {
   completedToolCount: number;
   evidenceStatus?: string;
   loopExitReason?: string;
+  inputUnderstanding?: AgentInputUnderstanding;
 }
 
 export interface SupplierReference {
@@ -421,6 +581,11 @@ export interface AccessApplicationItem {
 }
 
 export interface WSEventMap {
+  agent_run_updated: Record<string, never>;
+  assessment_updated: Record<string, never>;
+  action_updated: Record<string, never>;
+  company_updated: Record<string, never>;
+  realtime_resync: Record<string, never>;
   alert: AlertDoc;
   alert_update: AlertDoc;
   risk_update: { company_name: string; score: number; level: string };
@@ -439,6 +604,10 @@ export interface WSEventMap {
       risk_level: string;
     }>;
   };
+}
+
+export interface WSConnectionState {
+  reconnected: boolean;
 }
 
 // ---- Sourcing ----
@@ -504,6 +673,50 @@ export interface SourcingRequestDetail {
   created_at: string;
   completed_at: string | null;
   results: SourcingResultItem[];
+}
+
+export type SourcingTaskSourceType = 'agent_run' | 'legacy_request';
+
+export interface SourcingTaskHistoryItem {
+  source_type: SourcingTaskSourceType;
+  source_id: string;
+  title: string;
+  status: string;
+  updated_at: string;
+  time_basis: 'updated_at' | 'created_at';
+  resume_url: string;
+}
+
+export interface SourcingTaskSourceStatus {
+  status: 'available' | 'unavailable' | 'disabled';
+  reason?: string | null;
+}
+
+export interface SourcingTaskListResponse {
+  items: SourcingTaskHistoryItem[];
+  next_cursor: string | null;
+  sources: Record<SourcingTaskSourceType, SourcingTaskSourceStatus>;
+}
+
+export interface SourcingCandidateDisposition {
+  candidate_key: string;
+  action: 'confirm' | 'defer' | 'exclude';
+  company_id?: string | null;
+  reason?: string | null;
+}
+
+export interface SourcingCandidateDispositionState {
+  run_id: string;
+  run_version: number;
+  dispositions: SourcingCandidateDisposition[];
+  resume_status: string;
+  new_run_id: string | null;
+}
+
+export interface SourcingCandidateFollowupResponse {
+  parent_run_id: string;
+  run_id: string;
+  resume_url: string;
 }
 
 // ---- Sourcing Risk V2 agent runs ----
@@ -777,6 +990,88 @@ export interface SanctionsResult {
   clean: boolean;
   match_count: number;
   matches: SanctionsMatch[];
+}
+
+export type ScreeningStatus =
+  | 'no_match_in_scope'
+  | 'possible_match'
+  | 'confirmed_match'
+  | 'partial'
+  | 'stale'
+  | 'conflicting'
+  | 'not_queried'
+  | 'unavailable';
+
+export interface ScreeningSourceEvidence {
+  source?: string;
+  source_version?: string | null;
+  status?: string;
+  observed_at?: string | null;
+  collected_at?: string | null;
+  expires_at?: string | null;
+  scope?: string | null;
+  query_receipt?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ScreeningCoverageSource {
+  source: string;
+  required: boolean;
+  scope?: string | null;
+  evidence: ScreeningSourceEvidence;
+  validity: {
+    status: string;
+    observed_at?: string | null;
+    collected_at?: string | null;
+    expires_at?: string | null;
+    detail?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ScreeningDomesticFinding {
+  kind: string;
+  count: number | null;
+  source: string;
+  validity: {
+    status: string;
+    observed_at?: string | null;
+    collected_at?: string | null;
+    expires_at?: string | null;
+    detail?: string;
+    [key: string]: unknown;
+  };
+}
+
+export interface ScreeningReadResult {
+  schema_version: 1;
+  company_name: string;
+  entity_id: string | null;
+  scope: string | null;
+  screening_status: ScreeningStatus;
+  coverage: {
+    status: string;
+    sources: ScreeningCoverageSource[];
+    required_sources: string[];
+  };
+  matches: Array<{
+    source: string;
+    record_id?: string;
+    record_name?: string;
+    match_type: 'possible' | 'confirmed' | string;
+    matched_on?: string;
+    validity: Record<string, unknown>;
+  }>;
+  domestic_findings: ScreeningDomesticFinding[];
+  limitations: string[];
+  checked_at: string;
+}
+
+export interface SupplierComplianceReadResult {
+  schema_version: 1;
+  screening: ScreeningReadResult;
+  domestic_findings: ScreeningDomesticFinding[];
+  limitations: string[];
 }
 
 // ---- Supplier Master Data ----

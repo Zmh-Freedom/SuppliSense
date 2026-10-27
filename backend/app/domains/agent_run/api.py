@@ -6,25 +6,33 @@ from collections.abc import Coroutine
 from typing import Annotated, Any, Iterator
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.config import agent_run_v2_route, settings
 from app.core.errors import DomainError
 from app.core.deps import get_current_user
+from app.domains.auth.audit import AuditUnavailable, log_action
 from app.domains.agent_run.service import (
     cancel_run,
     create_sourcing_risk_run,
     decide_action_proposal,
+    get_candidate_decisions,
     get_sourcing_risk_run,
+    derive_candidate_followup,
     retry_sourcing_risk_raw_payload_compensations,
     stream_events,
     submit_clarification,
+    submit_candidate_decisions,
     submit_identity_resolution,
 )
 from app.domains.agent_run.schemas import (
     AgentRunResponse,
     ApprovalDecisionRequest,
+    CandidateDecisionBatchRequest,
+    CandidateDecisionResponse,
+    CandidateFollowupRequest,
+    CandidateFollowupResponse,
     CancelRunRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
@@ -34,6 +42,11 @@ from app.graphs.sourcing_risk_v2.runner import resume_sourcing_risk_graph, start
 from app.schemas.user import UserInDB
 
 router = APIRouter(prefix="/agent-runs", tags=["agent-runs"], dependencies=[Depends(get_current_user)])
+workspace_router = APIRouter(
+    prefix="/sourcing-workspace",
+    tags=["sourcing-workspace"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def _agent_run_sse_event(event: dict) -> str:
@@ -151,11 +164,101 @@ async def resolve_agent_run_identity(
     return run
 
 
+@workspace_router.get(
+    "/runs/{run_id}/candidate-decisions",
+    summary="读取寻源候选处置",
+    response_model=CandidateDecisionResponse,
+)
+async def read_candidate_decisions(
+    run_id: UUID,
+    current_user: UserInDB = Depends(get_current_user),
+) -> CandidateDecisionResponse:
+    _require_v2_route(current_user)
+    result = await asyncio.to_thread(
+        get_candidate_decisions, str(run_id), current_user.id, current_user.role.value
+    )
+    return CandidateDecisionResponse.model_validate(result)
+
+
+@workspace_router.post(
+    "/runs/{run_id}/candidate-decisions",
+    summary="提交寻源候选处置",
+    response_model=CandidateDecisionResponse,
+)
+async def write_candidate_decisions(
+    run_id: UUID,
+    data: CandidateDecisionBatchRequest,
+    request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    current_user: UserInDB = Depends(get_current_user),
+) -> CandidateDecisionResponse:
+    _require_v2_route(current_user, allow_shadow=False)
+    result = await asyncio.to_thread(
+        submit_candidate_decisions,
+        str(run_id),
+        data.model_dump(mode="json"),
+        current_user.id,
+        current_user.role.value,
+        request_key,
+    )
+    return CandidateDecisionResponse.model_validate(result)
+
+
+@workspace_router.post(
+    "/runs/{run_id}/followups",
+    summary="从暂存候选创建恢复任务",
+    response_model=CandidateFollowupResponse,
+)
+async def create_candidate_followup(
+    run_id: UUID,
+    data: CandidateFollowupRequest,
+    request_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
+    current_user: UserInDB = Depends(get_current_user),
+) -> CandidateFollowupResponse:
+    _require_v2_route(current_user, allow_shadow=False)
+    result = await asyncio.to_thread(
+        derive_candidate_followup,
+        str(run_id),
+        list(data.candidate_keys),
+        current_user.id,
+        current_user.role.value,
+        request_key,
+    )
+    start_required = bool(result.pop("_start_required", True))
+    if start_required:
+        await _schedule_graph(start_sourcing_risk_graph(str(result["run_id"])))
+    return CandidateFollowupResponse.model_validate(result)
+
+
 @router.post("/{run_id}/approvals/{approval_id}/decisions", summary="提交审批决定")
 @router.post("/{run_id}/approvals/{approval_id}", summary="提交审批决定（兼容旧路径）", deprecated=True)
-async def approve_agent_run(run_id: UUID, approval_id: UUID, data: ApprovalDecisionRequest, current_user: UserInDB = Depends(get_current_user)):
+async def approve_agent_run(
+    run_id: UUID,
+    approval_id: UUID,
+    data: ApprovalDecisionRequest,
+    request: Request,
+    current_user: UserInDB = Depends(get_current_user),
+):
     _require_v2_route(current_user, allow_shadow=False)
-    return await asyncio.to_thread(decide_action_proposal, str(run_id), str(approval_id), data, current_user.id, current_user.role.value)
+    audit_fields = {
+        "user_id": current_user.id,
+        "resource_type": "agent_action_proposal",
+        "resource_id": str(approval_id),
+        "details": {"run_id": str(run_id), "decision": data.decision},
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
+    try:
+        await asyncio.to_thread(log_action, "agent.approval_decision_requested", **audit_fields, required=True)
+    except AuditUnavailable as exc:
+        raise DomainError("AUDIT_UNAVAILABLE", str(exc), 503) from exc
+    result = await asyncio.to_thread(
+        decide_action_proposal, str(run_id), str(approval_id), data,
+        current_user.id, current_user.role.value,
+    )
+    await asyncio.to_thread(
+        log_action, "agent.approval_decided", **audit_fields,
+    )
+    return result
 
 
 @router.post("/{run_id}/cancel", summary="取消任务")

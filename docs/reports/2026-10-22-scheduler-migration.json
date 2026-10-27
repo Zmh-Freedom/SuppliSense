@@ -1,0 +1,405 @@
+{
+  "generated_at": "2026-10-22T13:50:00+08:00",
+  "database": "sra",
+  "mongo_database": "tianyancha",
+  "service_principal": "scheduler:watchlist-monitor",
+  "timezone": "Asia/Shanghai",
+  "include_paid": false,
+  "counts": {
+    "create": 24,
+    "update": 0,
+    "noop": 0,
+    "skip": 0
+  },
+  "applied": {
+    "applied": [
+      {
+        "schedule_id": "watchlist-financial:04c2486a-1258-492d-aa8b-23ff0e8e8d0f",
+        "target_id": "04c2486a-1258-492d-aa8b-23ff0e8e8d0f",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:056a69a9-72db-4f2d-9eb9-46f0b0cd5fa4",
+        "target_id": "056a69a9-72db-4f2d-9eb9-46f0b0cd5fa4",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:09adb9a6-c11c-4b3e-a835-2855df155e9e",
+        "target_id": "09adb9a6-c11c-4b3e-a835-2855df155e9e",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:0f4c8958-16ef-4c79-ad1f-10a3d83658a3",
+        "target_id": "0f4c8958-16ef-4c79-ad1f-10a3d83658a3",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:0fecc939-e3c5-40f9-9cc7-31cc4e23d55e",
+        "target_id": "0fecc939-e3c5-40f9-9cc7-31cc4e23d55e",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:189a3b05-5666-495a-8aa9-00d0a8cc7d58",
+        "target_id": "189a3b05-5666-495a-8aa9-00d0a8cc7d58",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:189fe9fc-b7ef-4d0f-b5fc-bd1eddd8124c",
+        "target_id": "189fe9fc-b7ef-4d0f-b5fc-bd1eddd8124c",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:3106368e-ed01-49e5-8c50-38ec0689b9db",
+        "target_id": "3106368e-ed01-49e5-8c50-38ec0689b9db",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:37976ead-c46f-4b10-a225-f5e2928ef412",
+        "target_id": "37976ead-c46f-4b10-a225-f5e2928ef412",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:385a4333-3211-4a49-900d-98937ebaa69f",
+        "target_id": "385a4333-3211-4a49-900d-98937ebaa69f",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:3fefe1ac-987d-4bd6-bfd5-a2b95ae951dd",
+        "target_id": "3fefe1ac-987d-4bd6-bfd5-a2b95ae951dd",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:5ffa1a07-d92d-411c-be9d-90b3152595df",
+        "target_id": "5ffa1a07-d92d-411c-be9d-90b3152595df",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:76ff917c-475a-49d9-a006-0e16f3475a00",
+        "target_id": "76ff917c-475a-49d9-a006-0e16f3475a00",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:7f065bdf-7a3e-443c-841b-3d3dcb551a23",
+        "target_id": "7f065bdf-7a3e-443c-841b-3d3dcb551a23",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:7f4d2d3f-2d8d-4252-92f8-7f57c7b498d5",
+        "target_id": "7f4d2d3f-2d8d-4252-92f8-7f57c7b498d5",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:90e8082d-85d6-4ee1-8c80-d5f9f271c194",
+        "target_id": "90e8082d-85d6-4ee1-8c80-d5f9f271c194",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:9ff73ebd-d8a2-4f8d-b7ac-8732f4d28e1d",
+        "target_id": "9ff73ebd-d8a2-4f8d-b7ac-8732f4d28e1d",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:aac07a46-895a-4869-a163-776340c761b8",
+        "target_id": "aac07a46-895a-4869-a163-776340c761b8",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:ace0260a-82c3-432a-ad79-e9ab03f686b5",
+        "target_id": "ace0260a-82c3-432a-ad79-e9ab03f686b5",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:b249fb26-524a-4014-9b1e-d1e462549df9",
+        "target_id": "b249fb26-524a-4014-9b1e-d1e462549df9",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:c770b226-0adc-4ccb-b546-27c2e088288b",
+        "target_id": "c770b226-0adc-4ccb-b546-27c2e088288b",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:dd56b04b-f171-4630-9639-cf0718c4564d",
+        "target_id": "dd56b04b-f171-4630-9639-cf0718c4564d",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:f80e91b1-1b24-4e95-88f4-26fc71265bfa",
+        "target_id": "f80e91b1-1b24-4e95-88f4-26fc71265bfa",
+        "revision": 1,
+        "created": true
+      },
+      {
+        "schedule_id": "watchlist-financial:ff4e87ab-33fa-4f0b-98ea-228c3836314f",
+        "target_id": "ff4e87ab-33fa-4f0b-98ea-228c3836314f",
+        "revision": 1,
+        "created": true
+      }
+    ],
+    "count": 24
+  },
+  "entries": [
+    {
+      "target_id": "04c2486a-1258-492d-aa8b-23ff0e8e8d0f",
+      "schedule_id": "watchlist-financial:04c2486a-1258-492d-aa8b-23ff0e8e8d0f",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "056a69a9-72db-4f2d-9eb9-46f0b0cd5fa4",
+      "schedule_id": "watchlist-financial:056a69a9-72db-4f2d-9eb9-46f0b0cd5fa4",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "7d7e4186-9e6b-4aa1-84c8-97234808acf8",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "09adb9a6-c11c-4b3e-a835-2855df155e9e",
+      "schedule_id": "watchlist-financial:09adb9a6-c11c-4b3e-a835-2855df155e9e",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "7d7e4186-9e6b-4aa1-84c8-97234808acf8",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "0f4c8958-16ef-4c79-ad1f-10a3d83658a3",
+      "schedule_id": "watchlist-financial:0f4c8958-16ef-4c79-ad1f-10a3d83658a3",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "0fecc939-e3c5-40f9-9cc7-31cc4e23d55e",
+      "schedule_id": "watchlist-financial:0fecc939-e3c5-40f9-9cc7-31cc4e23d55e",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "b669c18d-9432-4165-96e3-f45b9d22cb3d",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "189a3b05-5666-495a-8aa9-00d0a8cc7d58",
+      "schedule_id": "watchlist-financial:189a3b05-5666-495a-8aa9-00d0a8cc7d58",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "044ba9a7-b7e2-447b-8954-53f677d62a9a",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "189fe9fc-b7ef-4d0f-b5fc-bd1eddd8124c",
+      "schedule_id": "watchlist-financial:189fe9fc-b7ef-4d0f-b5fc-bd1eddd8124c",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "3106368e-ed01-49e5-8c50-38ec0689b9db",
+      "schedule_id": "watchlist-financial:3106368e-ed01-49e5-8c50-38ec0689b9db",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "37976ead-c46f-4b10-a225-f5e2928ef412",
+      "schedule_id": "watchlist-financial:37976ead-c46f-4b10-a225-f5e2928ef412",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "b669c18d-9432-4165-96e3-f45b9d22cb3d",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "385a4333-3211-4a49-900d-98937ebaa69f",
+      "schedule_id": "watchlist-financial:385a4333-3211-4a49-900d-98937ebaa69f",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "044ba9a7-b7e2-447b-8954-53f677d62a9a",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "3fefe1ac-987d-4bd6-bfd5-a2b95ae951dd",
+      "schedule_id": "watchlist-financial:3fefe1ac-987d-4bd6-bfd5-a2b95ae951dd",
+      "kind": "financial_check",
+      "mapping": "service_principal_no_owner",
+      "actor_kind": "service",
+      "actor_id": "scheduler:watchlist-monitor",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "5ffa1a07-d92d-411c-be9d-90b3152595df",
+      "schedule_id": "watchlist-financial:5ffa1a07-d92d-411c-be9d-90b3152595df",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "7d7e4186-9e6b-4aa1-84c8-97234808acf8",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "76ff917c-475a-49d9-a006-0e16f3475a00",
+      "schedule_id": "watchlist-financial:76ff917c-475a-49d9-a006-0e16f3475a00",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "044ba9a7-b7e2-447b-8954-53f677d62a9a",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "7f065bdf-7a3e-443c-841b-3d3dcb551a23",
+      "schedule_id": "watchlist-financial:7f065bdf-7a3e-443c-841b-3d3dcb551a23",
+      "kind": "financial_check",
+      "mapping": "service_principal_no_owner",
+      "actor_kind": "service",
+      "actor_id": "scheduler:watchlist-monitor",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "7f4d2d3f-2d8d-4252-92f8-7f57c7b498d5",
+      "schedule_id": "watchlist-financial:7f4d2d3f-2d8d-4252-92f8-7f57c7b498d5",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "b669c18d-9432-4165-96e3-f45b9d22cb3d",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "90e8082d-85d6-4ee1-8c80-d5f9f271c194",
+      "schedule_id": "watchlist-financial:90e8082d-85d6-4ee1-8c80-d5f9f271c194",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "9ff73ebd-d8a2-4f8d-b7ac-8732f4d28e1d",
+      "schedule_id": "watchlist-financial:9ff73ebd-d8a2-4f8d-b7ac-8732f4d28e1d",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "044ba9a7-b7e2-447b-8954-53f677d62a9a",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "aac07a46-895a-4869-a163-776340c761b8",
+      "schedule_id": "watchlist-financial:aac07a46-895a-4869-a163-776340c761b8",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "ace0260a-82c3-432a-ad79-e9ab03f686b5",
+      "schedule_id": "watchlist-financial:ace0260a-82c3-432a-ad79-e9ab03f686b5",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "7d7e4186-9e6b-4aa1-84c8-97234808acf8",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "b249fb26-524a-4014-9b1e-d1e462549df9",
+      "schedule_id": "watchlist-financial:b249fb26-524a-4014-9b1e-d1e462549df9",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "c770b226-0adc-4ccb-b546-27c2e088288b",
+      "schedule_id": "watchlist-financial:c770b226-0adc-4ccb-b546-27c2e088288b",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "044ba9a7-b7e2-447b-8954-53f677d62a9a",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "dd56b04b-f171-4630-9639-cf0718c4564d",
+      "schedule_id": "watchlist-financial:dd56b04b-f171-4630-9639-cf0718c4564d",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "f80e91b1-1b24-4e95-88f4-26fc71265bfa",
+      "schedule_id": "watchlist-financial:f80e91b1-1b24-4e95-88f4-26fc71265bfa",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    },
+    {
+      "target_id": "ff4e87ab-33fa-4f0b-98ea-228c3836314f",
+      "schedule_id": "watchlist-financial:ff4e87ab-33fa-4f0b-98ea-228c3836314f",
+      "kind": "financial_check",
+      "mapping": "target_owner",
+      "actor_kind": "user",
+      "actor_id": "68750a8c-d4ac-4035-a830-9022f707b6dd",
+      "action": "create",
+      "revision": 1
+    }
+  ]
+}

@@ -22,6 +22,8 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 from app.core.config import settings
+from app.core.llm_compat import completion_token_options
+from app.core.structured_response import parse_json_object_content
 from app.core.cache import cached, invalidate_cache, cache_client
 from app.db.mongo import get_db
 from app.domains.risk.news_sources import collect_public_news
@@ -87,13 +89,13 @@ def _call_llm(prompt: str) -> dict | None:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=2048,
+            **completion_token_options(2048),
         )
-        text = resp.choices[0].message.content or "{}"
-        text = text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("\n", 1)[0]
-        return json.loads(text)
+        return parse_json_object_content(
+            resp.choices[0].message.content,
+            operation="sentiment_analysis",
+            response=resp,
+        )
     except Exception as e:
         logger.warning("LLM sentiment call failed: %s", e)
         return None
@@ -741,8 +743,8 @@ def analyze_sentiment_background(company_name: str) -> None:
         analyze_sentiment(company_name, force_refresh=True)
         # Notify WebSocket clients that analysis is ready
         try:
-            from app.services.ws_manager import ws_manager
-            ws_manager.broadcast_from_thread(
+            from app.services.realtime import publish
+            publish(
                 "sentiment_ready",
                 {"company_name": company_name},
             )

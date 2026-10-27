@@ -5,10 +5,12 @@ import { api } from '../api';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from 'recharts';
 import SentimentPanel from './SentimentPanel';
 import { SkeletonCard, SkeletonChart } from './Skeleton';
-import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel, getRiskLevelLabel } from '../riskColors';
+import { getRiskColor, getRiskBg, getRiskColorForLevel, getRiskBgForLevel } from '../riskColors';
 import { useDashboard } from '../hooks';
 import { queryKeys } from '../query-keys';
 import type { Prediction } from '../types';
+import { monitorEvidencePresentation } from '../evidencePresentation';
+import WorkQueue from './WorkQueue';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -51,6 +53,7 @@ export default function Dashboard() {
       predQuery.refetch(),
       trendQuery.refetch(),
       queryClient.refetchQueries({ queryKey: queryKeys.sentimentDashboard, type: 'active' }),
+      queryClient.refetchQueries({ queryKey: queryKeys.procurementWorkbenchPrefix, type: 'active' }),
     ]);
     const failed = results.some(result => {
       if (result.status === 'rejected') return true;
@@ -67,6 +70,7 @@ export default function Dashboard() {
     return (
       <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
         <ProcurementEntry onStartSourcing={() => navigate('/sourcing')} onViewMonitoring={() => navigate('/assess')} />
+        <WorkQueue />
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-12 text-center shadow-sm">
           <p className="text-gray-400 mb-4">风险概览暂时加载失败，但你仍可以开始寻源或打开风险监控。</p>
           <button onClick={refreshDashboard} disabled={isRefreshing} className="min-h-[44px] rounded-lg px-3 text-sm text-[var(--color-primary-bg)] hover:bg-[var(--color-primary-bg)]/10 disabled:opacity-50">重试加载风险概览</button>
@@ -78,6 +82,7 @@ export default function Dashboard() {
   if (isLoading || !data) return (
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <ProcurementEntry onStartSourcing={() => navigate('/sourcing')} onViewMonitoring={() => navigate('/assess')} />
+      <WorkQueue />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}
       </div>
@@ -99,6 +104,7 @@ export default function Dashboard() {
   return (
     <div className="max-w-4xl mx-auto py-6 px-4 space-y-6">
       <ProcurementEntry onStartSourcing={() => navigate('/sourcing')} onViewMonitoring={() => navigate('/assess')} />
+      <WorkQueue />
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-[var(--color-text)]">风险状态概览</h2>
@@ -108,13 +114,9 @@ export default function Dashboard() {
       </div>
       {refreshError && <p role="status" className="-mt-4 text-xs text-amber-700">{refreshError}</p>}
 
-      {/* agent suggestions */}
-      <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-4 shadow-sm">
-        <div className="flex items-center gap-2 mb-3">
-          <svg className="w-4 h-4 text-[var(--color-primary-bg)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
-          <span className="text-sm font-medium text-[var(--color-text)]">Agent 建议</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <details className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
+        <summary className="min-h-[40px] cursor-pointer text-sm font-medium text-[var(--color-text)]">帮助与示例问题</summary>
+        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {[
             { label: '复核上市供应商案例', q: '复核青岛三祥科技股份有限公司' },
             { label: '复核非上市供应商案例', q: '复核上海汽车制动系统有限公司' },
@@ -128,7 +130,7 @@ export default function Dashboard() {
             </button>
           ))}
         </div>
-      </div>
+      </details>
 
       {/* summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -185,9 +187,10 @@ export default function Dashboard() {
 
       {/* risk distribution bar */}
       <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-4">风险分布</h3>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] mb-1">风险历史快照分布</h3>
+        <p className="mb-4 text-[11px] text-[var(--color-text-secondary)]">按最近保存的风险快照统计；未知对象也计入总数，当前有效性请查看证据覆盖。</p>
         <div className="flex h-8 rounded-full overflow-hidden">
-          {levels.filter(l => l.key !== '未知').map(l => {
+          {levels.map(l => {
             const count = data.distribution[l.key] || 0;
             const pct = data.total > 0 ? (count / data.total) * 100 : 0;
             return pct > 0 ? (
@@ -203,7 +206,7 @@ export default function Dashboard() {
           })}
         </div>
         <div className="flex gap-4 mt-3 text-xs text-gray-500">
-          {levels.filter(l => l.key !== '未知').map(l => (
+          {levels.map(l => (
             <span key={l.key} className="flex items-center gap-1">
               <span className="w-2.5 h-2.5 rounded-full" style={{ background: l.color }} />
               {l.key} {data.distribution[l.key] || 0} 个
@@ -270,8 +273,11 @@ export default function Dashboard() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {rankedTargets.map((target, index) => {
                   const score = target.risk_score;
-                  const riskColor = score == null ? '#737373' : getRiskColor(score);
-                  const riskBg = score == null ? '#f5f5f4' : getRiskBg(score);
+                  const evidence = monitorEvidencePresentation(target);
+                  const historical = evidence.riskLabel.startsWith('历史评估');
+                  const riskColor = score == null || historical ? '#737373' : getRiskColor(score);
+                  const riskBg = score == null || historical ? '#f5f5f4' : getRiskBg(score);
+                  const actionClass = evidence.actionTone === 'danger' ? 'text-red-700' : evidence.actionTone === 'warning' ? 'text-amber-700' : 'text-gray-600';
                   const trendDelta = target.risk_change?.delta;
                   const trendText = target.risk_change?.label || '暂无数据';
                   return (
@@ -287,7 +293,7 @@ export default function Dashboard() {
                       </td>
                       <td className="px-3 py-3">
                         <span className="inline-flex rounded-full px-2 py-1 text-[11px] font-medium" style={{ color: riskColor, background: riskBg }}>
-                          {score == null ? '暂无快照' : `${getRiskLevelLabel(target.risk_level)} ${score}/100`}
+                          {evidence.riskLabel}
                         </span>
                       </td>
                       <td className="px-3 py-3 text-[var(--color-text-secondary)]">
@@ -297,8 +303,8 @@ export default function Dashboard() {
                         <span className="block truncate">{(target.data_coverage as { summary?: string } | undefined)?.summary || '覆盖情况未知'}</span>
                       </td>
                       <td className="max-w-[160px] px-3 py-3">
-                        <span className={`block truncate font-medium ${target.next_action?.priority === 'high' ? 'text-red-700' : target.next_action?.priority === 'medium' ? 'text-amber-700' : 'text-emerald-700'}`}>
-                          {target.next_action?.label || '继续观察'}
+                        <span className={`block truncate font-medium ${actionClass}`} title={evidence.detail}>
+                          {evidence.actionLabel}
                         </span>
                       </td>
                     </tr>

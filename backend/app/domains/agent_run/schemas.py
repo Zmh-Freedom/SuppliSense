@@ -73,6 +73,45 @@ class IdentityResolutionRequest(_ImmutableModel):
         return _deep_freeze(value)
 
 
+class CandidateDecisionItem(_ImmutableModel):
+    candidate_key: str = Field(min_length=1, max_length=255)
+    action: Literal["confirm", "defer", "exclude"]
+    company_id: str | None = Field(default=None, min_length=1, max_length=64)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class CandidateDecisionBatchRequest(_ImmutableModel):
+    expected_version: int = Field(ge=1)
+    decisions: list[CandidateDecisionItem] = Field(default_factory=list, max_length=100)
+
+
+class CandidateDecisionResponse(_ImmutableModel):
+    run_id: UUID
+    run_version: int = Field(ge=1)
+    dispositions: list[dict[str, Any]] = Field(default_factory=list)
+    resume_status: str = Field(min_length=1, max_length=32)
+    new_run_id: UUID | None = None
+
+
+class CandidateFollowupRequest(_ImmutableModel):
+    candidate_keys: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("candidate_keys")
+    @classmethod
+    def validate_candidate_keys(cls, value: list[str]) -> list[str]:
+        if any(not key.strip() for key in value):
+            raise ValueError("candidate_key 不能为空")
+        if len(set(value)) != len(value):
+            raise ValueError("candidate_key 不得重复")
+        return value
+
+
+class CandidateFollowupResponse(_ImmutableModel):
+    parent_run_id: UUID
+    run_id: UUID
+    resume_url: str = Field(min_length=1, max_length=255)
+
+
 class ApprovalDecisionRequest(_ImmutableModel):
     expected_version: int = Field(ge=1)
     decision: Literal["approved", "rejected"]

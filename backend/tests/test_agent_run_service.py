@@ -12,6 +12,7 @@ from app.domains.agent_run.schemas import ClarificationRequest, CreateSourcingRi
 def _run(status: str = "CREATED", version: int = 1, user_id: str = "user-id") -> dict:
     return {
         "id": "00000000-0000-4000-8000-000000000001",
+        "run_type": "sourcing_risk_v2",
         "user_id": user_id,
         "status": status,
         "version": version,
@@ -34,8 +35,15 @@ def test_cancel_run_updates_only_the_expected_version(monkeypatch: pytest.Monkey
 def test_cancel_run_persists_terminal_stage_event(monkeypatch: pytest.MonkeyPatch):
     """Removing the terminal event would make a cancelled run unreplayable to SSE clients."""
     events: list[dict] = []
+    cancelled_batches: list[str] = []
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("CLARIFYING", 2))
+    monkeypatch.setattr(
+        service,
+        "cancel_pending_candidate_review_batches_with_cursor",
+        lambda run_id, _cur: cancelled_batches.append(run_id),
+    )
     monkeypatch.setattr(
         service,
         "update_run_status",
@@ -53,6 +61,7 @@ def test_cancel_run_persists_terminal_stage_event(monkeypatch: pytest.MonkeyPatc
 
     assert result["status"] == "CANCELLED"
     assert result["version"] == 3
+    assert cancelled_batches == ["run-id"]
     assert events == [{"run_id": "run-id", "version": 3, "event_type": "done", "payload": {"status": "CANCELLED"}}]
 
 
@@ -64,6 +73,7 @@ def test_persist_supervisor_snapshot_advances_terminal_run_status_atomically(
     updated = _run("COMPLETED", 5)
     events: list[dict] = []
     monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: dict(run))
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "update_run_status", lambda *_args, **_kwargs: dict(updated))
     monkeypatch.setattr(
@@ -763,6 +773,7 @@ def test_submit_clarification_merges_answers_and_resets_clarifying_run(monkeypat
     """Keeping answers only in an event would make the resumed graph parse stale input again."""
     events: list[dict] = []
     updated_requirement = {"requirement_text": "采购工业摄像头", "specification": "IP67"}
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("CLARIFYING", 2))
     monkeypatch.setattr(
@@ -802,6 +813,7 @@ def test_submit_clarification_merges_answers_and_resets_clarifying_run(monkeypat
 def test_create_run_persists_created_event(monkeypatch: pytest.MonkeyPatch):
     """Removing the first event would prevent a subscriber from reconstructing the lifecycle start."""
     events: list[dict] = []
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "insert_run", lambda **_: _run())
     monkeypatch.setattr(service, "append_event", lambda *args, **_: events.append(args))
@@ -843,8 +855,18 @@ def test_persist_parsed_requirement_merges_normalized_fields(monkeypatch: pytest
 def test_identity_resolution_versions_a_durable_resume_event(monkeypatch: pytest.MonkeyPatch):
     """A stale reviewer must not overwrite a newer durable identity resolution."""
     events: list[dict] = []
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
-    monkeypatch.setattr(service, "get_run_for_user", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(service, "get_run_for_update", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(
+        service,
+        "list_candidates_with_cursor",
+        lambda *_: [{
+            "candidate_id": "candidate-row",
+            "supplier_name": "candidate-a",
+            "identity_candidates": [{"company_id": "company-a"}],
+        }],
+    )
     monkeypatch.setattr(
         service,
         "update_run_status",
@@ -874,9 +896,42 @@ def test_identity_resolution_versions_a_durable_resume_event(monkeypatch: pytest
     }]
 
 
+def test_identity_resolution_rejects_company_outside_persisted_options(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(service, "get_cursor", _no_cursor)
+    monkeypatch.setattr(service, "get_run_for_update", lambda *_: _run("IDENTITY_REVIEW", 2))
+    monkeypatch.setattr(
+        service,
+        "list_candidates_with_cursor",
+        lambda *_: [{
+            "candidate_id": "candidate-row",
+            "supplier_name": "candidate-a",
+            "identity_candidates": [{"company_id": "company-a"}],
+        }],
+    )
+    monkeypatch.setattr(
+        service,
+        "update_run_status",
+        lambda *_args, **_kwargs: pytest.fail("forged identity must not advance the run"),
+    )
+
+    with pytest.raises(DomainError) as exc:
+        service.submit_identity_resolution(
+            "run-id",
+            IdentityResolutionRequest(expected_version=2, resolutions={"candidate-a": "forged-company"}),
+            "user-id",
+            "analyst",
+        )
+
+    assert exc.value.code == "SOURCING_IDENTITY_OPTION_INVALID"
+    assert exc.value.status_code == 422
+
+
 def test_orchestration_state_transition_writes_typed_event_with_new_version(monkeypatch: pytest.MonkeyPatch):
     """Keeping graph status in the checkpoint alone would strand SSE before its terminal event."""
     events: list[dict] = []
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_run", lambda *_: _run("SCORING", 7))
     monkeypatch.setattr(
@@ -1327,6 +1382,7 @@ def test_postgres_commit_failure_records_durable_recovery(monkeypatch: pytest.Mo
 def test_each_snapshot_attempt_uses_a_unique_staging_owner(monkeypatch: pytest.MonkeyPatch):
     owners: list[str] = []
     monkeypatch.setattr(service, "stage_raw_payloads", lambda _payloads, *, staging_owner: owners.append(staging_owner) or [])
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run("INVESTIGATING", 4))
     monkeypatch.setattr(service, "persist_run_snapshot", lambda *_args, **_kwargs: {"candidates": []})

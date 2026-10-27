@@ -192,47 +192,15 @@ def _candidate_context(candidate: dict | None, query: str) -> tuple[str, str | N
 
 
 def _data_coverage(candidate: dict | None, query: str, enterprise_state: dict) -> tuple[list[dict], list[dict], list[dict]]:
-    db = get_db()
-    company_name, supplier_id, supplier_code = _candidate_context(candidate, query)
-    transaction_query: dict[str, Any] = {"sync_status": "current"}
-    if supplier_code:
-        transaction_query["supplier_code"] = supplier_code
-    elif supplier_id:
-        transaction_query["supplier_id"] = supplier_id
-    else:
-        transaction_query = {"supplier_name": company_name, "sync_status": "current"}
-    transactions = list(db["supplier_transaction_snapshots"].find(transaction_query).sort("snapshot_month", -1).limit(24))
-    part_query: dict[str, Any] = {"supplier_code": supplier_code} if supplier_code else {"supplier_name": company_name}
-    part_count = db["internal_supplier_material_relations"].count_documents(part_query)
-    sentiment = db["sentiment_results"].find_one({"company_name": company_name})
+    from app.domains.alert.coverage_service import build_intake_coverage
 
-    financial = None
-    try:
-        from app.domains.risk.repo_financial import get_financial_metrics
-
-        metric = get_financial_metrics(company_name)
-        financial = metric.model_dump() if metric else None
-    except Exception:
-        financial = None
-
-    dimensions = [
-        {"key": "enterprise", "label": "企业工商与风险", "status": enterprise_state["status"], "detail": enterprise_state["detail"] or "尚未取得企业资料"},
-        {"key": "transaction", "label": "内部月度交易", "status": "available" if transactions else "missing", "detail": f"已关联 {len(transactions)} 条月度快照" if transactions else "未关联内部交易快照"},
-        {"key": "history", "label": "历史零件合作", "status": "available" if part_count else "missing", "detail": f"已关联 {part_count} 条零件—供应商关系" if part_count else "未关联历史零件关系"},
-        {"key": "financial", "label": "公开财务", "status": "available" if financial else "missing", "detail": "已取得公开财务指标" if financial else "未取得可用财务指标"},
-        {"key": "sentiment", "label": "舆情分析", "status": "available" if sentiment else "missing", "detail": "已有舆情分析结果" if sentiment else "尚未形成舆情分析"},
-    ]
-    findings: list[dict] = []
-    if transactions:
-        latest = transactions[0]
-        findings.append({"title": "已关联内部交易", "evidence": f"最新月度快照：{latest.get('snapshot_month') or '期间未知'}；收货记录数 {latest.get('receipt_record_count') or latest.get('receipt_count') or '未提供'}。", "status": "supported"})
-    if part_count:
-        findings.append({"title": "存在历史零件合作记录", "evidence": f"内部历史关系库中有 {part_count} 条零件—供应商关系。", "status": "supported"})
-    if financial:
-        findings.append({"title": "已取得公开财务指标", "evidence": "可在首次风险评估中使用已取得的财务指标；需以报告期间和来源为准。", "status": "supported"})
-    if not findings:
-        findings.append({"title": "尚未形成风险结论", "evidence": "当前仅完成线索调查，资料不足不能被解释为低风险。", "status": "partial"})
-    return dimensions, findings, [{"source": "内部交易", "count": len(transactions)}, {"source": "历史零件关系", "count": part_count}, {"source": "公开财务", "available": bool(financial)}]
+    return build_intake_coverage(
+        get_db(),
+        candidate,
+        query,
+        enterprise_state,
+        now=datetime.now(timezone.utc),
+    )
 
 
 def _serialize(value: Any) -> Any:
@@ -316,7 +284,7 @@ def select_monitor_intake_candidate(intake_id: str, candidate_id: str, user_id: 
     return get_monitor_intake(intake_id, user_id) or {}
 
 
-def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
+def confirm_monitor_intake(intake_id: str, user_id: str, user_role: str | None = None) -> dict:
     document = get_db()[INTAKE_COLLECTION].find_one({"intake_id": intake_id, "created_by": user_id})
     if not isinstance(document, dict):
         raise ValueError("调查不存在或无权访问")
@@ -329,8 +297,8 @@ def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
     if not candidate.get("company_id") and candidate.get("candidate_type") == "external_identity":
         raise ValueError("天眼查外部资料尚未绑定本地主体，请先完成主体核验")
 
-    from app.domains.alert.service import add_to_watchlist, get_watchlist_target_summaries, save_snapshot
-    from app.domains.risk.service import calculate_company_risk_preview
+    from app.domains.alert.service import add_to_watchlist, get_watchlist_target_summaries
+    from app.domains.risk.assessment_service import monitor_assessment
 
     target = add_to_watchlist(
         candidate.get("legal_name"),
@@ -339,13 +307,14 @@ def confirm_monitor_intake(intake_id: str, user_id: str) -> dict:
         company_id=candidate.get("company_id"),
         supplier_code=candidate.get("supplier_code"),
         owner_user_id=user_id,
+        actor_user_id=user_id if user_role is not None else None,
+        actor_role=user_role,
     )
     baseline_status = "not_available"
     try:
-        preview = calculate_company_risk_preview(target["company_name"])
-        if preview is not None:
-            save_snapshot(target["company_name"], preview, monitor_target_id=target["monitor_target_id"], target_type=target.get("target_type"), supplier_id=target.get("supplier_id"), company_id=target.get("company_id"))
-            baseline_status = "created"
+        monitor_assessment(target["company_name"], monitor_target_id=target["monitor_target_id"],
+            company_id=target.get("company_id"),actor_id=user_id,request_key="intake:"+intake_id)
+        baseline_status = "created"
     except Exception:
         baseline_status = "partial"
     summary = next((item for item in get_watchlist_target_summaries(user_id, "purchaser") if item.get("monitor_target_id") == target["monitor_target_id"]), target)

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { getStoredUser, setStoredUser, clearStoredUser, isAuthenticated, chatStream } from '../api'
+import { getStoredUser, setStoredUser, clearStoredUser, isAuthenticated, chatStream, resumeChat, chatRunEventStream } from '../api'
 
 describe('auth helpers', () => {
   beforeEach(() => {
@@ -30,9 +30,11 @@ describe('auth helpers', () => {
   it('clears only the current account chat cache on logout', () => {
     setStoredUser('xiaoli.meng', 'purchaser')
     localStorage.setItem('chat_sessions:xiaoli.meng', 'current')
+    localStorage.setItem('chat_active_session:xiaoli.meng', 'active')
     localStorage.setItem('chat_sessions:minhao.zhou', 'other')
     clearStoredUser()
     expect(localStorage.getItem('chat_sessions:xiaoli.meng')).toBeNull()
+    expect(localStorage.getItem('chat_active_session:xiaoli.meng')).toBeNull()
     expect(localStorage.getItem('chat_sessions:minhao.zhou')).toBe('other')
   })
 })
@@ -45,6 +47,25 @@ describe('stream authentication recovery', () => {
 
   afterEach(() => {
     vi.restoreAllMocks()
+  })
+
+  it('rejects an approval response that reaches EOF without a result', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      'event: thinking\ndata: {"message":"正在处理"}\n\n', { status: 200 },
+    )))
+    await expect(resumeChat('session-1', true, {})).rejects.toThrow('最终结果')
+  })
+
+  it('refreshes authentication once for durable replay as well', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('id: 2\nevent: done\ndata: {"status":"completed"}\n\n'))
+    vi.stubGlobal('fetch', fetchMock)
+    const onDone = vi.fn()
+    await chatRunEventStream('run-1', 1, { onDone })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(onDone).toHaveBeenCalledOnce()
   })
 
   it('refreshes once and retries the SSE request after a 401', async () => {

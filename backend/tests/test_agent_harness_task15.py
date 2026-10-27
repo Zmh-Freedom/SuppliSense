@@ -9,8 +9,10 @@ from langchain_core.tools import StructuredTool
 from app.domains.risk.operational_risk_service import assess_operational_risk
 from app.domains.risk.risk_contract import RiskAssessmentRequest, get_risk_dimension_spec
 from app.graphs.agent_core.planner import plan_supplier_analysis_task
-from app.graphs.agent_core.evidence_ledger import Claim, EvidenceLedger, EvidenceRecord
+from app.graphs.agent_core.answer_contract import AgentAnswer
+from app.graphs.agent_core.evidence_ledger import Claim, EvidenceLedger, EvidenceRecord, ValidatedClaim
 from app.graphs.harness import run_harness
+from app.graphs.harness.graph import _screening_statuses, _summary
 from app.services.conversation_state import analysis_dimensions_from_message
 from app.tools.executor import ToolContext, ToolExecutor
 from app.tools.evidence import attach_tool_evidence
@@ -44,6 +46,103 @@ def test_conversation_state_defaults_generic_review_to_available_real_dimensions
     assert analysis_dimensions_from_message("看一下米其林的风险情况") == [
         "risk", "financial", "business_risk",
     ]
+
+
+def test_compliance_summary_does_not_claim_screening_completed_without_verified_claims() -> None:
+    summary = _summary(
+        AgentAnswer(
+            status="needs_review",
+            summary="缺少名单结果",
+            limitations=["缺少 compliance 维度的正式证据"],
+        ),
+        {
+            "current_task": {
+                "user_message": "查询虚构甲供应链有限公司的制裁和黑名单",
+                "target_supplier_names": ["虚构甲供应链有限公司"],
+                "analysis_dimensions": ["compliance"],
+                "capability": "compliance",
+            },
+            "task_specs": [{"tool_name": "check_sanctions"}],
+            "tool_outcomes": [{
+                "tool_name": "check_sanctions",
+                "status": "unavailable",
+                "data": {"status": "unavailable", "clean": None, "match_count": 0, "claims": []},
+            }],
+        },
+    )
+
+    assert "已完成" not in summary
+    assert "无法判断" in summary or "尚未完成" in summary
+
+
+def test_compliance_summary_keeps_verified_domestic_facts_when_lists_are_unavailable() -> None:
+    evidence_id = "screening:domestic-lawsuit"
+    summary = _summary(
+        AgentAnswer(
+            status="needs_review",
+            summary="名单来源不可用，国内诉讼来源已核验。",
+            claims=[ValidatedClaim(
+                claim_id="claim:domestic-lawsuit-count",
+                entity_id="entity:虚构甲供应链有限公司",
+                dimension="compliance",
+                statement="国内 lawsuit 来源核验记录数：2。",
+                value=2,
+                fact_path="count",
+                operator="eq",
+                evidence_refs=[evidence_id],
+                confidence=0.9,
+                validation_status="supported",
+                validation_reasons=[],
+            )],
+            limitations=["没有足够的正式名单证据确认筛查结果"],
+        ),
+        {
+            "current_task": {
+                "user_message": "查询虚构甲供应链有限公司的制裁和黑名单",
+                "target_supplier_names": ["虚构甲供应链有限公司"],
+                "analysis_dimensions": ["compliance"],
+                "capability": "compliance",
+            },
+            "task_specs": [{"tool_name": "check_sanctions"}],
+            "tool_outcomes": [{
+                "tool_name": "check_sanctions",
+                "status": "unavailable",
+                "data": {
+                    "status": "unavailable",
+                    "clean": None,
+                    "match_count": 0,
+                    "evidence_records": [{
+                        "evidence_id": evidence_id,
+                        "entity_id": "entity:虚构甲供应链有限公司",
+                        "facts": {
+                            "domestic_finding_kind": "lawsuit",
+                            "screening_status": "unavailable",
+                        },
+                    }],
+                    "company_name": "虚构甲供应链有限公司",
+                },
+            }],
+        },
+    )
+
+    assert "无法判断" in summary
+    assert "诉讼记录 2 起" in summary
+
+
+def test_screening_status_aggregation_keeps_later_unavailable_supplier() -> None:
+    statuses = _screening_statuses([
+        {
+            "tool_name": "check_sanctions",
+            "data": {"evidence_records": [{"facts": {"screening_status": "no_match_in_scope"}}]},
+        },
+        {
+            "tool_name": "check_sanctions",
+            "status": "unavailable",
+            "data": {"status": "unavailable", "clean": None, "evidence_records": []},
+        },
+    ])
+
+    assert statuses == ["no_match_in_scope", "unavailable"]
 
 
 def test_risk_evidence_exposes_detail_claims_for_procurement_review() -> None:

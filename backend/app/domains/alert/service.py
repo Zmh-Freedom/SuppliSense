@@ -1,13 +1,15 @@
-import asyncio
 import json
-import logging
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timezone
 
+from pymongo.errors import DuplicateKeyError
+
+from app.core.logging import get_logger
 from app.db.mongo import get_db
 from app.schemas import RiskCalculateResponse
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MONITOR_TARGET_TYPES = {"formal_supplier", "external_candidate", "company"}
 
@@ -77,6 +79,62 @@ def _can_access_target(target: dict, user_id: str | None, user_role: str | None)
     return str(target.get("owner_user_id") or "") == str(user_id)
 
 
+def _require_target_access(target: dict, user_id: str, user_role: str) -> None:
+    if not _can_access_target(target, user_id, user_role):
+        raise PermissionError("无权修改该监控对象")
+
+
+def _target_access_filter(target: dict, user_id: str, user_role: str) -> dict:
+    if user_role == "admin":
+        return {}
+    scope = (
+        {"supplier_id": str(target["supplier_id"])}
+        if target.get("supplier_id")
+        else {"owner_user_id": str(user_id)}
+    )
+    if target.get("monitor_target_id"):
+        scope["monitor_target_id"] = str(target["monitor_target_id"])
+    return scope
+
+
+def validate_watchlist_add_access(
+    *,
+    user_id: str,
+    user_role: str,
+    company_name: str | None = None,
+    monitor_target_id: str | None = None,
+    supplier_id: str | None = None,
+    candidate_id: str | None = None,
+    company_id: str | None = None,
+) -> None:
+    """Preflight a watchlist add without writing, including resolved supplier scope."""
+    name = (company_name or "").strip()
+    existing = _find_watchlist_target(
+        monitor_target_id=monitor_target_id,
+        supplier_id=supplier_id,
+        candidate_id=candidate_id,
+        company_id=company_id,
+        company_name=name or None,
+        backfill_id=False,
+    )
+    if existing:
+        _require_target_access(existing, user_id, user_role)
+
+    resolved_supplier_id = supplier_id or (existing or {}).get("supplier_id")
+    resolved_candidate_id = candidate_id or (existing or {}).get("candidate_id")
+    db = get_db()
+    if not resolved_supplier_id and resolved_candidate_id:
+        candidate = db["external_supplier_candidates"].find_one({"_id": resolved_candidate_id})
+        if candidate:
+            resolved_supplier_id = candidate.get("supplier_id")
+    if not resolved_supplier_id and not resolved_candidate_id and not company_id and name:
+        from app.domains.sourcing.supplier_repo import resolve_supplier_id
+
+        resolved_supplier_id = resolve_supplier_id(name)
+    if resolved_supplier_id:
+        _require_target_access({"supplier_id": str(resolved_supplier_id)}, user_id, user_role)
+
+
 def get_watchlist_targets(user_id: str | None = None, user_role: str | None = None) -> list[dict]:
     """Return complete monitoring objects and lazily backfill legacy rows."""
     db = get_db()
@@ -111,6 +169,7 @@ def _find_watchlist_target(
     candidate_id: str | None = None,
     company_id: str | None = None,
     company_name: str | None = None,
+    backfill_id: bool = True,
 ) -> dict | None:
     db = get_db()
     query = _target_query(
@@ -126,7 +185,7 @@ def _find_watchlist_target(
     if not isinstance(document, dict):
         return None
     target = _target_from_document(document)
-    if target.get("monitor_target_id"):
+    if target.get("monitor_target_id") or not backfill_id:
         return target
     target["monitor_target_id"] = str(uuid.uuid4())
     db["watchlist"].update_one(
@@ -142,26 +201,37 @@ def _find_watchlist_target(
     return target
 
 
+def _legacy_snapshot_query(db, company_name: str) -> dict | None:
+    count = db["watchlist"].count_documents({"company_name": company_name})
+    if not isinstance(count, int) or count > 1:
+        return None
+    return {"company_name": company_name, "monitor_target_id": None, "company_id": None, "assessment_id": None}
+
+
+def _comparable_snapshots(first: dict, second: dict) -> bool:
+    return all(first.get(key) == second.get(key) for key in
+        ("company_id", "monitor_target_id", "actor_id", "assessment_scope_key", "policy_hash", "scoring_version"))
+
+
 def _target_snapshots(db: object, target: dict, limit: int = 2) -> list[dict]:
-    """Load the latest snapshots for one monitor target without mixing identities."""
+    """Latest comparable observations; legacy names are only used without ambiguity."""
     target_id = target.get("monitor_target_id")
     company_name = target.get("company_name")
-    query = {"monitor_target_id": target_id} if target_id else {"company_name": company_name}
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(query)
-        .sort([("checked_at", -1), ("snapshot_version", -1)])
-        .limit(limit)
-    )
-    if not snapshots and target_id and company_name:
-        # Compatibility only for snapshots written before monitor_target_id existed.
-        snapshots = list(
-            db["alert_snapshots"]
-            .find({"company_name": company_name})
-            .sort([("checked_at", -1), ("snapshot_version", -1)])
-            .limit(limit)
-        )
-    return [snapshot for snapshot in snapshots if isinstance(snapshot, dict)]
+    from app.domains.risk.assessment_contracts import get_assessment_context
+    context = get_assessment_context()
+    if context.get('actor_id'):
+        snapshots = get_snapshot_history(company_name,100,monitor_target_id=target_id)
+        return [item for item in snapshots if _comparable_snapshots(snapshots[0],item)][:limit] if snapshots else []
+    query = {"monitor_target_id": target_id} if target_id else _legacy_snapshot_query(db, company_name)
+    if query is None:
+        return []
+    snapshots = list(db["alert_snapshots"].find(query).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(100))
+    if not snapshots and target_id:
+        legacy = _legacy_snapshot_query(db, company_name)
+        if legacy:
+            snapshots = list(db["alert_snapshots"].find(legacy).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(100))
+    snapshots = [item for item in snapshots if isinstance(item, dict)]
+    return [item for item in snapshots if _comparable_snapshots(snapshots[0], item)][:limit] if snapshots else []
 
 
 def _has_transaction_data(db: object, target: dict) -> bool:
@@ -178,61 +248,16 @@ def _has_transaction_data(db: object, target: dict) -> bool:
         return False
 
 
-def _data_coverage(db: object, target: dict, snapshot: dict | None) -> dict:
-    """Build user-facing coverage semantics without treating missing data as low risk."""
-    risk_detail = (snapshot or {}).get("risk_detail") or {}
-    snapshot_coverage = risk_detail.get("data_coverage") if isinstance(risk_detail, dict) else {}
-    available_dimensions = set((snapshot_coverage or {}).get("available_dimensions") or [])
-    identity_status = target.get("identity_status") or "unresolved"
-    transaction_available = _has_transaction_data(db, target)
-    try:
-        sentiment_available = db["sentiment_results"].find_one({"company_name": target.get("company_name")}) is not None
-    except Exception:
-        sentiment_available = False
-    dimensions = [
-        {
-            "key": "identity",
-            "label": "主体身份",
-            "status": "available" if identity_status == "verified" else "pending",
-            "detail": "已核验" if identity_status == "verified" else "待核验",
-        },
-        {
-            "key": "risk_snapshot",
-            "label": "风险快照",
-            "status": "available" if snapshot else "missing",
-            "detail": "已有评估快照" if snapshot else "尚未完成首次评估",
-        },
-        {
-            "key": "financial",
-            "label": "财务/公开信息",
-            "status": "available" if (snapshot or "financial" in available_dimensions) and ((snapshot or {}).get("financial") or "financial" in available_dimensions) else "missing",
-            "detail": "已获取" if (snapshot or {}).get("financial") or "financial" in available_dimensions else "当前未覆盖",
-        },
-        {
-            "key": "transaction",
-            "label": "内部交易",
-            "status": "available" if transaction_available else "missing",
-            "detail": "已有供应商月度数据" if transaction_available else "暂无内部交易数据",
-        },
-        {
-            "key": "sentiment",
-            "label": "舆情",
-            "status": "available" if sentiment_available else "missing",
-            "detail": "已有舆情分析" if sentiment_available else "尚未形成舆情分析",
-        },
-    ]
-    available_count = sum(item["status"] == "available" for item in dimensions)
-    ratio = round(available_count / len(dimensions), 2) if dimensions else 0.0
-    status = "complete" if available_count == len(dimensions) else "partial" if available_count else "insufficient"
-    return {
-        "status": status,
-        "available_count": available_count,
-        "total_count": len(dimensions),
-        "coverage_ratio": ratio,
-        "summary": f"{available_count}/{len(dimensions)} 个数据域可用",
-        "dimensions": dimensions,
-        "missing_dimensions": [item["label"] for item in dimensions if item["status"] != "available"],
-    }
+def _data_coverage(db: object, target: dict, snapshot: dict | None, *, now: datetime | None = None) -> dict:
+    """Thin adapter preserving the public coverage response shape."""
+    from app.domains.alert.coverage_service import build_monitor_coverage
+
+    return build_monitor_coverage(
+        db,
+        target,
+        snapshot,
+        now=now or datetime.now(timezone.utc),
+    )
 
 
 def _risk_change(snapshots: list[dict]) -> dict:
@@ -268,7 +293,17 @@ def _next_action(target: dict, snapshot: dict | None, risk_change: dict, coverag
             return {"code": "assess", "label": "首次评估进行中", "priority": "high", "reason": "首次风险评估正在执行，完成后将生成风险快照"}
         return {"code": "assess", "label": "执行首次评估", "priority": "high", "reason": "暂无风险快照，不能判断风险变化"}
     if risk_change["status"] == "deteriorating" or snapshot.get("risk_level") == "高风险":
-        return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": "风险分数上升或当前处于高风险"}
+        risk_dimension = next(
+            (item for item in coverage.get("dimensions", []) if item.get("key") == "risk_snapshot"),
+            {},
+        )
+        historical = risk_dimension.get("status") != "available"
+        reason = (
+            "历史风险评估仍显示高风险或风险恶化，当前证据待核验，需要优先复核"
+            if historical
+            else "当前风险分数上升或处于高风险，需要优先复核"
+        )
+        return {"code": "review", "label": "优先采购复核", "priority": "high", "reason": reason}
     if coverage["status"] != "complete":
         return {"code": "supplement_data", "label": "核验数据覆盖范围", "priority": "medium", "reason": "部分数据域当前未覆盖，不能形成完整结论"}
     return {"code": "continue_monitoring", "label": "继续观察", "priority": "low", "reason": "当前已有完整覆盖且未发现明显恶化"}
@@ -286,47 +321,85 @@ def get_watchlist_target_summaries(
         if user_id is None and user_role is None
         else get_watchlist_targets(user_id, user_role)
     )
-    for target in targets:
-        snapshots = _target_snapshots(db, target)
-        latest = snapshots[0] if snapshots else None
-        initial_status = target.get("initial_assessment_status")
-        if not initial_status:
-            # Rows created before the status fields were introduced are
-            # considered complete when a historical snapshot already exists.
-            initial_status = "completed" if latest else "pending"
-        initial_assessment = {
-            "status": initial_status,
-            "started_at": target.get("initial_assessment_started_at"),
-            "completed_at": target.get("initial_assessment_at"),
-            "failed_at": target.get("initial_assessment_failed_at"),
-            "error": target.get("initial_assessment_error"),
-        }
-        risk_change = _risk_change(snapshots)
-        coverage = _data_coverage(db, target, latest)
-        next_action = _next_action(target, latest, risk_change, coverage)
-        enriched = dict(target)
-        try:
-            from app.domains.alert.review_tasks import get_latest_review_task
-            review_task = get_latest_review_task(target.get("monitor_target_id"))
-        except Exception:
-            # The monitoring dashboard remains readable while PostgreSQL is
-            # unavailable; task details will appear once the store recovers.
-            review_task = None
-        enriched.update({
-            "risk_score": latest.get("risk_score") if latest else None,
-            "risk_level": latest.get("risk_level") if latest else None,
-            "risk_change": risk_change,
-            "data_coverage": coverage,
-            "last_checked_at": latest.get("checked_at") if latest else None,
-            "next_action": next_action,
-            "review_task": review_task,
-            "initial_assessment_status": initial_status,
-            "initial_assessment_at": target.get("initial_assessment_at"),
-            "initial_assessment_error": target.get("initial_assessment_error"),
-            "initial_assessment": initial_assessment,
-        })
-        summaries.append(enriched)
+    checked_at = datetime.now(timezone.utc)
+    scope = nullcontext()
+    if user_id and user_role:
+        from app.domains.risk.assessment_contracts import assessment_scope
+
+        scope = assessment_scope(actor_id=user_id, actor_role=user_role)
+    with scope:
+        for target in targets:
+            try:
+                snapshots = _target_snapshots(db, target)
+            except Exception:
+                snapshots = _projected_target_history(db, target)
+                for snapshot in snapshots:
+                    snapshot["_assessment_context_unavailable"] = True
+            latest = snapshots[0] if snapshots else None
+            initial_status = target.get("initial_assessment_status")
+            if not initial_status:
+                # Rows created before the status fields were introduced are
+                # considered complete when a historical snapshot already exists.
+                initial_status = "completed" if latest else "pending"
+            initial_assessment = {
+                "status": initial_status,
+                "started_at": target.get("initial_assessment_started_at"),
+                "completed_at": target.get("initial_assessment_at"),
+                "failed_at": target.get("initial_assessment_failed_at"),
+                "error": target.get("initial_assessment_error"),
+            }
+            risk_change = _risk_change(snapshots)
+            coverage = _data_coverage(db, target, latest, now=checked_at)
+            next_action = _next_action(target, latest, risk_change, coverage)
+            enriched = dict(target)
+            try:
+                from app.domains.alert.review_tasks import get_latest_review_task
+                review_task = get_latest_review_task(
+                    target.get("monitor_target_id"), user_id, user_role
+                )
+            except Exception:
+                # The monitoring dashboard remains readable while PostgreSQL is
+                # unavailable; task details will appear once the store recovers.
+                review_task = None
+            enriched.update({
+                "risk_score": latest.get("risk_score") if latest else None,
+                "risk_level": latest.get("risk_level") if latest else None,
+                "risk_change": risk_change,
+                "data_coverage": coverage,
+                "last_checked_at": latest.get("checked_at") if latest else None,
+                "next_action": next_action,
+                "review_task": review_task,
+                "initial_assessment_status": initial_status,
+                "initial_assessment_at": target.get("initial_assessment_at"),
+                "initial_assessment_error": target.get("initial_assessment_error"),
+                "initial_assessment": initial_assessment,
+            })
+            summaries.append(enriched)
     return summaries
+
+
+def _projected_target_history(db: object, target: dict, limit: int = 2) -> list[dict]:
+    """Keep stable-ID historical values visible during PG outages, marked non-current."""
+    monitor_target_id = target.get("monitor_target_id")
+    if not monitor_target_id:
+        return []
+    try:
+        rows = list(
+            db["alert_snapshots"]
+            .find({"monitor_target_id": monitor_target_id})
+            .sort([("checked_at", -1), ("snapshot_version", -1)])
+            .limit(100)
+        )
+    except Exception:
+        return []
+    rows = [item for item in rows if isinstance(item, dict)]
+    if target.get("company_id"):
+        rows = [item for item in rows if item.get("company_id") in (None, target["company_id"])]
+    if not rows:
+        return []
+    first = rows[0]
+    comparable = [item for item in rows if _comparable_snapshots(first, item)]
+    return comparable[: max(1, min(limit, 20))]
 
 
 def get_watchlist_target_risk_detail(
@@ -342,7 +415,16 @@ def get_watchlist_target_risk_detail(
         return None
 
     db = get_db()
-    snapshots = _target_snapshots(db, target, limit=20)
+    scope = nullcontext()
+    if user_id and user_role:
+        from app.domains.risk.assessment_contracts import assessment_scope
+
+        scope = assessment_scope(actor_id=user_id, actor_role=user_role)
+    with scope:
+        try:
+            snapshots = _target_snapshots(db, target, limit=20)
+        except Exception:
+            snapshots = _projected_target_history(db, target, limit=20)
     latest = snapshots[0] if snapshots else None
     history = [
         {
@@ -386,14 +468,9 @@ def get_watchlist_target_risk_detail(
 def _broadcast_alert_update() -> None:
     """Notify all WebSocket clients that alert data changed."""
     try:
-        from app.services.ws_manager import ws_manager
-        db = get_db()
-        count = db["alerts"].count_documents({})
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(ws_manager.broadcast("alert_update", {"count": count}))
-        else:
-            asyncio.run(ws_manager.broadcast("alert_update", {"count": count}))
+        from app.services.realtime import publish
+
+        publish("alert_update", {})
     except Exception:
         pass  # WebSocket push is best-effort
 
@@ -408,7 +485,8 @@ def save_snapshot(
     candidate_id: str | None = None,
     company_id: str | None = None,
 ) -> None:
-    from app.domains.risk.service import SCORING_VERSION
+    # Historical import compatibility only; active assessment entries use the PG ledger.
+    SCORING_VERSION = "v3_safety_score"
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
     db = get_db()
@@ -446,6 +524,8 @@ def save_snapshot(
     snapshot_version = previous_version + 1 if isinstance(previous_version, int) else 1
     snapshot_id = str(uuid.uuid4())
     doc = {
+        "verification_status": "legacy_unverified",
+        "quality": "legacy_unverified",
         "snapshot_id": snapshot_id,
         "snapshot_version": snapshot_version,
         "previous_snapshot_id": previous_snapshot_id,
@@ -475,62 +555,40 @@ def get_snapshot_history(
 ) -> list[dict]:
     """Return append-only risk assessment snapshots for audit and monitoring review."""
     bounded_limit = max(1, min(limit, 100))
+    from app.domains.risk.assessment_contracts import get_assessment_context
+    from app.domains.risk.assessment_service import legacy_snapshot_history
+    context = get_assessment_context()
+    if context.get('actor_id'):
+        rows = legacy_snapshot_history(company_name,actor_id=context['actor_id'],actor_role=context.get('actor_role',''),
+            monitor_target_id=monitor_target_id,limit=bounded_limit)
+        if rows:
+            return rows
     db = get_db()
-    query = _target_query(monitor_target_id=monitor_target_id, company_name=company_name)
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(query)
-        .sort([("snapshot_version", -1), ("checked_at", -1)])
-        .limit(bounded_limit)
-    )
+    query = {"monitor_target_id": monitor_target_id} if monitor_target_id else _legacy_snapshot_query(db, company_name)
+    if query is None:
+        return []
+    snapshots = list(db["alert_snapshots"].find(query).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(bounded_limit))
     if not snapshots and monitor_target_id:
-        return list(
-            db["alert_snapshots"]
-            .find({"company_name": company_name})
-            .sort([("snapshot_version", -1), ("checked_at", -1)])
-            .limit(bounded_limit)
-        )
+        legacy = _legacy_snapshot_query(db, company_name)
+        if legacy:
+            return list(db["alert_snapshots"].find(legacy).sort([("checked_at", -1), ("snapshot_version", -1)]).limit(bounded_limit))
     return snapshots
 
 
-def get_latest_snapshot(
-    company_name: str,
-    *,
-    monitor_target_id: str | None = None,
-) -> dict | None:
-    db = get_db()
-    snapshot = db["alert_snapshots"].find_one(
-        _target_query(monitor_target_id=monitor_target_id, company_name=company_name),
-        sort=[("checked_at", -1)],
-    )
-    if snapshot is None and monitor_target_id and company_name:
-        # Legacy snapshots predate monitor_target_id; keep them readable during migration.
-        return db["alert_snapshots"].find_one(
-            {"company_name": company_name}, sort=[("checked_at", -1)]
-        )
-    return snapshot
+def get_latest_snapshot(company_name: str, *, monitor_target_id: str | None = None) -> dict | None:
+    snapshots = _target_snapshots(get_db(), {"monitor_target_id": monitor_target_id, "company_name": company_name}, 1)
+    return snapshots[0] if snapshots else None
 
 
 def detect_changes(
     company_name: str,
     *,
     monitor_target_id: str | None = None,
+    emit_alert: bool = True,
 ) -> dict:
     """Compare latest snapshot with second-latest, return changes."""
     db = get_db()
-    snapshots = list(
-        db["alert_snapshots"]
-        .find(_target_query(monitor_target_id=monitor_target_id, company_name=company_name))
-        .sort("checked_at", -1)
-        .limit(2)
-    )
-    if len(snapshots) < 2 and monitor_target_id:
-        snapshots = list(
-            db["alert_snapshots"]
-            .find({"company_name": company_name})
-            .sort("checked_at", -1)
-            .limit(2)
-        )
+    snapshots = _target_snapshots(db, {"company_name": company_name, "monitor_target_id": monitor_target_id}, 2)
     if len(snapshots) < 2:
         return {
             "company_name": company_name,
@@ -573,7 +631,7 @@ def detect_changes(
         for c in changes
     ) else "warning" if changes else "normal"
 
-    if changes:
+    if changes and emit_alert:
         # apply custom alert rules
         from app.domains.alert.rules import evaluate_changes, get_rules
         rules = get_rules(company_name)
@@ -641,6 +699,8 @@ def add_to_watchlist(
     company_id: str | None = None,
     supplier_code: str | None = None,
     owner_user_id: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
 ) -> dict:
     from app.domains.sourcing.supplier_repo import resolve_supplier_id
 
@@ -659,6 +719,7 @@ def add_to_watchlist(
         candidate_id=candidate_id,
         company_id=company_id,
         company_name=name or None,
+        backfill_id=False,
     )
 
     # Resolve existing identities only. Monitoring must never create a supplier.
@@ -684,6 +745,12 @@ def add_to_watchlist(
     if supplier_doc:
         company_id = company_id or supplier_doc.get("company_id")
         supplier_code = supplier_code or supplier_doc.get("supplier_code")
+    if actor_user_id:
+        actor_role = actor_role or ""
+        if existing:
+            _require_target_access(existing, actor_user_id, actor_role)
+        if sid:
+            _require_target_access({"supplier_id": str(sid)}, actor_user_id, actor_role)
     if not name and not (sid or candidate_id or company_id):
         raise ValueError("监控对象缺少企业名称或稳定身份 ID")
     resolved_type = target_type or (
@@ -701,6 +768,9 @@ def add_to_watchlist(
     identity_status = "candidate" if resolved_type == "external_candidate" else (
         "verified" if sid or company_id else "unresolved"
     )
+    target_owner_user_id = (existing or {}).get("owner_user_id")
+    if not existing and not sid:
+        target_owner_user_id = str(owner_user_id or actor_user_id) if (owner_user_id or actor_user_id) else None
     target_doc = {
         "monitor_target_id": target_id,
         "target_type": resolved_type,
@@ -712,7 +782,7 @@ def add_to_watchlist(
         "company_id": company_id,
         "supplier_code": supplier_code,
         "monitor_status": "active",
-        "owner_user_id": owner_user_id or (existing or {}).get("owner_user_id"),
+        "owner_user_id": target_owner_user_id,
         "added_at": datetime.now(timezone.utc),
     }
     identity_filter = _target_query(
@@ -722,11 +792,28 @@ def add_to_watchlist(
         company_id=company_id,
         company_name=name or None,
     )
-    db["watchlist"].update_one(
-        identity_filter,
-        {"$set": target_doc},
-        upsert=True,
-    )
+    update_fields = dict(target_doc)
+    insert_owner = update_fields.pop("owner_user_id", None)
+    update = {"$set": update_fields}
+    actor_owned_insert = bool(actor_user_id and not sid)
+    if insert_owner and not actor_owned_insert:
+        update["$setOnInsert"] = {"owner_user_id": insert_owner}
+    update_filter = identity_filter
+    if existing:
+        if actor_user_id:
+            update_filter = {"$and": [identity_filter, _target_access_filter(existing, actor_user_id, actor_role or "")]}
+        update_result = db["watchlist"].update_one(update_filter, update, upsert=False)
+        if actor_user_id and update_result.matched_count == 0:
+            raise PermissionError("监控对象所有权已变化，请刷新后重试")
+    else:
+        if actor_owned_insert:
+            update_filter = {"$and": [identity_filter, {"owner_user_id": str(actor_user_id)}]}
+        try:
+            db["watchlist"].update_one(update_filter, update, upsert=True)
+        except DuplicateKeyError as exc:
+            if actor_user_id and not sid:
+                raise PermissionError("监控对象已由其他用户创建，无权修改") from exc
+            raise
     _broadcast_alert_update()
     return {**target_doc, "status": "watching"}
 
@@ -738,6 +825,8 @@ def remove_from_watchlist(
     supplier_id: str | None = None,
     candidate_id: str | None = None,
     company_id: str | None = None,
+    actor_user_id: str | None = None,
+    actor_role: str | None = None,
 ) -> dict:
     db = get_db()
     target = _find_watchlist_target(
@@ -756,7 +845,18 @@ def remove_from_watchlist(
     )
     if not query:
         raise ValueError("移出监控缺少监控对象 ID 或企业名称")
-    db["watchlist"].delete_one(query)
+    delete_query = query
+    if actor_user_id:
+        if target is None:
+            raise ValueError("监控对象不存在或无权访问")
+        actor_role = actor_role or ""
+        _require_target_access(target, actor_user_id, actor_role)
+        if actor_role != "admin":
+            scope = _target_access_filter(target, actor_user_id, actor_role)
+            delete_query = {"$and": [query, scope]}
+    delete_result = db["watchlist"].delete_one(delete_query)
+    if actor_user_id and delete_result.deleted_count == 0:
+        raise PermissionError("监控对象所有权已变化，请刷新后重试")
     _broadcast_alert_update()
     return {
         "monitor_target_id": (target or {}).get("monitor_target_id") or monitor_target_id,
@@ -769,7 +869,12 @@ def remove_from_watchlist(
     }
 
 
-def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
+def resolve_watchlist_identity(
+    monitor_target_id: str,
+    limit: int = 10,
+    user_id: str | None = None,
+    user_role: str | None = None,
+) -> dict:
     """Resolve a monitoring target name to verified company candidates.
 
     This reuses both the canonical identity resolver and the supplier-master
@@ -779,6 +884,8 @@ def resolve_watchlist_identity(monitor_target_id: str, limit: int = 10) -> dict:
     target = _find_watchlist_target(monitor_target_id=monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
+    if user_id is not None or user_role is not None:
+        _require_target_access(target, user_id or "", user_role or "")
     from app.domains.company.service import search_identity
     from app.domains.alert.intake_service import (
         _external_identity_candidate,
@@ -868,6 +975,7 @@ def confirm_watchlist_identity(
     monitor_target_id: str,
     company_id: str,
     user_id: str,
+    user_role: str | None = None,
     *,
     source_reference: str | None = None,
     comment: str | None = None,
@@ -876,6 +984,8 @@ def confirm_watchlist_identity(
     target = _find_watchlist_target(monitor_target_id=monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
+    if user_role is not None:
+        _require_target_access(target, user_id, user_role)
 
     from app.domains.company.service import get_company
 
@@ -896,8 +1006,13 @@ def confirm_watchlist_identity(
         "source_reference": source_reference or company.get("source_reference"),
         "comment": comment,
     }
-    db["watchlist"].update_one(
-        {"monitor_target_id": monitor_target_id},
+    update_result = db["watchlist"].update_one(
+        {
+            "$and": [
+                {"monitor_target_id": monitor_target_id},
+                _target_access_filter(target, user_id, user_role) if user_role and user_role != "admin" else {},
+            ]
+        },
         {"$set": {
             "company_id": canonical_id,
             "company_name": canonical_name,
@@ -908,6 +1023,8 @@ def confirm_watchlist_identity(
             "updated_at": now,
         }},
     )
+    if user_role and user_role != "admin" and update_result.matched_count == 0:
+        raise PermissionError("监控对象所有权已变化，请刷新后重试")
     _broadcast_alert_update()
     updated = _find_watchlist_target(monitor_target_id=monitor_target_id) or target
     return {

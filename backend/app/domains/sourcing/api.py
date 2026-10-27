@@ -7,8 +7,9 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
-from app.core.deps import get_current_user, require_admin, require_admin_or_analyst
+from app.core.deps import get_current_user, require_admin, require_admin_or_analyst, require_admin_or_purchaser
 from app.core.logging import get_logger
+from app.domains.auth.audit import AuditUnavailable, log_action
 from app.schemas.sourcing import (
     SelectResultRequest,
     SourcingRequestInput,
@@ -18,6 +19,7 @@ from app.schemas.sourcing import (
     SupplierInput,
     SupplierUpdateInput,
 )
+from app.schemas.user import UserInDB
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sourcing", tags=["sourcing"], dependencies=[Depends(get_current_user)])
@@ -42,11 +44,19 @@ async def create_request(req: SourcingRequestInput, request: Request):
     summary="执行寻源搜索（SSE 流式）",
     description="流式返回寻源进度和结果。事件: retrieving / assessing / ranking / sourcing_result / done / error。",
 )
-async def search_stream(request_id: str):
+async def search_stream(
+    request_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
     from app.domains.sourcing.service import search_suppliers
-    from app.domains.sourcing.repo import get_request as _get_req
+    from app.domains.sourcing.service import get_sourcing_request_detail_for_user
 
-    req = _get_req(request_id)
+    req = await asyncio.to_thread(
+        get_sourcing_request_detail_for_user,
+        request_id,
+        current_user.id,
+        current_user.role.value,
+    )
     if not req:
         raise HTTPException(status_code=404, detail="寻源请求不存在")
 
@@ -109,10 +119,18 @@ async def list_requests(
     summary="寻源详情",
     description="获取单次寻源请求的详情和结果列表。",
 )
-async def get_request_detail(request_id: str):
-    from app.domains.sourcing.service import get_request_detail as _detail
+async def get_request_detail(
+    request_id: str,
+    current_user: UserInDB = Depends(get_current_user),
+):
+    from app.domains.sourcing.service import get_sourcing_request_detail_for_user
 
-    result = await asyncio.to_thread(_detail, request_id)
+    result = await asyncio.to_thread(
+        get_sourcing_request_detail_for_user,
+        request_id,
+        current_user.id,
+        current_user.role.value,
+    )
     if not result:
         raise HTTPException(status_code=404, detail="寻源请求不存在")
     return result
@@ -123,11 +141,55 @@ async def get_request_detail(request_id: str):
     summary="勾选寻源结果",
     description="对寻源结果执行动作: watchlist(加入监控) / apply_access(申请准入)。",
 )
-async def select_result(result_id: str, body: SelectResultRequest, request: Request):
+async def select_result(
+    result_id: str,
+    body: SelectResultRequest,
+    request: Request,
+    current_user: UserInDB = Depends(require_admin_or_purchaser),
+):
     from app.domains.sourcing.service import select_result as _select
 
-    user_id = getattr(request.state, "user_id", "anonymous")
-    return await asyncio.to_thread(_select, result_id, body.action, user_id)
+    user_id = str(current_user.id)
+    if body.action == "watchlist":
+        try:
+            await asyncio.to_thread(
+                log_action,
+                "sourcing.watchlist_add_requested",
+                user_id=user_id,
+                resource_type="sourcing_result",
+                resource_id=result_id,
+                ip_address=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent"),
+                required=True,
+            )
+        except AuditUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        result = await asyncio.to_thread(
+            _select, result_id, body.action, user_id, current_user.role.value
+        )
+    except PermissionError as exc:
+        await asyncio.to_thread(
+            log_action,
+            "sourcing.watchlist_add_denied",
+            user_id=user_id,
+            resource_type="sourcing_result",
+            resource_id=result_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    if body.action == "watchlist":
+        await asyncio.to_thread(
+            log_action,
+            "sourcing.watchlist_added",
+            user_id=user_id,
+            resource_type="sourcing_result",
+            resource_id=result_id,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    return result
 
 
 @router.post(

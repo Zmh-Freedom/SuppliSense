@@ -131,6 +131,30 @@ def test_normalize_uses_frozen_policy_window_not_provider_window(monkeypatch):
     assert record.freshness_status == "stale"
 
 
+def test_normalize_sanctions_uses_risk_freshness_from_resolved_policy():
+    """The required sanctions provider dimension shares the frozen risk freshness window."""
+    from app.domains.sourcing_risk.policy_service import resolve_policy_template
+
+    now = datetime.now(timezone.utc)
+    policy = resolve_policy_template("摄像头")
+
+    record = evidence_service.normalize_evidence(
+        str(uuid4()),
+        str(uuid4()),
+        "sanctions",
+        {
+            "claim_code": "clear",
+            "source_type": "fixed_test_fixture",
+            "observed_at": now.isoformat(),
+            "collected_at": now.isoformat(),
+            "conflict_status": "none",
+        },
+        policy=policy,
+    )
+
+    assert record.freshness_status == "fresh"
+
+
 def test_unavailable_and_hit_sanctions_are_not_score_eligible():
     """Both a failed lookup and a sanctions match must close the scoring path."""
     unavailable = evidence_service.validate_evidence_set(

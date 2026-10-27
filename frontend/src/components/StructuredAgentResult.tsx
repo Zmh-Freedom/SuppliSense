@@ -1,4 +1,7 @@
 import { Fragment } from 'react';
+import { presentRiskClaim } from '../claimPresentation';
+import { canonicalFactPath as canonicalizeFactPath } from '../factPaths';
+import { screeningEvidenceReview } from '../evidencePresentation';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import { EvidenceTable } from './ChatResultSections';
 import AgentTrendCharts from './AgentTrendCharts';
@@ -120,33 +123,8 @@ const FACT_LABELS: Record<string, string> = {
   high_risk_related_count: '高风险关联主体数量',
 };
 
-const FACT_PATH_ALIASES: Record<string, string> = {
-  'revenue_growth': 'revenue_growth',
-  'net_profit_growth': 'net_profit_growth',
-  'debt_ratio': 'debt_ratio',
-  'cash_flow': 'cash_flow',
-  'net_profit_margin': 'net_profit_margin',
-  'current_ratio': 'current_ratio',
-  'quick_ratio': 'quick_ratio',
-  'return_on_equity': 'roe',
-  'roe': 'roe',
-  'revenue': 'revenue',
-  'net_profit': 'net_profit',
-};
-
 function canonicalFactPath(path: string): string {
-  const normalized = path
-    .trim()
-    .replace(/([a-z])([A-Z])/g, '$1_$2')
-    .toLowerCase()
-    .replace(/[\s-]+/g, '_')
-    .replace(/\.{2,}/g, '.')
-    .replace(/^\.+|\.+$/g, '');
-  if (FACT_PATH_ALIASES[normalized]) return FACT_PATH_ALIASES[normalized];
-  const knownPaths = [...Object.keys(FACT_LABELS), ...Object.keys(RISK_FACT_LABELS)];
-  const compact = normalized.replace(/[._]/g, '');
-  const matched = knownPaths.find(item => item.replace(/[._]/g, '').toLowerCase() === compact);
-  return matched || normalized;
+  return canonicalizeFactPath(path, [...Object.keys(FACT_LABELS), ...Object.keys(RISK_FACT_LABELS)]);
 }
 
 const RISK_FACT_LABELS: Record<string, string> = {
@@ -197,7 +175,7 @@ function readableFactLabel(path: string): string {
 function readableFactValue(path: string, value: unknown): string {
   const canonicalPath = canonicalFactPath(path);
   const leafPath = canonicalPath.split('.').pop() || canonicalPath;
-  if (leafPath === 'clean' && typeof value === 'boolean') return value ? '未命中风险记录' : '发现风险记录';
+  if (leafPath === 'clean' && typeof value === 'boolean') return value ? '范围内未发现匹配' : '发现风险记录';
   if (leafPath === 'supplier_spend_share' && typeof value === 'number') return `${(value * 100).toFixed(1)}%`;
   if (leafPath === 'settlement_share' && typeof value === 'number') {
     return value > 0 && value < 0.001 ? '<0.1%' : `${(value * 100).toFixed(1)}%`;
@@ -445,6 +423,7 @@ function trendStatusMeta(trend: string): { label: string; className: string } {
 }
 
 function analysisOverview(answer: AgentAnswer, limitations: string[]): string {
+  if (answer.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension)) && answer.summary) return answer.summary;
   if (answer.summary.includes('监控清单') && answer.claims.length === 0) return answer.summary;
   if (answer.summary.includes('风险变化') && answer.claims.length === 0) return answer.summary;
   if (answer.claims.some(claim => claim.dimension === 'risk_monitoring' && claim.statement.startsWith('监控对象：'))) {
@@ -755,21 +734,44 @@ function reviewClaims(answer: AgentAnswer, paths: string[]): string[] {
     .map(readableClaimStatement);
 }
 
-function answerStatusMeta(answer: AgentAnswer, limitations: string[]) {
+function answerStatusMeta(answer: AgentAnswer, limitations: string[], screeningReview: ReturnType<typeof screeningEvidenceReview>) {
   const text = limitations.join(' ');
+  if (screeningReview) return { label: screeningReview.label, className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   if (text.includes('主体')) return { label: '主体待确认', className: 'border-violet-200 bg-violet-50 text-violet-700', icon: '?' };
   if (text.includes('权限')) return { label: '权限不足', className: 'border-red-200 bg-red-50 text-red-700', icon: '×' };
   if (text.includes('资料') || text.includes('财务')) return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
+  if (answer.claims.length === 0 && ['quality', 'delivery'].includes(getAnswerCapability(answer))) return { label: '当前未覆盖', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   if (answer.status === 'needs_review') return { label: '发现信号，需人工复核', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: '!' };
   return ANSWER_STATUS_META[answer.status] || { label: answer.status, className: 'border-gray-200 bg-gray-50 text-gray-600', icon: '·' };
+}
+
+function hasCurrentScreeningClaimEvidence(claim: AgentAnswer['claims'][number], evidence: AgentEvidenceRecord[]): boolean {
+  const factPath = claim.fact_path?.split('.').at(-1);
+  if (!factPath) return false;
+  return evidence.some(record => {
+    if (!claim.evidence_refs.includes(record.evidence_id)
+      || record.entity_id !== claim.entity_id
+      || record.dimension !== 'compliance'
+      || record.data_mode !== 'formal'
+      || !['sanctions_list', 'sanctions_list_match', 'domestic_compliance'].includes(record.source_type)
+      || !['available', 'confirmed_empty'].includes(record.status)
+      || (record.valid_until && (!Number.isFinite(Date.parse(record.valid_until)) || Date.parse(record.valid_until) < Date.now()))) {
+      return false;
+    }
+    const facts = record.facts || {};
+    if (!['available', 'empty'].includes(String(facts.validity_status))) return false;
+    if (!['no_match_in_scope', 'possible_match', 'confirmed_match', 'partial'].includes(String(facts.screening_status))) return false;
+    return Object.prototype.hasOwnProperty.call(facts, factPath) && facts[factPath] === claim.value;
+  });
 }
 
 export default function StructuredAgentResult({ answer, evidence }: { answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }) {
   if (!answer && (!evidence || evidence.length === 0)) return null;
   const limitations = answer?.limitations.map(readableLimitation).filter(Boolean) || [];
-  const status = answer ? answerStatusMeta(answer, limitations) : null;
+  const screeningReview = answer ? screeningEvidenceReview(evidence || [], answer.claims) : null;
+  const status = answer ? answerStatusMeta(answer, limitations, screeningReview) : null;
   const riskItems = buildRiskItems(answer, evidence || []);
-  const overview = answer ? analysisOverview(answer, limitations) : '';
+  const overview = answer ? screeningReview?.summary || analysisOverview(answer, limitations) : '';
   const watchlistClaims = answer?.claims.filter(claim => claim.dimension === 'risk_monitoring' && (
     claim.statement.startsWith('监控对象：') || (typeof claim.value === 'string' && /(?:有限公司|股份有限公司|集团)/.test(claim.value))
   )) || [];
@@ -781,12 +783,13 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const isWatchlist = Boolean(watchlistClaims.length > 0 || (answer?.summary.includes('监控清单') && !isTrend));
   const scopeQuery = isWatchlist || isTrend;
   const financialMissing = limitations.some(item => item.includes('财务'));
+  const operationalReview = Boolean(answer?.claims.some(claim => ['quality', 'delivery'].includes(claim.dimension)));
   const hasRiskSignals = Boolean(answer?.claims.some(claim => claimGroup(claim) === 'risk' && claim.fact_path?.startsWith('risk_detail.')));
   const capability = getAnswerCapability(answer);
   const capabilityMeta = getAnswerCapabilityMeta(capability);
 
   return <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="Agent 分析结果">
-    {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} />}
+    {answer && !scopeQuery && <ActionSummary answer={answer} limitations={limitations} evidence={evidence || []} />}
     {answer && <div className="bg-gradient-to-br from-[var(--color-surface)] to-[var(--color-code-bg)]/60 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -828,13 +831,33 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {
             const claims = answer.claims.filter(claim => claimGroup(claim) === group && shouldShowClaim(claim));
             if (claims.length === 0) return null;
-            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => { const assessment = claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0); return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{readableClaimDetail(claim)}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>; })}</Fragment>;
+            return <Fragment key={group}>{<tr className="bg-[var(--color-code-bg)]/35"><th colSpan={6} className="px-2 py-2 text-left text-xs font-semibold text-[var(--color-text-secondary)] sm:px-3">{claimGroupTitle(group)}</th></tr>}{claims.map(claim => {
+              const presentation = presentRiskClaim(claim, evidence || [], answer.claims, answer.status !== 'completed' || limitations.length > 0 || Boolean(screeningReview));
+              const isScreeningClaim = claim.dimension === 'compliance' || claim.fact_path?.split('.').at(-1) === 'clean';
+              const hasCurrentScreeningEvidence = isScreeningClaim && hasCurrentScreeningClaimEvidence(claim, evidence || []);
+              const screeningClaimMeta = isScreeningClaim ? screeningReview || (hasCurrentScreeningEvidence ? {
+                label: '范围内未发现匹配',
+                className: 'border-stone-200 bg-stone-50 text-stone-700',
+              } : {
+                label: '名单核验状态未知',
+                className: 'border-amber-200 bg-amber-50 text-amber-700',
+              }) : null;
+              const assessment = screeningClaimMeta
+                ? { label: screeningClaimMeta.label, className: 'className' in screeningClaimMeta ? screeningClaimMeta.className : 'border-amber-200 bg-amber-50 text-amber-700' }
+                : presentation ? { label: presentation.label, className: ({ neutral: 'border-stone-200 bg-stone-50 text-stone-700', positive: 'border-emerald-200 bg-emerald-50 text-emerald-700', warning: 'border-amber-200 bg-amber-50 text-amber-700', danger: 'border-red-200 bg-red-50 text-red-700' })[presentation.tone] } : claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0);
+              const claimValue = isScreeningClaim && !hasCurrentScreeningEvidence ? '旧筛查结果仅供历史参考' : presentation?.value ?? readableClaimDetail(claim);
+              return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{claimValue}{presentation?.context && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{presentation.context}</p>}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>;
+            })}</Fragment>;
           })}</tbody>
         </table>
       </div></EvidenceTable>}
       {answer.claims.length > 0 && !scopeQuery && <section className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3.5 text-sm leading-6 text-violet-950" aria-label={capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}>
         <h4 className="font-semibold">{capability !== 'generic' ? capabilityMeta.suggestionTitle : '采购建议'}</h4>
-        <p className="mt-1">{capability !== 'generic'
+        <p className="mt-1">{screeningReview
+          ? screeningReview.summary
+          : operationalReview
+          ? '质量/交付指标仅用于核对来源事实；评级政策尚未确认，当前无法据此判断风险等级或形成采购放行建议。'
+          : capability !== 'generic'
           ? capabilityMeta.suggestion
           : answer.status === 'needs_review' || financialMissing
           ? `当前结论仅代表已取得资料范围${hasRiskSignals ? '，请先核实上方风险信号' : ''}；涉及关键零件或大额订单时，建议完成采购复核后再决定。`
@@ -872,7 +895,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <p className="font-medium text-[var(--color-text)]">数据来源</p>
           {evidence.map(record => <div key={record.evidence_id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2 text-[var(--color-text)]"><span className="font-medium">{readableProvider(record.provider, record.source_type)}</span><span className="text-[var(--color-text-secondary)]">{readableEvidenceStatus(record.status)}</span></div>
-            <p className="mt-1 leading-5 text-[var(--color-text-secondary)]">{record.data_mode === 'synthetic' ? '演示数据' : '正式数据'} · 更新于 {formatEvidenceDate(record.collected_at)}</p>
+            <p className="mt-1 leading-5 text-[var(--color-text-secondary)]">{record.data_mode === 'synthetic' ? '演示数据' : '正式数据'} · 本次采集时间：{formatEvidenceDate(record.collected_at)} · 来源观察时间：{typeof record.facts?.observed_at === 'string' ? formatEvidenceDate(record.facts.observed_at) : '未知'}</p>
             <details className="mt-2 rounded-lg bg-[var(--color-code-bg)] px-2.5 py-2">
               <summary className="cursor-pointer text-[11px] text-[var(--color-text-secondary)]">查看审计原始数据（含系统字段）</summary>
               <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--color-text-secondary)]">{JSON.stringify({ evidence_id: record.evidence_id, entity_id: record.entity_id, facts: record.facts || {} }, null, 2)}</pre>

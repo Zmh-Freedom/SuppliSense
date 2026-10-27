@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 
+from app.core.config import settings
 from app.core.errors import DomainError
 from app.db.init_pg import ensure_pg_schema
 from app.db.postgres import get_conn, get_cursor, put_conn
@@ -31,6 +32,17 @@ from app.domains.outbox.service import (
 
 _TEST_EVENT_TYPE_PATTERN = "test.outbox.%"
 _TEST_EVENT_ID_PATTERN = "00000000-0000-4000-8000-000000000%"
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _isolate_outbox_queue() -> Iterator[None]:
+    """The batch API has no event-type filter, so other modules' rows would be claimed."""
+    if settings.PG_DB != "outbox_service_test":
+        pytest.skip("requires the explicitly isolated outbox_service_test database")
+    ensure_pg_schema()
+    with get_cursor() as (_, cur):
+        cur.execute("TRUNCATE outbox_consumptions, outbox_events")
+    yield
 
 
 @contextmanager
@@ -601,9 +613,9 @@ def test_process_outbox_batch_retries_dead_letters_and_replays_with_real_handler
             assert attempt_count == 1
             assert last_error == "consumer_handler_failed"
             assert dead_lettered_at is None
-            assert next_attempt_at >= failure_started_at + timedelta(seconds=2)
-            # PostgreSQL clock and the Python assertion clock are sampled on
-            # separate connections; allow a small scheduling/round-trip margin.
+            assert next_attempt_at >= failure_started_at + timedelta(seconds=2) - timedelta(milliseconds=1)
+            # PostgreSQL and Python clocks can differ slightly across the
+            # separate connections used by the retry and assertion paths.
             assert next_attempt_at <= datetime.now(timezone.utc) + timedelta(seconds=3)
             cur.execute(
                 "UPDATE outbox_events SET next_attempt_at = NOW() WHERE event_id = %s",

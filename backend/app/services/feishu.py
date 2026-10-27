@@ -96,7 +96,7 @@ def _get_tenant_access_token() -> str | None:
         return None
 
 
-def send_user_message(open_id: str, text: str) -> bool:
+def send_user_message(open_id: str, text: str, *, raise_on_unknown: bool = False) -> bool:
     """Send a text message to one Feishu user through the self-built app."""
     if not open_id:
         return False
@@ -119,10 +119,16 @@ def send_user_message(open_id: str, text: str) -> bool:
             timeout=settings.FEISHU_BITABLE_TIMEOUT_SECONDS,
         )
         if not response.is_success:
+            if raise_on_unknown and response.status_code >= 500:
+                raise RuntimeError("通知服务送达结果未知")
             return False
         payload = response.json()
+        if raise_on_unknown and (not isinstance(payload, dict) or "code" not in payload):
+            raise RuntimeError("通知服务送达结果未知")
         return isinstance(payload, dict) and payload.get("code", 0) == 0
     except Exception as exc:
+        if raise_on_unknown:
+            raise RuntimeError("通知服务送达结果未知") from exc
         logger.warning("feishu_user_message_failed", open_id=open_id, error=str(exc)[:200])
         return False
 

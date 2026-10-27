@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+
+import pytest
 
 from app.graphs.agent_core import adapter
 from app.graphs.streaming import stream_harness_graph
@@ -32,7 +35,7 @@ def test_load_execution_context_prefers_postgres_snapshot_over_mongo(
     )
     monkeypatch.setattr(
         "app.graphs.agent_core.intent_extractor.extract_conversation_intent",
-        lambda *_args: None,
+        lambda *_args, **_kwargs: None,
     )
 
     context = adapter.load_execution_context(
@@ -48,6 +51,57 @@ def test_load_execution_context_prefers_postgres_snapshot_over_mongo(
     assert active_supplier["supplier_id"] == "supplier-1"
 
 
+def test_load_execution_context_rejects_foreign_session_before_mongo_fallback(
+    monkeypatch,
+) -> None:
+    foreign = SimpleNamespace(user_id="other-user", state={})
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.get_session",
+        lambda *_args: foreign,
+    )
+    monkeypatch.setattr(
+        "app.services.agent._load_conversation_context",
+        lambda _session_id: pytest.fail("Mongo fallback must not read a foreign session"),
+    )
+
+    with pytest.raises(PermissionError, match="不属于当前用户"):
+        adapter.load_execution_context(
+            "00000000-0000-4000-8000-000000000011",
+            "这家供应商怎么样？",
+            "00000000-0000-4000-8000-000000000012",
+        )
+
+
+@pytest.mark.parametrize(
+    "user_id",
+    ["00000000-0000-4000-8000-000000000012", None],
+)
+def test_load_execution_context_does_not_read_unowned_legacy_mongo_history(
+    monkeypatch, user_id: str | None
+) -> None:
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.get_session",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.services.agent._load_conversation_context",
+        lambda _session_id: pytest.fail("unowned legacy Mongo history must not be read"),
+    )
+    monkeypatch.setattr(
+        "app.graphs.agent_core.intent_extractor.extract_conversation_intent",
+        lambda *_args, **_kwargs: None,
+    )
+
+    context = adapter.load_execution_context(
+        "00000000-0000-4000-8000-000000000013",
+        "分析这家供应商的风险",
+        user_id,
+    )
+
+    assert context["history"] == []
+    assert context["references"] == []
+
+
 def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch) -> None:
     calls: list[tuple[str, str, str]] = []
     updated_contexts: list[dict] = []
@@ -55,7 +109,8 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
     expected_turn_id = "00000000-0000-4000-8000-000000000004"
 
     class FakeStore:
-        def persist_harness_snapshot(self, run_id, event_type, snapshot):
+        def persist_harness_snapshot(self, run_id, event_type, snapshot, *, permit):
+            assert permit.run_id == expected_run_id
             calls.append((run_id, event_type, snapshot["run_id"]))
 
         def update_execution_context(self, _session_id, _user_id, context):
@@ -65,6 +120,21 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
         "app.domains.agent_run.state_store.session_state_store",
         FakeStore(),
     )
+    from app.domains.agent_run.coordinator import ExecutionPermit, run_coordinator
+
+    monkeypatch.setattr(run_coordinator, "claim", lambda run_id, owner: ExecutionPermit(run_id, "attempt", 1))
+    monkeypatch.setattr(run_coordinator, "check", lambda permit: None)
+    monkeypatch.setattr(run_coordinator, "recovery_record", lambda *_: {"execution_input": {}})
+
+    def finish(permit, **kwargs):
+        assert kwargs["snapshot"]["run_id"] == expected_run_id
+        updated_contexts.append(kwargs["next_context"])
+        return [
+            {"event_type": name, "payload": payload, "event_id": index}
+            for index, (name, payload) in enumerate(kwargs["events"], 1)
+        ]
+
+    monkeypatch.setattr(run_coordinator, "finish", finish)
     monkeypatch.setattr(
         "app.graphs.agent_core.adapter.save_execution_turn",
         lambda *_args: None,
@@ -116,7 +186,7 @@ def test_harness_stream_uses_control_plane_run_and_persists_snapshot(monkeypatch
         )
     )
 
-    assert any(event.startswith("event: agent_answer") for event in events)
+    assert any("\nevent: agent_answer\n" in event for event in events)
     assert calls == [(expected_run_id, "load_session", expected_run_id)]
     assert updated_contexts
 

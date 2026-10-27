@@ -112,6 +112,9 @@ class TurnResolution(BaseModel):
     needs_clarification: bool = False
     reason: str = Field(min_length=1, max_length=64)
     unresolved_mentions: list[str] = Field(default_factory=list, max_length=20)
+    status: Literal["resolved", "ambiguous", "unresolved"] = "unresolved"
+    candidate_id: str | None = None
+    candidate_names: list[str] = Field(default_factory=list, max_length=20)
 
 
 _COMPANY_NAME_PATTERN = re.compile(
@@ -125,8 +128,9 @@ _PLURAL_REFERENCE_TOKENS = (
 )
 _SINGULAR_REFERENCE_TOKENS = ("这家", "该企业", "该供应商", "该公司", "它")
 _ORDINAL_TARGETS = (
-    ("排名第一", 1), ("第一家", 1), ("前两家", 2), ("前3家", 3),
-    ("前三家", 3), ("前五家", 5),
+    ("排名第一", 0, 1), ("第一家", 0, 1), ("第二家", 1, 1),
+    ("第三家", 2, 1), ("第四家", 3, 1), ("第五家", 4, 1),
+    ("前两家", 0, 2), ("前3家", 0, 3), ("前三家", 0, 3), ("前五家", 0, 5),
 )
 _EXCLUSION_TOKENS = ("除了", "除去", "排除")
 _SUPPLIER_CODE_PATTERN = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9][A-Za-z0-9_\-/]{1,63})(?![A-Za-z0-9])")
@@ -162,8 +166,26 @@ def resolve_turn(
         references or [],
         turn_id,
     )
+    if memory.focus_set is None and memory.entities:
+        # A just-returned ordered candidate set is valid context for ordinal
+        # follow-ups, including when the user refers to it in the same turn.
+        memory.focus_set = FocusSet(
+            entity_ids=[entity.entity_id for entity in memory.entities],
+            primary_entity_id=memory.entities[0].entity_id,
+            source_turn_id=turn_id,
+            reason="reference_set",
+        )
     entries_by_alias = _aliases_to_entities(memory.entities)
     explicit_mentions = _explicit_company_names(message)
+    ambiguous_aliases = _ambiguous_alias_mentions(message, memory.entities)
+    focus_ids = memory.focus_set.entity_ids if memory.focus_set else []
+    ambiguous_singular_reference = (
+        not explicit_mentions
+        and len(focus_ids) > 1
+        and any(token in message for token in _SINGULAR_REFERENCE_TOKENS)
+    )
+    contextual_ambiguity = bool(ambiguous_aliases) or ambiguous_singular_reference
+    ambiguity_reason = "ambiguous_alias" if ambiguous_aliases else "ambiguous_singular_reference"
     explicit_ids: list[str] = []
     mentions: list[EntityMention] = []
 
@@ -181,11 +203,19 @@ def resolve_turn(
     for entity in memory.entities:
         if entity.entity_id in explicit_ids:
             continue
-        if any(alias and alias in message for alias in entity.aliases):
+        if not ambiguous_aliases and any(alias and alias in message for alias in entity.aliases):
             explicit_ids.append(entity.entity_id)
             mentions.append(_mention(turn_id, next(alias for alias in entity.aliases if alias in message), entity.entity_id, MentionMatchType.ALIAS, 1.0))
 
-    for candidate in llm_candidates or []:
+    has_contextual_reference = _has_contextual_reference(message)
+    contextual_targets, contextual_reason, contextual_confidence = _resolve_contextual_targets(message, memory)
+    deterministic_context_wins = bool(
+        not explicit_ids
+        and not contextual_ambiguity
+        and contextual_targets
+        and has_contextual_reference
+    )
+    for candidate in ([] if contextual_ambiguity or deterministic_context_wins else (llm_candidates or [])):
         candidate = str(candidate).strip()
         if not candidate:
             continue
@@ -202,12 +232,20 @@ def resolve_turn(
             ))
 
     explicit_ids = _ordered_mention_ids(message, mentions)
-    if explicit_ids:
+    if contextual_ambiguity and not explicit_mentions:
+        explicit_ids = []
+        mentions = []
+        target_ids = []
+        reason = ambiguity_reason
+        confidence = 0.0
+    elif explicit_ids:
         reason = "explicit_name_or_code"
         target_ids = _apply_exclusions(message, explicit_ids, entries_by_alias)
         confidence = 1.0
+    elif deterministic_context_wins:
+        target_ids, reason, confidence = contextual_targets, contextual_reason, contextual_confidence
     else:
-        target_ids, reason, confidence = _resolve_contextual_targets(message, memory)
+        target_ids, reason, confidence = contextual_targets, contextual_reason, contextual_confidence
 
     entities_by_id = {entity.entity_id: entity for entity in memory.entities}
     target_entities = [entities_by_id[entity_id] for entity_id in target_ids if entity_id in entities_by_id]
@@ -218,7 +256,29 @@ def resolve_turn(
         entity.mention_count += 1
 
     unresolved = [item.text for item in mentions if item.entity_id is None]
-    needs_clarification = not target_ids and _has_contextual_reference(message)
+    needs_clarification = not target_ids and (
+        _has_contextual_reference(message) or reason == "ambiguous_alias"
+    )
+    if ambiguous_aliases:
+        ambiguous_alias_keys = {_normalize(alias) for alias in ambiguous_aliases}
+        ambiguous_ids = {
+            entity.entity_id for entity in memory.entities
+            if any(_normalize(alias) in ambiguous_alias_keys for alias in entity.aliases)
+        }
+        candidate_names = [
+            entity.canonical_name for entity in memory.entities
+            if entity.entity_id in ambiguous_ids
+        ]
+    elif ambiguous_singular_reference:
+        candidate_names = [
+            entity.canonical_name for entity in memory.entities
+            if entity.entity_id in focus_ids
+        ]
+    else:
+        candidate_names = []
+    candidate_id = None
+    if len(target_entities) == 1 and target_entities[0].entity_id.startswith("candidate:"):
+        candidate_id = target_entities[0].entity_id.removeprefix("candidate:")
     focus = FocusSet(
         entity_ids=target_ids,
         primary_entity_id=target_ids[0] if target_ids else None,
@@ -244,6 +304,9 @@ def resolve_turn(
         needs_clarification=needs_clarification,
         reason=reason,
         unresolved_mentions=unresolved,
+        status="resolved" if target_ids else "ambiguous" if contextual_ambiguity else "unresolved",
+        candidate_id=candidate_id,
+        candidate_names=candidate_names,
     )
 
 
@@ -332,14 +395,29 @@ def _resolve_contextual_targets(message: str, memory: EntityMemory) -> tuple[lis
         }
         remaining = [entity.entity_id for entity in entities if entity.entity_id in focus_ids and entity.entity_id not in excluded]
         return remaining, "exclusion", 0.95
-    for token, limit in _ORDINAL_TARGETS:
+    for token, start, limit in _ORDINAL_TARGETS:
         if token in message:
-            return focus_ids[:limit], "ordinal_reference", 0.95
+            return focus_ids[start:start + limit], "ordinal_reference", 0.95
     if any(token in message for token in _PLURAL_REFERENCE_TOKENS):
         return focus_ids, "plural_reference", 0.95
     if any(token in message for token in _SINGULAR_REFERENCE_TOKENS):
+        if len(focus_ids) > 1:
+            return [], "ambiguous_singular_reference", 0.0
         return focus_ids[:1], "singular_reference", 0.9
     return [], "no_target", 0.0
+
+
+def _ambiguous_alias_mentions(message: str, entities: list[EntityMemoryEntry]) -> list[str]:
+    aliases: dict[str, set[str]] = {}
+    display_aliases: dict[str, str] = {}
+    for entity in entities:
+        for alias in entity.aliases:
+            normalized = _normalize(alias)
+            if not normalized or normalized not in _normalize(message):
+                continue
+            aliases.setdefault(normalized, set()).add(entity.entity_id)
+            display_aliases[normalized] = alias
+    return [display_aliases[alias] for alias, entity_ids in aliases.items() if len(entity_ids) > 1]
 
 
 def _apply_exclusions(message: str, target_ids: list[str], aliases: dict[str, EntityMemoryEntry]) -> list[str]:

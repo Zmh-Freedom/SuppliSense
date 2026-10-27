@@ -30,6 +30,7 @@ class ToolContext(BaseModel):
     call_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str | None = None
     run_id: str | None = None
+    task_id: str | None = None
     user_id: str | None = None
     approval_token: str | None = None
     approval_proposal_id: str | None = None
@@ -166,13 +167,22 @@ class ToolExecutor:
         while attempts < max_attempts:
             attempts += 1
             try:
+                from app.domains.agent_run.coordinator import check_current_execution
+
+                await asyncio.to_thread(check_current_execution)
                 raw_result = await asyncio.wait_for(
                     self._invoke(definition.tool, validated.model_dump(), context), timeout=timeout
                 )
+                if spec.side_effect == "read":
+                    await asyncio.to_thread(check_current_execution)
                 break
             except asyncio.TimeoutError:
                 last_error = ToolError(code="timeout", message="工具执行超时", retryable=True)
             except Exception as exc:
+                from app.domains.agent_run.coordinator import ExecutionLost
+
+                if isinstance(exc, ExecutionLost):
+                    raise
                 last_error = ToolError(code="tool_execution_failed", message=str(exc), retryable=attempts < max_attempts)
             if last_error and not last_error.retryable:
                 break

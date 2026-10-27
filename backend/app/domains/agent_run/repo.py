@@ -131,11 +131,79 @@ def get_run(run_id: str) -> dict[str, Any] | None:
         return _row_to_dict(cur, cur.fetchone())
 
 
+def list_sourcing_risk_runs_with_cursor(
+    *,
+    user_id: str,
+    scope_all: bool,
+    cursor: dict[str, str] | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read only authorized sourcing-risk Runs using the workspace's stable cursor order."""
+    sort_at = "COALESCE(updated_at, created_at)"
+    clauses = ["run_type = %s"]
+    params: list[object] = ["sourcing_risk_v2"]
+    if not scope_all:
+        clauses.append("user_id = %s")
+        params.append(user_id)
+
+    if cursor is not None:
+        cursor_at = cursor["updated_at"]
+        source_type = cursor["source_type"]
+        if "agent_run" > source_type:
+            clauses.append(f"({sort_at} < %s OR {sort_at} = %s)")
+            params.extend([cursor_at, cursor_at])
+        elif "agent_run" < source_type:
+            clauses.append(f"{sort_at} < %s")
+            params.append(cursor_at)
+        else:
+            clauses.append(f"({sort_at} < %s OR ({sort_at} = %s AND id::text > %s))")
+            params.extend([cursor_at, cursor_at, cursor["source_id"]])
+
+    query = f"""
+        SELECT id, status, requirement, created_at, updated_at
+        FROM agent_runs
+        WHERE {' AND '.join(clauses)}
+        ORDER BY {sort_at} DESC, id::text ASC
+        LIMIT %s
+    """
+    params.append(limit)
+    with get_cursor() as (_, cur):
+        cur.execute(query, tuple(params))
+        rows = [_row_to_dict(cur, row) for row in cur.fetchall()]
+
+    tasks: list[dict[str, Any]] = []
+    for row in rows:
+        if row is None:
+            continue
+        requirement = dict(row.get("requirement") or {})
+        updated_at = row.get("updated_at")
+        created_at = row.get("created_at")
+        sort_time = updated_at or created_at
+        if sort_time is None:
+            continue
+        run_id = str(row["id"])
+        tasks.append({
+            "source_type": "agent_run",
+            "source_id": run_id,
+            "title": str(
+                requirement.get("title")
+                or requirement.get("requirement_text")
+                or requirement.get("category")
+                or "智能寻源任务"
+            ),
+            "status": str(row.get("status") or "unknown"),
+            "updated_at": sort_time.isoformat(),
+            "time_basis": "updated_at" if updated_at else "created_at",
+            "resume_url": f"/sourcing?run={run_id}",
+        })
+    return tasks
+
+
 def get_latest_harness_run_for_session(
     session_id: str,
     user_id: str,
 ) -> dict[str, Any] | None:
-    """Return the newest Harness run owned by one user."""
+    """Return the newest managed chat run owned by one user."""
     with get_cursor() as (_, cur):
         cur.execute(
             """
@@ -143,9 +211,9 @@ def get_latest_harness_run_for_session(
             FROM agent_runs
             WHERE session_id = %s
               AND user_id = %s
-              AND run_type = 'agent_harness'
+              AND run_type IN ('agent_harness','sourcing_risk_v2')
             ORDER BY CASE
-                WHEN status = 'RUNNING' THEN 0
+                WHEN status NOT IN ('COMPLETED','PARTIAL','NEEDS_REVIEW','ACTION_FAILED','FAILED','CANCELLED','ROLLBACK_FROZEN') THEN 0
                 WHEN status = 'CANCELLED' THEN 1
                 WHEN status IN (
                     'COMPLETED', 'PARTIAL', 'NEEDS_REVIEW',
@@ -234,6 +302,111 @@ def get_run_detail_collections(run_id: str) -> dict[str, Any]:
         "action_proposals": [_proposal_detail(proposal) for proposal in proposals],
         "approvals": approvals,
     }
+
+
+def list_candidates_with_cursor(run_id: str, cur: PgCursor) -> list[dict[str, Any]]:
+    """Load persisted candidates inside the caller's locked-run transaction."""
+    return [
+        _candidate_detail(candidate)
+        for candidate in _list_rows(
+            cur,
+            "SELECT * FROM agent_run_candidates WHERE run_id = %s ORDER BY created_at ASC, id ASC",
+            (run_id,),
+        )
+    ]
+
+
+def list_sourcing_candidate_dispositions_with_cursor(
+    run_id: str, cur: PgCursor,
+) -> list[dict[str, Any]]:
+    return _list_rows(
+        cur,
+        "SELECT * FROM sourcing_candidate_dispositions WHERE run_id = %s ORDER BY candidate_id ASC",
+        (run_id,),
+    )
+
+
+def get_candidate_review_event_by_request_with_cursor(
+    actor_id: str, request_key: str, cur: PgCursor,
+) -> dict[str, Any] | None:
+    cur.execute(
+        "SELECT * FROM sourcing_candidate_review_events WHERE actor_id=%s AND request_key=%s",
+        (actor_id, request_key),
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
+def lock_candidate_review_request_with_cursor(actor_id: str, request_key: str, cur: PgCursor) -> None:
+    """Serialize the actor-wide idempotency key before checking/inserting it."""
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"sourcing-candidate-review:{actor_id}:{request_key}",),
+    )
+
+
+def upsert_sourcing_candidate_disposition_with_cursor(
+    run_id: str,
+    candidate_id: str,
+    action: str,
+    company_id: str | None,
+    reason: str | None,
+    decided_by: str,
+    batch_id: str,
+    cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO sourcing_candidate_dispositions
+            (run_id, candidate_id, action, company_id, reason, decided_by, batch_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (run_id, candidate_id) DO UPDATE SET
+            action=EXCLUDED.action, company_id=EXCLUDED.company_id,
+            reason=EXCLUDED.reason, decided_by=EXCLUDED.decided_by,
+            batch_id=EXCLUDED.batch_id, updated_at=NOW()
+        RETURNING *
+        """,
+        (run_id, candidate_id, action, company_id, reason, decided_by, batch_id),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def insert_candidate_review_event_with_cursor(
+    *,
+    batch_id: str,
+    run_id: str,
+    actor_id: str,
+    request_key: str,
+    request_hash: str,
+    expected_version: int,
+    run_version: int,
+    decisions: list[dict[str, Any]],
+    response: dict[str, Any],
+    resume_status: str,
+    dispatch_status: str,
+    cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO sourcing_candidate_review_events
+            (batch_id, run_id, actor_id, request_key, request_hash, expected_version,
+             run_version, decisions, response, resume_status, dispatch_status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            batch_id, run_id, actor_id, request_key, request_hash, expected_version,
+            run_version, Json(decisions), Json(response), resume_status, dispatch_status,
+        ),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def list_candidate_review_events_with_cursor(run_id: str, cur: PgCursor) -> list[dict[str, Any]]:
+    return _list_rows(
+        cur,
+        "SELECT * FROM sourcing_candidate_review_events WHERE run_id=%s ORDER BY event_id DESC",
+        (run_id,),
+    )
 
 
 def upsert_raw_payload_compensations(
@@ -391,6 +564,20 @@ def update_run_status_with_cursor(
     return _row_to_dict(cur, cur.fetchone())
 
 
+def touch_terminal_run_with_cursor(
+    cur: PgCursor, run_id: str, expected_version: int, expected_status: str,
+) -> dict[str, Any] | None:
+    """Advance a terminal Run's CAS version without rewriting its terminal data."""
+    cur.execute(
+        """UPDATE agent_runs
+           SET version=version+1, updated_at=NOW()
+           WHERE id=%s AND version=%s AND status=%s
+           RETURNING *""",
+        (run_id, expected_version, expected_status),
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
 def append_event(
     run_id: str,
     version: int,
@@ -470,6 +657,164 @@ def insert_policy_snapshot(
         {"id": str(uuid.uuid4()), "run_id": run_id, "template_id": template_id, "policy": policy},
         {"policy"},
     )
+
+
+def get_policy_snapshot_by_run_with_cursor(run_id: str, cur: PgCursor) -> dict[str, Any] | None:
+    cur.execute("SELECT * FROM sourcing_policy_snapshots WHERE run_id=%s", (run_id,))
+    return _row_to_dict(cur, cur.fetchone())
+
+
+def get_policy_snapshot_by_id_with_cursor(snapshot_id: str, cur: PgCursor) -> dict[str, Any] | None:
+    cur.execute("SELECT * FROM sourcing_policy_snapshots WHERE id=%s", (snapshot_id,))
+    return _row_to_dict(cur, cur.fetchone())
+
+
+def upsert_policy_snapshot_with_cursor(
+    run_id: str, policy: dict[str, Any], cur: PgCursor,
+) -> dict[str, Any]:
+    snapshot_id = _stable_id(run_id, "sourcing-policy-snapshot")
+    cur.execute(
+        """
+        INSERT INTO sourcing_policy_snapshots (id, run_id, policy)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (run_id) DO UPDATE SET policy=EXCLUDED.policy
+        RETURNING *
+        """,
+        (snapshot_id, run_id, Json(policy)),
+    )
+    row = _row_to_dict(cur, cur.fetchone())
+    if row is None:
+        raise RuntimeError("寻源规则快照持久化失败")
+    cur.execute(
+        "UPDATE agent_runs SET policy_snapshot_id=%s WHERE id=%s",
+        (row["id"], run_id),
+    )
+    return row
+
+
+def update_run_policy_snapshot_with_cursor(run_id: str, snapshot_id: str, cur: PgCursor) -> None:
+    cur.execute(
+        "UPDATE agent_runs SET policy_snapshot_id=%s WHERE id=%s",
+        (snapshot_id, run_id),
+    )
+
+
+def get_candidate_review_batch_for_execution(batch_id: str) -> dict[str, Any] | None:
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT event.*, run.status AS run_status, run.version AS current_run_version,
+                   run.run_type, run.user_id
+            FROM sourcing_candidate_review_events AS event
+            JOIN agent_runs AS run ON run.id=event.run_id
+            WHERE event.batch_id=%s
+            """,
+            (batch_id,),
+        )
+        return _row_to_dict(cur, cur.fetchone())
+
+
+def mark_candidate_review_batch_consumed_with_cursor(
+    batch_id: str, fencing_token: int, cur: PgCursor,
+) -> bool:
+    cur.execute(
+        """
+        UPDATE sourcing_candidate_review_events
+        SET dispatch_status='consumed', consumed_at=NOW(), lease_owner=NULL,
+            lease_until=NULL, last_error=NULL
+        WHERE batch_id=%s AND dispatch_status='processing' AND fencing_token=%s
+        RETURNING batch_id
+        """,
+        (batch_id, fencing_token),
+    )
+    return cur.fetchone() is not None
+
+
+def cancel_pending_candidate_review_batches_with_cursor(run_id: str, cur: PgCursor) -> int:
+    """Fence pending or leased review batches in the same Run cancellation transaction."""
+    cur.execute(
+        """UPDATE sourcing_candidate_review_events
+           SET dispatch_status='cancelled', lease_owner=NULL, lease_until=NULL,
+               fencing_token=fencing_token+1, last_error='run_cancelled'
+           WHERE run_id=%s AND dispatch_status IN ('pending','processing')""",
+        (run_id,),
+    )
+    return int(cur.rowcount)
+
+
+def get_candidate_followup_event_by_request_with_cursor(
+    actor_id: str, request_key: str, cur: PgCursor,
+) -> dict[str, Any] | None:
+    cur.execute(
+        "SELECT * FROM sourcing_candidate_followup_events WHERE actor_id=%s AND request_key=%s",
+        (actor_id, request_key),
+    )
+    return _row_to_dict(cur, cur.fetchone())
+
+
+def lock_candidate_followup_request_with_cursor(actor_id: str, request_key: str, cur: PgCursor) -> None:
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s))",
+        (f"sourcing-candidate-followup:{actor_id}:{request_key}",),
+    )
+
+
+def insert_candidate_followup_with_cursor(
+    *,
+    parent_run_id: str,
+    child_run_id: str,
+    created_by: str,
+    source_candidate_ids: list[str],
+    child_candidate_ids: list[str],
+    policy_snapshot_id: str | None,
+    cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO sourcing_candidate_followups
+            (child_run_id, parent_run_id, created_by, source_candidate_ids,
+             child_candidate_ids, policy_snapshot_id)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (
+            child_run_id, parent_run_id, created_by, Json(source_candidate_ids),
+            Json(child_candidate_ids), policy_snapshot_id,
+        ),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def insert_candidate_followup_event_with_cursor(
+    *,
+    event_id: str,
+    parent_run_id: str,
+    child_run_id: str,
+    actor_id: str,
+    request_key: str,
+    request_hash: str,
+    response: dict[str, Any],
+    cur: PgCursor,
+) -> dict[str, Any]:
+    cur.execute(
+        """
+        INSERT INTO sourcing_candidate_followup_events
+            (id, parent_run_id, child_run_id, actor_id, request_key, request_hash, response)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+        """,
+        (event_id, parent_run_id, child_run_id, actor_id, request_key, request_hash, Json(response)),
+    )
+    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+
+
+def get_candidate_followup_context(child_run_id: str) -> dict[str, Any] | None:
+    with get_cursor() as (_, cur):
+        cur.execute(
+            "SELECT * FROM sourcing_candidate_followups WHERE child_run_id=%s",
+            (child_run_id,),
+        )
+        return _row_to_dict(cur, cur.fetchone())
 
 
 def insert_candidate(
@@ -575,10 +920,10 @@ def _insert_decision_with_cursor(
 
 def upsert_candidate(
     run_id: str, candidate_key: str, source: str, status: str, candidate_snapshot: dict[str, Any],
-    company_id: str | None, cur: PgCursor,
+    company_id: str | None, cur: PgCursor, persisted_candidate_id: str | None = None,
 ) -> dict[str, Any]:
     """Make graph retries update one immutable-in-scope candidate identity per Run."""
-    candidate_id = _stable_id(run_id, f"candidate:{candidate_key}")
+    candidate_id = persisted_candidate_id or _stable_id(run_id, f"candidate:{candidate_key}")
     cur.execute(
         """
         INSERT INTO agent_run_candidates (id, run_id, company_id, source, status, candidate_snapshot)
@@ -589,11 +934,15 @@ def upsert_candidate(
             status = EXCLUDED.status,
             candidate_snapshot = EXCLUDED.candidate_snapshot,
             updated_at = NOW()
+        WHERE agent_run_candidates.run_id = EXCLUDED.run_id
         RETURNING *
         """,
         (candidate_id, run_id, company_id, source, status, Json(candidate_snapshot)),
     )
-    return _row_to_dict(cur, cur.fetchone())  # type: ignore[return-value]
+    persisted = _row_to_dict(cur, cur.fetchone())
+    if persisted is None:
+        raise ValueError("候选持久化标识与当前任务不匹配")
+    return persisted
 
 
 def upsert_evidence_review(
@@ -654,6 +1003,7 @@ def persist_run_snapshot(
         persisted = upsert_candidate(
             run_id, key, _candidate_source(candidate), _candidate_status(candidate), dict(candidate),
             str(company_id) if company_id else None, cur=cur,
+            persisted_candidate_id=str(candidate["candidate_id"]) if candidate.get("candidate_id") else None,
         )
         persisted_candidates.append(persisted)
         if company_id:

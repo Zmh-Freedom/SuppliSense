@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timezone
@@ -20,6 +21,13 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from app.graphs.agent_core.answer_contract import AgentAnswer, build_agent_answer
+from app.graphs.agent_core.capability_routing import (
+    detect_explicit_capabilities,
+    is_general_supplier_knowledge_question,
+    is_out_of_scope_request,
+    is_translation_request,
+    normalize_primary_capability,
+)
 from app.graphs.agent_core.evidence_ledger import (
     Claim,
     EvidenceLedger,
@@ -38,11 +46,13 @@ from app.graphs.harness.state import (
     utc_now_iso,
 )
 from app.domains.risk.risk_contract import get_risk_dimension_spec
+from app.domains.agent_run.coordinator import ExecutionLost
 
 
 PersistCallback = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 ProgressCallback = Callable[[str, dict[str, Any], bool], Awaitable[None] | None]
 NarrateCallback = Callable[[AgentAnswer, str], Awaitable[AgentAnswer] | AgentAnswer]
+KnowledgeAnswerCallback = Callable[[str], Awaitable[str] | str]
 
 _DIMENSION_TO_TOOL = {
     dimension: (spec.tool_name, spec.argument_name)
@@ -54,6 +64,40 @@ _DIMENSION_TO_TOOL = {
 }
 
 logger = get_logger()
+
+
+def _mark_live_sourcing_deadline_for_review(
+    answer: AgentAnswer,
+    state: HarnessState,
+) -> AgentAnswer:
+    """Keep partial read-only sourcing evidence visible after its time budget.
+
+    A live candidate lookup can return a useful local or external subset before
+    a slower provider reaches the Harness deadline. It must not be rendered as
+    a completed recommendation merely because that subset has valid claims.
+    """
+    current_task = state.get("current_task") or {}
+    requirement = current_task.get("requirement")
+    request_id = requirement.get("request_id") if isinstance(requirement, dict) else None
+    is_live_sourcing = (
+        current_task.get("task_type") == "sourcing"
+        and not str(request_id or "").strip()
+    )
+    if state.get("loop_exit_reason") != "deadline_exceeded" or not is_live_sourcing:
+        return answer
+
+    boundary = "外部寻源未在受限时间内完成，当前结果仅保留已取得的候选线索，需人工复核后再用于采购决策。"
+    summary = answer.summary.strip()
+    if boundary not in summary:
+        summary = f"{summary}\n\n{boundary}" if summary else boundary
+    return answer.model_copy(update={
+        "status": "needs_review",
+        "summary": summary,
+        "limitations": list(dict.fromkeys([
+            *answer.limitations,
+            "外部寻源达到执行时限，未完成的提供方结果未纳入推荐结论",
+        ])),
+    })
 
 
 def _entity_id(name: str, context: Mapping[str, Any]) -> str:
@@ -410,6 +454,23 @@ def _append_derived_tasks(
     return tasks
 
 
+def _has_active_request_phrase(message: str, phrases: tuple[str, ...]) -> bool:
+    """Ignore capability keywords inside an explicitly cancelled clause."""
+    text = str(message or "")
+    for phrase in phrases:
+        start = 0
+        while (position := text.find(phrase, start)) >= 0:
+            clause_prefix = re.split(r"[，,。；;！？!?]", text[:position])[-1]
+            if not re.search(
+                r"(?:不看|先不看|不查|先不查|不需要|无需|不用看|不用查|不必看|不必查|别看|别查)"
+                r"\s*(?:再)?(?:了)?$",
+                clause_prefix,
+            ):
+                return True
+            start = position + len(phrase)
+    return False
+
+
 def _append_capability_tasks(
     tasks: list[HarnessTask],
     current_task: Mapping[str, Any],
@@ -420,6 +481,7 @@ def _append_capability_tasks(
     if not names:
         return
     message = str(current_task.get("user_message") or "")
+    explicit_capabilities = set(detect_explicit_capabilities(message))
     capability_requests = {
         "risk": ("assess_risk", "risk"),
         "financial": ("query_financials", "financial"),
@@ -440,18 +502,32 @@ def _append_capability_tasks(
     llm_capability = str(current_task.get("capability") or "")
     llm_request = capability_requests.get(llm_capability)
     requests = [
-        (("舆情", "新闻", "负面信息"), "sentiment_analysis", "sentiment"),
-        (("供应链关系", "关联关系", "传染风险", "风险传染"), "contagion_analysis", "risk_network"),
-        (("预测", "未来", "趋势预测"), "predict_risk", "risk_prediction"),
-        (("替代供应商", "备选供应商", "供应商替代"), "find_alternatives", "sourcing"),
-        (("生成报告", "风险评估报告", "导出报告"), "generate_report", "report"),
+        (("sentiment", ("舆情", "新闻", "负面信息")), "sentiment_analysis", "sentiment"),
+        (("risk_network", ("供应链关系", "关联关系", "传染风险", "风险传染")), "contagion_analysis", "risk_network"),
+        (("risk_prediction", ("预测", "未来", "趋势预测")), "predict_risk", "risk_prediction"),
+        (("sourcing", ("替代供应商", "备选供应商", "供应商替代")), "find_alternatives", "sourcing"),
+        (("report", ("生成报告", "风险评估报告", "导出报告")), "generate_report", "report"),
     ]
     if llm_request is not None:
         requests.append(((), llm_request[0], llm_request[1]))
     existing = {task.tool_name for task in tasks}
     prefix = str(current_task.get("task_id") or "task")
-    for tokens, tool_name, dimension in requests:
-        if tool_name in existing or (tokens and not any(token in message for token in tokens)):
+    for capability_rule, tool_name, dimension in requests:
+        if not capability_rule:
+            requested_capability, tokens = llm_capability, ()
+        else:
+            requested_capability, tokens = capability_rule
+        if tool_name in existing:
+            continue
+        if (
+            capability_rule
+            and requested_capability not in explicit_capabilities
+            and not _has_active_request_phrase(message, tokens)
+        ):
+            continue
+        if not capability_rule and explicit_capabilities and requested_capability not in explicit_capabilities:
+            continue
+        if tokens and not any(token in message for token in tokens):
             continue
         for name in dict.fromkeys(names):
             argument_name = _DIMENSION_TO_TOOL.get(dimension, ("", "company_name"))[1]
@@ -489,6 +565,7 @@ def _append_tianyancha_tasks(
         for item in current_task.get("provider_capabilities", [])
         if str(item).strip()
     }
+    explicit_capabilities = set(detect_explicit_capabilities(message))
     token_rules = {
         "identity": ("主体身份", "主体核验", "统一社会信用代码", "法人", "登记状态"),
         "legal_risk": ("司法", "诉讼", "被执行", "失信", "限制消费"),
@@ -499,8 +576,10 @@ def _append_tianyancha_tasks(
     if "天眼查" in message:
         requested.add("identity")
     for capability, tokens in token_rules.items():
-        if any(token in message for token in tokens):
+        if _has_active_request_phrase(message, tokens):
             requested.add(capability)
+    if not _has_active_request_phrase(message, token_rules["news"]):
+        requested.discard("news")
     tool_by_capability = {
         "identity": ("lookup_company_identity", "identity_review"),
         "legal_risk": ("lookup_legal_risk", "legal_risk"),
@@ -757,17 +836,21 @@ def _primary_summary_capability(
     tool_names: set[str],
     dimensions: set[str],
     capability: str = "",
+    requested_action: str = "none",
 ) -> str | None:
     """Choose the user's explicitly requested capability for the lead summary."""
-    # The LLM capability is authoritative once it has been validated into the
-    # current task.  Message tokens remain only as a compatibility fallback
-    # for historical callers that construct HarnessState directly.
-    if capability in {
+    # Generic LLM output is corrected by the same pure rule used before the
+    # execution context is built. This also protects historical/directly
+    # constructed Harness state that predates the normalized capability.
+    normalized_capability = normalize_primary_capability(
+        message, capability, requested_action
+    )
+    if normalized_capability in {
         "risk", "risk_network", "risk_prediction", "sentiment", "financial", "compliance",
         "esg", "risk_trend", "legal_risk", "business_risk", "report", "sourcing",
         "company_profile", "identity_review", "risk_comparison", "quality", "delivery",
     }:
-        return capability
+        return normalized_capability
     matched: list[tuple[int, int, str]] = []
     for priority, (capability, tokens, tools) in enumerate(_SUMMARY_ROUTE_DEFINITIONS):
         if not tool_names.intersection(tools):
@@ -807,12 +890,95 @@ def _latest_tool_data(outcomes: list[Any], tool_names: set[str]) -> dict[str, An
     return {}
 
 
+def _screening_statuses(outcomes: list[Any]) -> list[str]:
+    statuses: list[str] = []
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        if str(outcome.get("tool_name") or outcome.get("tool") or "") != "check_sanctions":
+            continue
+        data = outcome.get("data") if isinstance(outcome.get("data"), dict) else {}
+        outcome_statuses: list[str] = []
+        for record in data.get("evidence_records") or []:
+            facts = record.get("facts") if isinstance(record, dict) else None
+            status = facts.get("screening_status") if isinstance(facts, dict) else None
+            if status:
+                outcome_statuses.append(str(status))
+        if not outcome_statuses:
+            declared = str(data.get("status") or outcome.get("status") or "")
+            if declared in {"unavailable", "failed", "denied", "invalid"}:
+                outcome_statuses.append("unavailable")
+        statuses.extend(outcome_statuses)
+    return list(dict.fromkeys(statuses))
+
+
 def _claim_values(claims: list[Any]) -> dict[str, Any]:
     return {
         str(claim.fact_path): claim.value
         for claim in claims
         if claim.fact_path and claim.value is not None
     }
+
+
+def _verified_domestic_facts(answer: AgentAnswer, outcomes: list[Any]) -> list[str]:
+    labels = {
+        "lawsuit": ("诉讼记录", "起"),
+        "court_register": ("开庭公告", "条"),
+        "executed_person": ("被执行人记录", "条"),
+        "dishonesty": ("失信被执行人记录", "条"),
+        "abnormal_operation": ("经营异常记录", "条"),
+        "administrative_penalty": ("行政处罚记录", "条"),
+        "tax_arrears": ("欠税记录", "条"),
+    }
+    domestic_records: dict[str, tuple[str, str, str]] = {}
+    for outcome in outcomes:
+        if not isinstance(outcome, dict):
+            continue
+        data = outcome.get("data") if isinstance(outcome.get("data"), dict) else {}
+        for record in data.get("evidence_records") or []:
+            if not isinstance(record, dict):
+                continue
+            facts = record.get("facts") if isinstance(record.get("facts"), dict) else {}
+            kind = str(facts.get("domestic_finding_kind") or "")
+            if kind in labels and record.get("evidence_id"):
+                domestic_records[str(record["evidence_id"])] = (
+                    kind,
+                    str(record.get("entity_id") or ""),
+                    str(data.get("company_name") or ""),
+                )
+
+    summaries: list[str] = []
+    seen: set[tuple[str, str, int]] = set()
+    for claim in answer.claims:
+        if (
+            claim.dimension != "compliance"
+            or claim.fact_path != "count"
+            or claim.validation_status != "supported"
+            or isinstance(claim.value, bool)
+            or not isinstance(claim.value, int)
+            or claim.value <= 0
+        ):
+            continue
+        findings = {
+            domestic_records[ref]
+            for ref in claim.evidence_refs
+            if ref in domestic_records
+        }
+        for kind, entity_id, company_name in findings:
+            key = (entity_id, kind, claim.value)
+            if key in seen:
+                continue
+            seen.add(key)
+            label, unit = labels[kind]
+            subject_label = f"{company_name}的" if company_name else ""
+            summaries.append(f"{subject_label}{label} {claim.value} {unit}")
+    return summaries
+
+
+def _append_verified_domestic_facts(summary: str, facts: list[str]) -> str:
+    if not facts:
+        return summary
+    return summary + " 已核实的国内风险信息：" + "、".join(facts) + "。"
 
 
 def _summary_subject(target_names: list[str]) -> str:
@@ -903,6 +1069,39 @@ def _watchlist_risk_overview(
     return "；".join(parts) + "。"
 
 
+def _format_sourcing_requirement(requirement: dict[str, Any]) -> str:
+    """Render the confirmed search constraints in the user-facing summary."""
+    parts: list[str] = []
+    category = str(requirement.get("category") or "").strip()
+    product = str(requirement.get("product") or "").strip()
+    material = str(requirement.get("material") or "").strip()
+    if category and not (category.isdigit() and category == material):
+        parts.append(f"品类：{category}")
+    if product and product not in {category, material}:
+        parts.append(f"产品：{product}")
+    if material and (material.isdigit() or material not in {category, product}):
+        parts.append(f"物料号：{material}")
+    if isinstance(requirement.get("candidate_count"), int):
+        parts.append(f"目标候选数：{requirement['candidate_count']}家")
+    if isinstance(requirement.get("quantity"), int):
+        parts.append(f"采购数量：{requirement['quantity']}")
+    if requirement.get("region"):
+        parts.append(f"优先地区：{str(requirement['region']).strip()}")
+    if requirement.get("supply_region"):
+        parts.append(f"交付地区：{str(requirement['supply_region']).strip()}")
+    if requirement.get("budget"):
+        parts.append(f"预算：{str(requirement['budget']).strip()}")
+    if requirement.get("specification"):
+        parts.append(f"规格：{str(requirement['specification']).strip()}")
+    if requirement.get("qualifications"):
+        parts.append(f"资质：{str(requirement['qualifications']).strip()}")
+    if requirement.get("delivery"):
+        parts.append(f"交付要求：{str(requirement['delivery']).strip()}")
+    if requirement.get("risk_limit"):
+        parts.append(f"风险筛选：{str(requirement['risk_limit']).strip()}")
+    return f"检索条件：{'；'.join(parts)}。" if parts else ""
+
+
 def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     current_task = state.get("current_task") or {}
     target_names = [
@@ -927,6 +1126,7 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         tool_names,
         dimensions,
         str(current_task.get("capability") or ""),
+        str(current_task.get("requested_action") or "none"),
     )
     sourcing_follow_up = str(current_task.get("sourcing_follow_up") or "")
     if sourcing_follow_up == "no_match":
@@ -1053,15 +1253,60 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if primary_capability == "compliance":
         compliance_claims = [claim for claim in answer.claims if claim.dimension == "compliance"]
         values = _claim_values(compliance_claims)
+        screening_statuses = _screening_statuses(outcomes)
+        domestic_facts = _verified_domestic_facts(answer, outcomes)
+        if "confirmed_match" in screening_statuses:
+            return _summary_with_boundary(
+                answer,
+                _append_verified_domestic_facts(
+                    f"{subject} 存在与主体标识一致的名单记录，需要人工复核；其他来源覆盖情况见下方证据。",
+                    domestic_facts,
+                ),
+                "请结合名单来源和主体信息复核后再作采购判断。",
+            )
+        if "possible_match" in screening_statuses:
+            return _summary_with_boundary(
+                answer,
+                _append_verified_domestic_facts(
+                    f"{subject} 存在名称相似的名单线索，主体尚未确认，需要人工核验。",
+                    domestic_facts,
+                ),
+                "请先核对统一社会信用代码等主体标识。",
+            )
+        if screening_statuses and all(status == "no_match_in_scope" for status in screening_statuses):
+            return _summary_with_boundary(
+                answer,
+                _append_verified_domestic_facts(
+                    f"在已核验的名单范围内，{subject} 未发现匹配记录。",
+                    domestic_facts,
+                ),
+                "未命中结论仅适用于本轮列明的名单与声明范围。",
+            )
+        if "stale" in screening_statuses:
+            return _append_verified_domestic_facts(
+                f"{subject} 的现有名单依据已过期，当前无法确认筛查结果，需要重新核验。",
+                domestic_facts,
+            )
+        if "conflicting" in screening_statuses:
+            return _append_verified_domestic_facts(
+                f"{subject} 的名单来源或主体信息存在冲突，当前结论需要人工核对。",
+                domestic_facts,
+            )
         if not compliance_claims:
-            return f"已完成 {subject} 的合规筛查，但当前没有可验证的筛查结果。"
+            return _append_verified_domestic_facts(
+                f"当前没有足够的正式名单证据，无法判断 {subject} 是否存在名单命中。",
+                domestic_facts,
+            )
         clean = values.get("clean")
         match_count = values.get("match_count")
-        result = f"已完成 {subject} 的合规与制裁筛查；" + (
-            "当前未发现名单命中"
+        result = (
+            f"在已核验的名单范围内，{subject} 未发现匹配记录。"
             if clean is True
-            else f"发现名单命中 {int(match_count)} 条" if isinstance(match_count, (int, float)) else "发现需要人工核验的名单信号"
-        ) + "。"
+            else f"{subject} 发现名单记录，需要人工复核。"
+            if isinstance(match_count, (int, float)) and match_count > 0
+            else f"当前没有足够的正式名单证据，无法判断 {subject} 是否存在名单命中。"
+        )
+        result = _append_verified_domestic_facts(result, domestic_facts)
         return _summary_with_boundary(answer, result, "可结合命中记录和主体信息继续人工核验。")
     if primary_capability == "esg":
         esg_claims = [claim for claim in answer.claims if claim.dimension == "esg"]
@@ -1130,6 +1375,10 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         all_candidates = data.get("candidates") if isinstance(data.get("candidates"), list) else []
         result_candidates = data.get("results") if isinstance(data.get("results"), list) else []
         formal_items = data.get("items") if isinstance(data.get("items"), list) else []
+        requirement = data.get("requirement") if isinstance(data.get("requirement"), dict) else {}
+        if not requirement and isinstance(current_task.get("requirement"), dict):
+            requirement = current_task["requirement"]
+        requirement_summary = _format_sourcing_requirement(requirement)
         count = values.get("alternatives_count", data.get("alternatives_count"))
         if all_candidates and not local_candidates:
             external_names = {
@@ -1143,15 +1392,24 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 and str(item.get("supplier_name") or item.get("company_name") or "").strip() not in external_names
             ]
         if local_candidates or external_candidates:
+            base_summary = (
+                f"已找到 {len(local_candidates) + len(external_candidates)} 家寻源候选，其中历史合作 "
+                f"{len(local_candidates)} 家、外部待核验 {len(external_candidates)} 家。"
+            )
+            if requirement_summary:
+                base_summary += f" {requirement_summary}"
             return _summary_with_boundary(
                 answer,
-                f"已找到 {len(local_candidates) + len(external_candidates)} 家寻源候选，其中历史合作 {len(local_candidates)} 家、外部待核验 {len(external_candidates)} 家。",
+                base_summary,
                 "下面按来源分组展示匹配品类、主营产品和下一步核验事项。",
             )
         if result_candidates or formal_items:
+            base_summary = f"已找到 {len(result_candidates) or len(formal_items)} 家供应商候选。"
+            if requirement_summary:
+                base_summary += f" {requirement_summary}"
             return _summary_with_boundary(
                 answer,
-                f"已找到 {len(result_candidates) or len(formal_items)} 家供应商候选。",
+                base_summary,
                 "下面按来源展示主营品类、主营产品和当前状态。",
             )
         if not isinstance(count, (int, float)):
@@ -1161,7 +1419,8 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
                 return f"已按“{category}”发起寻源，但本地供应商库暂时不可用，当前没有可用候选；请稍后重试。"
             if data.get("external_failure_reasons") or str(data.get("external_status") or "") in {"failed", "unavailable"}:
                 return f"已按“{category}”完成本地检索，但外部候选来源暂时不可用，当前没有可用候选；可稍后重试或补充内部供应商资料。"
-            return f"已按“{category}”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            base_summary = f"已按“{category}”完成历史合作和外部候选检索，当前没有匹配候选；可以补充规格、交付地区或扩大候选来源。"
+            return f"{base_summary} {requirement_summary}" if requirement_summary else base_summary
         return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "下面展示候选来源、主营产品和当前核验状态。")
     if primary_capability == "company_profile":
         profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]
@@ -1181,17 +1440,15 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         count_text = f"共 {int(count)} 家企业" if isinstance(count, (int, float)) else "已完成企业横向比较"
         return _summary_with_boundary(answer, f"已完成企业风险对比；{count_text}。", "可结合下方指标比较各企业差异。")
     if primary_capability in {"quality", "delivery"}:
-        operational_claims = [claim for claim in answer.claims if claim.dimension == primary_capability]
-        values = _claim_values(operational_claims)
-        label = "质量" if primary_capability == "quality" else "交付"
+        requested = dimensions.intersection({"quality", "delivery"}) or {primary_capability}
+        operational_claims = [claim for claim in answer.claims
+                              if claim.dimension in requested and claim.validation_status == "supported"
+                              and claim.fact_path in {"quality_rate", "on_time_rate"}]
         if not operational_claims:
-            return f"已完成 {subject} 的{label}风险查询，但当前没有可验证的{label}数据。"
-        detail = []
-        if values.get("risk_score") is not None:
-            detail.append(f"评分 {values['risk_score']}/100")
-        if values.get("risk_level") is not None:
-            detail.append(f"等级：{values['risk_level']}")
-        return _summary_with_boundary(answer, f"已完成 {subject} 的{label}风险分析；" + "，".join(detail) + "。", f"可结合{label}明细和时间趋势继续核查。")
+            return f"已完成 {subject} 的质量/交付查询，但当前没有可验证的指标数据，当前未覆盖，暂不评级。"
+        # Claim statements already bind the subject, source-specific rate and unit.
+        detail = "；".join(dict.fromkeys(claim.statement for claim in operational_claims))
+        return f"已取得质量/交付指标：{detail}。评级政策尚未确认，暂不提供正式风险分与等级。"
     if {"lookup_company_news", "sentiment_analysis"}.intersection(tool_names):
         sentiment_claims = [claim for claim in answer.claims if claim.dimension in {"sentiment", "news"}]
         if not sentiment_claims:
@@ -1390,13 +1647,18 @@ def build_harness_graph(
     persist: PersistCallback | None = None,
     progress: ProgressCallback | None = None,
     narrate: NarrateCallback | None = None,
+    answer_general_knowledge: KnowledgeAnswerCallback | None = None,
+    answer_translation: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
+    control: Callable[[], Awaitable[None]] | None = None,
 ) -> Any:
     """Build the only runtime graph used by Harness-level tests and callers."""
 
     active_executor = executor or ToolExecutor(TOOL_REGISTRY)
 
     async def persist_event(event: str, state: HarnessState, patch: dict[str, Any] | None = None) -> None:
+        if control:
+            await control()
         snapshot = dict(state)
         if patch:
             snapshot.update(patch)
@@ -1501,7 +1763,10 @@ def build_harness_graph(
                 task.status = "running"
 
             async def execute_one(index: int, task: HarnessTask) -> ToolOutcome:
+                if control:
+                    await control()
                 context = ToolContext(
+                    task_id=task.task_id,
                     session_id=state["session_id"],
                     run_id=state["run_id"],
                     user_id=state.get("user_id"),
@@ -1544,6 +1809,8 @@ def build_harness_graph(
                     active_executor.execute(task.tool_name, task.arguments, context),
                     timeout=max(0.001, remaining_seconds),
                 )
+                if control:
+                    await control()
                 if progress:
                     result = progress(
                         "tool_result",
@@ -1569,6 +1836,9 @@ def build_harness_graph(
                 *(execute_one(index, task) for index, task in enumerate(wave)),
                 return_exceptions=True,
             )
+            for result in wave_results:
+                if isinstance(result, (ExecutionLost, asyncio.CancelledError)):
+                    raise result
             for task, result in zip(wave, wave_results, strict=True):
                 if isinstance(result, asyncio.TimeoutError):
                     task.status = "failed"
@@ -1716,31 +1986,138 @@ def build_harness_graph(
             required_dimensions=_required_dimensions(tasks),
             required_evidence=_required_evidence_items(tasks),
         )
+        screening_statuses = _screening_statuses(state.get("tool_outcomes", []))
+        unresolved_screening = [status for status in screening_statuses if status != "no_match_in_scope"]
+        if unresolved_screening:
+            status_limitations = {
+                "confirmed_match": "名单主体标识匹配需要人工复核",
+                "possible_match": "名称相似线索尚未核实主体身份",
+                "partial": "名单来源覆盖不完整",
+                "stale": "名单来源依据已过期",
+                "conflicting": "名单来源或主体信息存在冲突",
+                "not_queried": "已配置名单来源尚未完成查询",
+                "unavailable": "没有足够的正式名单证据确认筛查结果",
+            }
+            answer = answer.model_copy(update={
+                "status": "needs_review",
+                "limitations": list(dict.fromkeys([
+                    *answer.limitations,
+                    *[status_limitations.get(status, "名单筛查状态需要人工核验") for status in unresolved_screening],
+                ])),
+            })
+        operational_limits = []
+        for record in state.get("evidence_records", []):
+            if record.get("dimension") in {"quality", "delivery"}:
+                values = (record.get("facts") or {}).get("limitations", [])
+                if isinstance(values, list):
+                    operational_limits.extend(value for value in values if isinstance(value, str))
+        for outcome in state.get("tool_outcomes", []):
+            data = outcome.get("data") or {}
+            if data.get("dimension") in {"quality", "delivery"} and data.get("reason"):
+                operational_limits.append(str(data["reason"]))
+        if operational_limits:
+            answer = answer.model_copy(update={
+                "status": "partial" if answer.status == "completed" else answer.status,
+                "limitations": list(dict.fromkeys([*answer.limitations, *operational_limits])),
+            })
         if _requests_procurement_action(state):
             answer = answer.model_copy(update={"action_proposals": _procurement_action_proposals(answer)})
+        no_plan_llm_attempted = False
         if not claims:
             no_plan = not tasks
+            user_message = str(state.get("user_message") or "")
+            translation = no_plan and is_translation_request(user_message)
+            out_of_scope = no_plan and is_out_of_scope_request(user_message)
+            general_knowledge = (
+                no_plan
+                and not translation
+                and not out_of_scope
+                and is_general_supplier_knowledge_question(user_message)
+            )
             current_task = state.get("current_task") or {}
             follow_up = str(current_task.get("sourcing_follow_up") or "")
-            summary = (
-                _summary(answer, state)
-                if follow_up in {"no_match", "ordinal_out_of_range", "candidate_selected"}
-                else _no_plan_summary(state) if no_plan else _summary(answer, state)
-            )
-            limitations = list(answer.limitations)
-            if no_plan and follow_up not in {"no_match", "ordinal_out_of_range", "candidate_selected"}:
-                limitations.append("当前请求未形成可执行任务")
-            answer = answer.model_copy(
-                update={
-                    "status": "needs_review",
+            if translation:
+                summary = "我暂时无法完成这段翻译，请稍后重试。"
+                translation_budget = new_budget(state.get("budget"))
+                translation_succeeded = False
+                if (
+                    answer_translation is not None
+                    and int(state.get("llm_call_count", 0)) < translation_budget.max_llm_calls
+                ):
+                    no_plan_llm_attempted = True
+                    try:
+                        generated = answer_translation(user_message)
+                        if inspect.isawaitable(generated):
+                            generated = await generated
+                        if isinstance(generated, str) and generated.strip():
+                            summary = generated.strip()
+                            translation_succeeded = True
+                    except Exception as exc:
+                        logger.warning("translation_answer_callback_failed", error=str(exc))
+                answer = answer.model_copy(
+                    update={
+                        "status": "completed" if translation_succeeded else "needs_review",
+                        "summary": summary,
+                        "limitations": list(dict.fromkeys([
+                            *answer.limitations,
+                            "本轮仅处理文本翻译，未查询供应商或调用业务工具。",
+                        ])),
+                    }
+                )
+            elif out_of_scope:
+                answer = answer.model_copy(
+                    update={
+                        "status": "completed",
+                        "summary": (
+                            "我是采购与供应商风险助手，主要协助供应商风险分析、供应商评估和寻源。"
+                            "这类闲聊或一般计算不在当前服务范围内。"
+                        ),
+                    }
+                )
+            elif general_knowledge:
+                summary = _general_supplier_knowledge_fallback()
+                general_budget = new_budget(state.get("budget"))
+                if (
+                    answer_general_knowledge is not None
+                    and int(state.get("llm_call_count", 0)) < general_budget.max_llm_calls
+                ):
+                    no_plan_llm_attempted = True
+                    try:
+                        generated = answer_general_knowledge(str(state.get("user_message") or ""))
+                        if inspect.isawaitable(generated):
+                            generated = await generated
+                        if isinstance(generated, str) and generated.strip():
+                            summary = generated.strip()
+                    except Exception as exc:
+                        logger.warning("general_knowledge_answer_callback_failed", error=str(exc))
+                answer = answer.model_copy(update={
+                    "status": "completed",
                     "summary": summary,
-                    "limitations": list(dict.fromkeys(
-                        [*limitations, "工具结果未提供可验证 Claim"]
-                        if not no_plan
-                        else limitations
-                    )),
-                }
-            )
+                    "limitations": list(dict.fromkeys([
+                        *answer.limitations,
+                        "以上为通用风险评估方法说明，不代表对任何具体供应商的评估结论。",
+                    ])),
+                })
+            else:
+                summary = (
+                    _summary(answer, state)
+                    if follow_up in {"no_match", "ordinal_out_of_range", "candidate_selected"}
+                    else _no_plan_summary(state) if no_plan else _summary(answer, state)
+                )
+                limitations = list(answer.limitations)
+                if no_plan and follow_up not in {"no_match", "ordinal_out_of_range", "candidate_selected"}:
+                    limitations.append("当前请求未形成可执行任务")
+                answer = answer.model_copy(
+                    update={
+                        "status": "needs_review",
+                        "summary": summary,
+                        "limitations": list(dict.fromkeys(
+                            [*limitations, "工具结果未提供可验证 Claim"]
+                            if not no_plan
+                            else limitations
+                        )),
+                    }
+                )
         else:
             answer = answer.model_copy(update={"summary": _summary(answer, state)})
         narration_attempted = False
@@ -1762,6 +2139,7 @@ def build_harness_graph(
                 # Narration is an optional presentation layer.  The validated
                 # deterministic summary remains the source of truth.
                 logger.warning("answer_narration_callback_failed", error=str(exc))
+        answer = _mark_live_sourcing_deadline_for_review(answer, state)
         coverage = state.get("evidence_coverage") or {}
         loop_exit_reason = state.get("loop_exit_reason")
         if coverage.get("missing_dimensions") and loop_exit_reason not in {
@@ -1788,7 +2166,7 @@ def build_harness_graph(
             "loop_exit_reason": loop_exit_reason,
             "status": answer.status,
         }
-        if narration_attempted:
+        if narration_attempted or no_plan_llm_attempted:
             patch["llm_call_count"] = int(state.get("llm_call_count", 0)) + 1
         await persist_event("render_answer", state, patch)
         return patch
@@ -1798,14 +2176,21 @@ def build_harness_graph(
         return {"status": state.get("status", "needs_review")}
 
     graph = StateGraph(HarnessState)
-    graph.add_node("load_session", load_session)
-    graph.add_node("resolve_turn", resolve_turn)
-    graph.add_node("build_plan", build_plan)
-    graph.add_node("execute_ready_tasks", execute_ready_tasks)
-    graph.add_node("validate_evidence", validate_evidence)
-    graph.add_node("remediate", remediate)
-    graph.add_node("render_answer", render_answer)
-    graph.add_node("persist_turn", persist_turn)
+    def controlled(node):
+        async def invoke(state: HarnessState) -> dict[str, Any]:
+            if control:
+                await control()
+            return await node(state)
+        return invoke
+
+    graph.add_node("load_session", controlled(load_session))
+    graph.add_node("resolve_turn", controlled(resolve_turn))
+    graph.add_node("build_plan", controlled(build_plan))
+    graph.add_node("execute_ready_tasks", controlled(execute_ready_tasks))
+    graph.add_node("validate_evidence", controlled(validate_evidence))
+    graph.add_node("remediate", controlled(remediate))
+    graph.add_node("render_answer", controlled(render_answer))
+    graph.add_node("persist_turn", controlled(persist_turn))
     graph.add_edge(START, "load_session")
     graph.add_edge("load_session", "resolve_turn")
     graph.add_edge("resolve_turn", "build_plan")
@@ -1830,6 +2215,17 @@ def _no_plan_summary(state: HarnessState) -> str:
     if any(token in message for token in ("趋势", "变化", "复核")):
         return "我还不能形成复核结论：请指定正式供应商或明确的监控范围。"
     return "我暂未识别出可执行的分析任务，请补充供应商、监控范围或具体问题。"
+
+
+def _general_supplier_knowledge_fallback() -> str:
+    """Provide useful generic guidance without relying on the LLM provider."""
+    return (
+        "供应商风险分析通常会从几个方面看：财务与现金流、交付与产能、质量与过程控制、"
+        "合规与法律、经营稳定性，以及舆情和供应链依赖。评估时可结合历史趋势、问题发生频率、"
+        "影响范围和整改情况，区分风险信号与已核实事实。\n\n"
+        "这是一套通用检查思路，不代表对任何具体供应商的评估结论。"
+        "如果你希望分析某家供应商，请提供名称，并说明关注的风险维度。"
+    )
 
 
 def _requests_procurement_action(state: HarnessState) -> bool:
@@ -1872,8 +2268,12 @@ async def run_harness(
     persist: PersistCallback | None = None,
     progress: ProgressCallback | None = None,
     narrate: NarrateCallback | None = None,
+    answer_general_knowledge: KnowledgeAnswerCallback | None = None,
+    answer_translation: KnowledgeAnswerCallback | None = None,
     checkpointer: Any = None,
     config: dict[str, Any] | None = None,
+    control: Callable[[], Awaitable[None]] | None = None,
+    resume: bool = False,
 ) -> HarnessState:
     """Invoke the unified graph with the required LangGraph thread identity."""
     active_config = dict(config or {})
@@ -1881,13 +2281,16 @@ async def run_harness(
     configurable.setdefault("thread_id", state["run_id"])
     active_config["configurable"] = configurable
     graph = build_harness_graph(
+        control=control,
         executor=executor,
         persist=persist,
         progress=progress,
         narrate=narrate,
+        answer_general_knowledge=answer_general_knowledge,
+        answer_translation=answer_translation,
         checkpointer=checkpointer,
     )
-    return await graph.ainvoke(state, config=active_config)
+    return await graph.ainvoke(None if resume else state, config=active_config)
 
 
 def _parse_time(value: str | None) -> datetime:

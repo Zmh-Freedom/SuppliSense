@@ -6,6 +6,13 @@ from app.core.config import settings
 from app.services import scheduler
 
 
+@pytest.fixture(autouse=True)
+def _isolate_scheduler_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Developer .env must not change the legacy scheduler contract tests."""
+    monkeypatch.setattr(settings, "SCHEDULER_ROLE_ENABLED", True)
+    monkeypatch.setattr(settings, "SCHEDULER_MIGRATED_KINDS", "")
+
+
 class _FakeScheduler:
     def __init__(self) -> None:
         self.running = False

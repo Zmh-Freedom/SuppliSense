@@ -50,6 +50,7 @@ class HarnessState(TypedDict, total=False):
     """
 
     schema_version: int
+    input_digest: str
     session_id: str
     turn_id: str
     run_id: str

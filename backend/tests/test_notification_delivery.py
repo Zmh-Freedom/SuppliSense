@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from app.core.config import settings
 from app.domains.alert import notifier
+from app.domains.outbox import notification_delivery
 from app.services import feishu
 from app.services.ws_manager import WSManager
 from app.domains.alert.api_notifications import _notification_scope
@@ -95,6 +96,52 @@ def test_notification_delivery_records_each_retry(monkeypatch):
     assert attempts["count"] == notifier.DELIVERY_MAX_ATTEMPTS
     assert len(db.collections["notification_deliveries"].rows) == notifier.DELIVERY_MAX_ATTEMPTS
     assert all(row["status"] == "failed" for row in db.collections["notification_deliveries"].rows)
+
+
+def test_durable_notification_retries_explicit_rejections_three_times(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        feishu,
+        "send_user_message",
+        lambda open_id, text, **kwargs: calls.append((open_id, text, kwargs)) or False,
+    )
+
+    sent = notification_delivery._send_with_explicit_retry("ou-user", "风险提醒")
+
+    assert sent is False
+    assert len(calls) == 3
+    assert all(call[2] == {"raise_on_unknown": True} for call in calls)
+
+
+def test_durable_notification_stops_explicit_retries_after_success(monkeypatch):
+    calls = {"count": 0}
+
+    def send(_open_id, _text, **_kwargs):
+        calls["count"] += 1
+        return calls["count"] == 2
+
+    monkeypatch.setattr(feishu, "send_user_message", send)
+
+    assert notification_delivery._send_with_explicit_retry("ou-user", "风险提醒") is True
+    assert calls["count"] == 2
+
+
+def test_durable_notification_does_not_retry_unknown_delivery_result(monkeypatch):
+    calls = {"count": 0}
+
+    def unknown(_open_id, _text, **_kwargs):
+        calls["count"] += 1
+        raise RuntimeError("provider outcome unknown")
+
+    monkeypatch.setattr(feishu, "send_user_message", unknown)
+
+    try:
+        notification_delivery._send_with_explicit_retry("ou-user", "风险提醒")
+    except RuntimeError as exc:
+        assert str(exc) == "provider outcome unknown"
+    else:
+        raise AssertionError("unknown delivery result must be propagated")
+    assert calls["count"] == 1
 
 
 def test_notification_scope_uses_feishu_identity_for_non_admin(monkeypatch):

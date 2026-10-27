@@ -23,6 +23,10 @@ class AgentTaskState(TypedDict, total=False):
     """Serializable state shared by Supervisor nodes."""
 
     run_id: str
+    session_id: str
+    user_id: str
+    input_digest: str
+    execution_context: dict[str, Any]
     user_query: str
     supplier_references: list[dict[str, Any]]
     intent: dict[str, Any]

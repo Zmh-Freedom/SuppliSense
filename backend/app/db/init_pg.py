@@ -194,6 +194,25 @@ DDL_STATEMENTS = [
     )
     """,
 
+    """
+    CREATE TABLE IF NOT EXISTS notification_dispatches (
+        id UUID PRIMARY KEY,
+        dedupe_key VARCHAR(64) NOT NULL,
+        document JSONB NOT NULL,
+        recipient JSONB NOT NULL,
+        message_text TEXT NOT NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'QUEUED'
+            CHECK (status IN ('QUEUED','SENDING','SENT','FAILED','CANCELLED','NEEDS_REVIEW')),
+        attempt_id UUID,
+        version INTEGER NOT NULL DEFAULT 1,
+        diagnostic VARCHAR(64),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+    )
+    """,
+    "ALTER TABLE notification_dispatches ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1",
+    "CREATE INDEX IF NOT EXISTS idx_notification_dispatch_dedupe ON notification_dispatches (dedupe_key,created_at DESC)",
+
     # Assessment history
     """
     CREATE TABLE IF NOT EXISTS assessment_history (
@@ -258,6 +277,128 @@ DDL_STATEMENTS = [
     )
     """,
     "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS session_id UUID",
+    """
+    CREATE TABLE IF NOT EXISTS agent_run_executions (
+        run_id UUID PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        state VARCHAR(32) NOT NULL CHECK (state IN
+            ('QUEUED','RUNNING','PAUSED','CANCEL_REQUESTED','SUCCEEDED','FAILED','CANCELLED')),
+        attempt_id UUID,
+        fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+        owner_id TEXT,
+        lease_until TIMESTAMPTZ,
+        cancel_requested_at TIMESTAMPTZ,
+        terminal_event_id BIGINT,
+        quality VARCHAR(32),
+        pause_reason TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_execution_lease_expiry ON agent_run_executions (lease_until) WHERE state IN ('RUNNING','QUEUED')",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS execution_input JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS snapshot JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS checkpoint JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE agent_run_executions ADD COLUMN IF NOT EXISTS recovery_count INTEGER NOT NULL DEFAULT 0",
+    """
+    CREATE TABLE IF NOT EXISTS agent_execution_jobs (
+        id UUID PRIMARY KEY,
+        run_id UUID NOT NULL UNIQUE REFERENCES agent_runs(id) ON DELETE CASCADE,
+        queue VARCHAR(32) NOT NULL DEFAULT 'agent',
+        status VARCHAR(32) NOT NULL DEFAULT 'QUEUED' CHECK (status IN
+            ('QUEUED','LEASED','PAUSED','SUCCEEDED','FAILED','CANCELLED')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        recoveries INTEGER NOT NULL DEFAULT 0 CHECK (recoveries >= 0),
+        max_recoveries INTEGER NOT NULL DEFAULT 3 CHECK (max_recoveries >= 0),
+        available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        lease_owner TEXT,
+        lease_until TIMESTAMPTZ,
+        attempt_id UUID,
+        fencing_token BIGINT,
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_agent_execution_jobs_claim ON agent_execution_jobs (queue,status,available_at)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_execution_jobs_lease ON agent_execution_jobs (lease_until) WHERE status='LEASED'",
+    "ALTER TABLE agent_execution_jobs ALTER COLUMN status SET DEFAULT 'QUEUED'",
+    # Durable schedules: definitions are immutable per revision; only the
+    # operational cursor and enabled flag may change.
+    """
+    CREATE TABLE IF NOT EXISTS durable_schedules (
+        schedule_id TEXT NOT NULL,
+        revision INTEGER NOT NULL CHECK (revision > 0),
+        target_id TEXT NOT NULL,
+        cron TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        actor_kind VARCHAR(16) NOT NULL CHECK (actor_kind IN ('user','service')),
+        actor_id TEXT NOT NULL,
+        kind VARCHAR(48) NOT NULL,
+        scope JSONB NOT NULL,
+        effective_at TIMESTAMPTZ NOT NULL,
+        enabled BOOLEAN NOT NULL DEFAULT TRUE,
+        last_checked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (schedule_id, revision, target_id)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_durable_schedules_due ON durable_schedules (enabled, last_checked_at NULLS FIRST, schedule_id)",
+    # One row per logical period. The unique key is the only deduplication
+    # mechanism; a scheduler crash between INSERT and UPDATE cannot duplicate.
+    """
+    CREATE TABLE IF NOT EXISTS scheduled_execution_jobs (
+        id UUID PRIMARY KEY,
+        schedule_id TEXT NOT NULL,
+        schedule_revision INTEGER NOT NULL,
+        target_id TEXT NOT NULL,
+        logical_period TEXT NOT NULL,
+        period_start_at TIMESTAMPTZ NOT NULL,
+        period_end_at TIMESTAMPTZ,
+        fire_at TIMESTAMPTZ NOT NULL,
+        kind VARCHAR(48) NOT NULL,
+        actor_kind VARCHAR(16) NOT NULL,
+        actor_id TEXT NOT NULL,
+        scope JSONB NOT NULL,
+        definition JSONB NOT NULL,
+        status VARCHAR(24) NOT NULL DEFAULT 'QUEUED' CHECK (status IN
+            ('QUEUED','BLOCKED_POLICY','LEASED','NEEDS_REVIEW','SUCCEEDED','FAILED','CANCELLED')),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+        lease_owner TEXT,
+        lease_until TIMESTAMPTZ,
+        fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+        last_error TEXT,
+        result JSONB NOT NULL DEFAULT '{}'::jsonb,
+        started_at TIMESTAMPTZ,
+        provider_started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT scheduled_execution_jobs_period_key UNIQUE
+            (schedule_id, schedule_revision, target_id, logical_period),
+        CONSTRAINT scheduled_execution_jobs_schedule_fkey FOREIGN KEY
+            (schedule_id, schedule_revision, target_id)
+            REFERENCES durable_schedules (schedule_id, revision, target_id)
+    )
+    """,
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS max_attempts INTEGER NOT NULL DEFAULT 3",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS lease_owner TEXT",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS last_error TEXT",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS result JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ",
+    "ALTER TABLE scheduled_execution_jobs DROP CONSTRAINT IF EXISTS scheduled_execution_jobs_status_check",
+    """
+    ALTER TABLE scheduled_execution_jobs ADD CONSTRAINT scheduled_execution_jobs_status_check
+        CHECK (status IN ('QUEUED','BLOCKED_POLICY','LEASED','NEEDS_REVIEW',
+                          'SUCCEEDED','FAILED','CANCELLED'))
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_execution_jobs_claim ON scheduled_execution_jobs (status, fire_at, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_scheduled_execution_jobs_lease ON scheduled_execution_jobs (lease_until) WHERE status='LEASED'",
     """
     DO $$ BEGIN
         IF NOT EXISTS (
@@ -405,6 +546,109 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_dispositions (
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        candidate_id UUID NOT NULL REFERENCES agent_run_candidates(id) ON DELETE CASCADE,
+        action VARCHAR(16) NOT NULL CHECK (action IN ('confirm','defer','exclude')),
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        reason TEXT,
+        decided_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        batch_id UUID NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (run_id, candidate_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_handoffs (
+        id UUID PRIMARY KEY,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id UUID NOT NULL UNIQUE REFERENCES agent_sessions(id) ON DELETE CASCADE,
+        source_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+        source_run_version INTEGER NOT NULL CHECK (source_run_version > 0),
+        candidate_id UUID NOT NULL REFERENCES agent_run_candidates(id) ON DELETE RESTRICT,
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        candidate_snapshot JSONB NOT NULL,
+        requirement_snapshot JSONB NOT NULL,
+        evidence_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+        intent VARCHAR(32) NOT NULL CHECK (intent IN ('risk_review','monitor_proposal')),
+        status VARCHAR(16) NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','consumed','cancelled')),
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        continue_message TEXT NOT NULL,
+        consumed_turn_id UUID REFERENCES agent_turns(id) ON DELETE SET NULL,
+        consumed_message_hash CHAR(64),
+        run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        consumed_at TIMESTAMPTZ,
+        UNIQUE (actor_id, request_key)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_handoffs_session_status ON sourcing_handoffs (session_id,status)",
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_handoffs_source_run ON sourcing_handoffs (source_run_id,candidate_id)",
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_review_events (
+        event_id BIGSERIAL UNIQUE,
+        batch_id UUID PRIMARY KEY,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        expected_version INTEGER NOT NULL,
+        run_version INTEGER NOT NULL,
+        decisions JSONB NOT NULL,
+        response JSONB NOT NULL,
+        resume_status VARCHAR(32) NOT NULL,
+        dispatch_status VARCHAR(16) NOT NULL DEFAULT 'pending',
+        lease_owner TEXT,
+        lease_until TIMESTAMPTZ,
+        attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+        fencing_token BIGINT NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+        last_error TEXT,
+        new_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        consumed_at TIMESTAMPTZ,
+        UNIQUE (actor_id, request_key)
+    )
+    """,
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS lease_owner TEXT",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0",
+    "ALTER TABLE sourcing_candidate_review_events ADD COLUMN IF NOT EXISTS last_error TEXT",
+    "DO $$ BEGIN ALTER TABLE sourcing_candidate_review_events ADD CONSTRAINT sourcing_candidate_review_events_attempt_count_check CHECK (attempt_count >= 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$",
+    "DO $$ BEGIN ALTER TABLE sourcing_candidate_review_events ADD CONSTRAINT sourcing_candidate_review_events_fencing_token_check CHECK (fencing_token >= 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$",
+    "ALTER TABLE sourcing_candidate_review_events DROP CONSTRAINT IF EXISTS sourcing_candidate_review_events_dispatch_status_check",
+    "ALTER TABLE sourcing_candidate_review_events ADD CONSTRAINT sourcing_candidate_review_events_dispatch_status_check CHECK (dispatch_status IN ('pending','processing','consumed','not_required','cancelled','failed'))",
+    "DROP INDEX IF EXISTS idx_sourcing_candidate_review_pending",
+    "CREATE INDEX idx_sourcing_candidate_review_pending ON sourcing_candidate_review_events (created_at) WHERE dispatch_status IN ('pending','processing')",
+    "CREATE INDEX IF NOT EXISTS idx_sourcing_candidate_review_run_event ON sourcing_candidate_review_events (run_id, event_id DESC)",
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_followups (
+        child_run_id UUID PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+        parent_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+        created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+        source_candidate_ids JSONB NOT NULL,
+        child_candidate_ids JSONB NOT NULL,
+        policy_snapshot_id UUID NOT NULL REFERENCES sourcing_policy_snapshots(id) ON DELETE RESTRICT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS sourcing_candidate_followup_events (
+        event_id BIGSERIAL UNIQUE,
+        id UUID PRIMARY KEY,
+        parent_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE RESTRICT,
+        child_run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        response JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (actor_id, request_key)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agent_evidence (
         id UUID PRIMARY KEY,
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
@@ -481,6 +725,16 @@ DDL_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS agent_action_receipts (
+        proposal_id UUID PRIMARY KEY REFERENCES agent_action_proposals(id) ON DELETE CASCADE,
+        run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+        status VARCHAR(16) NOT NULL CHECK (status IN ('started','succeeded','unknown')),
+        proposal_digest TEXT NOT NULL,
+        receipt JSONB,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS agent_approval_decisions (
         id UUID PRIMARY KEY,
         run_id UUID NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
@@ -513,6 +767,7 @@ DDL_STATEMENTS = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         approved_at TIMESTAMPTZ,
         started_at TIMESTAMPTZ,
+        provider_started_at TIMESTAMPTZ,
         completed_at TIMESTAMPTZ,
         CHECK (status IN ('pending_approval', 'approved', 'rejected', 'executing', 'completed', 'needs_review', 'failed', 'cancelled'))
     )
@@ -538,6 +793,88 @@ DDL_STATEMENTS = [
         evidence JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (task_id, evidence_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_cases (
+        id UUID PRIMARY KEY,
+        monitor_target_id TEXT NOT NULL,
+        company_id UUID REFERENCES companies(id) ON DELETE SET NULL,
+        department_code VARCHAR(128),
+        case_type VARCHAR(32) NOT NULL,
+        scope_key TEXT NOT NULL,
+        trigger_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        priority VARCHAR(16) NOT NULL DEFAULT 'normal',
+        status VARCHAR(32) NOT NULL DEFAULT 'open',
+        created_by TEXT NOT NULL,
+        owner_user_id TEXT,
+        due_at TIMESTAMPTZ,
+        next_review_at TIMESTAMPTZ,
+        version INTEGER NOT NULL DEFAULT 1,
+        closure_request JSONB,
+        reopened_from_case_id UUID REFERENCES procurement_cases(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        closed_at TIMESTAMPTZ,
+        CONSTRAINT procurement_cases_type_check
+            CHECK (case_type IN ('risk_review', 'coverage_gap', 'identity_review')),
+        CONSTRAINT procurement_cases_priority_check
+            CHECK (priority IN ('high', 'normal')),
+        CONSTRAINT procurement_cases_status_check
+            CHECK (status IN ('open', 'in_progress', 'deferred', 'pending_closure', 'closed')),
+        CONSTRAINT procurement_cases_scope_key_check CHECK (BTRIM(scope_key) <> ''),
+        CONSTRAINT procurement_cases_trigger_key_check CHECK (BTRIM(trigger_key) <> ''),
+        CONSTRAINT procurement_cases_title_check CHECK (BTRIM(title) <> ''),
+        CONSTRAINT procurement_cases_version_check CHECK (version > 0),
+        CONSTRAINT procurement_cases_closed_at_check
+            CHECK ((status = 'closed' AND closed_at IS NOT NULL) OR status <> 'closed'),
+        CONSTRAINT procurement_cases_deferred_review_check
+            CHECK ((status = 'deferred' AND next_review_at IS NOT NULL) OR status <> 'deferred')
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_case_requests (
+        id UUID PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        request_key VARCHAR(255) NOT NULL,
+        request_hash CHAR(64) NOT NULL,
+        case_id UUID REFERENCES procurement_cases(id) ON DELETE RESTRICT,
+        response JSONB,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT procurement_case_requests_actor_key_key UNIQUE (actor_id, request_key),
+        CONSTRAINT procurement_case_requests_key_check CHECK (BTRIM(request_key) <> ''),
+        CONSTRAINT procurement_case_requests_hash_check CHECK (LENGTH(request_hash) = 64),
+        CONSTRAINT procurement_case_requests_completion_check
+            CHECK ((case_id IS NULL AND response IS NULL) OR (case_id IS NOT NULL AND response IS NOT NULL))
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_case_events (
+        id UUID PRIMARY KEY,
+        case_id UUID NOT NULL REFERENCES procurement_cases(id) ON DELETE CASCADE,
+        actor_id TEXT,
+        event_type VARCHAR(64) NOT NULL,
+        from_status VARCHAR(32),
+        to_status VARCHAR(32),
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        request_id UUID REFERENCES procurement_case_requests(id) ON DELETE SET NULL,
+        version INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT procurement_case_events_version_check CHECK (version > 0),
+        CONSTRAINT procurement_case_events_event_type_check CHECK (BTRIM(event_type) <> ''),
+        CONSTRAINT procurement_case_events_case_version_key UNIQUE (case_id, version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS procurement_case_tasks (
+        id UUID PRIMARY KEY,
+        case_id UUID NOT NULL REFERENCES procurement_cases(id) ON DELETE CASCADE,
+        task_id UUID NOT NULL REFERENCES monitor_review_tasks(id) ON DELETE CASCADE,
+        linked_by TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT procurement_case_tasks_case_task_key UNIQUE (case_id, task_id)
     )
     """,
 ]
@@ -727,13 +1064,29 @@ INDEX_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_monitor_review_tasks_status_updated ON monitor_review_tasks (status, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_monitor_review_task_events_task_created ON monitor_review_task_events (task_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_monitor_review_task_evidence_task_created ON monitor_review_task_evidence (task_id, created_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_procurement_cases_active_trigger "
+    "ON procurement_cases (monitor_target_id, case_type, scope_key, trigger_key) WHERE status <> 'closed'",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_cases_target_updated "
+    "ON procurement_cases (monitor_target_id, updated_at DESC, id)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_cases_department_status_updated "
+    "ON procurement_cases (department_code, status, updated_at DESC, id)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_case_events_case_created "
+    "ON procurement_case_events (case_id, created_at, version)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_case_tasks_task "
+    "ON procurement_case_tasks (task_id, case_id)",
+    "CREATE INDEX IF NOT EXISTS idx_procurement_case_requests_case "
+    "ON procurement_case_requests (case_id) WHERE case_id IS NOT NULL",
 ]
 
 
 def ensure_pg_schema() -> None:
+    from app.db.assessment_schema import ASSESSMENT_DDL
+
     try:
         with get_cursor() as (conn, cur):
             for stmt in DDL_STATEMENTS:
+                cur.execute(stmt)
+            for stmt in ASSESSMENT_DDL:
                 cur.execute(stmt)
             _ensure_verified_evidence_constraint(cur)
             _ensure_agent_run_constraints(cur)

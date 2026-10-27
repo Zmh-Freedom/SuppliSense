@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import SourcingRiskApprovalCard from '../components/SourcingRiskApprovalCard';
 import SourcingRiskCandidateCard from '../components/SourcingRiskCandidateCard';
@@ -36,6 +37,11 @@ function renderWithQueryClient(node: React.ReactNode, initialEntries = ['/sourci
     defaultOptions: { queries: { retry: false } },
   });
   return render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={initialEntries}>{node}</MemoryRouter></QueryClientProvider>);
+}
+
+function CurrentRoute() {
+  const location = useLocation();
+  return <output data-testid="current-route">{`${location.pathname}${location.search}`}</output>;
 }
 
 afterEach(() => {
@@ -87,6 +93,48 @@ describe('SourcingRiskWorkbench', () => {
 
     expect(screen.getByLabelText('采购需求')).toHaveValue('采购工业摄像头');
     expect(screen.queryByText('暂未找到可确认主体')).not.toBeInTheDocument();
+  });
+
+  it('submits confirmed candidates while clearly staging the unselected candidate', async () => {
+    const mixedRun = {
+      ...identityReviewRun,
+      id: 'run-mixed-review',
+      version: 4,
+      candidates: [
+        { id: 'candidate-exact', supplier_name: '已确认供应商', company_id: 'company-exact', identity_status: 'exact' },
+        { id: 'candidate-unknown', supplier_name: '暂不可确认供应商', identity_review: true, identity_status: 'pending_verification', identity_candidates: [] },
+        { id: 'candidate-selectable', supplier_name: '可确认供应商', identity_review: true, identity_status: 'pending_verification', identity_candidates: [{ company_id: 'company-selectable', legal_name: '可确认供应商有限公司' }] },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent-runs/run-mixed-review')) return Response.json(mixedRun);
+      if (url.endsWith('/candidate-decisions') && init?.method !== 'POST') {
+        return Response.json({ run_id: 'run-mixed-review', run_version: 4, dispositions: [], resume_status: 'not_started', new_run_id: null });
+      }
+      if (url.endsWith('/candidate-decisions') && init?.method === 'POST') {
+        return Response.json({ run_id: 'run-mixed-review', run_version: 5, dispositions: [], resume_status: 'pending', new_run_id: null });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithQueryClient(<SourcingRiskWorkbench initialRunId="run-mixed-review" />);
+
+    expect(await screen.findByText(/未选择的候选会暂存到下一轮/)).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: '候选供应商：已确认供应商' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('可确认供应商本轮处置'), { target: { value: 'confirm' } });
+    fireEvent.change(screen.getByLabelText('可确认供应商主体'), { target: { value: 'company-selectable' } });
+    fireEvent.click(screen.getByRole('button', { name: '提交候选处置' }));
+
+    await vi.waitFor(() => {
+      const postCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/candidate-decisions') && init?.method === 'POST');
+      expect(postCall).toBeDefined();
+      expect(JSON.parse(String(postCall?.[1]?.body))).toEqual({
+        expected_version: 4,
+        decisions: [{ candidate_key: 'candidate-selectable', action: 'confirm', company_id: 'company-selectable' }],
+      });
+    });
   });
 
   it('shows missing sourcing fields and resumes the same run', async () => {
@@ -295,5 +343,134 @@ describe('SourcingRiskWorkbench', () => {
 
     expect(errors).toHaveLength(1);
     expect(errors[0]?.message).toContain('断开');
+  });
+
+  it('creates a version-bound handoff for a stable candidate instead of a q deep link', async () => {
+    const run = {
+      id: 'run-handoff', status: 'READY_FOR_REVIEW', version: 9,
+      requirement: { requirement_text: '采购工业相机' },
+      candidates: [{ id: 'candidate-handoff', company_id: 'company-1', supplier_name: '候选工厂', identity_status: 'exact', source: 'local' }],
+      decisions: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent-runs/run-handoff')) return Response.json(run);
+      if (url.endsWith('/sourcing-workspace/handoffs') && init?.method === 'POST') {
+        return Response.json({ handoff_id: 'handoff-1', session_id: 'session-1', chat_url: '/chat?handoff_id=handoff-1&session_id=session-1' });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWithQueryClient(<><SourcingRiskWorkbench initialRunId="run-handoff" /><CurrentRoute /></>);
+    fireEvent.click(await screen.findByRole('button', { name: '继续风险核验' }));
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/sourcing-workspace/handoffs'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
+        body: JSON.stringify({ run_id: 'run-handoff', candidate_key: 'candidate-handoff', expected_version: 9, intent: 'risk_review' }),
+      }),
+    ));
+    await vi.waitFor(() => expect(screen.getByTestId('current-route')).toHaveTextContent('/chat?handoff_id=handoff-1&session_id=session-1'));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/chat?q='))).toBe(false);
+  });
+
+  it('lets the user select deferred candidates and opens the derived run from a terminal task', async () => {
+    const user = userEvent.setup();
+    const terminalRun = {
+      id: 'run-terminal', status: 'PARTIAL', version: 11,
+      requirement: { requirement_text: '采购工业摄像头', category: '摄像头' },
+      candidates: [
+        { id: 'candidate-deferred', supplier_name: '待补资料供应商', identity_status: 'pending_verification' },
+      ],
+      decisions: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent-runs/run-terminal')) return Response.json(terminalRun);
+      if (url.endsWith('/runs/run-terminal/candidate-decisions')) {
+        return Response.json({
+          run_id: 'run-terminal', run_version: 11,
+          dispositions: [{ candidate_key: 'candidate-deferred', action: 'defer', reason: '等待补充主体资料' }],
+          resume_status: 'followup_available', new_run_id: null,
+        });
+      }
+      if (url.endsWith('/runs/run-terminal/followups') && init?.method === 'POST') {
+        return Response.json({ parent_run_id: 'run-terminal', run_id: 'run-child', resume_url: '/sourcing?run=run-child' });
+      }
+      if (url.endsWith('/agent-runs/run-child')) {
+        return Response.json({ ...terminalRun, id: 'run-child', status: 'CREATED', candidates: [] });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithQueryClient(<><SourcingRiskWorkbench /><CurrentRoute /></>, ['/sourcing?run=run-terminal']);
+
+    expect(await screen.findByRole('region', { name: '暂存候选恢复' })).toBeInTheDocument();
+    expect(await screen.findByLabelText('选择待补资料供应商继续核验')).toBeInTheDocument();
+    expect(screen.getByText('暂存原因：等待补充主体资料')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '创建恢复任务' })).toBeDisabled();
+    await user.click(screen.getByLabelText('选择待补资料供应商继续核验'));
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: '创建恢复任务' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: '创建恢复任务' }));
+
+    await vi.waitFor(() => {
+      const followupCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/runs/run-terminal/followups') && init?.method === 'POST');
+      expect(followupCall, JSON.stringify(fetchMock.mock.calls.map(([url, init]) => [String(url), init?.method]))).toBeDefined();
+      expect(followupCall?.[1]?.headers).toEqual(expect.objectContaining({ 'Idempotency-Key': expect.any(String) }));
+      expect(JSON.parse(String(followupCall?.[1]?.body))).toEqual({ candidate_keys: ['candidate-deferred'] });
+    });
+    await vi.waitFor(() => expect(screen.getByTestId('current-route')).toHaveTextContent('/sourcing?run=run-child'));
+  });
+
+  it('lets the user reclassify an excluded candidate as deferred before follow-up', async () => {
+    const user = userEvent.setup();
+    const terminalRun = {
+      id: 'run-excluded-terminal', status: 'NEEDS_REVIEW', version: 6,
+      requirement: { requirement_text: '采购工业摄像头' },
+      candidates: [{ id: 'candidate-excluded', supplier_name: '此前排除供应商', identity_status: 'pending_verification' }],
+      decisions: [],
+    };
+    const dispositionResponse = (action: 'exclude' | 'defer', version: number) => Response.json({
+      run_id: 'run-excluded-terminal', run_version: version,
+      dispositions: [{ candidate_key: 'candidate-excluded', action, reason: action === 'exclude' ? '初次排除' : '补齐资料后再核验' }],
+      resume_status: 'followup_available', new_run_id: null,
+    });
+    let reclassified = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/agent-runs/run-excluded-terminal')) return Response.json(terminalRun);
+      if (url.endsWith('/runs/run-excluded-terminal/candidate-decisions') && init?.method === 'POST') {
+        reclassified = true;
+        return dispositionResponse('defer', 7);
+      }
+      if (url.endsWith('/runs/run-excluded-terminal/candidate-decisions')) {
+        return dispositionResponse(reclassified ? 'defer' : 'exclude', reclassified ? 7 : 6);
+      }
+      if (url.endsWith('/runs/run-excluded-terminal/followups') && init?.method === 'POST') {
+        return Response.json({ parent_run_id: 'run-excluded-terminal', run_id: 'run-excluded-child', resume_url: '/sourcing?run=run-excluded-child' });
+      }
+      if (url.endsWith('/agent-runs/run-excluded-child')) {
+        return Response.json({ ...terminalRun, id: 'run-excluded-child', status: 'CREATED', candidates: [] });
+      }
+      return new Response('', { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderWithQueryClient(<><SourcingRiskWorkbench /><CurrentRoute /></>, ['/sourcing?run=run-excluded-terminal']);
+
+    expect(await screen.findByRole('region', { name: '暂存候选恢复' })).toBeInTheDocument();
+    await user.type(await screen.findByLabelText('此前排除供应商重新暂存原因'), '补齐资料后再核验');
+    await user.click(screen.getByRole('button', { name: '将此前排除供应商改为暂存' }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/runs/run-excluded-terminal/candidate-decisions'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ expected_version: 6, decisions: [{ candidate_key: 'candidate-excluded', action: 'defer', reason: '补齐资料后再核验' }] }),
+      }),
+    ));
+    expect(await screen.findByLabelText('选择此前排除供应商继续核验')).toBeInTheDocument();
   });
 });

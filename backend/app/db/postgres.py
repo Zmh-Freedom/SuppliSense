@@ -5,54 +5,74 @@ PostgreSQL connection pool management (psycopg2, synchronous).
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from threading import BoundedSemaphore, Lock
 
 import psycopg2
 from psycopg2.extensions import connection as PgConnection, cursor as PgCursor
-from psycopg2.pool import ThreadedConnectionPool
+from psycopg2.pool import PoolError, ThreadedConnectionPool
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 _pool: ThreadedConnectionPool | None = None
+_pool_slots: BoundedSemaphore | None = None
+_pool_lock = Lock()
 
 
 def _get_pool() -> ThreadedConnectionPool:
-    global _pool
+    global _pool, _pool_slots
     if _pool is None:
-        _pool = ThreadedConnectionPool(
-            minconn=settings.PG_POOL_MIN,
-            maxconn=settings.PG_POOL_MAX,
-            host=settings.PG_HOST,
-            port=settings.PG_PORT,
-            user=settings.PG_USER,
-            password=settings.PG_PASSWORD,
-            dbname=settings.PG_DB,
-            connect_timeout=3,
-        )
+        with _pool_lock:
+            if _pool is None:
+                _pool = ThreadedConnectionPool(
+                    minconn=settings.PG_POOL_MIN,
+                    maxconn=settings.PG_POOL_MAX,
+                    host=settings.PG_HOST,
+                    port=settings.PG_PORT,
+                    user=settings.PG_USER,
+                    password=settings.PG_PASSWORD,
+                    dbname=settings.PG_DB,
+                    connect_timeout=3,
+                )
+                _pool_slots = BoundedSemaphore(settings.PG_POOL_MAX)
     return _pool
 
 
 def get_conn() -> PgConnection:
     pool = _get_pool()
-    conn = pool.getconn()
-    # 健康检查：跳过死连接
+    slots = _pool_slots
+    if slots is None:
+        raise RuntimeError("PostgreSQL connection pool slots are not initialized")
+    if not slots.acquire(timeout=settings.PG_POOL_ACQUIRE_TIMEOUT_SECONDS):
+        raise PoolError("timed out waiting for a PostgreSQL connection")
     try:
-        cur = conn.cursor()
-        cur.execute("SELECT 1")
-        cur.close()
-    except Exception:
-        # 连接已死，关闭并从池中获取新连接
-        try:
-            pool.putconn(conn, close=True)
-        except Exception:
-            pass
         conn = pool.getconn()
-    return conn
+        # 健康检查：跳过死连接
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.close()
+        except Exception:
+            # 连接已死，关闭并从池中获取新连接
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                pass
+            conn = pool.getconn()
+        return conn
+    except BaseException:
+        slots.release()
+        raise
 
 
 def put_conn(conn: PgConnection, *, close: bool = False) -> None:
-    _get_pool().putconn(conn, close=close)
+    try:
+        _get_pool().putconn(conn, close=close)
+    finally:
+        slots = _pool_slots
+        if slots is not None:
+            slots.release()
 
 
 @contextmanager
@@ -93,8 +113,10 @@ def get_cursor() -> Iterator[tuple[PgConnection, PgCursor]]:
 
 
 def close_pool() -> None:
-    global _pool
-    if _pool is not None:
-        _pool.closeall()
-        _pool = None
+    global _pool, _pool_slots
+    with _pool_lock:
+        if _pool is not None:
+            _pool.closeall()
+            _pool = None
+            _pool_slots = None
         logger.info("pg_pool_closed")

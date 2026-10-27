@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import asyncio
 import os
 import time
 import uuid
@@ -22,6 +23,8 @@ from app.api.chat import router as chat_router
 from app.api.health import router as health_router
 from app.api.p2 import router as p2_router
 from app.domains.alert.api import router as alert_router
+from app.domains.alert.api_cases import router as procurement_cases_router
+from app.domains.alert.api_workbench import router as procurement_workbench_router
 from app.domains.alert.api_notifications import router as notifications_router
 from app.domains.auth.api import router as auth_router
 from app.domains.company.api import router as company_identity_router
@@ -34,12 +37,15 @@ from app.domains.risk.api_financial import router as financial_router
 from app.domains.risk.api_report import router as report_router
 from app.domains.risk.api_macro import router as macro_router
 from app.domains.risk.api_scenario import router as scenario_router
+from app.domains.risk.api_screening import router as screening_router
 from app.domains.risk.api_sentiment import router as sentiment_router
 from app.domains.risk.api_trend import router as trend_router
 from app.domains.sourcing.api import router as sourcing_router
+from app.domains.sourcing.api_workspace import router as sourcing_task_workspace_router
 from app.domains.supplier.api import router as supplier_router
 from app.domains.sourcing.api_access import router as access_router
 from app.domains.agent_run.api import router as agent_run_router
+from app.domains.agent_run.api import workspace_router as sourcing_workspace_router
 from app.domains.agent_run.rollout_api import router as agent_rollout_router
 from app.core.config import settings
 from app.core.errors import (
@@ -65,6 +71,7 @@ from app.graphs.sourcing_risk_v2.checkpointer import (
     get_sourcing_risk_checkpointer,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.realtime import start_realtime_subscriber, stop_realtime_subscriber
 
 # Setup logging
 setup_logging()
@@ -98,6 +105,9 @@ def _validate_config():
         "CHANGE_ME_生成一个64位随机字符串",
     ):
         errors.append("SECRET_KEY 仍为占位符，请设置真实的随机密钥。")
+    admin_password = os.getenv("INITIAL_ADMIN_PASSWORD", "")
+    if admin_password.startswith("CHANGE_ME"):
+        errors.append("INITIAL_ADMIN_PASSWORD 仍为占位符，请设置首次管理员密码。")
     if settings.FEISHU_BITABLE_ENABLED:
         missing_feishu = [
             name for name, value in (
@@ -119,9 +129,6 @@ def _validate_config():
 
 def create_default_admin():
     """Create default admin user if no users exist."""
-    import secrets
-    import string
-
     from app.domains.auth.service import create_user, list_users
     from app.schemas.user import UserCreate, UserRole
 
@@ -129,14 +136,11 @@ def create_default_admin():
     if not users:
         password = os.getenv("INITIAL_ADMIN_PASSWORD")
         if not password:
-            alphabet = string.ascii_letters + string.digits + "!@#$%&*"
-            password = "".join(secrets.choice(alphabet) for _ in range(16))
-            logger.warning(
-                "default_admin_created_with_random_password",
-                username="admin",
-                password=password,
-                hint="请保存此密码！设置 INITIAL_ADMIN_PASSWORD 环境变量可自定义。",
+            logger.error(
+                "default_admin_creation_blocked",
+                reason="请通过 INITIAL_ADMIN_PASSWORD 设置初始管理员密码。",
             )
+            raise SystemExit(1)
         try:
             create_user(UserCreate(
                 username="admin",
@@ -155,18 +159,37 @@ async def lifespan(app: FastAPI):
     logger.info("application_starting", version=settings.APP_VERSION)
     ensure_indexes()
     ensure_pg_schema()
+    from app.domains.agent_run.coordinator import run_coordinator
+
+    worker_runner = settings.AGENT_EXECUTION_MODE == "worker"
+    reconciliation_options = {"exclude_run_type": "agent_harness"} if worker_runner else {}
+    await asyncio.to_thread(run_coordinator.reconcile_expired, **reconciliation_options)
     create_default_admin()
     if settings.AGENT_RUN_V2_ENABLED:
         await get_sourcing_risk_checkpointer()
     start_scheduler()
+    start_realtime_subscriber()
     logger.info("application_started")
-    yield
-    logger.info("application_shutting_down")
-    stop_scheduler()
-    await close_sourcing_risk_checkpointer()
-    close_db()
-    close_pool()
-    logger.info("application_stopped")
+    from app.graphs.harness.runner import reconcile_interrupted_runs, stop_managed_runners
+
+    reconciler = asyncio.create_task(
+        reconcile_interrupted_runs(**reconciliation_options),
+        name="agent-run-reconciler",
+    )
+    try:
+        yield
+    finally:
+        logger.info("application_shutting_down")
+        if reconciler is not None:
+            reconciler.cancel()
+            await asyncio.gather(reconciler, return_exceptions=True)
+        await stop_managed_runners()
+        await asyncio.to_thread(stop_realtime_subscriber)
+        stop_scheduler()
+        await close_sourcing_risk_checkpointer()
+        close_db()
+        close_pool()
+        logger.info("application_stopped")
 
 
 app = FastAPI(
@@ -270,6 +293,8 @@ api_v1 = APIRouter(prefix="/api/v1")
 api_v1.include_router(auth_router)
 api_v1.include_router(async_tasks_router)
 api_v1.include_router(alert_router, prefix="/alert", tags=["alert"])
+api_v1.include_router(procurement_cases_router)
+api_v1.include_router(procurement_workbench_router)
 api_v1.include_router(chat_router, prefix="/chat", tags=["chat"])
 api_v1.include_router(company_router, prefix="/company", tags=["company"])
 api_v1.include_router(company_identity_router)
@@ -281,6 +306,7 @@ api_v1.include_router(sentiment_router, prefix="/sentiment", tags=["sentiment"])
 api_v1.include_router(p2_router, prefix="/p2", tags=["p2"])
 api_v1.include_router(macro_router, prefix="/analysis", tags=["analysis"])
 api_v1.include_router(scenario_router, prefix="/analysis", tags=["analysis"])
+api_v1.include_router(screening_router)
 api_v1.include_router(report_router, prefix="/report", tags=["report"])
 api_v1.include_router(sourcing_router)
 api_v1.include_router(supplier_router)
@@ -289,8 +315,13 @@ api_v1.include_router(trend_router)
 api_v1.include_router(compare_router)
 api_v1.include_router(notifications_router)
 api_v1.include_router(agent_run_router)
+api_v1.include_router(sourcing_workspace_router)
+api_v1.include_router(sourcing_task_workspace_router)
 api_v1.include_router(agent_rollout_router)
 
+from app.domains.risk.assessment_api import router as assessment_router
+
+app.include_router(assessment_router)
 app.include_router(api_v1)
 app.include_router(health_router)
 
@@ -335,8 +366,11 @@ async def websocket_endpoint(websocket: WebSocket):
     from app.domains.supplier.access import feishu_open_id_for_user
 
     user_id = str(payload.get("sub") or "")
-    user = get_user_by_id(user_id)
-    open_id = feishu_open_id_for_user(user_id) if user else None
+    user = await asyncio.to_thread(get_user_by_id, user_id)
+    if user is None or not user.is_active:
+        await websocket.close(code=4001, reason="Inactive user")
+        return
+    open_id = await asyncio.to_thread(feishu_open_id_for_user, user_id)
 
     await websocket.accept()
     client_id = f"{id(websocket)}"

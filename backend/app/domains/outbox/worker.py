@@ -17,13 +17,15 @@ from app.domains.outbox.service import process_outbox_batch
 logger = get_logger(__name__)
 
 
-def run_outbox_once() -> dict:
+def run_outbox_once(worker_id: str | None = None, *, dedicated: bool = False) -> dict:
     """Process one configured batch and refresh backlog metrics for an interval tick."""
-    worker_id = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+    if dedicated and settings.DELIVERY_ROLE_ENABLED:
+        raise ValueError("独立投递前必须设置 DELIVERY_ROLE_ENABLED=false，停止 API 领取")
+    worker_id = worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     result = {"claimed": 0, "published": 0, "failed": 0}
     status = "ok"
 
-    if settings.OUTBOX_WORKER_ENABLED:
+    if settings.OUTBOX_WORKER_ENABLED and (dedicated or settings.DELIVERY_ROLE_ENABLED):
         try:
             result = process_outbox_batch(
                 worker_id=worker_id,

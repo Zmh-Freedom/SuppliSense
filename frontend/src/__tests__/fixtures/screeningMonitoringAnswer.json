@@ -1,0 +1,103 @@
+{
+  "answer": {
+    "status": "needs_review",
+    "summary": "虚构甲供应链有限公司 存在名称相似的名单线索，主体尚未确认，需要人工核验。以上结论仅基于当前已取得资料，部分维度尚未覆盖；采购动作请先按下方提示核实。",
+    "claims": [
+      {
+        "claim_id": "screening:d7f4286b654f3559b3f2e429:match:a696c25650e8b13a1c21:claim:record_name",
+        "entity_id": "company-fixture-a",
+        "dimension": "compliance",
+        "statement": "在 fixture-formal-sanctions-list 中发现名称相似名单线索：同名线索主体有限公司；主体尚未确认。",
+        "value": "同名线索主体有限公司",
+        "fact_path": "record_name",
+        "operator": "eq",
+        "unit": null,
+        "evidence_refs": [
+          "screening:d7f4286b654f3559b3f2e429:match:a696c25650e8b13a1c21"
+        ],
+        "confidence": 0.65,
+        "validation_status": "supported",
+        "validation_reasons": []
+      }
+    ],
+    "limitations": [
+      "缺少 compliance 维度的正式证据",
+      "名称相似线索尚未核实主体身份"
+    ],
+    "action_proposals": [],
+    "action_receipts": [],
+    "evidence_refs": [
+      "screening:d7f4286b654f3559b3f2e429:match:a696c25650e8b13a1c21"
+    ]
+  },
+  "evidence": [
+    {
+      "evidence_id": "screening:d7f4286b654f3559b3f2e429:source",
+      "entity_id": "company-fixture-a",
+      "monitor_target_id": null,
+      "dimension": "compliance",
+      "provider": "fixture-formal-sanctions-list",
+      "source_type": "sanctions_list",
+      "endpoint": null,
+      "query": {},
+      "status": "available",
+      "collected_at": "2026-10-22T00:05:00Z",
+      "valid_until": "2026-10-24T00:00:00Z",
+      "data_mode": "formal",
+      "content_hash": "bfb9d4335c39196daeb45d275929df83a251658b029bf2c824e96c73a3e9c7ed",
+      "raw_payload_ref": null,
+      "facts": {
+        "source": "fixture-formal-sanctions-list",
+        "source_version": "fixture-v1",
+        "scope": "fixture-scope",
+        "observed_at": "2026-10-22T00:00:00+00:00",
+        "collected_at": "2026-10-22T00:05:00+00:00",
+        "expires_at": "2026-10-24T00:00:00+00:00",
+        "query_receipt": {},
+        "validity_status": "available",
+        "screening_status": "possible_match",
+        "coverage_status": "complete",
+        "match_count": 1,
+        "limitations": [
+          "存在名称线索，主体标识尚未核实。"
+        ]
+      }
+    },
+    {
+      "evidence_id": "screening:d7f4286b654f3559b3f2e429:match:a696c25650e8b13a1c21",
+      "entity_id": "company-fixture-a",
+      "monitor_target_id": null,
+      "dimension": "compliance",
+      "provider": "fixture-formal-sanctions-list",
+      "source_type": "sanctions_list_match",
+      "endpoint": null,
+      "query": {},
+      "status": "available",
+      "collected_at": "2026-10-22T00:05:00Z",
+      "valid_until": "2026-10-24T00:00:00Z",
+      "data_mode": "formal",
+      "content_hash": "a3c69636b4e24768552ef632b01db52084e2c0b9c0c1ba54bedbd6cf95c990d0",
+      "raw_payload_ref": null,
+      "facts": {
+        "source": "fixture-formal-sanctions-list",
+        "source_version": "fixture-v1",
+        "scope": "fixture-scope",
+        "observed_at": "2026-10-22T00:00:00+00:00",
+        "collected_at": "2026-10-22T00:05:00+00:00",
+        "expires_at": "2026-10-24T00:00:00+00:00",
+        "query_receipt": {},
+        "validity_status": "available",
+        "screening_status": "possible_match",
+        "coverage_status": "complete",
+        "match_count": 1,
+        "limitations": [
+          "存在名称线索，主体标识尚未核实。"
+        ],
+        "record_id": "fixture-record-possible",
+        "record_name": "同名线索主体有限公司",
+        "match_type": "possible",
+        "matched_on": "name"
+      }
+    }
+  ]
+}

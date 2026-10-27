@@ -16,6 +16,12 @@ from app.tools.registry import ToolRegistry, ToolSpec
 pytestmark = pytest.mark.agent_e2e
 
 
+@pytest.fixture(autouse=True)
+def isolate_matrix_identity_lookup(monkeypatch):
+    """Synthetic matrix entities are not live formal supplier identities."""
+    monkeypatch.setattr("app.domains.supplier.access.formal_supplier_id_by_name", lambda _name: None)
+
+
 def _matrix_state(task_specs: list[dict]) -> dict:
     return {
         "session_id": "task19-session",

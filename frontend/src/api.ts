@@ -1,5 +1,6 @@
 const SESSION_KEY = 'session';
 const API_BASE = '/api/v1';
+const CHAT_STREAM_TIMEOUT_MS = 130_000;
 
 export function getStoredUser(): { username: string; role: string } | null {
   try {
@@ -15,6 +16,7 @@ export function setStoredUser(username: string, role: string): void {
   // login. Authenticated ChatView instances use a username-scoped key.
   localStorage.removeItem('chat_sessions');
   localStorage.removeItem('chat_input');
+  localStorage.removeItem('chat_active_session');
   localStorage.setItem(SESSION_KEY, JSON.stringify({ username, role }));
 }
 
@@ -26,6 +28,8 @@ export function clearStoredUser(): void {
     if (username) {
       localStorage.removeItem(`chat_sessions:${encodeURIComponent(username)}`);
       localStorage.removeItem(`chat_input:${encodeURIComponent(username)}`);
+      localStorage.removeItem(`chat_active_session:${encodeURIComponent(username)}`);
+      localStorage.removeItem(`chat_runs:${encodeURIComponent(username)}`);
     }
   } catch {
     // Continue clearing the auth marker even if local storage is malformed.
@@ -33,6 +37,8 @@ export function clearStoredUser(): void {
   // Remove legacy unscoped values as a safety net for older browser sessions.
   localStorage.removeItem('chat_sessions');
   localStorage.removeItem('chat_input');
+  localStorage.removeItem('chat_active_session');
+  localStorage.removeItem('chat_runs');
   localStorage.removeItem(SESSION_KEY);
 }
 
@@ -96,10 +102,10 @@ export const api = {
     return request<T>(`${path}${qs}`, { signal });
   },
 
-  post: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
+  post: <T>(path: string, body?: unknown, signal?: AbortSignal, headers?: Record<string, string>) =>
     request<T>(path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body || {}),
       signal,
     }),
@@ -131,6 +137,11 @@ export interface ApprovalData {
   args: Record<string, unknown>;
   session_id: string;
   status?: 'pending' | 'submitting' | 'approved' | 'rejected' | 'failed';
+  run_id?: string | null;
+  last_event_id?: number | null;
+  approval_event_id?: number | null;
+  resume_started?: boolean;
+  decision?: 'approved' | 'rejected';
 }
 
 export interface StreamCallbacks {
@@ -149,6 +160,7 @@ export interface StreamCallbacks {
     run_id?: string;
     tool_call_count?: number;
     completed_tool_count?: number;
+    input_understanding?: import('./types').AgentInputUnderstanding;
   }) => void;
   onPlan?: (data: { steps: Array<{ tool: string; args: Record<string, unknown>; parallel?: boolean }> }) => void;
   onAgentSelection?: (data: { agents: string[]; reasoning: string }) => void;
@@ -193,10 +205,10 @@ async function _parseSSEStream(
       const dataStr = line.slice(6);
       try {
         const data = JSON.parse(dataStr);
+        if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
         dispatchStreamEvent(currentEvent, data, callbacks, (text) => {
           fullAnswer += text;
         });
-        if (currentEventId !== null && Number.isFinite(currentEventId)) callbacks.onEventId?.(currentEventId);
         currentEvent = '';
         currentEventId = null;
       } catch {
@@ -265,17 +277,21 @@ export async function chatStream(
   sessionId: string,
   callbacks: StreamCallbacks,
   mode: string = 'auto',
+  signal?: AbortSignal,
+  sourcingHandoffId?: string,
 ): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
+  const timeout = setTimeout(() => controller.abort(), CHAT_STREAM_TIMEOUT_MS);
 
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (sourcingHandoffId) headers['X-Sourcing-Handoff-ID'] = sourcingHandoffId;
     const res = await fetchWithAuthRetry(`${API_BASE}/chat/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ message, session_id: sessionId, mode }),
       credentials: 'same-origin',
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     });
 
     if (!res.ok) {
@@ -318,6 +334,7 @@ export async function resumeChat(
   sessionId: string,
   approved: boolean,
   callbacks: StreamCallbacks,
+  signal?: AbortSignal,
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -328,14 +345,24 @@ export async function resumeChat(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId, approved }),
       credentials: 'same-origin',
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
     });
 
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
     }
 
-    return await _parseSSEStream(res, callbacks);
+    let receivedResult = false;
+    const terminal = () => { receivedResult = true; };
+    const answer = await _parseSSEStream(res, {
+      ...callbacks,
+      onDone: data => { terminal(); callbacks.onDone?.(data); },
+      onError: data => { terminal(); callbacks.onError?.(data); },
+      onApprovalRequired: data => { terminal(); callbacks.onApprovalRequired?.(data); },
+      onClarification: data => { terminal(); callbacks.onClarification?.(data); },
+    });
+    if (!receivedResult) throw new Error('SSE 流在收到最终结果前断开');
+    return answer;
   } finally {
     clearTimeout(timeout);
   }
@@ -359,7 +386,7 @@ export async function agentRunEventStream(
   if (lastEventId !== null) headers['Last-Event-ID'] = String(lastEventId);
 
   try {
-    const res = await fetch(`${API_BASE}${pathPrefix}/${encodeURIComponent(runId)}/events`, {
+    const res = await fetchWithAuthRetry(`${API_BASE}${pathPrefix}/${encodeURIComponent(runId)}/events`, {
       headers,
       credentials: 'same-origin',
       signal,
@@ -380,7 +407,7 @@ export async function agentRunEventStream(
       try {
         const event = { eventId, eventType, data: JSON.parse(dataLines.join('\n')) };
         callbacks.onEvent?.(event);
-        if (eventType === 'done') {
+        if (eventType === 'done' || eventType === 'error') {
           receivedTerminalEvent = true;
           callbacks.onDone?.(event);
         }

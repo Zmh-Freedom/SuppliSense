@@ -57,11 +57,71 @@ def _row(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _authorize(row: dict[str, Any], user_id: str, user_role: str) -> None:
-    if user_role == "admin":
-        return
-    if str(row.get("requested_by") or "") != str(user_id):
+def _authorize_case_task(
+    row: dict[str, Any],
+    user_id: str,
+    user_role: str,
+    *,
+    action: str = "read",
+    target: dict[str, Any] | None = None,
+) -> None:
+    """Apply current case capability checks to a task linked to a business case."""
+    from app.domains.alert import case_access, case_repo
+
+    cases = case_repo.list_linked_cases_for_task(str(row.get("id") or ""))
+    if not cases:
+        if user_role == "admin":
+            return
+        if (
+            user_role in case_access.PURCHASER_ROLES
+            and str(row.get("requested_by") or "") == str(user_id)
+        ):
+            return
+        if (
+            user_role in case_access.PURCHASER_ROLES
+            and target
+            and case_access.is_current_manager_for_target(target, str(user_id))
+        ):
+            return
         raise PermissionError("无权访问该复核任务")
+    scoped = [
+        (
+            case,
+            case_access.case_capabilities(case, str(user_id), str(user_role)),
+        )
+        for case in cases
+    ]
+    readable = [(case, caps) for case, caps in scoped if caps.get("can_read")]
+    if not readable:
+        raise PermissionError("无权访问该复核任务")
+    if action == "decide":
+        if not (
+            user_role == "admin"
+            or str(row.get("requested_by") or "") == str(user_id)
+            or any(caps.get("can_assign") for _, caps in readable)
+        ):
+            raise PermissionError("无权确认该复核任务")
+    elif action == "execute":
+        is_case_owner = any(
+            str(case.get("owner_user_id") or "") == str(user_id)
+            for case, _ in readable
+        )
+        if not (
+            user_role == "admin"
+            or str(row.get("requested_by") or "") == str(user_id)
+            or is_case_owner
+            or any(caps.get("can_assign") for _, caps in readable)
+        ):
+            raise PermissionError("无权执行该复核任务")
+
+
+def _authorize_task(
+    row: dict[str, Any], user_id: str, user_role: str, *, action: str = "read"
+) -> None:
+    target = _authorize_target_access(
+        str(row.get("monitor_target_id") or ""), user_id, user_role
+    )
+    _authorize_case_task(row, user_id, user_role, action=action, target=target)
 
 
 def _target(monitor_target_id: str) -> dict[str, Any] | None:
@@ -70,6 +130,25 @@ def _target(monitor_target_id: str) -> dict[str, Any] | None:
         return None
     document.pop("_id", None)
     return document
+
+
+def _authorize_target_access(
+    monitor_target_id: str,
+    user_id: str,
+    user_role: str,
+    *,
+    target: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if user_role == "admin":
+        return target or _target(monitor_target_id) or {}
+    target = target if target is not None else _target(monitor_target_id)
+    if target is None:
+        raise PermissionError("无权访问该监控对象")
+    from app.domains.alert.service import _can_access_target
+
+    if not _can_access_target(target, str(user_id), user_role):
+        raise PermissionError("无权访问该监控对象")
+    return target
 
 
 def _append_event(
@@ -129,12 +208,16 @@ def get_review_task(task_id: str, user_id: str, user_role: str) -> dict[str, Any
     with get_cursor() as (_, cur):
         task = _fetch_task(cur, task_id)
     if task is not None:
-        _authorize(task, user_id, user_role)
+        _authorize_task(task, user_id, user_role)
     return task
 
 
-def get_latest_review_task(monitor_target_id: str) -> dict[str, Any] | None:
-    """Return the most recent task for a target for dashboard enrichment."""
+def get_latest_review_task(
+    monitor_target_id: str,
+    user_id: str | None = None,
+    user_role: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the latest visible target task for dashboard enrichment."""
     with get_cursor() as (_, cur):
         cur.execute(
             """
@@ -144,20 +227,71 @@ def get_latest_review_task(monitor_target_id: str) -> dict[str, Any] | None:
             (monitor_target_id,),
         )
         row = cur.fetchone()
-        return _fetch_task(cur, row[0], include_history=False) if row else None
+        task = _fetch_task(cur, row[0], include_history=False) if row else None
+    if task is not None and user_id is not None and user_role is not None:
+        try:
+            _authorize_task(task, user_id, user_role)
+        except PermissionError:
+            return None
+    return task
+
+
+def _current_user_target_ids(user_id: str, user_role: str) -> list[str]:
+    """Find formal monitor targets in the user's current responsibility scope."""
+    from app.domains.alert.case_access import PURCHASER_ROLES
+
+    if user_role not in PURCHASER_ROLES:
+        return []
+    try:
+        from app.domains.supplier.access import list_assigned_supplier_ids
+
+        supplier_ids = list_assigned_supplier_ids(str(user_id), str(user_role))
+        if not supplier_ids:
+            return []
+        targets = get_db()["watchlist"].find(
+            {"supplier_id": {"$in": sorted(supplier_ids)}},
+            {"monitor_target_id": 1},
+        )
+        return sorted(
+            {
+                str(target["monitor_target_id"])
+                for target in targets
+                if target.get("monitor_target_id")
+            }
+        )
+    except Exception:
+        return []
 
 
 def list_review_tasks(
     monitor_target_id: str | None, user_id: str, user_role: str
 ) -> list[dict[str, Any]]:
+    if monitor_target_id:
+        _authorize_target_access(monitor_target_id, user_id, user_role)
     clauses: list[str] = []
     values: list[Any] = []
     if monitor_target_id:
         clauses.append("monitor_target_id = %s")
         values.append(monitor_target_id)
     if user_role != "admin":
-        clauses.append("requested_by = %s")
-        values.append(user_id)
+        from app.domains.alert.case_access import current_manager_departments
+
+        departments = current_manager_departments(user_id)
+        target_ids = _current_user_target_ids(user_id, user_role)
+        case_clause = (
+            "id IN (SELECT link.task_id FROM procurement_case_tasks AS link "
+            "JOIN procurement_cases AS cases ON cases.id = link.case_id "
+            "WHERE cases.owner_user_id = %s OR cases.created_by = %s"
+            + (" OR cases.department_code = ANY(%s)" if departments else "")
+            + ")"
+        )
+        clauses.append(
+            f"(requested_by = %s OR {case_clause} OR monitor_target_id = ANY(%s))"
+        )
+        values.extend([user_id, user_id, user_id])
+        if departments:
+            values.append(departments)
+        values.append(target_ids)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_cursor() as (_, cur):
         cur.execute(
@@ -165,7 +299,15 @@ def list_review_tasks(
             tuple(values),
         )
         columns = [desc[0] for desc in cur.description]
-        return [_row(dict(zip(columns, row, strict=True))) for row in cur.fetchall()]
+        tasks = [_row(dict(zip(columns, row, strict=True))) for row in cur.fetchall()]
+    visible = []
+    for task in tasks:
+        try:
+            _authorize_task(task, user_id, user_role)
+            visible.append(task)
+        except PermissionError:
+            continue
+    return visible
 
 
 def create_review_task(
@@ -173,38 +315,78 @@ def create_review_task(
     task_type: str,
     payload: dict[str, Any],
     requested_by: str,
+    user_role: str | None = None,
 ) -> dict[str, Any]:
     if task_type not in REVIEW_TASK_TYPES:
         raise ValueError("不支持的复核任务类型")
     target = _target(monitor_target_id)
     if target is None:
         raise ValueError("监控对象不存在")
+    if user_role is not None:
+        _authorize_target_access(
+            monitor_target_id, str(requested_by), user_role, target=target
+        )
     with get_cursor() as (_, cur):
-        cur.execute(
-            """
-            SELECT id FROM monitor_review_tasks
-            WHERE monitor_target_id = %s AND task_type = %s
-              AND status IN ('pending_approval', 'approved', 'executing')
-            ORDER BY created_at DESC LIMIT 1
-            """,
-            (monitor_target_id, task_type),
+        return create_review_task_with_cursor(
+            cur,
+            {
+                "monitor_target_id": monitor_target_id,
+                "task_type": task_type,
+                "payload": payload,
+                "requested_by": requested_by,
+                "user_role": user_role,
+            },
         )
-        existing = cur.fetchone()
-        if existing:
-            task = _fetch_task(cur, existing[0])
-            if task is not None:
-                return task
-        task_id = str(uuid4())
-        cur.execute(
-            """
-            INSERT INTO monitor_review_tasks
-              (id, monitor_target_id, task_type, status, requested_by, payload)
-            VALUES (%s, %s, %s, 'pending_approval', %s, %s)
-            """,
-            (task_id, monitor_target_id, task_type, str(requested_by), Json(_json_safe(payload))),
-        )
-        _append_event(cur, task_id, str(requested_by), "created", None, "pending_approval", payload)
-        return _fetch_task(cur, task_id) or {}
+
+
+def create_review_task_with_cursor(cur: Any, values: dict[str, Any]) -> dict[str, Any]:
+    """Create or reuse one active task using a caller-owned transaction."""
+    monitor_target_id = str(values["monitor_target_id"])
+    task_type = str(values["task_type"])
+    payload = values.get("payload") or {}
+    requested_by = str(values["requested_by"])
+    user_role = values.get("user_role")
+    dedupe_across_requesters = bool(values.get("dedupe_across_requesters"))
+    if task_type not in REVIEW_TASK_TYPES:
+        raise ValueError("不支持的复核任务类型")
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+        (monitor_target_id, task_type),
+    )
+    requester_clause = (
+        "AND requested_by = %s"
+        if user_role is not None and user_role != "admin" and not dedupe_across_requesters
+        else ""
+    )
+    existing_params: list[Any] = [monitor_target_id, task_type]
+    if requester_clause:
+        existing_params.append(requested_by)
+    cur.execute(
+        f"""
+        SELECT id FROM monitor_review_tasks
+        WHERE monitor_target_id = %s AND task_type = %s
+          AND status IN ('pending_approval', 'approved', 'executing')
+          {requester_clause}
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        tuple(existing_params),
+    )
+    existing = cur.fetchone()
+    if existing:
+        task = _fetch_task(cur, existing[0])
+        if task is not None:
+            return task
+    task_id = str(uuid4())
+    cur.execute(
+        """
+        INSERT INTO monitor_review_tasks
+          (id, monitor_target_id, task_type, status, requested_by, payload)
+        VALUES (%s, %s, %s, 'pending_approval', %s, %s)
+        """,
+        (task_id, monitor_target_id, task_type, requested_by, Json(_json_safe(payload))),
+    )
+    _append_event(cur, task_id, requested_by, "created", None, "pending_approval", payload)
+    return _fetch_task(cur, task_id) or {}
 
 
 def decide_review_task(
@@ -224,7 +406,7 @@ def decide_review_task(
             raise ValueError("复核任务不存在")
         columns = [desc[0] for desc in cur.description]
         task = _row(dict(zip(columns, row, strict=True)))
-        _authorize(task, user_id, user_role)
+        _authorize_task(task, user_id, user_role, action="decide")
         if task["version"] != expected_version:
             raise ValueError("复核任务已发生变化，请刷新后重试")
         if task["status"] != "pending_approval":
@@ -269,21 +451,20 @@ def _evidence(
     }
 
 
-def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-    from app.domains.risk.service import calculate_company_risk_preview
-    from app.domains.alert.service import save_snapshot
+def _execute_action(
+    task: dict[str, Any],
+    target: dict[str, Any],
+    *,
+    actor_id: str | None = None,
+    actor_role: str | None = None,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    from app.domains.risk.assessment_service import monitor_assessment
 
     task_type = task["task_type"]
     name = str(target.get("display_name") or target.get("company_name") or "").strip()
-    common = {
-        "monitor_target_id": task["monitor_target_id"],
-        "target_type": target.get("target_type"),
-        "supplier_id": target.get("supplier_id"),
-        "candidate_id": target.get("candidate_id"),
-        "company_id": target.get("company_id"),
-    }
     if task_type in {"assess", "review"}:
-        preview = calculate_company_risk_preview(name)
+        preview = monitor_assessment(name, monitor_target_id=task["monitor_target_id"],
+            company_id=target.get("company_id"),actor_id=task.get("requested_by"),request_key="review-task:"+str(task["id"]))
         if preview is None:
             evidence = _evidence(
                 task, dimension="risk_monitoring", provider="monitoring_workbench",
@@ -292,7 +473,6 @@ def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, 
             )
             return "needs_review", {"summary": "风险评估未形成结论，主体或风险数据当前未覆盖", "status": "needs_review"}, [evidence]
         result = preview.model_dump(mode="json") if hasattr(preview, "model_dump") else dict(preview)
-        save_snapshot(name, preview, **common)
         evidence = _evidence(
             task, dimension="risk_monitoring", provider="cached_risk_evidence",
             source_type="risk_snapshot", status="supported", data_mode="formal",
@@ -307,12 +487,45 @@ def _execute_action(task: dict[str, Any], target: dict[str, Any]) -> tuple[str, 
         )
         return "needs_review", {"summary": "主体核验尚未形成可确认结果", "status": "needs_review"}, [evidence]
     if task_type == "supplement_data":
-        coverage = task.get("payload", {}).get("data_coverage") or {}
+        coverage = {}
+        if actor_id and actor_role:
+            try:
+                from app.domains.alert.service import get_watchlist_target_summaries
+
+                summary = next(
+                    (
+                        item
+                        for item in get_watchlist_target_summaries(actor_id, actor_role)
+                        if str(item.get("monitor_target_id") or "")
+                        == str(task["monitor_target_id"])
+                    ),
+                    None,
+                )
+                if summary:
+                    coverage = summary.get("data_coverage") or {}
+            except Exception:
+                coverage = {}
+        missing_dimensions = coverage.get("missing_dimensions", [])
+        current_status = coverage.get("status") or "unknown"
         evidence = _evidence(
             task, dimension="risk_monitoring", provider="monitoring_workbench", source_type="coverage_snapshot",
-            status="partial", data_mode="formal", facts={"missing_dimensions": coverage.get("missing_dimensions", []), "coverage": coverage},
+            status="partial", data_mode="formal",
+            facts={
+                "coverage_status": current_status,
+                "missing_dimensions": missing_dimensions,
+                "dimensions": coverage.get("dimensions", []),
+            },
         )
-        return "needs_review", {"summary": "数据覆盖不完整，已记录未覆盖的数据域", "status": "needs_review", "missing_dimensions": coverage.get("missing_dimensions", [])}, [evidence]
+        summary = (
+            "当前数据覆盖仍不完整，已记录当前未覆盖的数据域"
+            if current_status not in {"unknown", "failed"}
+            else "当前覆盖状态暂不可用，需人工复核"
+        )
+        return "needs_review", {
+            "summary": summary,
+            "status": "needs_review",
+            "missing_dimensions": missing_dimensions,
+        }, [evidence]
     evidence = _evidence(
         task, dimension="risk_monitoring", provider="monitoring_workbench", source_type="monitoring_observation",
         status="supported", data_mode="formal", facts={"monitor_status": target.get("monitor_status"), "identity_status": target.get("identity_status")},
@@ -333,7 +546,7 @@ def execute_review_task(
             raise ValueError("复核任务不存在")
         columns = [desc[0] for desc in cur.description]
         task = _row(dict(zip(columns, row, strict=True)))
-        _authorize(task, user_id, user_role)
+        _authorize_task(task, user_id, user_role, action="execute")
         if task["version"] != expected_version:
             raise ValueError("复核任务已发生变化，请刷新后重试")
         if task["status"] != "approved":
@@ -352,7 +565,28 @@ def execute_review_task(
         error_code = "MONITOR_TARGET_NOT_FOUND"
     else:
         try:
-            final_status, result, evidences = _execute_action(task, target)
+            _authorize_task(task, user_id, user_role, action="execute")
+        except PermissionError:
+            with get_cursor() as (_, cur):
+                cur.execute(
+                    """
+                    UPDATE monitor_review_tasks
+                    SET status = 'cancelled', version = version + 1,
+                        error_code = 'AUTHORIZATION_REVOKED', completed_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = %s AND status = 'executing'
+                    """,
+                    (task_id,),
+                )
+                _append_event(
+                    cur, UUID(str(task_id)), str(user_id), "execution_denied",
+                    "executing", "cancelled", {"reason": "authorization_revoked"},
+                )
+                return _fetch_task(cur, task_id) or {}
+        try:
+            final_status, result, evidences = _execute_action(
+                task, target, actor_id=str(user_id), actor_role=str(user_role)
+            )
             error_code = None
         except Exception as exc:
             final_status = "failed"

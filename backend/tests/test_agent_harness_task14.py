@@ -18,7 +18,7 @@ from app.graphs.agent_core.adapter import _enforce_scope_query_intent
 from app.graphs.agent_core.adapter import apply_extracted_conversation_intent
 from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
-from app.graphs.harness.graph import _build_default_plan, _summary
+from app.graphs.harness.graph import _build_default_plan, _primary_summary_capability, _summary
 from app.graphs.agent_core.intent_extractor import ConversationIntentExtraction
 from app.domains.risk import tools_risk
 from app.tools import TOOL_REGISTRY
@@ -52,6 +52,20 @@ def test_harness_requirement_extracts_complete_natural_language_purchase_request
     assert result["requirement"]["category"] == "工业摄像头"
     assert result["requirement"]["specification"] == "IP67，支持 PoE"
     assert result["requirement"]["region"] == "华东"
+
+
+def test_harness_requirement_extracts_quantity_and_product_from_purchase_request(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+
+    result = resolve_harness_requirement(
+        "采购1000件不锈钢螺栓，规格M8×30，含税预算不超过2万元，交付到苏州。"
+    )
+
+    assert result["status"] == "ready"
+    assert result["requirement"]["category"] == "螺栓"
+    assert result["requirement"]["product"] == "不锈钢螺栓"
+    assert result["requirement"]["quantity"] == 1000
+    assert result["requirement"]["specification"] == "M8×30"
 
 
 def test_harness_requirement_extracts_material_number_for_read_only_sourcing(monkeypatch) -> None:
@@ -123,6 +137,40 @@ def test_harness_uses_llm_requirement_slots_before_legacy_wording_fallback() -> 
     assert planned[0].tool_name == "discover_supplier_candidates"
 
 
+def test_harness_does_not_reask_optional_fields_for_known_material_number(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    context = {
+        "references": [],
+        "conversation_state": {},
+        "llm_intent": {
+            "needs_clarification": False,
+            "missing_fields": [],
+            "clarification_question": None,
+        },
+        "current_task": {
+            "task_id": "source-material-number",
+            "task_type": "sourcing",
+            "user_message": "帮我为物料号23748163寻找供应商，优先展示历史合作候选。",
+            "llm_sourcing_requirement": {
+                "category": "后轮制动鼓",
+                "product": "23748163",
+                "material": "23748163",
+                "specification": "23748163",
+            },
+        },
+    }
+
+    resolved = _apply_harness_sourcing_requirement(
+        context,
+        context["current_task"]["user_message"],
+    )
+
+    assert resolved["current_task"]["requirement_status"] == "ready"
+    assert resolved["current_task"]["requirement"]["material"] == "23748163"
+    assert resolved["llm_intent"]["needs_clarification"] is False
+    assert resolved["llm_intent"]["missing_fields"] == []
+
+
 def test_llm_capability_survives_supplier_plan_replacement() -> None:
     """The active Harness contract must retain the routing capability after planning."""
     from app.graphs.agent_core.adapter import validate_execution_context
@@ -151,6 +199,49 @@ def test_llm_capability_survives_supplier_plan_replacement() -> None:
 
     assert resolved["current_task"]["capability"] == "risk"
     assert resolved["current_task"]["scope"] == "single_supplier"
+
+
+def test_compound_financial_and_legal_request_plans_both_capabilities() -> None:
+    company = "上海凯众材料科技股份有限公司"
+    current_task = {
+        "task_id": "compound-analysis",
+        "task_type": "analysis",
+        "user_message": f"分析{company}的财务和司法风险，财务重点看现金流，司法重点看当前未结案件",
+        "target_supplier_names": [company],
+        "analysis_dimensions": ["financial"],
+        "provider_capabilities": ["legal_risk"],
+        "capability": "financial",
+    }
+
+    plan = _build_default_plan({
+        "current_task": current_task,
+        "execution_context": {"references": [], "conversation_state": {}},
+    })
+
+    assert {task.tool_name for task in plan} >= {"query_financials", "lookup_legal_risk"}
+
+
+def test_negated_sentiment_is_not_added_to_legal_task_plan() -> None:
+    company = "上海凯众材料科技股份有限公司"
+    current_task = {
+        "task_id": "legal-only",
+        "task_type": "analysis",
+        "user_message": f"那先不看舆情了，改查{company}的司法风险，重点看当前未结案件",
+        "target_supplier_names": [company],
+        "analysis_dimensions": [],
+        "provider_capabilities": ["legal_risk"],
+        "capability": "legal_risk",
+    }
+
+    plan = _build_default_plan({
+        "current_task": current_task,
+        "execution_context": {"references": [], "conversation_state": {}},
+    })
+
+    tools = {task.tool_name for task in plan}
+    assert "lookup_legal_risk" in tools
+    assert "sentiment_analysis" not in tools
+    assert "lookup_company_news" not in tools
 
 
 def test_harness_new_sourcing_turn_replaces_previous_category(monkeypatch) -> None:
@@ -809,7 +900,7 @@ def test_comprehensive_risk_summary_preserves_risk_as_primary_capability() -> No
     [
         ("查看测试供应商的财务数据", "query_financials", "financial", "net_profit_growth", -0.1, "财务分析"),
         ("分析测试供应商的舆情", "sentiment_analysis", "sentiment", "overall_sentiment", "neutral", "舆情分析"),
-        ("对测试供应商进行合规筛查", "check_sanctions", "compliance", "clean", True, "合规与制裁筛查"),
+        ("对测试供应商进行合规筛查", "check_sanctions", "compliance", "clean", True, "已核验的名单范围内"),
         ("评估测试供应商的 ESG 风险", "esg_assessment", "esg", "total_score", 20, "ESG 评估"),
         ("查看测试供应商最近 6 个月的风险趋势", "analyze_trend", "risk_trend", "trend", "稳定", "历史风险趋势分析"),
         ("查询测试供应商的司法风险", "lookup_legal_risk", "legal_risk", None, 2, "司法风险检索"),
@@ -1065,6 +1156,7 @@ def test_harness_maps_explicit_capabilities_to_tools(message: str, tool_name: st
 
 
 def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing.service.discover_read_only_sourcing_candidates", lambda _req: {"local_candidates": [], "external_candidates": []})
     formal = {
         "supplier_id": "supplier-1",
         "supplier_name": "华东钢材有限公司",
@@ -1110,6 +1202,7 @@ def test_harness_sourcing_keeps_formal_candidates_when_external_stage_fails(monk
 
 
 def test_harness_sourcing_exposes_external_candidate_as_pending_verification(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing.service.discover_read_only_sourcing_candidates", lambda _req: {"local_candidates": [], "external_candidates": []})
     external = {
         "candidate_id": "candidate-1",
         "supplier_name": "公开钢材候选有限公司",
@@ -1149,3 +1242,127 @@ def test_harness_sourcing_exposes_external_candidate_as_pending_verification(mon
     assert candidate["identity_status"] == "unavailable"
     assert candidate["verification_status"] == "pending_verification"
     assert outcome.data["source_order"][-2:] == ["tianyancha", "web_search"]
+
+
+@pytest.mark.parametrize(
+    ("message", "tool_name", "expected"),
+    [
+        ("分析青岛三祥科技股份有限公司的最新舆情和新闻动态", "sentiment_analysis", "舆情分析"),
+        ("分析青岛三祥科技股份有限公司的供应链关系和传染风险", "contagion_analysis", "供应链关系与传染风险分析"),
+    ],
+)
+def test_summary_repairs_legacy_generic_capability_for_explicit_request(
+    message: str, tool_name: str, expected: str
+) -> None:
+    dimension = "sentiment" if tool_name == "sentiment_analysis" else "risk_network"
+    fact_path = "overall_sentiment" if dimension == "sentiment" else "related_count"
+    value: object = "neutral" if dimension == "sentiment" else 3
+    answer = AgentAnswer(
+        status="completed",
+        summary="待生成",
+        claims=[ValidatedClaim(
+            claim_id=f"{dimension}-claim",
+            entity_id="entity:qingdao",
+            dimension=dimension,
+            statement=f"青岛三祥科技股份有限公司 {fact_path}：{value}",
+            value=value,
+            fact_path=fact_path,
+            evidence_refs=[tool_name],
+            confidence=0.9,
+            validation_status="supported",
+        )],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "capability": "risk",
+            "user_message": message,
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+        },
+        "task_specs": [{"tool_name": tool_name}],
+        "tool_outcomes": [],
+    })
+
+    assert expected in summary
+    assert "综合风险分析" not in summary
+
+
+@pytest.mark.parametrize(
+    ("message", "tool_name", "expected"),
+    [
+        ("查看测试供应商的现金流", "query_financials", "financial"),
+        ("预测测试供应商未来 6 个月的风险", "predict_risk", "risk_prediction"),
+        ("核验测试供应商的主体身份", "lookup_company_identity", "identity_review"),
+        ("给我测试供应商的电话和官网", "lookup_company_profile", "company_profile"),
+        ("分析测试供应商的交付周期", "assess_operational_risk", "delivery"),
+    ],
+)
+def test_summary_router_normalizes_other_explicit_generic_capabilities(
+    message: str, tool_name: str, expected: str
+) -> None:
+    assert _primary_summary_capability(message, {tool_name}, set(), "risk") == expected
+
+
+@pytest.mark.parametrize(
+    ("capability", "message", "expected_tool"),
+    [
+        ("sentiment", "分析青岛三祥科技股份有限公司的新闻动态", "sentiment_analysis"),
+        ("risk_network", "分析青岛三祥科技股份有限公司的上下游关系", "contagion_analysis"),
+    ],
+)
+def test_harness_plan_binds_normalized_primary_capability(
+    capability: str, message: str, expected_tool: str
+) -> None:
+    planned = _build_default_plan({
+        "current_task": {
+            "task_id": "normalized-capability",
+            "task_type": "analysis",
+            "capability": capability,
+            "user_message": message,
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": [],
+        },
+        "execution_context": {"references": []},
+    })
+
+    assert expected_tool in [task.tool_name for task in planned]
+    assert "assess_risk" not in [task.tool_name for task in planned]
+
+
+def test_specialized_capability_replaces_prebuilt_generic_risk_matrix() -> None:
+    context = {
+        "session_id": "replace-generic-risk-matrix",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "prebuilt-risk",
+            "task_type": "analysis",
+            "user_message": "分析青岛三祥科技股份有限公司的供应链关系和传染风险",
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": ["risk"],
+            "subtasks": [{
+                "subtask_id": "prebuilt-risk-1-1",
+                "supplier_name": "青岛三祥科技股份有限公司",
+                "dimension": "risk",
+                "evidence_requirements": ["risk"],
+            }],
+        },
+    }
+    extraction = ConversationIntentExtraction(
+        target_supplier_names=["青岛三祥科技股份有限公司"],
+        analysis_dimensions=[],
+        capability="risk_network",
+        scope="single_supplier",
+        task_type="analysis",
+    )
+
+    resolved = apply_extracted_conversation_intent(context, extraction)
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["analysis_dimensions"] == []
+    assert resolved["current_task"]["subtasks"] == []
+    assert [task.tool_name for task in planned] == ["contagion_analysis"]

@@ -33,8 +33,20 @@ def _cursor():
     yield None, object()
 
 
-def _run(*, status: str = "ACTION_PENDING", version: int = 3, user_id: str = "owner") -> dict:
-    return {"id": RUN_ID, "status": status, "version": version, "user_id": user_id}
+def _run(
+    *,
+    status: str = "ACTION_PENDING",
+    version: int = 3,
+    user_id: str = "owner",
+    requirement: dict | None = None,
+) -> dict:
+    return {
+        "id": RUN_ID,
+        "status": status,
+        "version": version,
+        "user_id": user_id,
+        "requirement": requirement or {},
+    }
 
 
 def _proposal(**overrides: object) -> dict:
@@ -125,12 +137,67 @@ def test_scheduled_report_action_creates_only_after_durable_execution_boundary(m
         "company_names": ["青岛三祥科技股份有限公司"],
         "cron": "weekly",
         "report_type": "excel",
-    })
+        "idempotency_key": "schedule:proposal-1",
+    }, owner_user_id="run-owner")
 
     assert result == {"task_id": "weekly-1"}
     creator.assert_called_once_with(
-        ["青岛三祥科技股份有限公司"], cron="weekly", report_type="excel"
+        ["青岛三祥科技股份有限公司"],
+        cron="weekly",
+        report_type="excel",
+        owner_user_id="run-owner",
+        idempotency_key="schedule:proposal-1",
     )
+
+
+def test_scheduled_report_execution_uses_owner_from_run_not_event_payload(monkeypatch):
+    proposal = _proposal(
+        action_type="manage_scheduled_report",
+        status="approved",
+        payload={"action": "list"},
+    )
+    executed = Mock()
+    monkeypatch.setattr(action_service, "get_action_proposal_for_execution", lambda *_: proposal)
+    monkeypatch.setattr(action_service, "get_run", lambda *_: _run(user_id="run-owner"))
+    monkeypatch.setattr(action_service, "_execute_action", executed)
+    monkeypatch.setattr(action_service, "mark_action_succeeded", lambda *_: None)
+
+    action_service.execute_sourcing_risk_action({
+        "payload": {
+            "run_id": RUN_ID,
+            "proposal_id": PROPOSAL_ID,
+            "owner_user_id": "attacker-controlled",
+        }
+    })
+
+    assert executed.call_args.kwargs["owner_user_id"] == "run-owner"
+
+
+def test_scheduled_report_target_must_be_bound_to_the_current_run(monkeypatch):
+    persisted: list[dict] = []
+    monkeypatch.setattr(action_service, "get_cursor", _cursor)
+    monkeypatch.setattr(
+        action_service,
+        "get_run_for_update",
+        lambda *_: _run(requirement={"target_supplier_names": ["当前 Run 企业"]}),
+    )
+    monkeypatch.setattr(action_service, "get_action_proposal_for_idempotency_key", lambda *_: None)
+    monkeypatch.setattr(
+        action_service,
+        "insert_action_proposal",
+        lambda **kwargs: persisted.append(kwargs) or _proposal(),
+    )
+
+    with pytest.raises(DomainError) as exc:
+        _create_proposal(
+            action_type="manage_scheduled_report",
+            payload={"action": "create", "company_name": "其他企业", "company_names": ["其他企业"]},
+            idempotency_key="schedule:foreign-target",
+            candidate_id=None,
+        )
+
+    assert (exc.value.code, exc.value.status_code) == ("AGENT_ACTION_TARGET_NOT_FOUND", 404)
+    assert persisted == []
 
 
 def test_shadow_action_boundary_rejects_proposal_before_database_write(monkeypatch):
@@ -592,6 +659,12 @@ def test_action_side_effects_have_unique_durable_idempotency_keys(monkeypatch):
     assert "suppliers" in indexed_collections
     assert "access_applications" in indexed_collections
     assert "agent_report_exports" in indexed_collections
-    for collection_name in ("suppliers", "access_applications", "agent_report_exports"):
+    assert "scheduled_reports" in indexed_collections
+    for collection_name in (
+        "suppliers",
+        "access_applications",
+        "agent_report_exports",
+        "scheduled_reports",
+    ):
         calls = db[collection_name].create_index.call_args_list
         assert any(call.kwargs.get("unique") is True for call in calls)

@@ -89,7 +89,57 @@ def test_plural_and_singular_references_only_use_previous_focus_set() -> None:
     )
 
     assert plural.target_supplier_names == [item["name"] for item in REFERENCES]
-    assert singular.target_supplier_names == [REFERENCES[0]["name"]]
+    assert singular.target_supplier_names == []
+    assert singular.needs_clarification is True
+    assert singular.reason == "ambiguous_singular_reference"
+
+
+def test_singular_reference_resolves_when_previous_focus_has_one_supplier() -> None:
+    first = resolve_turn(
+        "对深圳市立创电子有限公司做风险分析",
+        session_id="session-a",
+        references=REFERENCES,
+    )
+    result = resolve_turn(
+        "再看这家合规情况",
+        session_id="session-a",
+        previous_memory=first.memory,
+        references=REFERENCES,
+    )
+
+    assert result.target_supplier_names == [REFERENCES[0]["name"]]
+    assert result.needs_clarification is False
+
+
+def test_duplicate_alias_requires_supplier_identity_clarification() -> None:
+    references = [
+        {"name": "上海海拉电子有限公司", "aliases": ["海拉"]},
+        {"name": "海拉汽车科技有限公司", "aliases": ["海拉"]},
+    ]
+
+    result = resolve_turn("看看海拉的风险", references=references)
+
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert result.reason == "ambiguous_alias"
+
+
+def test_candidate_ordinal_beats_conflicting_llm_target_and_returns_stable_id() -> None:
+    references = [
+        {"name": "甲光学有限公司", "candidate_id": "cand-a"},
+        {"name": "乙影像有限公司", "candidate_id": "cand-b"},
+        {"name": "丙视觉有限公司", "candidate_id": "cand-c"},
+    ]
+
+    result = resolve_turn(
+        "第二家做主体核验",
+        references=references,
+        llm_candidates=["甲光学有限公司"],
+    )
+
+    assert result.target_supplier_names == ["乙影像有限公司"]
+    assert result.status == "resolved"
+    assert result.candidate_id == "cand-b"
 
 
 def test_unknown_llm_candidate_stays_pending_and_is_not_verified() -> None:

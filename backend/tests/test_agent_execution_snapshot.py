@@ -24,6 +24,7 @@ def test_persist_supervisor_snapshot_embeds_recoverable_execution_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[dict] = []
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run())
     monkeypatch.setattr(

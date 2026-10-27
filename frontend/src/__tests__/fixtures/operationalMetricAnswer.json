@@ -1,0 +1,183 @@
+{
+  "answer": {
+    "status": "partial",
+    "summary": "已取得质量/交付指标：甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 合格率：95.2%；甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 准时交付率：70.0%。评级政策尚未确认，暂不提供正式风险分与等级。",
+    "claims": [
+      {
+        "claim_id": "operational:entity:甲公司:quality:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f:claim:quality_rate",
+        "entity_id": "entity:甲公司",
+        "dimension": "quality",
+        "statement": "甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 合格率：95.2%",
+        "value": 0.952,
+        "fact_path": "quality_rate",
+        "operator": "eq",
+        "unit": "ratio",
+        "evidence_refs": [
+          "operational:entity:甲公司:quality:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f"
+        ],
+        "confidence": 0.85,
+        "validation_status": "supported",
+        "validation_reasons": []
+      },
+      {
+        "claim_id": "operational:entity:甲公司:delivery:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371:claim:on_time_rate",
+        "entity_id": "entity:甲公司",
+        "dimension": "delivery",
+        "statement": "甲公司（2026-10；供应商代码 S1；物料 M1；基地 P1；来源记录 r1） 准时交付率：70.0%",
+        "value": 0.7,
+        "fact_path": "on_time_rate",
+        "operator": "eq",
+        "unit": "ratio",
+        "evidence_refs": [
+          "operational:entity:甲公司:delivery:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371"
+        ],
+        "confidence": 0.85,
+        "validation_status": "supported",
+        "validation_reasons": []
+      }
+    ],
+    "limitations": [
+      "已取得指标，风险等级待确认：质量/交付评级政策尚未确认。"
+    ],
+    "action_proposals": [],
+    "action_receipts": [],
+    "evidence_refs": [
+      "operational:entity:甲公司:quality:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f",
+      "operational:entity:甲公司:delivery:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371"
+    ]
+  },
+  "evidence": [
+    {
+      "evidence_id": "operational:entity:甲公司:quality:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f",
+      "entity_id": "entity:甲公司",
+      "monitor_target_id": null,
+      "dimension": "quality",
+      "provider": "assess_operational_risk",
+      "source_type": "feishu_transaction_snapshot",
+      "endpoint": null,
+      "query": {
+        "scope": {
+          "supplier_code": "S1",
+          "material_code": "M1",
+          "base": "P1"
+        },
+        "period": "2026-10"
+      },
+      "status": "available",
+      "collected_at": "2026-10-22T00:00:00Z",
+      "valid_until": "2099-11-01T00:00:00Z",
+      "data_mode": "formal",
+      "content_hash": "d9a10ab780227e27d20a3b360334a7e11f92965818dd7276a4371dae1eb9aa8d",
+      "raw_payload_ref": "operational-source:test-contract:5d66e5049c6238d7cb47b96efe7736aa5438b548ce7c039eb0be8cea2adeaa9f",
+      "facts": {
+        "company_name": "甲公司",
+        "period": "2026-10",
+        "scope": {
+          "supplier_code": "S1",
+          "material_code": "M1",
+          "base": "P1"
+        },
+        "source_version": "1",
+        "observed_at": "2026-10-01T00:00:00+00:00",
+        "source_observations": [
+          {
+            "metric": "quality_rate",
+            "raw_value": 0.952,
+            "raw_unit": "ratio",
+            "value": 0.952,
+            "numerator": 952.0,
+            "denominator": 1000.0,
+            "denominator_basis": "inspected_units",
+            "quantity_unit": "件",
+            "period": "2026-10",
+            "scope": {
+              "supplier_code": "S1",
+              "material_code": "M1",
+              "base": "P1"
+            },
+            "source": "test-contract",
+            "source_record_id": "r1",
+            "partition": "B1",
+            "row_kind": "detail",
+            "source_version": "1",
+            "observed_at": "2026-10-01T00:00:00Z",
+            "valid_until": "2099-11-01T00:00:00Z",
+            "status": "available",
+            "reasons": []
+          }
+        ],
+        "limitations": [
+          "已取得指标，风险等级待确认：质量/交付评级政策尚未确认。"
+        ],
+        "quality_rate": 0.952,
+        "quality_rate_unit": "ratio"
+      }
+    },
+    {
+      "evidence_id": "operational:entity:甲公司:delivery:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371",
+      "entity_id": "entity:甲公司",
+      "monitor_target_id": null,
+      "dimension": "delivery",
+      "provider": "assess_operational_risk",
+      "source_type": "feishu_transaction_snapshot",
+      "endpoint": null,
+      "query": {
+        "scope": {
+          "supplier_code": "S1",
+          "material_code": "M1",
+          "base": "P1"
+        },
+        "period": "2026-10"
+      },
+      "status": "available",
+      "collected_at": "2026-10-22T00:00:00Z",
+      "valid_until": "2099-11-01T00:00:00Z",
+      "data_mode": "formal",
+      "content_hash": "d310302d8d8335e4b74cce266dd861e9757fef80cba0cf45d800ec45c0d3745c",
+      "raw_payload_ref": "operational-source:test-contract:f848b860eb0ef4c1d33ca54bae781ed5fc733b1351c982dfef277347e6c59371",
+      "facts": {
+        "company_name": "甲公司",
+        "period": "2026-10",
+        "scope": {
+          "supplier_code": "S1",
+          "material_code": "M1",
+          "base": "P1"
+        },
+        "source_version": "1",
+        "observed_at": "2026-10-01T00:00:00+00:00",
+        "source_observations": [
+          {
+            "metric": "on_time_rate",
+            "raw_value": 0.7,
+            "raw_unit": "ratio",
+            "value": 0.7,
+            "numerator": 700.0,
+            "denominator": 1000.0,
+            "denominator_basis": "ordered_units",
+            "quantity_unit": "件",
+            "period": "2026-10",
+            "scope": {
+              "supplier_code": "S1",
+              "material_code": "M1",
+              "base": "P1"
+            },
+            "source": "test-contract",
+            "source_record_id": "r1",
+            "partition": "B1",
+            "row_kind": "detail",
+            "source_version": "1",
+            "observed_at": "2026-10-01T00:00:00Z",
+            "valid_until": "2099-11-01T00:00:00Z",
+            "status": "available",
+            "reasons": []
+          }
+        ],
+        "limitations": [
+          "已取得指标，风险等级待确认：质量/交付评级政策尚未确认。"
+        ],
+        "on_time_rate": 0.7,
+        "on_time_rate_unit": "ratio"
+      }
+    }
+  ]
+}

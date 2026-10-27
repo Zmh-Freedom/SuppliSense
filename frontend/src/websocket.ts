@@ -1,4 +1,4 @@
-import type { WSEventMap } from './types';
+import type { WSConnectionState, WSEventMap } from './types';
 
 type EventHandler<T = unknown> = (data: T) => void;
 
@@ -9,6 +9,8 @@ export class WSClient {
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = 1000;
   private reconnectEnabled = true;
+  private connectedOnce = false;
+  private connectionHandlers = new Set<EventHandler<WSConnectionState>>();
 
   connect() {
     this.reconnectEnabled = true;
@@ -36,9 +38,13 @@ export class WSClient {
     socket.onopen = () => {
       if (this.ws !== socket) return;
       this.reconnectDelay = 1000;
+      const state = { reconnected: this.connectedOnce };
+      this.connectedOnce = true;
+      this.connectionHandlers.forEach(handler => handler(state));
     };
 
     socket.onmessage = (msg) => {
+      if (this.ws !== socket) return;
       try {
         const { event, data } = JSON.parse(msg.data);
         const handlers = this.handlers.get(event);
@@ -84,10 +90,16 @@ export class WSClient {
     this.handlers.get(event)?.delete(handler);
   }
 
+  onConnection(handler: EventHandler<WSConnectionState>): () => void {
+    this.connectionHandlers.add(handler);
+    return () => { this.connectionHandlers.delete(handler); };
+  }
+
   disconnect() {
     // Closing a socket fires onclose asynchronously. Disable reconnects before
     // closing so logout/unmount cannot schedule an anonymous retry.
     this.reconnectEnabled = false;
+    this.connectedOnce = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -114,6 +126,7 @@ export class WSClient {
   destroy() {
     this.disconnect();
     this.handlers.clear();
+    this.connectionHandlers.clear();
   }
 }
 

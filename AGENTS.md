@@ -14,6 +14,21 @@
 - **调度:** APScheduler (定时任务)
 - **实时:** WebSocket (预警推送), SSE (对话流式)
 
+## 开发环境连接约定（2026-10-19 用户确认）
+
+日常开发、联调和手工验收统一连接服务器上的 PostgreSQL、MongoDB 和 Redis。沿用 `backend/.env` 中已经验证的配置，不默认启动本地数据库或 Redis 容器，也不在连接失败时自动切换到本地实例。
+
+| 服务 | 本地 SSH 隧道入口 | 服务器端口 | 开发库 |
+| --- | --- | --- | --- |
+| PostgreSQL | `127.0.0.1:15432` | `127.0.0.1:5432` | `sra` |
+| MongoDB | `127.0.0.1:27018` | `127.0.0.1:27017` | `tianyancha` |
+| Redis | `127.0.0.1:16379` | `127.0.0.1:6379` | 以 `backend/.env` 的 URL 为准 |
+
+- SSH 主机别名：`supplisense-db`，端口转发由本机 `~/.ssh/config` 管理。现有 `scripts/db-tunnel.sh` 支持 `start`、`status`；也可用 `ssh -f -N supplisense-db` 建立隧道，先检查端口是否已有监听。
+- 远程检查使用 Alibaba Cloud Workbench CLI：实例 `i-7xv2k7dlyua90lp00gfk`，地域 `cn-guangzhou`。使用现有 Workbench profile；账号、密码和云凭据不写入文档或日志。
+- 开发前先确认隧道与服务认证可用，再启动应用。不要把 `127.0.0.1` 的转发端口误判为本机数据库。
+- 需要写入、清理 fixture 的集成测试使用该服务器上的独立测试库及独立 Redis 数据范围，显式覆盖连接配置；不得把共享开发库 `sra`、`tianyancha` 作为可清空的测试库。离线单元测试继续使用 mock。
+
 ## 架构分层
 
 ```

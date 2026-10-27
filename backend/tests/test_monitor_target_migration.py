@@ -12,6 +12,13 @@ from app.schemas import RiskCalculateResponse
 from app.tools.contracts import WatchlistOutput
 
 
+@pytest.fixture(autouse=True)
+def identity_source_boundaries(monkeypatch):
+    """Identity assembly tests provide each source explicitly, never query dev data."""
+    monkeypatch.setattr("app.domains.alert.intake_service._load_local_candidates", lambda _query: [])
+    monkeypatch.setattr("app.domains.alert.intake_service._load_external_profile", lambda _query: (None, {}))
+
+
 def test_watchlist_output_accepts_owner_user_id_from_responsibility_scope():
     result = WatchlistOutput.model_validate({
         "company_name": "责任范围供应商有限公司",
@@ -344,6 +351,7 @@ def test_alert_change_keeps_monitor_target_identity(monkeypatch):
         {
             "company_name": "正式供应商有限公司",
             "monitor_target_id": "monitor-1",
+            "company_id": "company-1",
             "risk_score": 40,
             "risk_level": "低风险",
             "risk_detail": {},
@@ -376,6 +384,57 @@ def test_risk_change_does_not_treat_missing_history_as_stable():
         "previous_score": None,
     }
     assert alert_service._risk_change([{"risk_score": 22}])["status"] == "insufficient_data"
+
+
+def test_check_alert_read_does_not_create_alert_or_notify(monkeypatch):
+    """A read-only tool invocation must not emit business side effects."""
+    db = {name: MagicMock() for name in ("alert_snapshots", "alerts", "watchlist")}
+    db["watchlist"].count_documents.return_value = 1
+    db["alert_snapshots"].find.return_value.sort.return_value.limit.return_value = [
+        {"company_name": "甲公司", "risk_score": 60, "risk_level": "低风险", "risk_detail": {}},
+        {"company_name": "甲公司", "risk_score": 50, "risk_level": "中风险", "risk_detail": {}},
+    ]
+    monkeypatch.setattr(alert_service, "get_db", lambda: db)
+    monkeypatch.setattr(alert_service, "get_latest_snapshot", lambda *_args, **_kwargs: {"risk_score": 60})
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.resolve_supplier_id", lambda _name: None)
+    notified = MagicMock()
+    monkeypatch.setattr("app.domains.alert.notifier.notify_target_change", notified)
+    monkeypatch.setattr("app.domains.alert.rules.get_rules", lambda _name: [])
+    monkeypatch.setattr(
+        "app.domains.alert.rules.evaluate_changes",
+        lambda _rules, changes: [{**change, "severity": "warning"} for change in changes],
+    )
+
+    result = alert_tools.check_alert.invoke({"company_name": "甲公司"})
+
+    assert result["changed"] is True
+    db["alerts"].insert_one.assert_not_called()
+    notified.assert_not_called()
+
+
+def test_alert_delivery_failure_preserves_original_change_result(monkeypatch):
+    """A notifier failure must not be replaced by a logger TypeError."""
+    db = {name: MagicMock() for name in ("alert_snapshots", "alerts", "watchlist")}
+    db["watchlist"].count_documents.return_value = 1
+    db["alert_snapshots"].find.return_value.sort.return_value.limit.return_value = [
+        {"company_name": "甲公司", "risk_score": 60, "risk_level": "低风险", "risk_detail": {}},
+        {"company_name": "甲公司", "risk_score": 50, "risk_level": "中风险", "risk_detail": {}},
+    ]
+    monkeypatch.setattr(alert_service, "get_db", lambda: db)
+    monkeypatch.setattr("app.domains.sourcing.supplier_repo.resolve_supplier_id", lambda _name: None)
+    monkeypatch.setattr("app.domains.alert.rules.get_rules", lambda _name: [])
+    monkeypatch.setattr(
+        "app.domains.alert.rules.evaluate_changes",
+        lambda _rules, changes: [{**change, "severity": "warning"} for change in changes],
+    )
+    monkeypatch.setattr(
+        "app.domains.alert.notifier.notify_target_change",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("delivery failed")),
+    )
+
+    result = alert_service.detect_changes("甲公司")
+
+    assert result["changed"] is True
 
 
 def test_monitor_target_summary_exposes_procurement_next_action(monkeypatch):

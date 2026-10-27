@@ -29,6 +29,7 @@ const PROFILE: SupplierProfile = {
   risk: { risk_score: 20, risk_level: '低风险', trend: [], alert_count: 1, in_watchlist: false },
   financial: { history: [{ period: '2025', revenue: 100, net_profit: 10 }, { period: '2025-03-31', revenue: 24, net_profit: 2, debt_ratio: 0.4, cash_flow: 1.2 }], revenue_growth: 0.1, cash_flow: 1.2 },
   sentiment: { overall_sentiment: 'neutral', sentiment_score: 0, negative_ratio: 0, article_count: 0, top_tags: [] },
+  compliance: { sanctions_clean: true, sanctions_match_count: 0, lawsuit_count: 0, executed_count: 0, dishonesty_count: 0, abnormal_operation_count: 0, administrative_penalty_count: 0, tax_arrears_count: 0 },
   alerts: [{ _id: 'a-1', severity: 'warning', changes: [{ field: '诉讼', old: 0, new: 1 }], created_at: '2026-08-20' }],
   relationships: { related_count: 1, branch_count: 0, dependency_count: 1, high_risk_related_count: 0, entities: [{ name: '关联供应商', relation_type: '供应链', supplier_id: 'related-1', risk_score: 15 }] },
   changelog: [{ changed_at: '2026-08-20T10:00:00+00:00', changed: { industry: { old: '旧行业', new: '仪器仪表制造业' } } }],
@@ -95,9 +96,9 @@ function renderProfile() {
 
 describe('SupplierProfilePage', () => {
   beforeEach(() => {
-    mocks.get.mockImplementation((path: string) => Promise.resolve(
-      path.startsWith('/risk/business/') ? BUSINESS_RISK : path === '/alert/snapshots' ? RISK_SNAPSHOTS : path.startsWith('/sentiment/') ? SENTIMENT_DETAIL : PROFILE,
-    ));
+    mocks.get.mockImplementation((path: string) => path.endsWith('/compliance-status')
+      ? Promise.reject(new Error('screening unavailable'))
+      : Promise.resolve(path.startsWith('/risk/business/') ? BUSINESS_RISK : path === '/alert/snapshots' ? RISK_SNAPSHOTS : path.startsWith('/sentiment/') ? SENTIMENT_DETAIL : PROFILE));
     mocks.post.mockResolvedValue({});
     mocks.put.mockResolvedValue({});
     mocks.delete.mockResolvedValue({});
@@ -130,6 +131,14 @@ describe('SupplierProfilePage', () => {
     await screen.findByText('测试供应商有限公司');
     expect(screen.queryByRole('button', { name: '编辑主数据' })).not.toBeInTheDocument();
     expect(mocks.put).not.toHaveBeenCalled();
+  });
+
+  it('does not use the legacy clean flag when current screening cannot be read', async () => {
+    renderProfile();
+
+    expect(await screen.findByRole('heading', { name: '名单筛查：核验状态未知' })).toBeInTheDocument();
+    expect(screen.queryByText('正常')).not.toBeInTheDocument();
+    expect(mocks.get).toHaveBeenCalledWith('/suppliers/supplier-1/compliance-status');
   });
 
   it('opens financial detail and filters annual and quarterly records', async () => {

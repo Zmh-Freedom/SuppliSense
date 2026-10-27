@@ -119,7 +119,11 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
         }
 
     # 3. 快速风险查分（MongoDB 快照，不调外部 API）
-    risk_map = _batch_assess_risk(candidates) if candidates else {}
+    try:
+        risk_map = _batch_assess_risk(candidates) if candidates else {}
+    except ValueError:
+        update_request_status(request_id, "failed")
+        raise
 
     # 4. 排序
     results = []
@@ -244,7 +248,9 @@ def search_suppliers(request_id: str) -> dict[str, Any]:
     }
 
 
-def select_result(result_id: str, action: str, user_id: str) -> dict:
+def select_result(
+    result_id: str, action: str, user_id: str, user_role: str | None = None,
+) -> dict:
     result = get_result(result_id)
     if not result:
         raise ValueError(f"寻源结果不存在: {result_id}")
@@ -252,11 +258,15 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
     supplier_name = result.get("supplier_name", "")
     request_id = result.get("request_id")
 
-    update_result_action(result_id, action)
-
     if action == "watchlist":
         from app.domains.alert.service import add_to_watchlist
-        add_to_watchlist(supplier_name)
+        add_to_watchlist(
+            supplier_name,
+            owner_user_id=user_id if user_role is not None else None,
+            actor_user_id=user_id if user_role is not None else None,
+            actor_role=user_role,
+        )
+        update_result_action(result_id, action)
         return {"success": True, "action": "watchlist", "message": f"已将 {supplier_name} 加入监控列表"}
     elif action == "apply_access":
         aid = create_access_application(
@@ -264,6 +274,7 @@ def select_result(result_id: str, action: str, user_id: str) -> dict:
             request_id=request_id,
             applicant_id=user_id,
         )
+        update_result_action(result_id, action)
         return {"success": True, "action": "apply_access", "application_id": aid}
 
     return {"success": False, "message": f"未知动作: {action}"}
@@ -381,6 +392,18 @@ def get_request_detail(request_id: str) -> dict | None:
     req = get_request(request_id)
     if not req:
         return None
+    return _request_detail_payload(req, request_id)
+
+
+def get_sourcing_request_detail_for_user(request_id: str, user_id: str, user_role: str) -> dict | None:
+    """Return a legacy request only to its owner or an administrator."""
+    req = get_request(request_id)
+    if not req or (user_role != "admin" and str(req.get("user_id") or "") != user_id):
+        return None
+    return _request_detail_payload(req, request_id)
+
+
+def _request_detail_payload(req: dict, request_id: str) -> dict:
     results = get_results(request_id)
     return {
         "request_id": str(req.get("_id", req.get("request_id", ""))),
@@ -844,8 +867,8 @@ def _batch_assess_risk(candidates: list[dict]) -> dict[str, dict]:
                 "risk_level": doc.get("risk_level", "unknown"),
                 "summary": doc.get("risk_level", "未知"),
             }
-    except Exception:
-        pass  # 聚合失败则降级为默认值
+    except Exception as exc:
+        raise ValueError("风险快照读取失败，已停止寻源排序") from exc
 
     # 未找到快照的补充默认值
     for name in names:

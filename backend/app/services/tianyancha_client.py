@@ -420,6 +420,6 @@ def _save(collection: str, name: str, data: dict, wrapper_key: str) -> None:
     sid = resolve_supplier_id(name)
     db[collection].update_one(
         {"name": name},
-        {"$set": {"name": name, "supplier_id": sid, wrapper_key: data}},
+        {"$set": {"name": name, "supplier_id": sid, "fetched_at": datetime.now(timezone.utc), wrapper_key: data}},
         upsert=True,
     )

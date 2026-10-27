@@ -11,11 +11,82 @@ from pydantic import BaseModel
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
+from app.core.config import settings
 from app.core.deps import get_current_user
 from app.core.logging import get_logger
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 logger = get_logger()
+
+
+async def _load_stream_execution_context(
+    session_id: str,
+    message: str,
+    user_id: str,
+) -> dict[str, Any]:
+    """Load the single request context without blocking the streaming loop."""
+    from app.graphs.agent_core.adapter import load_execution_context
+
+    if _is_uuid(session_id) and _is_uuid(user_id):
+        return await asyncio.to_thread(load_execution_context, session_id, message, user_id)
+    return await asyncio.to_thread(load_execution_context, session_id, message)
+
+
+async def _persist_pending_clarification(
+    session_id: str,
+    user_id: str,
+    execution_context: dict[str, Any],
+    missing_fields: list[str],
+) -> None:
+    """Keep confirmed intent slots in PostgreSQL while the API asks a question."""
+    if not (_is_uuid(session_id) and _is_uuid(user_id)):
+        return
+    from app.domains.agent_run.state_store import session_state_store
+
+    session = await asyncio.to_thread(session_state_store.get_session, session_id)
+    if session is None:
+        await asyncio.to_thread(
+            session_state_store.create_session,
+            user_id,
+            session_id=session_id,
+        )
+    elif str(session.user_id or "") != user_id:
+        raise PermissionError("Agent 会话不属于当前用户")
+
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    current_task = dict(execution_context.get("current_task") or {})
+    intent = execution_context.get("llm_intent")
+    intent = intent if isinstance(intent, dict) else {}
+    pending = {
+        key: value
+        for key, value in {
+            "task_type": intent.get("task_type") or current_task.get("task_type"),
+            "capability": intent.get("capability") or current_task.get("capability"),
+            "scope": intent.get("scope") or current_task.get("scope"),
+            "target_supplier_names": intent.get("target_supplier_names") or current_task.get("target_supplier_names"),
+            "analysis_dimensions": intent.get("analysis_dimensions") or current_task.get("analysis_dimensions"),
+            "provider_capabilities": intent.get("provider_capabilities") or current_task.get("provider_capabilities"),
+            "time_range": intent.get("time_range") or current_task.get("time_range"),
+            "requirement": intent.get("sourcing_requirement") or current_task.get("requirement") or current_task.get("llm_sourcing_requirement"),
+            "interpretation_summary": intent.get("interpretation_summary"),
+            "missing_fields": list(dict.fromkeys(missing_fields)),
+        }.items()
+        if value not in (None, "", [])
+    }
+    conversation_state["pending_clarification"] = pending
+    if current_task:
+        conversation_state["current_task"] = current_task
+    target_names = pending.get("target_supplier_names")
+    if isinstance(target_names, list) and target_names:
+        conversation_state["selected_supplier_names"] = target_names
+        conversation_state["selected_suppliers"] = target_names
+    persisted_context = {**execution_context, "conversation_state": conversation_state}
+    await asyncio.to_thread(
+        session_state_store.update_execution_context,
+        session_id,
+        user_id,
+        persisted_context,
+    )
 
 
 def _is_uuid(value: str) -> bool:
@@ -53,6 +124,18 @@ async def _langgraph_agent_supervisor_stream(
 ):
     """Agent Supervisor 组合寻源与风险任务流式输出。"""
     del preference_context
+
+    control = (execution_context or {}).get("_control_plane") or {}
+    if control.get("run_id"):
+        from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
+        from app.graphs.agent_supervisor.runtime import stream_managed_supervisor
+        from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
+
+        saver = await get_sourcing_risk_checkpointer()
+        graph = build_agent_supervisor_graph(checkpointer=saver)
+        async for event in stream_managed_supervisor(graph, control["run_id"], execution_context["agent_user_id"]):
+            yield event
+        return
 
     from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
     from app.graphs.streaming import stream_agent_supervisor_graph
@@ -166,6 +249,53 @@ async def _langgraph_harness_stream(
         yield event
 
 
+async def _stream_durable_harness_run(
+    run_id: str,
+    user_id: str,
+    user_role: str,
+    *,
+    last_event_id: int = 0,
+):
+    """Subscribe to a worker-owned Harness Run from the durable event log."""
+    from app.domains.agent_run.coordinator import run_coordinator
+    from app.domains.agent_run.repo import get_run, list_events_after
+    from app.graphs.streaming import _sse_event
+
+    terminal = {
+        "COMPLETED", "PARTIAL", "NEEDS_REVIEW", "ACTION_FAILED", "FAILED",
+        "CANCELLED", "ROLLBACK_FROZEN",
+    }
+    cursor = last_event_id
+    idle_cycles = 0
+    while True:
+        events = await asyncio.to_thread(list_events_after, run_id, cursor)
+        for event in events:
+            cursor = int(event["event_id"])
+            yield _sse_event(
+                event["event_type"], dict(event.get("payload") or {}), cursor
+            )
+        run = await asyncio.to_thread(get_run, run_id)
+        if run is None or str(run.get("user_id") or "") not in {user_id, ""}:
+            yield _sse_event("error", {"message": "任务不存在或无权访问"})
+            return
+        if run["status"] in terminal or await asyncio.to_thread(run_coordinator.is_paused, run_id):
+            # The worker may have committed its terminal/pause transaction
+            # between the first event read and the state read above.
+            tail = await asyncio.to_thread(list_events_after, run_id, cursor)
+            for event in tail:
+                cursor = int(event["event_id"])
+                yield _sse_event(event["event_type"], dict(event.get("payload") or {}), cursor)
+            return
+        if not events:
+            idle_cycles += 1
+            if idle_cycles >= 40:
+                idle_cycles = 0
+                yield ": keepalive\n\n"
+        else:
+            idle_cycles = 0
+        await asyncio.sleep(0.25)
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = ""
@@ -201,6 +331,22 @@ async def chat_run_events(
         event_generator(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/runs/{run_id}", summary="查询聊天 Harness 运行状态")
+async def get_chat_run_status(
+    run_id: UUID,
+    current_user: Any = Depends(get_current_user),
+):
+    """Return run, execution and durable job state for reconnect or operations."""
+    from app.domains.agent_run.service import get_harness_run_status
+
+    return await asyncio.to_thread(
+        get_harness_run_status,
+        str(run_id),
+        str(getattr(current_user, "id", "")),
+        str(getattr(getattr(current_user, "role", None), "value", "")),
     )
 
 
@@ -255,6 +401,62 @@ async def _resume_chat_event_generator(
         return
 
     config = dict(paused.get("config") or {"configurable": {"thread_id": req.session_id}})
+    if not config.get("managed_run_id") and _is_uuid(str(getattr(current_user, "id", ""))):
+        if claim_token:
+            release_chat_interrupt(req.session_id, claim_token)
+        message = "历史任务缺少冻结输入与检查点绑定，请取消旧任务后重新发起。"
+        yield f"event: done\ndata: {json.dumps({'answer': message, 'status': 'needs_review'}, ensure_ascii=False)}\n\n"
+        return
+    if config.get("managed_run_id"):
+        from app.graphs.agent_supervisor.runtime import stream_managed_supervisor
+        from app.graphs.agent_supervisor.graph import build_agent_supervisor_graph
+        from app.graphs.sourcing_risk_v2.checkpointer import get_sourcing_risk_checkpointer
+
+        try:
+            if paused.get("mode") == "harness" and settings.AGENT_EXECUTION_MODE == "worker":
+                from app.domains.agent_run.coordinator import run_coordinator
+
+                run_id = str(config["managed_run_id"])
+                if req.approved:
+                    await asyncio.to_thread(
+                        run_coordinator.resume_for_worker,
+                        run_id,
+                        str(getattr(current_user, "id", "")),
+                    )
+                else:
+                    await asyncio.to_thread(
+                        run_coordinator.cancel,
+                        run_id,
+                        str(getattr(current_user, "id", "")),
+                    )
+                async for event in _stream_durable_harness_run(
+                    run_id,
+                    str(getattr(current_user, "id", "")),
+                    str(getattr(getattr(current_user, "role", None), "value", "")),
+                ):
+                    yield event
+                if claim_token:
+                    await asyncio.to_thread(ack_chat_interrupt, req.session_id, claim_token)
+                return
+            saver = await get_sourcing_risk_checkpointer()
+            if paused.get("mode") == "harness":
+                from app.graphs.harness.recovery import stream_harness_recovery
+
+                async for event in stream_harness_recovery(config["managed_run_id"], str(getattr(current_user, "id", "")), saver, approved=req.approved, claim=claim_token):
+                    yield event
+                return
+            managed_graph = build_agent_supervisor_graph(checkpointer=saver)
+            async for event in stream_managed_supervisor(
+                managed_graph, config["managed_run_id"], str(getattr(current_user, "id", "")),
+                approved=req.approved, interrupt_claim=claim_token,
+            ):
+                yield event
+            return
+        except Exception:
+            if claim_token:
+                await asyncio.to_thread(release_chat_interrupt, req.session_id, claim_token)
+            yield f"event: error\ndata: {json.dumps({'message': '恢复执行环境暂不可用，任务已保留，请稍后重试。'}, ensure_ascii=False)}\n\n"
+            return
     resume_value = config.pop("__resume_value", None)
     if not isinstance(resume_value, dict):
         resume_value = {"approved": req.approved}
@@ -379,7 +581,11 @@ def _optional_agent_user_id(request: Request) -> str:
         500: {"description": "服务器内部错误"},
     },
 )
-async def chat_stream_endpoint(req: ChatRequest, request: Request):
+async def chat_stream_endpoint(
+    req: ChatRequest,
+    request: Request,
+    sourcing_handoff_id: Annotated[str | None, Header(alias="X-Sourcing-Handoff-ID")] = None,
+):
     """Streaming chat endpoint using SSE (Server-Sent Events)."""
     sid = req.session_id or str(uuid.uuid4())
     user_id = getattr(request.state, "user_id", "") or _optional_agent_user_id(request)
@@ -434,8 +640,10 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 yield f"event: done\ndata: {json.dumps({'answer': recovery_message(), 'status': 'needs_review'}, ensure_ascii=False)}\n\n"
                 return
             run_id = str(cancelled.get("id") or "")
-            yield _workflow_status("cancelled", "cancelled", "本轮 Agent 工作流已取消")
-            yield f"event: done\ndata: {json.dumps({'answer': '本轮 Agent 工作流已取消。', 'status': 'cancelled', 'run_id': run_id}, ensure_ascii=False)}\n\n"
+            status = str(cancelled.get("status") or "cancelled").lower()
+            message = "本轮 Agent 工作流已取消。" if status == "cancelled" else "本轮 Agent 工作流已结束，保留已提交的结果。"
+            yield _workflow_status(status, "cancelled" if status == "cancelled" else "completed", message)
+            yield f"event: done\ndata: {json.dumps({'answer': message, 'status': status, 'run_id': run_id}, ensure_ascii=False)}\n\n"
             return
 
         if is_chat_resume_request(req.message) or is_chat_reject_request(req.message):
@@ -478,14 +686,12 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             try:
                 from app.graphs.agent_core.adapter import (
                     ExecutionContextContractViolation,
-                    load_execution_context,
                     validate_execution_context,
                 )
 
-                if _is_uuid(sid) and _is_uuid(user_id):
-                    execution_context = load_execution_context(sid, req.message, user_id)
-                else:
-                    execution_context = load_execution_context(sid, req.message)
+                execution_context = await _load_stream_execution_context(
+                    sid, req.message, user_id
+                )
                 validate_execution_context(
                     execution_context, source="chat_stream_endpoint"
                 )
@@ -498,6 +704,38 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                 yield f"event: error\ndata: {json.dumps({'message': '会话上下文暂不可用，已停止执行，请稍后重试。'}, ensure_ascii=False)}\n\n"
                 return
             execution_context["agent_user_id"] = user_id
+            execution_context["agent_user_role"] = user_role
+            if sourcing_handoff_id:
+                from app.core.errors import DomainError
+                from app.domains.sourcing_risk.handoff_service import resolve_session_handoff
+
+                execution_context["_requested_handoff_id"] = sourcing_handoff_id
+                execution_context["_handoff_request_message"] = req.message
+                try:
+                    execution_context = await asyncio.to_thread(
+                        resolve_session_handoff, sid, user_id, execution_context,
+                    )
+                except DomainError as exc:
+                    yield f"event: error\ndata: {json.dumps({'code': exc.code, 'message': exc.message}, ensure_ascii=False)}\n\n"
+                    return
+                handoff = execution_context.get("sourcing_handoff") or {}
+                if handoff.get("requires_identity_confirmation"):
+                    candidate = handoff.get("candidate") or {}
+                    identity_candidates = list(handoff.get("identity_candidates") or [])
+                    candidate_name = str(candidate.get("supplier_name") or candidate.get("name") or "该候选")
+                    if identity_candidates:
+                        message = f"候选供应商“{candidate_name}”对应多个可能主体。请选择正式供应商主体后继续，避免误关联风险数据。"
+                    else:
+                        message = f"候选供应商“{candidate_name}”尚未确认正式主体。请补充或确认正式供应商全称后继续。"
+                    yield "event: clarification\ndata: " + json.dumps({
+                        "message": message,
+                        "missing": ["supplier_identity"],
+                        "missing_fields": ["supplier_identity"],
+                        "candidates": identity_candidates,
+                        "status": "stopped",
+                        "stage": "understand",
+                    }, ensure_ascii=False) + "\n\n"
+                    return
 
             # Programmatic clarification is only a fallback after structured state.
             from app.services.clarification import detect_clarification_needed
@@ -513,6 +751,18 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
 
             requested_write_action = explicit_write_action(req.message)
             is_write_action = requested_write_action != "none"
+            llm_intent = execution_context.get("llm_intent")
+            llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
+            explicitly_no_business_task = (
+                not is_write_action
+                and llm_intent.get("task_type") == "none"
+                and llm_intent.get("capability") == "none"
+                and llm_intent.get("requested_action", "none") == "none"
+                and not llm_intent.get("target_supplier_names")
+                and not llm_intent.get("analysis_dimensions")
+                and not llm_intent.get("provider_capabilities")
+                and not llm_intent.get("sourcing_requirement")
+            )
             from app.services.clarification import (
                 external_assessment_clarification,
                 formal_supplier_identity_clarification,
@@ -522,12 +772,19 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             # approval path.  The read-only identity/scope preflight cannot
             # know about cached external identity evidence and used to stop
             # the request before the confirmation card could be rendered.
-            identity_clarification = None if is_write_action else await asyncio.to_thread(
-                formal_supplier_identity_clarification,
-                resolved_target_names,
-                req.message,
+            identity_clarification = (
+                None
+                if is_write_action or explicitly_no_business_task
+                else await asyncio.to_thread(
+                    formal_supplier_identity_clarification,
+                    resolved_target_names,
+                    req.message,
+                )
             )
             if identity_clarification:
+                await _persist_pending_clarification(
+                    sid, user_id, execution_context, identity_clarification.missing
+                )
                 yield f"event: clarification\ndata: {json.dumps({'message': identity_clarification.message, 'missing': identity_clarification.missing, 'missing_fields': identity_clarification.missing, 'candidates': identity_clarification.candidates, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
             # Scope enforcement is meaningful only for a verified application
@@ -543,17 +800,21 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
                     user_role,
                     req.message,
                 )
-                if _is_uuid(user_id) and not is_write_action
+                if _is_uuid(user_id) and not is_write_action and not explicitly_no_business_task
                 else None
             )
             if scope_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': scope_clarification.message, 'missing': scope_clarification.missing, 'missing_fields': scope_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
-            external_clarification = None if is_write_action else await asyncio.to_thread(
-                external_assessment_clarification,
-                resolved_target_names,
-                supplier_references,
-                req.message,
+            external_clarification = (
+                None
+                if is_write_action or explicitly_no_business_task
+                else await asyncio.to_thread(
+                    external_assessment_clarification,
+                    resolved_target_names,
+                    supplier_references,
+                    req.message,
+                )
             )
             if external_clarification:
                 yield f"event: clarification\ndata: {json.dumps({'message': external_clarification.message, 'missing': external_clarification.missing, 'missing_fields': external_clarification.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
@@ -561,14 +822,46 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             has_structured_context = bool(
                 supplier_references or conversation_state.get("active_suppliers")
             )
-            clar = None if is_write_action else detect_clarification_needed(
-                req.message,
-                supplier_references=supplier_references,
-                resolved_target_names=resolved_target_names,
-                has_structured_context=has_structured_context,
+            clar = (
+                None
+                if is_write_action or explicitly_no_business_task
+                else detect_clarification_needed(
+                    req.message,
+                    supplier_references=supplier_references,
+                    resolved_target_names=resolved_target_names,
+                    has_structured_context=has_structured_context,
+                )
             )
             if clar:
+                await _persist_pending_clarification(
+                    sid, user_id, execution_context, clar.missing
+                )
                 yield f"event: clarification\ndata: {json.dumps({'message': clar.message, 'missing': clar.missing, 'missing_fields': clar.missing, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
+                return
+
+            # Model-detected ambiguity can request clarification after the
+            # deterministic identity, access, and policy checks have run.
+            # Write requests stay on the approval workflow's own validation.
+            clarification_question = str(
+                llm_intent.get("clarification_question") or ""
+            ).strip()[:300]
+            raw_missing_fields = llm_intent.get("missing_fields")
+            allowed_missing_fields = {
+                "target_supplier_names", "analysis_dimensions",
+                "sourcing_requirement", "time_range",
+            }
+            missing_fields = [
+                field for field in raw_missing_fields if field in allowed_missing_fields
+            ] if isinstance(raw_missing_fields, list) else []
+            if (
+                not is_write_action
+                and llm_intent.get("needs_clarification") is True
+                and clarification_question
+            ):
+                await _persist_pending_clarification(
+                    sid, user_id, execution_context, missing_fields
+                )
+                yield f"event: clarification\ndata: {json.dumps({'message': clarification_question, 'missing': missing_fields, 'missing_fields': missing_fields, 'status': 'stopped', 'stage': 'understand'}, ensure_ascii=False)}\n\n"
                 return
 
             # Resolve mode only after target resolution and fallback clarification.
@@ -584,37 +877,62 @@ async def chat_stream_endpoint(req: ChatRequest, request: Request):
             )
             requested_action = requested_write_action if requested_write_action != "none" else llm_requested_action
             stream_fn = _select_chat_stream(mode, requested_action=requested_action)
+            control = None
 
             if (
-                stream_fn is _langgraph_harness_stream
+                stream_fn in (_langgraph_harness_stream, _langgraph_agent_supervisor_stream)
                 and _is_uuid(sid)
                 and _is_uuid(user_id)
             ):
                 from app.domains.agent_run.state_store import session_state_store
 
-                control = await asyncio.to_thread(
-                    session_state_store.start_harness_turn,
-                    sid,
-                    user_id,
-                    req.message,
-                    request={"mode": req.mode},
-                    state={"execution_context": execution_context},
-                )
+                try:
+                    control = await asyncio.to_thread(
+                        session_state_store.start_harness_turn,
+                        sid,
+                        user_id,
+                        req.message,
+                        request={"mode": req.mode},
+                        state={"execution_context": execution_context},
+                        run_type="agent_harness" if stream_fn is _langgraph_harness_stream else "sourcing_risk_v2",
+                        handoff_id=sourcing_handoff_id,
+                    )
+                except ValueError as exc:
+                    yield f"event: error\ndata: {json.dumps({'message': str(exc)}, ensure_ascii=False)}\n\n"
+                    return
                 execution_context["_control_plane"] = {
                     "turn_id": str(control["turn"].id),
                     "run_id": str(control["run"].id),
                 }
 
+            if control is not None and control.get("idempotent_replay"):
+                run_id = str(control["run"].id)
+                yield f"event: run\ndata: {json.dumps({'run_id': run_id})}\n\n"
+                async for event in _stream_durable_harness_run(run_id, user_id, user_role):
+                    yield event
+                return
+
             # Stream the chat response
             try:
-                async for event in stream_fn(
-                    sid,
-                    req.message,
-                    pref_ctx,
-                    execution_context=execution_context,
+                if (
+                    settings.AGENT_EXECUTION_MODE == "worker"
+                    and stream_fn is _langgraph_harness_stream
+                    and control is not None
                 ):
-                    await asyncio.to_thread(renew_agent_session_run, sid, run_token)
-                    yield event
+                    async for event in _stream_durable_harness_run(
+                        str(control["run"].id), user_id, user_role
+                    ):
+                        await asyncio.to_thread(renew_agent_session_run, sid, run_token)
+                        yield event
+                else:
+                    async for event in stream_fn(
+                        sid,
+                        req.message,
+                        pref_ctx,
+                        execution_context=execution_context,
+                    ):
+                        await asyncio.to_thread(renew_agent_session_run, sid, run_token)
+                        yield event
             except Exception as exc:
                 logger.exception("chat_stream_failed", error=str(exc), session_id=sid)
                 yield f"event: error\ndata: {json.dumps({'message': 'Agent 工作流执行失败，请重试。'}, ensure_ascii=False)}\n\n"
@@ -659,7 +977,7 @@ async def resume_endpoint(req: ResumeRequest, current_user: Any = Depends(get_cu
 
         raise HTTPException(status_code=404, detail="无暂停的会话，可能已过期")
     try:
-        graph = await _rebuild_paused_graph(paused)
+        graph = None if (paused.get("config") or {}).get("managed_run_id") or _is_uuid(str(authenticated_user_id or "")) else await _rebuild_paused_graph(paused)
     except Exception as exc:
         if claim_token:
             from app.domains.agent_run.chat_interrupt_repo import release_chat_interrupt

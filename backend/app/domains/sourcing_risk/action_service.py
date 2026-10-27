@@ -60,9 +60,10 @@ def create_action_proposal(
         if run is None:
             raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
         _require_proposal_creator(run, user_id, user_role)
+        _require_managed_owner(cur, run)
         _require_expected_version(run, expected_version)
         persisted_payload = _bind_action_target(
-            cur, run_id, action_type, candidate_id, payload
+            cur, run_id, action_type, candidate_id, payload, run=run
         )
         existing = get_action_proposal_for_idempotency_key(cur, normalized_key)
         if existing is not None:
@@ -101,6 +102,9 @@ def decide_action_proposal(
     _require_approval_role(user_role)
     run = _get_authorized_run(run_id, user_id, user_role)
     _require_expected_version(run, request.expected_version)
+
+    if (run.get("requirement") or {}).get("_managed_chat"):
+        return decide_action_proposals(run_id, [proposal_id], request, user_id, user_role)[0]
 
     with get_cursor() as (_, cur):
         proposal = get_action_proposal_for_update(cur, run_id, proposal_id)
@@ -182,18 +186,26 @@ def decide_action_proposals(
         locked_run = get_run_for_update(cur, run_id)
         if locked_run is None:
             raise DomainError("AGENT_ACTION_APPROVAL_FORBIDDEN", "没有审批该操作的权限", 403)
+        _require_managed_owner(cur, locked_run)
         _require_expected_version(locked_run, request.expected_version)
         proposals = []
         for proposal_id in proposal_ids:
             proposal = get_action_proposal_for_update(cur, run_id, proposal_id)
             if proposal is None or proposal["run_id"] != run_id:
                 raise DomainError("AGENT_ACTION_PROPOSAL_NOT_FOUND", "操作提案不存在", 404)
+            if proposal["status"] == request.decision and (locked_run.get("requirement") or {}).get("_managed_chat"):
+                proposals.append(proposal)
+                continue
             if proposal["status"] != "pending":
                 raise DomainError("AGENT_ACTION_ALREADY_DECIDED", "操作提案已处理", 409)
             if request.decision == "approved":
                 _verify_harness_approval(proposal, locked_run, request.approval_token, user_id)
                 _require_non_self_approval_for_high_risk_import(proposal, user_id, locked_run)
             proposals.append(proposal)
+        if all(proposal["status"] == request.decision for proposal in proposals):
+            return [{"run": locked_run, "proposal": proposal} for proposal in proposals]
+        if any(proposal["status"] != "pending" for proposal in proposals):
+            raise DomainError("AGENT_ACTION_ALREADY_DECIDED", "操作提案存在不一致的审批状态", 409)
         if locked_run["status"] != "ACTION_PENDING":
             raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许审批操作", 409)
 
@@ -235,6 +247,7 @@ def decide_action_proposals(
                         "proposal_id": proposal_id,
                         "idempotency_key": proposal["idempotency_key"],
                         "approver_id": user_id,
+                        **({"managed_execution": True} if (locked_run.get("requirement") or {}).get("_managed_chat") else {}),
                     },
                 )
             decisions.append({"run": updated_run, "proposal": updated_proposal, "approval": decision})
@@ -247,6 +260,10 @@ def execute_sourcing_risk_action(event: dict) -> dict[str, Any] | None:
     payload = dict(event.get("payload") or {})
     run_id = _required_event_value(payload, "run_id")
     proposal_id = _required_event_value(payload, "proposal_id")
+    from app.domains.agent_run.coordinator import current_execution
+
+    if payload.get("managed_execution") or current_execution.get() is not None:
+        return _execute_managed_action(event, run_id, proposal_id)
     proposal = get_action_proposal_for_execution(run_id, proposal_id)
     if proposal is None:
         raise DomainError("AGENT_ACTION_PROPOSAL_NOT_FOUND", "操作提案不存在", 404)
@@ -259,6 +276,12 @@ def execute_sourcing_risk_action(event: dict) -> dict[str, Any] | None:
     result: dict[str, Any] | None = None
     if proposal["action_type"] in {"add_watchlist", "remove_watchlist"}:
         result = _execute_watchlist_action(event, proposal, action_payload)
+    elif proposal["action_type"] == "manage_scheduled_report":
+        run = get_run(run_id)
+        owner_user_id = str((run or {}).get("user_id") or "")
+        if not owner_user_id:
+            raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "定时报告缺少所属用户", 409)
+        _execute_action(proposal["action_type"], action_payload, owner_user_id=owner_user_id)
     else:
         _execute_action(proposal["action_type"], action_payload)
     mark_action_succeeded(run_id, proposal_id)
@@ -355,7 +378,9 @@ def export_report(payload: dict[str, Any]) -> str:
     return key
 
 
-def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
+def manage_scheduled_report_action(
+    payload: dict[str, Any], *, owner_user_id: str | None = None
+) -> dict[str, Any]:
     """Create/list/delete a scheduled report after durable approval."""
     from app.domains.risk.scheduled_report import (
         create_scheduled_report,
@@ -363,6 +388,9 @@ def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
         list_scheduled_reports,
     )
 
+    if not isinstance(owner_user_id, str) or not owner_user_id.strip():
+        raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "定时报告缺少所属用户", 409)
+    owner_user_id = owner_user_id.strip()
     action = str(payload.get("action") or "create")
     company_names = list(payload.get("company_names") or [])
     if action == "create":
@@ -372,18 +400,23 @@ def manage_scheduled_report_action(payload: dict[str, Any]) -> dict[str, Any]:
                 company_names = [company_name.strip()]
         if not company_names:
             raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定企业", 422)
+        idempotency_key = _require_idempotency_key(
+            _required_event_value(payload, "idempotency_key")
+        )
         return create_scheduled_report(
             company_names,
             cron=str(payload.get("cron") or "weekly"),
             report_type=str(payload.get("report_type") or "excel"),
+            owner_user_id=owner_user_id,
+            idempotency_key=idempotency_key,
         )
     if action == "list":
-        return {"reports": list_scheduled_reports()}
+        return {"reports": list_scheduled_reports(owner_user_id=owner_user_id)}
     if action == "delete":
         task_id = str(payload.get("task_id") or (company_names[0] if company_names else ""))
         if not task_id:
             raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "删除定时报告必须指定任务", 422)
-        return delete_scheduled_report(task_id)
+        return delete_scheduled_report(task_id, owner_user_id=owner_user_id)
     raise DomainError("AGENT_ACTION_PAYLOAD_INVALID", "定时报告操作类型无效", 422)
 
 
@@ -392,6 +425,10 @@ def record_action_delivery_outcome(event: dict, outcome: str) -> None:
     payload = dict(event.get("payload") or {})
     run_id = payload.get("run_id")
     proposal_id = payload.get("proposal_id")
+    if payload.get("managed_execution"):
+        # This Outbox delivery observes graph-owned work. Retry exhaustion is
+        # a delivery diagnostic, never authority to fail its Run or proposal.
+        return
     if not isinstance(run_id, str) or not isinstance(proposal_id, str):
         return
     if outcome not in {"retry", "dead_lettered"}:
@@ -439,6 +476,8 @@ def _bind_action_target(
     action_type: str,
     candidate_id: str | None,
     payload: dict[str, Any],
+    *,
+    run: dict[str, Any],
 ) -> dict[str, Any]:
     """Bind every writable target to this Run before it becomes approvable."""
     if action_type == "import_external_supplier":
@@ -475,11 +514,29 @@ def _bind_action_target(
 
     if action_type == "manage_scheduled_report":
         action = str(payload.get("action") or "create")
-        if action == "create" and not (
-            isinstance(payload.get("company_name"), str)
-            or payload.get("company_names")
-        ):
-            raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定当前任务企业", 422)
+        if action == "create":
+            company_names = [
+                value.strip()
+                for value in (payload.get("company_names") or [])
+                if isinstance(value, str) and value.strip()
+            ] if isinstance(payload.get("company_names"), list) else []
+            company_name = payload.get("company_name")
+            if not company_names and isinstance(company_name, str) and company_name.strip():
+                company_names = [company_name.strip()]
+            if not company_names:
+                raise DomainError("AGENT_ACTION_TARGET_REQUIRED", "定时报告必须绑定当前任务企业", 422)
+            allowed_names = _run_target_company_names(run)
+            if candidate_id is not None:
+                candidate = get_action_candidate_for_update(cur, candidate_id)
+                if candidate is None or candidate["run_id"] != run_id:
+                    raise DomainError("AGENT_ACTION_CANDIDATE_NOT_FOUND", "候选企业不属于任务", 404)
+                snapshot = candidate.get("candidate_snapshot") or {}
+                candidate_name = snapshot.get("company_name") or snapshot.get("name")
+                if isinstance(candidate_name, str) and candidate_name.strip():
+                    allowed_names.add(candidate_name.strip().casefold())
+            if any(name.casefold() not in allowed_names for name in company_names):
+                raise DomainError("AGENT_ACTION_TARGET_NOT_FOUND", "定时报告目标不属于当前任务", 404)
+            payload = {**dict(payload), "company_names": company_names}
 
     if candidate_id is not None:
         candidate = get_action_candidate_for_update(cur, candidate_id)
@@ -511,6 +568,48 @@ def _bind_action_target(
         if cur.fetchone() is None:
             raise DomainError("AGENT_ACTION_COMPANY_NOT_FOUND", "企业不属于任务", 404)
     return dict(payload)
+
+
+def _run_target_company_names(run: dict[str, Any]) -> set[str]:
+    """Read target names only from the Run's frozen request/context snapshot."""
+    requirement = run.get("requirement")
+    if not isinstance(requirement, dict):
+        return set()
+    execution_context = requirement.get("execution_context")
+    execution_context = execution_context if isinstance(execution_context, dict) else {}
+    contexts = [
+        requirement,
+        requirement.get("intent"),
+        execution_context,
+        execution_context.get("current_task"),
+        execution_context.get("conversation_state"),
+    ]
+    names: set[str] = set()
+    for context in contexts:
+        if not isinstance(context, dict):
+            continue
+        for field in ("company_name", "supplier_name"):
+            value = context.get(field)
+            if isinstance(value, str) and value.strip():
+                names.add(value.strip().casefold())
+        for field in ("company_names", "supplier_names", "target_supplier_names", "selected_supplier_names"):
+            values = context.get(field)
+            if isinstance(values, list):
+                names.update(
+                    value.strip().casefold()
+                    for value in values
+                    if isinstance(value, str) and value.strip()
+                )
+        for field in ("references", "supplier_references", "active_suppliers"):
+            references = context.get(field)
+            if isinstance(references, list):
+                names.update(
+                    str(reference.get("name") or reference.get("company_name") or "").strip().casefold()
+                    for reference in references
+                    if isinstance(reference, dict)
+                    and (reference.get("name") or reference.get("company_name"))
+                )
+    return names
 
 
 def _is_same_proposal_request(
@@ -609,17 +708,23 @@ def _mark_run_action_failed_after_dead_letter(run_id: str) -> None:
             )
 
 
-def _execute_action(action_type: str, payload: dict[str, Any]) -> None:
+def _execute_action(
+    action_type: str,
+    payload: dict[str, Any],
+    *,
+    owner_user_id: str | None = None,
+) -> Any:
     _require_action_type(action_type)
+    if action_type == "manage_scheduled_report":
+        return manage_scheduled_report_action(payload, owner_user_id=owner_user_id)
     handlers = {
         "import_external_supplier": import_external_supplier,
         "add_watchlist": add_watchlist,
         "remove_watchlist": remove_watchlist,
         "submit_access_application": submit_access_application,
         "export_report": export_report,
-        "manage_scheduled_report": manage_scheduled_report_action,
     }
-    handlers[action_type](payload)
+    return handlers[action_type](payload)
 
 
 def _execute_watchlist_action(
@@ -794,3 +899,64 @@ def _row_to_dict(cur: PgCursor, row: tuple[Any, ...] | None) -> dict[str, Any] |
         if isinstance(value, uuid.UUID):
             result[key] = str(value)
     return result
+
+
+def _execute_managed_action(event: dict, run_id: str, proposal_id: str) -> dict[str, Any]:
+    """Claim before invocation; an uncertain delivery is never issued twice."""
+    import hashlib
+    from psycopg2.extras import Json
+    from app.domains.agent_run.coordinator import current_execution, require_active, lock_run, ExecutionLost
+
+    with get_cursor() as (_, cur):
+        run = lock_run(cur, run_id)
+        proposal = get_action_proposal_for_update(cur, run_id, proposal_id)
+        if not proposal or proposal["status"] != "approved":
+            raise ExecutionLost("操作尚未批准")
+        digest = hashlib.sha256(json.dumps({"action_type": proposal["action_type"], "payload": proposal["payload"], "idempotency_key": proposal["idempotency_key"]}, sort_keys=True, default=str).encode()).hexdigest()
+        cur.execute("SELECT status,receipt,proposal_digest FROM agent_action_receipts WHERE proposal_id=%s FOR UPDATE", (proposal_id,))
+        previous = cur.fetchone()
+        if previous:
+            if previous[2] != digest:
+                raise ExecutionLost("已领取操作的参数发生变化")
+            if previous[0] == "succeeded":
+                return previous[1]
+            raise ExecutionLost("操作执行结果未知，禁止自动重试")
+        require_active(cur, run, current_execution.get())
+        actor_id = str((event.get("payload") or {}).get("approver_id") or "")
+        cur.execute("SELECT role,is_active FROM users WHERE id=%s", (actor_id,))
+        actor = cur.fetchone()
+        if actor_id != str(run.get("user_id")) or not actor or not actor[1] or actor[0] not in {"admin", "purchaser", "analyst"}:
+            raise PermissionError("审批人已失去执行权限")
+        _verify_harness_approval(proposal, run, None, actor_id)
+        cur.execute("INSERT INTO agent_action_receipts(proposal_id,run_id,status,proposal_digest) VALUES(%s,%s,'started',%s)", (proposal_id, run_id, digest))
+    payload = {**dict(proposal["payload"]), "idempotency_key": proposal["idempotency_key"]}
+    try:
+        if proposal["action_type"] in {"add_watchlist", "remove_watchlist"}:
+            result = _execute_watchlist_action(event, proposal, payload)
+        elif proposal["action_type"] == "manage_scheduled_report":
+            owner_user_id = str(run.get("user_id") or "")
+            if not owner_user_id:
+                raise DomainError("AGENT_ACTION_EXECUTION_CONTEXT_INVALID", "定时报告缺少所属用户", 409)
+            result = _execute_action(
+                proposal["action_type"], payload, owner_user_id=owner_user_id
+            )
+        else:
+            result = _execute_action(proposal["action_type"], payload)
+        receipt = {"proposal_id": proposal_id, "action_type": proposal["action_type"], "status": "succeeded", "result": result}
+        if isinstance(result, dict) and "side_effect_receipt" in result:
+            receipt.update(result)
+        with get_cursor() as (_, cur):
+            lock_run(cur, run_id)
+            cur.execute("UPDATE agent_action_receipts SET status='succeeded',receipt=%s,updated_at=NOW() WHERE proposal_id=%s AND status='started'", (Json(receipt), proposal_id))
+            cur.execute("UPDATE agent_action_proposals SET execution_state='succeeded',updated_at=NOW() WHERE id=%s", (proposal_id,))
+        return receipt
+    except BaseException:
+        with get_cursor() as (_, cur):
+            cur.execute("UPDATE agent_action_receipts SET status='unknown',updated_at=NOW() WHERE proposal_id=%s AND status='started'", (proposal_id,))
+        raise
+
+
+def _require_managed_owner(cur: PgCursor, run: dict[str, Any]) -> None:
+    if (run.get("requirement") or {}).get("_managed_chat"):
+        from app.domains.agent_run.coordinator import current_execution, require_active
+        require_active(cur, run, current_execution.get())

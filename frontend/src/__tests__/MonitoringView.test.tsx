@@ -20,6 +20,7 @@ const target: MonitorTarget = {
     status: 'partial',
     summary: '2/5 个数据域可用',
     dimensions: [
+      { key: 'risk_snapshot', label: '风险快照', status: 'pending', detail: '历史评估依据已过期' },
       { key: 'identity', label: '主体身份', status: 'pending', detail: '待核验' },
       { key: 'financial', label: '财务/公开信息', status: 'available', detail: '已获取' },
     ],
@@ -27,7 +28,7 @@ const target: MonitorTarget = {
   next_action: { code: 'verify_identity', label: '完成主体核验', priority: 'high', reason: '外部候选尚未完成主体确认' },
 };
 
-vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), upload: vi.fn() } }));
+vi.mock('../api', () => ({ api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), upload: vi.fn() }, getStoredUser: () => ({ username: 'buyer', role: 'purchaser' }) }));
 vi.mock('../hooks', () => ({
   useDashboard: () => ({ data: { total: 1, alert_count: 0, distribution: {}, targets: [target] }, isLoading: false, error: null, refetch: vi.fn() }),
   useWatchlist: () => ({ companies: [], targets: [target], isLoading: false, error: null, refetch: vi.fn() }),
@@ -44,9 +45,9 @@ function renderView(initialEntry: string) {
 }
 
 describe('MonitoringView', () => {
-  it('shows a high safety score in the low-risk green tone', () => {
+  it('marks a historical low-risk score as awaiting current verification', () => {
     renderView('/assess');
-    expect(screen.getByText('低风险 85/100')).toHaveStyle({ color: '#2d8c63' });
+    expect(screen.getByText('历史评估：低风险 85/100；当前待核验')).toBeInTheDocument();
   });
 
   it('shows procurement wording for risk detail levels and priorities', async () => {
@@ -64,9 +65,31 @@ describe('MonitoringView', () => {
     });
     renderView('/assess/monitor-1');
 
-    expect((await screen.findAllByText('低风险 · 85/100')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('历史评估：低风险 · 85/100；当前待核验')).length).toBeGreaterThan(0);
     expect(await screen.findByText('该维度暂未形成可用结论')).toBeInTheDocument();
     expect(screen.queryByText('LLM 不可用')).not.toBeInTheDocument();
+  });
+
+  it('keeps zero scores and no-record findings historical while current evidence is pending', async () => {
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path.includes('/risk-detail')) return Promise.resolve({
+        monitor_target_id: 'monitor-1', company_name: '待核验候选有限公司', has_snapshot: true,
+        risk_change: { status: 'no_data', label: '暂无快照' },
+        latest_snapshot: {
+          risk_score: 85, risk_level: 'low', scoring_version: 'v2', checked_at: '2025-01-01T10:00:00Z',
+          score_breakdown: { 司法风险: { 归一化: 0, 明细: { 诉讼记录数: 0 } } },
+          risk_detail: { judicial_data_status: { executedPerson: 'no_records' }, executed_count: 0 },
+        }, history: [{ risk_score: 85, risk_level: 'low' }],
+      });
+      if (path.includes('/identity-candidates')) return Promise.resolve({ monitor_target_id: 'monitor-1', query: '待核验候选有限公司', resolution: 'pending_verification', candidates: [] });
+      return Promise.resolve({});
+    });
+    renderView('/assess/monitor-1');
+
+    expect(await screen.findByText('历史信号待核验')).toBeInTheDocument();
+    expect(screen.getByText('历史未发现记录')).toBeInTheDocument();
+    expect(screen.queryByText('当前未见异常信号')).not.toBeInTheDocument();
+    expect(screen.queryByText('本轮未发现记录')).not.toBeInTheDocument();
   });
 
   it('investigates a supplier before adding it to monitoring', async () => {
@@ -157,5 +180,52 @@ describe('MonitoringView', () => {
     expect(screen.getByText(/注册号：450205000188432/)).toBeInTheDocument();
     expect(screen.getByText('主体尚未核验，不能绑定')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '确认此主体' })).not.toBeInTheDocument();
+  });
+
+  it('labels a completed legacy review as execution completion', async () => {
+    const originalTask = target.review_task;
+    target.review_task = {
+      id: 'legacy-task-1',
+      monitor_target_id: target.monitor_target_id,
+      task_type: 'review',
+      status: 'completed',
+      version: 2,
+      created_at: '2026-10-23T08:00:00Z',
+      updated_at: '2026-10-23T09:00:00Z',
+      result: { summary: '技术复核执行完成。' },
+    };
+    vi.mocked(api.get).mockImplementation(path => path === '/procurement-cases'
+      ? Promise.resolve({ items: [], next_cursor: null, available_views: { mine: true, department: false } })
+      : path.includes('legacy-task-1') ? Promise.resolve(target.review_task) : Promise.resolve({}));
+    try {
+      renderView('/assess/monitor-1');
+      expect(await screen.findByText('执行完成')).toBeInTheDocument();
+      expect(screen.getByText('技术复核执行完成。')).toBeInTheDocument();
+    } finally {
+      target.review_task = originalTask;
+    }
+  });
+
+  it('creates a procurement case from the stable monitor target id', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.get).mockImplementation((path: string) => {
+      if (path === '/procurement-cases') return Promise.resolve({ items: [], next_cursor: null, available_views: { mine: true, department: false } });
+      if (path.includes('/identity-candidates')) return Promise.resolve({ monitor_target_id: 'monitor-1', query: '待核验候选有限公司', resolution: 'pending_verification', candidates: [] });
+      return Promise.resolve({});
+    });
+    vi.mocked(api.post).mockResolvedValueOnce({ case: { id: 'case-created' }, capabilities: { can_read: true } });
+    renderView('/assess/monitor-1');
+
+    await user.click(await screen.findByRole('button', { name: '创建采购事项' }));
+    await user.clear(screen.getByLabelText('事项标题'));
+    await user.type(screen.getByLabelText('事项标题'), '核验候选主体身份');
+    await user.click(screen.getByRole('button', { name: '创建事项' }));
+
+    expect(api.post).toHaveBeenLastCalledWith('/procurement-cases', expect.objectContaining({
+      monitor_target_id: 'monitor-1',
+      case_type: 'identity_review',
+      title: '核验候选主体身份',
+    }), undefined, expect.objectContaining({ 'Idempotency-Key': expect.any(String) }));
+    expect(await screen.findByTestId('location')).toHaveTextContent('/cases/case-created');
   });
 });

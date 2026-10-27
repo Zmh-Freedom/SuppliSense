@@ -149,16 +149,15 @@ def check_alert(
         company_name: 企业全称
     """
     from app.domains.alert.service import detect_changes, get_latest_snapshot
-    if not get_latest_snapshot(company_name, monitor_target_id=monitor_target_id):
-        return {"status": "not_found", "company_name": company_name, "message": "暂无历史快照"}
-    from app.tools.evidence import attach_tool_evidence
-
-    return attach_tool_evidence(
-        detect_changes(company_name, monitor_target_id=monitor_target_id),
-        tool_name="check_alert",
-        entity_id=monitor_target_id or f"entity:{company_name}",
-        dimension="risk_monitoring",
-    )
+    from app.domains.risk.assessment_contracts import assessment_scope
+    user_id,user_role,scoped_call = _active_scope()
+    with assessment_scope(actor_id=user_id,actor_role=user_role):
+        if not get_latest_snapshot(company_name, monitor_target_id=monitor_target_id):
+            return {"status": "not_found", "company_name": company_name, "message": "暂无历史快照"}
+        from app.tools.evidence import attach_tool_evidence
+        return attach_tool_evidence(
+            detect_changes(company_name, monitor_target_id=monitor_target_id, emit_alert=False),
+            tool_name="check_alert",entity_id=monitor_target_id or f"entity:{company_name}",dimension="risk_monitoring")
 
 
 @tool
@@ -509,21 +508,15 @@ def add_to_watchlist(
         "risk_baseline_message": "当前没有可用于计算风险基线的企业资料。",
     }
     try:
-        from app.domains.alert.service import save_snapshot
-        from app.domains.risk.service import calculate_company_risk_preview
+        from app.domains.risk.assessment_service import monitor_assessment
 
-        preview = calculate_company_risk_preview(result.get("company_name") or company_name)
+        preview = monitor_assessment(result.get("company_name") or company_name,
+            monitor_target_id=result.get("monitor_target_id") or monitor_target_id,
+            company_id=result.get("company_id") or company_id,
+            actor_id=active_context.user_id if active_context else None,
+            request_key=active_context.idempotency_key if active_context else None)
         if preview is not None:
             preview_data = preview.model_dump(mode="json")
-            save_snapshot(
-                result.get("company_name") or company_name,
-                preview,
-                monitor_target_id=result.get("monitor_target_id") or monitor_target_id,
-                target_type=result.get("target_type") or target_type,
-                supplier_id=result.get("supplier_id") or supplier_id,
-                candidate_id=result.get("candidate_id") or candidate_id,
-                company_id=result.get("company_id") or company_id,
-            )
             baseline = {
                 "risk_baseline_status": "created",
                 "risk_baseline_message": "已基于当前可用资料建立风险基线。",

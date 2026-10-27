@@ -61,6 +61,7 @@ def test_persist_supervisor_snapshot_appends_trace_events_in_same_transaction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[tuple[str, dict]] = []
+    monkeypatch.setattr("app.domains.agent_run.coordinator.lock_execution", lambda *_: None)
     monkeypatch.setattr(service, "get_cursor", _no_cursor)
     monkeypatch.setattr(service, "get_orchestration_run_for_update", lambda *_: _run())
     monkeypatch.setattr(

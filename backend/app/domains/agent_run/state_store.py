@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
 from psycopg2.extras import Json
 
+from app.core.config import settings
 from app.db.postgres import PgCursor, get_cursor
+from app.domains.agent_run.coordinator import ExecutionPermit, lock_run, require_active
 from app.domains.agent_run.harness_contracts import (
     AgentRun,
     AgentSession,
@@ -81,6 +84,27 @@ class SessionStateStore:
             raise RuntimeError("Agent session 创建失败")
         return session
 
+    def create_session_with_cursor(
+        self,
+        user_id: str,
+        cur: PgCursor,
+        *,
+        state: dict[str, Any] | None = None,
+        status: SessionStatus = SessionStatus.ACTIVE,
+        session_id: str | None = None,
+    ) -> AgentSession:
+        """Insert an owned session in the caller's transaction."""
+        session_id = session_id or str(uuid.uuid4())
+        cur.execute(
+            """INSERT INTO agent_sessions (id,user_id,status,state)
+               VALUES (%s,%s,%s,%s) RETURNING *""",
+            (session_id, user_id, status.value, Json(state or {})),
+        )
+        session = _session_from_row(cur, cur.fetchone())
+        if session is None:
+            raise RuntimeError("Agent session 创建失败")
+        return session
+
     def start_harness_turn(
         self,
         session_id: str,
@@ -89,9 +113,19 @@ class SessionStateStore:
         *,
         request: dict[str, Any] | None = None,
         state: dict[str, Any] | None = None,
+        run_type: str = "agent_harness",
+        handoff_id: str | None = None,
     ) -> dict[str, Any]:
         """Atomically create/update the control-plane records for one Chat turn."""
+        if run_type not in {"agent_harness", "sourcing_risk_v2"}:
+            raise ValueError("不支持的聊天执行类型")
         with get_cursor() as (_, cur):
+            # Serialize even the first request for a previously unseen Session.
+            cur.execute(
+                """INSERT INTO agent_sessions (id,user_id,status,state) VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (id) DO NOTHING""",
+                (session_id, user_id, SessionStatus.ACTIVE.value, Json(state or {})),
+            )
             cur.execute(
                 "SELECT * FROM agent_sessions WHERE id = %s FOR UPDATE",
                 (session_id,),
@@ -112,11 +146,73 @@ class SessionStateStore:
             if session is None:
                 raise RuntimeError("Agent session 创建失败")
 
+            handoff = None
+            message_hash = hashlib.sha256(user_message.encode("utf-8")).hexdigest()
+            if handoff_id:
+                cur.execute(
+                    """SELECT id, actor_id, session_id, source_run_id, source_run_version,
+                              candidate_id, status, consumed_turn_id, consumed_message_hash, run_id
+                       FROM sourcing_handoffs
+                       WHERE id=%s AND session_id=%s AND actor_id=%s FOR UPDATE""",
+                    (handoff_id, session_id, user_id),
+                )
+                handoff = _row_to_dict(cur, cur.fetchone())
+                if handoff is None:
+                    raise PermissionError("寻源交接不存在或无权访问")
+                if str(handoff.get("status") or "") == "cancelled":
+                    raise ValueError("寻源交接已取消")
+                if str(handoff.get("status") or "") == "consumed":
+                    if str(handoff.get("consumed_message_hash") or "") != message_hash:
+                        raise ValueError("寻源交接已消费，请以普通聊天继续后续问题")
+                    cur.execute(
+                        "SELECT * FROM agent_turns WHERE id=%s AND session_id=%s",
+                        (handoff.get("consumed_turn_id"), session_id),
+                    )
+                    existing_turn = _turn_from_row(cur, cur.fetchone())
+                    cur.execute(
+                        "SELECT * FROM agent_runs WHERE id=%s AND session_id=%s",
+                        (handoff.get("run_id"), session_id),
+                    )
+                    existing_run = _run_from_row(cur, cur.fetchone())
+                    if existing_turn is None or existing_run is None:
+                        raise RuntimeError("已消费交接的原始任务记录缺失")
+                    return {
+                        "session": session,
+                        "turn": existing_turn,
+                        "run": existing_run,
+                        "idempotent_replay": True,
+                    }
+                cur.execute(
+                    """SELECT id FROM agent_runs
+                       WHERE id=%s AND user_id=%s AND run_type='sourcing_risk_v2'
+                         AND version=%s FOR UPDATE""",
+                    (handoff["source_run_id"], user_id, handoff["source_run_version"]),
+                )
+                if cur.fetchone() is None:
+                    raise ValueError("原寻源任务已更新或不可访问，请重新交接")
+                cur.execute(
+                    "SELECT id FROM agent_run_candidates WHERE id=%s AND run_id=%s FOR UPDATE",
+                    (handoff["candidate_id"], handoff["source_run_id"]),
+                )
+                if cur.fetchone() is None:
+                    raise ValueError("原候选已不可用，请重新选择候选")
+
+            cur.execute(
+                """SELECT id FROM agent_runs WHERE session_id=%s
+                   AND status NOT IN ('COMPLETED','PARTIAL','NEEDS_REVIEW','ACTION_FAILED',
+                                      'FAILED','CANCELLED','ROLLBACK_FROZEN') LIMIT 1""",
+                (session_id,),
+            )
+            if cur.fetchone() is not None:
+                raise ValueError("当前会话仍有未结束的任务，请先停止或恢复该任务")
+
             cur.execute(
                 "SELECT COALESCE(MAX(turn_number), 0) + 1 FROM agent_turns WHERE session_id = %s",
                 (session_id,),
             )
             turn_number = int(cur.fetchone()[0])
+            next_session_state = dict(state or {})
+            next_session_state["projection_start_turn"] = session.state.get("projection_start_turn", turn_number)
             turn_id = str(uuid.uuid4())
             cur.execute(
                 """
@@ -138,10 +234,11 @@ class SessionStateStore:
             run_payload = {
                 "session_id": session_id,
                 "turn_id": turn_id,
+                "_managed_chat": True,
                 "execution_context": (state or {}).get("execution_context", {}),
             }
             run = insert_run(
-                run_type="agent_harness",
+                run_type=run_type,
                 requirement=run_payload,
                 user_id=user_id,
                 status="RUNNING",
@@ -149,10 +246,37 @@ class SessionStateStore:
                 session_id=session_id,
             )
             cur.execute(
+                """INSERT INTO agent_run_executions (run_id,state,lease_until,execution_input)
+                   VALUES (%s,'QUEUED',clock_timestamp() + INTERVAL '30 seconds',%s)""",
+                (run["id"], Json({
+                    **run_payload, "run_id": str(run["id"]), "user_id": user_id,
+                    "user_message": user_message,
+                    "runtime": "harness" if run_type == "agent_harness" else "agent-supervisor",
+                })),
+            )
+            if run_type == "agent_harness" and settings.AGENT_EXECUTION_MODE == "worker":
+                from app.domains.agent_run.execution_jobs import enqueue_job_with_cursor
+
+                enqueue_job_with_cursor(
+                    cur,
+                    str(run["id"]),
+                    max_recoveries=settings.AGENT_WORKER_MAX_RECOVERIES,
+                )
+            cur.execute(
                 "UPDATE agent_turns SET run_id = %s WHERE id = %s RETURNING *",
                 (run["id"], turn_id),
             )
             turn = _turn_from_row(cur, cur.fetchone())
+            if handoff is not None:
+                cur.execute(
+                    """UPDATE sourcing_handoffs
+                       SET status='consumed', consumed_turn_id=%s, consumed_message_hash=%s,
+                           run_id=%s, consumed_at=NOW(), updated_at=NOW()
+                       WHERE id=%s AND status='ready'""",
+                    (turn_id, message_hash, run["id"], handoff_id),
+                )
+                if cur.rowcount != 1:
+                    raise ValueError("寻源交接已被其他请求消费")
             cur.execute(
                 """
                 UPDATE agent_sessions
@@ -160,7 +284,7 @@ class SessionStateStore:
                 WHERE id = %s
                 RETURNING *
                 """,
-                (Json(state or {}), session_id),
+                (Json(next_session_state), session_id),
             )
             session = _session_from_row(cur, cur.fetchone())
         if session is None or turn is None:
@@ -170,6 +294,7 @@ class SessionStateStore:
             "session": session,
             "turn": turn,
             "run": AgentRun.model_validate(run),
+            "idempotent_replay": False,
         }
 
     def get_execution_context(
@@ -178,9 +303,14 @@ class SessionStateStore:
         user_id: str,
     ) -> dict[str, Any] | None:
         """Return the last committed execution context for the owned session."""
-        session = self.get_session(session_id, user_id)
+        # Distinguish a genuinely legacy session from an existing session
+        # owned by someone else.  Returning None for both would let callers
+        # fall back to the unscoped Mongo conversation store.
+        session = self.get_session(session_id)
         if session is None:
             return None
+        if str(session.user_id or "") != user_id:
+            raise PermissionError("Agent 会话不属于当前用户")
         context = session.state.get("execution_context")
         return context if isinstance(context, dict) else None
 
@@ -189,9 +319,13 @@ class SessionStateStore:
         run_id: str,
         event_type: str,
         snapshot: dict[str, Any],
+        *,
+        permit: ExecutionPermit | None = None,
     ) -> AgentRun:
         """Persist one Harness snapshot and its control-plane projections atomically."""
         with get_cursor() as (_, cur):
+            raw_run = lock_run(cur, run_id)
+            require_active(cur, raw_run, permit)
             cur.execute(
                 "SELECT * FROM agent_runs WHERE id = %s FOR UPDATE",
                 (run_id,),
@@ -199,7 +333,9 @@ class SessionStateStore:
             run = _run_from_row(cur, cur.fetchone())
             if run is None:
                 raise ValueError("Agent Harness run 不存在")
-            status = _run_status_from_snapshot(snapshot)
+            # The public terminal and its final events belong to finish(), not
+            # to a checkpoint-adjacent node callback.
+            status = "RUNNING" if permit else _run_status_from_snapshot(snapshot)
             next_version = run.version + 1
             cur.execute(
                 """
@@ -229,6 +365,9 @@ class SessionStateStore:
             if updated is None:
                 raise RuntimeError("Agent Harness run 版本提交失败")
 
+            if permit:
+                cur.execute("UPDATE agent_run_executions SET snapshot=%s WHERE run_id=%s", (Json(snapshot), run_id))
+
             session_id = str(snapshot.get("session_id") or run.session_id or "")
             turn_id = str(snapshot.get("turn_id") or "")
             _upsert_harness_tasks(cur, snapshot, session_id, run_id, turn_id)
@@ -246,10 +385,10 @@ class SessionStateStore:
                     WHERE id = %s
                     """,
                     (
-                        _turn_status_from_snapshot(snapshot),
+                        TurnStatus.RUNNING.value if permit else _turn_status_from_snapshot(snapshot),
                         Json(snapshot),
                         _snapshot_answer_text(snapshot),
-                        _turn_status_from_snapshot(snapshot),
+                        TurnStatus.RUNNING.value if permit else _turn_status_from_snapshot(snapshot),
                         turn_id,
                     ),
                 )
@@ -267,9 +406,12 @@ class SessionStateStore:
         run_id: str,
         event_type: str,
         payload: dict[str, Any],
+        *,
+        permit: ExecutionPermit | None = None,
     ) -> dict[str, Any]:
         """Append a replayable chat event without fabricating a state snapshot."""
         with get_cursor() as (_, cur):
+            require_active(cur, lock_run(cur, run_id), permit)
             cur.execute("SELECT version FROM agent_runs WHERE id = %s FOR UPDATE", (run_id,))
             row = cur.fetchone()
             if row is None:

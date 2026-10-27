@@ -1,14 +1,21 @@
 """Normalize sourcing-risk provider results into auditable evidence records."""
 
 import json
-from uuid import uuid4
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Literal
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 
 from pydantic import BaseModel, Field
 
 from app.db.mongo import get_db
+
+
+EVIDENCE_FRESHNESS_POLICY_DIMENSIONS = {
+    "financial": "risk",
+    "sanctions": "risk",
+    "continuity": "capacity",
+}
 
 
 _KNOWN_RAW_PAYLOAD_LIFECYCLE_STATUSES = frozenset(
@@ -71,7 +78,7 @@ def normalize_evidence(
 
     collected_at = _parse_timestamp(provider_result.get("collected_at")) or datetime.now(timezone.utc)
     observed_at = _parse_timestamp(provider_result.get("observed_at"))
-    freshness_days = policy.get("freshness_days", {}).get(dimension)
+    freshness_days = freshness_window_days(policy.get("freshness_days"), dimension)
     freshness_status = _freshness_status(observed_at, collected_at, freshness_days)
     raw_payload_ref = _raw_payload_ref(run_uuid, company_uuid, dimension, provider_result)
     record = EvidenceRecord(
@@ -92,6 +99,19 @@ def normalize_evidence(
         summary=str(provider_result.get("summary") or ""),
     )
     return record
+
+
+def freshness_window_days(freshness_days: object, evidence_dimension: str) -> int | None:
+    """Resolve an evidence source's freshness window from the frozen scoring policy."""
+    if not isinstance(freshness_days, Mapping):
+        return None
+    policy_dimension = evidence_dimension
+    if evidence_dimension not in freshness_days:
+        policy_dimension = EVIDENCE_FRESHNESS_POLICY_DIMENSIONS.get(
+            evidence_dimension, evidence_dimension
+        )
+    value = freshness_days.get(policy_dimension)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def validate_evidence_set(evidence: list[dict], policy: dict) -> dict:

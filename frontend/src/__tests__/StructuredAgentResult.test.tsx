@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import StructuredAgentResult from '../components/StructuredAgentResult';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
+
+afterEach(() => vi.restoreAllMocks());
 
 const answer: AgentAnswer = {
   status: 'completed',
@@ -70,4 +72,251 @@ describe('StructuredAgentResult', () => {
     expect(screen.getByText(/平均 76\.7\/100/)).toBeInTheDocument();
     expect(screen.queryByText(/可直接打开详情/)).not.toBeInTheDocument();
   });
+});
+
+it('renders operational facts without a formal risk classification', () => {
+  const operational: AgentAnswer = {...answer, summary:'已取得质量指标。', limitations:['质量评级政策尚未确认'],
+    claims: [{...answer.claims[0], claim_id:'quality-1',entity_id:'company:1',dimension:'quality',
+      statement:'甲公司 合格率：95.2%',fact_path:'quality_rate',value:0.952,unit:'ratio',evidence_refs:['quality-e1']}],
+    evidence_refs:['quality-e1']};
+  const records: AgentEvidenceRecord[] = [{...evidence[0],evidence_id:'quality-e1',entity_id:'company:1',dimension:'quality',
+    provider:'assess_operational_risk',facts:{quality_rate:0.952,quality_rate_unit:'ratio'}}];
+  render(<StructuredAgentResult answer={operational} evidence={records} />);
+  expect(screen.getAllByText('合格率').length).toBeGreaterThan(0);
+  expect(screen.getByText('95.2%')).toBeInTheDocument();
+  expect(screen.getByText('已取得指标，风险等级待确认')).toBeInTheDocument();
+  expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
+});
+
+it('consumes the actual Harness answer contract used by backend E2E', async () => {
+  const fixture = (await import('./fixtures/operationalMetricAnswer.json')).default;
+  render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={fixture.evidence as AgentEvidenceRecord[]} />);
+  expect(screen.getAllByText('95.2%').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('70.0%').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('已取得指标，风险等级待确认')).toHaveLength(2);
+  expect(screen.queryByText(/可按正常流程推进/)).not.toBeInTheDocument();
+  expect(screen.getAllByText(fixture.answer.summary).length).toBeGreaterThan(0);
+  expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
+});
+
+it('retains neutral historical scores for both subjects and dimensions', () => {
+  const historical: AgentAnswer = {...answer, summary:'历史运营分析', limitations:[], claims:[
+    {...answer.claims[0],claim_id:'old-quality',entity_id:'company:1',dimension:'quality',fact_path:'risk_score',value:4.8,statement:'原质量风险分4.8'},
+    {...answer.claims[0],claim_id:'old-delivery',entity_id:'company:2',dimension:'delivery',fact_path:'risk_score',value:90,statement:'原交付风险分90'},
+  ]};
+  const before = JSON.stringify(historical);
+  render(<StructuredAgentResult answer={historical} evidence={[]} />);
+  expect(screen.getAllByText('历史规则待核验')).toHaveLength(2);
+  expect(screen.getByText('4.8/100')).toBeInTheDocument();
+  expect(screen.getByText('90/100')).toBeInTheDocument();
+  expect(JSON.stringify(historical)).toBe(before);
+});
+
+it('shows the operational source gap instead of implying a detected risk signal', () => {
+  const gap: AgentAnswer = {...answer,status:'needs_review',claims:[],evidence_refs:[],
+    summary:'已完成甲公司的质量/交付查询，但当前没有可验证的指标数据，当前未覆盖，暂不评级。',
+    limitations:['来源指标单位、分母和范围契约尚未确认']};
+  render(<StructuredAgentResult answer={gap} evidence={[]} />);
+  expect(screen.getAllByText(gap.summary).length).toBeGreaterThan(0);
+  expect(screen.getByText('当前未覆盖')).toBeInTheDocument();
+  expect(screen.queryByText('发现信号，需人工复核')).not.toBeInTheDocument();
+});
+
+it('does not create a green action signal from a completed historical score', () => {
+  const historical: AgentAnswer = {...answer,status:'completed',summary:'历史运营分析',limitations:[],
+    claims:[{...answer.claims[0],dimension:'delivery',fact_path:'riskScore',value:90,statement:'历史90分',evidence_refs:[]}]};
+  render(<StructuredAgentResult answer={historical} evidence={[]} />);
+  expect(screen.queryByText('可继续推进')).not.toBeInTheDocument();
+  expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
+  expect(screen.getAllByText('历史规则待核验').length).toBeGreaterThan(0);
+});
+
+it('does not present unavailable screening as completed or procurement-ready', () => {
+  const unavailable: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: 'screening-unavailable', dimension: 'compliance',
+    provider: 'check_sanctions', source_type: 'screening_query', status: 'unavailable',
+    facts: { screening_status: 'unavailable', coverage_status: 'insufficient' },
+  };
+  const completedCompliance: AgentAnswer = {
+    ...answer, status: 'completed', summary: '已完成供应商名单筛查，未发现风险。', claims: [], evidence_refs: [],
+    action_proposals: [{ action_type: 'continue', label: '可按正常流程推进', reason: '旧筛查工具未发现命中' }],
+  };
+  render(<StructuredAgentResult answer={completedCompliance} evidence={[unavailable]} />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.queryByText('已完成供应商名单筛查，未发现风险。')).not.toBeInTheDocument();
+  expect(screen.queryByText('可按正常流程推进并持续关注指标变化。')).not.toBeInTheDocument();
+  expect(screen.queryByText('可按正常流程推进')).not.toBeInTheDocument();
+  expect(screen.getByText('名单核验后再确定采购动作')).toBeInTheDocument();
+  expect(screen.getByText('需采购人员处理')).toBeInTheDocument();
+});
+
+it('keeps a possible name match in manual review even if the answer status is completed', () => {
+  const possible: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: 'screening-possible', dimension: 'compliance',
+    provider: 'fixture-list', source_type: 'sanctions_list_match', status: 'available',
+    facts: { screening_status: 'possible_match', match_type: 'possible', record_name: '同名主体有限公司' },
+  };
+  const completedCompliance: AgentAnswer = {
+    ...answer, status: 'completed', summary: '名单筛查已完成。', claims: [], evidence_refs: [],
+  };
+  render(<StructuredAgentResult answer={completedCompliance} evidence={[possible]} />);
+
+  expect(screen.getAllByText('疑似名单线索，待核验').length).toBeGreaterThan(0);
+  expect(screen.queryByText('名单筛查已完成。')).not.toBeInTheDocument();
+  expect(screen.queryByText('可按正常流程推进并持续关注指标变化。')).not.toBeInTheDocument();
+  expect(screen.getByText('需采购人员处理')).toBeInTheDocument();
+});
+
+it('renders the backend-generated screening fixture without turning a possible match green', async () => {
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-23T12:00:00Z'));
+  const fixture = (await import('./fixtures/screeningMonitoringAnswer.json')).default;
+  render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={fixture.evidence as AgentEvidenceRecord[]} />);
+
+  expect(screen.getAllByText('疑似名单线索，待核验').length).toBeGreaterThan(0);
+  expect(screen.getByText('名单核验后再确定采购动作')).toBeInTheDocument();
+  expect(screen.getByText('同名线索主体有限公司')).toBeInTheDocument();
+  expect(screen.queryByText('旧筛查结果仅供历史参考')).not.toBeInTheDocument();
+  expect(screen.queryByText(/可按正常流程推进|未命中风险记录|范围内未发现匹配/)).not.toBeInTheDocument();
+  expect(screen.queryByText(fixture.answer.summary)).not.toBeInTheDocument();
+});
+
+it('does not treat an expired screening claim as a current source fact', async () => {
+  const fixture = (await import('./fixtures/screeningMonitoringAnswer.json')).default;
+  const expiredEvidence = (fixture.evidence as AgentEvidenceRecord[]).map(record => ({
+    ...record,
+    status: 'stale',
+    facts: { ...record.facts, validity_status: 'stale', screening_status: 'stale' },
+  }));
+  render(<StructuredAgentResult answer={fixture.answer as AgentAnswer} evidence={expiredEvidence} />);
+
+  expect(screen.getAllByText('名单依据已过期').length).toBeGreaterThan(0);
+  expect(screen.queryByText('同名线索主体有限公司')).not.toBeInTheDocument();
+  expect(screen.getByText('旧筛查结果仅供历史参考')).toBeInTheDocument();
+});
+
+it('does not treat a legacy clean boolean as a current screening conclusion', () => {
+  const legacyClaim = {
+    ...answer.claims[0], claim_id: 'legacy-screening', dimension: 'compliance', fact_path: 'clean', value: true,
+    statement: '虚构甲供应链有限公司 合规筛查结果：未命中风险记录', evidence_refs: ['legacy-screening-evidence'],
+  };
+  const legacyEvidence: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: 'legacy-screening-evidence', dimension: 'compliance',
+    provider: 'check_sanctions', source_type: 'screening_query', status: 'available', facts: { clean: true },
+  };
+  const completedCompliance: AgentAnswer = {
+    ...answer, status: 'completed', summary: '已完成供应商名单筛查，未发现风险。', claims: [legacyClaim],
+    evidence_refs: ['legacy-screening-evidence'],
+  };
+  render(<StructuredAgentResult answer={completedCompliance} evidence={[legacyEvidence]} />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.queryByText('未见风险信号')).not.toBeInTheDocument();
+  expect(screen.queryByText('未命中风险记录')).not.toBeInTheDocument();
+  expect(screen.queryByText('可继续推进')).not.toBeInTheDocument();
+});
+
+it('does not present synthetic screening claims as current evidence', () => {
+  const synthetic: AgentEvidenceRecord = {
+    ...evidence[0],
+    evidence_id: 'synthetic-screening',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    provider: 'demo-list',
+    source_type: 'sanctions_list_match',
+    status: 'available',
+    data_mode: 'synthetic',
+    valid_until: '2026-12-31T00:00:00Z',
+    facts: {
+      validity_status: 'available',
+      screening_status: 'confirmed_match',
+      confirmed_match: true,
+      record_name: '演示名单主体',
+    },
+  };
+  const syntheticClaim: AgentAnswer['claims'][number] = {
+    ...answer.claims[0],
+    claim_id: 'synthetic-screening-claim',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    fact_path: 'confirmed_match',
+    value: true,
+    statement: '演示名单主体命中',
+    evidence_refs: ['synthetic-screening'],
+  };
+
+  render(<StructuredAgentResult
+    answer={{ ...answer, summary: '演示筛查发现名单命中。', claims: [syntheticClaim] }}
+    evidence={[synthetic]}
+  />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.getByText('旧筛查结果仅供历史参考')).toBeInTheDocument();
+  expect(screen.queryByText('名单命中，待人工复核')).not.toBeInTheDocument();
+  expect(screen.queryByText('演示名单主体命中')).not.toBeInTheDocument();
+});
+
+it('does not let formal no-match evidence validate an unrelated synthetic screening claim', () => {
+  const formalNoMatch: AgentEvidenceRecord = {
+    ...evidence[0],
+    evidence_id: 'formal-no-match',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    provider: 'formal-registry',
+    source_type: 'sanctions_list',
+    status: 'confirmed_empty',
+    data_mode: 'formal',
+    facts: {
+      validity_status: 'empty',
+      screening_status: 'no_match_in_scope',
+    },
+  };
+  const synthetic: AgentEvidenceRecord = {
+    ...evidence[0],
+    evidence_id: 'synthetic-screening',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    provider: 'demo-list',
+    source_type: 'sanctions_list_match',
+    status: 'available',
+    data_mode: 'synthetic',
+    valid_until: '2026-12-31T00:00:00Z',
+    facts: {
+      validity_status: 'available',
+      screening_status: 'confirmed_match',
+      confirmed_match: true,
+      record_name: '演示名单主体',
+    },
+  };
+  const syntheticClaim: AgentAnswer['claims'][number] = {
+    ...answer.claims[0],
+    claim_id: 'synthetic-screening-claim',
+    entity_id: 'company:synthetic',
+    dimension: 'compliance',
+    fact_path: 'confirmed_match',
+    value: true,
+    statement: '演示名单主体命中',
+    evidence_refs: ['synthetic-screening'],
+  };
+
+  render(<StructuredAgentResult
+    answer={{ ...answer, summary: '演示筛查发现名单命中。', claims: [syntheticClaim] }}
+    evidence={[formalNoMatch, synthetic]}
+  />);
+
+  expect(screen.getAllByText('名单核验状态未知').length).toBeGreaterThan(0);
+  expect(screen.getByText('旧筛查结果仅供历史参考')).toBeInTheDocument();
+  expect(screen.queryByText('范围内未发现匹配')).not.toBeInTheDocument();
+  expect(screen.queryByText('演示名单主体命中')).not.toBeInTheDocument();
+});
+
+it('identifies the subject period and scope of each metric and distinguishes source time', () => {
+  const c = {...answer.claims[0],entity_id:'company:1',dimension:'quality',fact_path:'quality_rate',value:0.952,unit:'ratio',evidence_refs:['scoped']};
+  const scoped: AgentEvidenceRecord = {...evidence[0],evidence_id:'scoped',entity_id:'company:1',dimension:'quality',
+    facts:{company_name:'甲公司',period:'2026-10',scope:{material_code:'M1',base:'P1'},quality_rate:0.952,quality_rate_unit:'ratio',observed_at:null}};
+  render(<StructuredAgentResult answer={{...answer,claims:[c]}} evidence={[scoped]} />);
+  expect(screen.getByText(/甲公司.*2026-10.*物料 M1.*基地 P1/)).toBeInTheDocument();
+  expect(screen.getByText(/本次采集时间/)).toBeInTheDocument();
+  expect(screen.getByText(/来源观察时间：未知/)).toBeInTheDocument();
+  expect(screen.queryByText(/更新于/)).not.toBeInTheDocument();
 });

@@ -1,8 +1,10 @@
 """Framework-independent lifecycle commands for sourcing-risk agent runs."""
 
+import hashlib
+import json
 import time
-from datetime import datetime, timedelta, timezone
 from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -20,30 +22,52 @@ from app.domains.agent_run.models import ALLOWED_STATUS_TRANSITIONS, AgentRunSta
 from app.domains.agent_run.harness_contracts import TurnStatus
 from app.domains.agent_run.repo import (
     append_event,
+    cancel_pending_candidate_review_batches_with_cursor,
+    get_candidate_review_event_by_request_with_cursor,
+    get_candidate_followup_event_by_request_with_cursor,
+    get_candidate_followup_context,
+    get_candidate_review_batch_for_execution as repo_get_candidate_review_batch_for_execution,
+    get_policy_snapshot_by_id_with_cursor,
+    get_policy_snapshot_by_run_with_cursor,
+    get_latest_harness_run_for_session,
     get_run,
     get_run_for_update,
     get_run_detail_collections,
     get_run_for_user,
-    get_latest_harness_run_for_session,
+    insert_candidate_review_event_with_cursor,
+    insert_candidate_followup_event_with_cursor,
+    insert_candidate_followup_with_cursor,
     insert_approval_decision,
     insert_run,
+    list_candidate_review_events_with_cursor,
+    list_candidates_with_cursor,
     list_events_after,
     list_execution_snapshot_events,
-    persist_run_snapshot,
-    update_run_requirement,
-    update_run_status,
     list_raw_payload_compensations,
+    list_sourcing_candidate_dispositions_with_cursor,
+    lock_candidate_review_request_with_cursor,
+    lock_candidate_followup_request_with_cursor,
+    mark_candidate_review_batch_consumed_with_cursor,
+    persist_run_snapshot,
     update_raw_payload_compensation,
+    update_run_requirement,
+    update_run_policy_snapshot_with_cursor,
+    update_run_status,
+    touch_terminal_run_with_cursor,
     upsert_raw_payload_compensations,
+    upsert_sourcing_candidate_disposition_with_cursor,
+    upsert_policy_snapshot_with_cursor,
 )
 from app.domains.agent_run.schemas import (
     AgentRunResponse,
     ApprovalDecisionRequest,
+    AgentExecutionSnapshot,
+    CandidateDecisionBatchRequest,
     ClarificationRequest,
     CreateSourcingRiskRunRequest,
     IdentityResolutionRequest,
-    AgentExecutionSnapshot,
 )
+from app.domains.sourcing.candidate_review import apply_candidate_decisions
 from app.graphs.agent_core.trace import TRACE_EVENT_TYPE, build_agent_trace_events
 
 TERMINAL_STATUSES = frozenset(
@@ -375,10 +399,31 @@ def submit_identity_resolution(
     user_role: str,
 ) -> dict[str, Any]:
     """Durably record reviewer-selected company identities before graph resume."""
-    run = _get_authorized_run(run_id, user_id, user_role)
-    _require_version(run, request.expected_version)
-    _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+    _require_candidate_review_role(user_role)
     with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(run, user_id, user_role)
+        _require_version(run, request.expected_version)
+        _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+        persisted_candidates = list_candidates_with_cursor(run_id, cur)
+        by_review_id: dict[str, dict[str, Any]] = {}
+        for candidate in persisted_candidates:
+            review_id = _legacy_candidate_review_id(candidate)
+            if review_id in by_review_id:
+                raise DomainError(
+                    "SOURCING_IDENTITY_REVIEW_AMBIGUOUS",
+                    "候选审核标识不唯一，请使用候选处置入口重新审核",
+                    409,
+                )
+            by_review_id[review_id] = candidate
+        for review_id, company_id in request.resolutions.items():
+            candidate = by_review_id.get(review_id)
+            if candidate is None or company_id not in _candidate_identity_options(candidate):
+                raise DomainError(
+                    "SOURCING_IDENTITY_OPTION_INVALID",
+                    "所选企业不在当前候选主体选项中",
+                    422,
+                )
         updated = update_run_status(run_id, request.expected_version, AgentRunStatus.IDENTITY_REVIEW.value, cur=cur)
         if updated is None:
             _raise_version_conflict()
@@ -392,16 +437,471 @@ def submit_identity_resolution(
     return updated
 
 
+def get_candidate_decisions(run_id: str, user_id: str, user_role: str) -> dict[str, Any]:
+    """Return the latest separately persisted disposition state for one Run."""
+    with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(run, user_id, user_role)
+        candidates = list_candidates_with_cursor(run_id, cur)
+        dispositions = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+        batches = list_candidate_review_events_with_cursor(run_id, cur)
+    disposition_by_candidate = {str(row["candidate_id"]): row for row in dispositions}
+    effective = []
+    for candidate in candidates:
+        row = disposition_by_candidate.get(str(candidate.get("candidate_id") or candidate.get("id")))
+        if row is None:
+            continue
+        effective.append(_candidate_disposition_payload(candidate, row))
+    latest_batch = batches[0] if batches else None
+    resume_status = (
+        str(latest_batch.get("resume_status"))
+        if latest_batch
+        else str(run.get("status") or "not_started").lower()
+    )
+    return {
+        "run_id": str(run["id"]),
+        "run_version": int(run["version"]),
+        "dispositions": effective,
+        "resume_status": resume_status,
+        "new_run_id": str(latest_batch["new_run_id"]) if latest_batch and latest_batch.get("new_run_id") else None,
+    }
+
+
+def submit_candidate_decisions(
+    run_id: str,
+    payload: dict[str, Any],
+    user_id: str,
+    user_role: str,
+    request_key: str,
+) -> dict[str, Any]:
+    """Persist a candidate review batch and its durable resume intent atomically."""
+    _require_candidate_review_role(user_role)
+    request_key = request_key.strip()
+    if not request_key or len(request_key) > 255:
+        raise DomainError("IDEMPOTENCY_KEY_INVALID", "Idempotency-Key 无效", 422)
+    request = CandidateDecisionBatchRequest.model_validate(payload)
+    serialized_request = request.model_dump(mode="json")
+    request_hash = hashlib.sha256(
+        json.dumps(serialized_request, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(run, user_id, user_role)
+
+        lock_candidate_review_request_with_cursor(user_id, request_key, cur)
+        previous = get_candidate_review_event_by_request_with_cursor(user_id, request_key, cur)
+        if previous is not None:
+            if previous["request_hash"] != request_hash or str(previous["run_id"]) != run_id:
+                raise DomainError(
+                    "SOURCING_CANDIDATE_IDEMPOTENCY_CONFLICT",
+                    "Idempotency-Key 已用于不同的候选处置请求",
+                    409,
+                )
+            response = previous.get("response") or {}
+            if isinstance(response, str):
+                response = json.loads(response)
+            return dict(response)
+
+        _require_version(run, request.expected_version)
+        terminal_reclassification = str(run.get("status")) in TERMINAL_STATUSES
+        if terminal_reclassification and run.get("status") not in {
+            AgentRunStatus.PARTIAL.value,
+            AgentRunStatus.NEEDS_REVIEW.value,
+        }:
+            raise DomainError(
+                "SOURCING_TERMINAL_DISPOSITION_INVALID",
+                "当前终态不支持修改候选处置",
+                409,
+            )
+        if not terminal_reclassification:
+            _require_transition(run, AgentRunStatus.IDENTITY_REVIEW)
+        persisted_candidates = list_candidates_with_cursor(run_id, cur)
+        disposition_rows = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+        disposition_by_candidate = {str(row["candidate_id"]): row for row in disposition_rows}
+        review_candidates: list[dict[str, Any]] = []
+        for persisted in persisted_candidates:
+            stable_id = str(persisted.get("candidate_id") or persisted.get("id") or "")
+            if not stable_id:
+                raise DomainError(
+                    "SOURCING_CANDIDATE_KEY_UNAVAILABLE",
+                    "候选缺少已持久化的稳定标识，无法提交审核",
+                    409,
+                )
+            candidate = {**persisted, "candidate_key": stable_id}
+            existing = disposition_by_candidate.get(stable_id)
+            if existing:
+                candidate.update(
+                    disposition=str(existing["action"]),
+                    reason=existing.get("reason"),
+                )
+                if existing.get("action") == "confirm" and existing.get("company_id"):
+                    candidate.update(
+                        company_id=str(existing["company_id"]),
+                        identity_status="exact",
+                        score_eligible=True,
+                    )
+            review_candidates.append(candidate)
+
+        normalized_decisions = [item.model_dump(exclude_none=True) for item in request.decisions]
+        if terminal_reclassification:
+            existing_actions = {
+                str(item["candidate_id"]): str(item["action"])
+                for item in disposition_rows
+            }
+            if not normalized_decisions or any(
+                item.get("action") != "defer"
+                or existing_actions.get(str(item.get("candidate_key"))) != "exclude"
+                for item in normalized_decisions
+            ):
+                raise DomainError(
+                    "SOURCING_TERMINAL_DISPOSITION_INVALID",
+                    "终态任务仅允许将已排除候选显式改为暂存",
+                    409,
+                )
+        try:
+            groups = apply_candidate_decisions(review_candidates, normalized_decisions)
+        except ValueError as exc:
+            raise DomainError("SOURCING_CANDIDATE_DECISION_INVALID", str(exc), 422) from exc
+
+        batch_id = str(uuid4())
+        submitted_by_key = {item["candidate_key"]: item for item in normalized_decisions}
+        disposition_payloads: list[dict[str, Any]] = []
+        for _group_name, candidates in groups.items():
+            for candidate in candidates:
+                candidate_key = str(candidate["candidate_key"])
+                if terminal_reclassification and candidate_key not in submitted_by_key:
+                    continue
+                action = candidate.get("disposition")
+                if action not in {"confirm", "defer", "exclude"}:
+                    continue
+                submitted = submitted_by_key.get(candidate_key, {})
+                company_id = str(candidate["company_id"]) if action == "confirm" else None
+                reason = submitted.get("reason") or candidate.get("reason")
+                if not submitted and action == "defer" and not reason:
+                    reason = "not_selected_this_round"
+                upsert_sourcing_candidate_disposition_with_cursor(
+                    run_id=run_id,
+                    candidate_id=str(candidate["candidate_key"]),
+                    action=action,
+                    company_id=company_id,
+                    reason=reason,
+                    decided_by=user_id,
+                    batch_id=batch_id,
+                    cur=cur,
+                )
+                disposition_payloads.append({
+                    "candidate_key": candidate_key,
+                    "action": action,
+                    "company_id": company_id,
+                    "reason": reason,
+                })
+
+        has_eligible = bool(groups["eligible"])
+        run_status = (
+            str(run["status"])
+            if terminal_reclassification
+            else AgentRunStatus.IDENTITY_RESOLVING.value
+            if has_eligible
+            else AgentRunStatus.NEEDS_REVIEW.value
+        )
+        resume_status = (
+            "followup_available"
+            if terminal_reclassification
+            else "pending"
+            if has_eligible
+            else "needs_review"
+        )
+        updated = (
+            touch_terminal_run_with_cursor(
+                cur, run_id, request.expected_version, run_status
+            )
+            if terminal_reclassification
+            else update_run_status(run_id, request.expected_version, run_status, cur=cur)
+        )
+        if updated is None:
+            _raise_version_conflict()
+        append_event(
+            run_id,
+            int(updated["version"]),
+            "candidate_dispositions_updated" if terminal_reclassification else "candidate_review_submitted",
+            {
+                "batch_id": batch_id,
+                "dispositions": disposition_payloads,
+                "resume_status": resume_status,
+                "status": updated["status"],
+            },
+            cur=cur,
+        )
+        response = {
+            "run_id": run_id,
+            "run_version": int(updated["version"]),
+            "dispositions": disposition_payloads,
+            "resume_status": resume_status,
+            "new_run_id": None,
+        }
+        insert_candidate_review_event_with_cursor(
+            batch_id=batch_id,
+            run_id=run_id,
+            actor_id=user_id,
+            request_key=request_key,
+            request_hash=request_hash,
+            expected_version=request.expected_version,
+            run_version=int(updated["version"]),
+            decisions=disposition_payloads,
+            response=response,
+            resume_status=resume_status,
+            dispatch_status="pending" if has_eligible and not terminal_reclassification else "not_required",
+            cur=cur,
+        )
+    return response
+
+
+def persist_sourcing_policy_snapshot(run_id: str, policy: dict[str, Any]) -> dict[str, Any]:
+    """Persist one immutable scoring policy and bind its UUID to the source Run."""
+    with get_cursor() as (_, cur):
+        run = get_run_for_update(run_id, cur)
+        if run is None or run.get("run_type") != "sourcing_risk_v2":
+            raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+        snapshot = get_policy_snapshot_by_run_with_cursor(run_id, cur)
+        if snapshot is None:
+            snapshot = upsert_policy_snapshot_with_cursor(run_id, policy, cur)
+        else:
+            update_run_policy_snapshot_with_cursor(run_id, str(snapshot["id"]), cur)
+    return snapshot
+
+
+def get_sourcing_policy_snapshot(snapshot_id: str) -> dict[str, Any] | None:
+    with get_cursor() as (_, cur):
+        return get_policy_snapshot_by_id_with_cursor(snapshot_id, cur)
+
+
+def get_sourcing_candidate_followup_context(child_run_id: str) -> dict[str, Any] | None:
+    """Load the selected parent candidates and frozen policy for a child Run."""
+    followup = get_candidate_followup_context(child_run_id)
+    if followup is None:
+        return None
+    policy_snapshot_id = str(followup.get("policy_snapshot_id") or "")
+    policy_snapshot = get_sourcing_policy_snapshot(policy_snapshot_id) if policy_snapshot_id else None
+    if policy_snapshot is None:
+        raise DomainError(
+            "SOURCING_POLICY_SNAPSHOT_UNAVAILABLE",
+            "父任务规则快照不可用，不能恢复候选任务",
+            409,
+        )
+    with get_cursor() as (_, cur):
+        candidates = list_candidates_with_cursor(child_run_id, cur)
+    candidate_ids = {str(item) for item in followup.get("child_candidate_ids") or []}
+    selected = [
+        candidate for candidate in candidates
+        if str(candidate.get("candidate_id") or candidate.get("id")) in candidate_ids
+    ]
+    if len(selected) != len(candidate_ids):
+        raise DomainError(
+            "SOURCING_FOLLOWUP_CANDIDATES_UNAVAILABLE",
+            "恢复任务候选快照不完整，不能继续执行",
+            409,
+        )
+    return {
+        **followup,
+        "candidates": selected,
+        "policy_snapshot_id": policy_snapshot_id,
+        "policy_snapshot": dict(policy_snapshot.get("policy") or {}),
+    }
+
+
+def get_candidate_review_batch_for_execution(batch_id: str) -> dict[str, Any] | None:
+    """Read the currently leased candidate batch for the persistent worker."""
+    batch = repo_get_candidate_review_batch_for_execution(batch_id)
+    if batch is None:
+        return None
+    return {
+        **batch,
+        "fencing_token": int(batch.get("fencing_token") or 0),
+        "run_version": int(batch.get("run_version") or 0),
+    }
+
+
+def mark_candidate_review_batch_consumed(batch_id: str, fencing_token: int) -> bool:
+    with get_cursor() as (_, cur):
+        return mark_candidate_review_batch_consumed_with_cursor(batch_id, fencing_token, cur)
+
+
+def get_candidate_review_groups_for_batch(batch_id: str) -> dict[str, Any]:
+    """Rebuild the resume groups from PostgreSQL candidates and dispositions."""
+    batch = repo_get_candidate_review_batch_for_execution(batch_id)
+    if batch is None or batch.get("dispatch_status") != "processing":
+        raise DomainError("SOURCING_CANDIDATE_BATCH_UNAVAILABLE", "候选恢复批次不可用", 409)
+    run_id = str(batch["run_id"])
+    with get_cursor() as (_, cur):
+        candidates = list_candidates_with_cursor(run_id, cur)
+        disposition_rows = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+    by_candidate = {str(row["candidate_id"]): row for row in disposition_rows}
+    review_candidates: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_id = str(candidate.get("candidate_id") or candidate.get("id") or "")
+        if not candidate_id:
+            raise DomainError("SOURCING_CANDIDATE_KEY_UNAVAILABLE", "候选缺少已持久化标识", 409)
+        review_candidate = {**candidate, "candidate_key": candidate_id}
+        disposition = by_candidate.get(candidate_id)
+        if disposition:
+            review_candidate.update(
+                disposition=str(disposition["action"]),
+                reason=disposition.get("reason"),
+            )
+            if disposition.get("action") == "confirm" and disposition.get("company_id"):
+                review_candidate.update(
+                    company_id=str(disposition["company_id"]),
+                    identity_status="exact",
+                    score_eligible=True,
+                )
+        review_candidates.append(review_candidate)
+    decisions = list(batch.get("decisions") or [])
+    try:
+        groups = apply_candidate_decisions(review_candidates, decisions)
+    except ValueError as exc:
+        raise DomainError("SOURCING_CANDIDATE_DECISION_INVALID", str(exc), 409) from exc
+    return {**groups, "all_candidates": [*groups["eligible"], *groups["deferred"], *groups["excluded"]]}
+
+
+def derive_candidate_followup(
+    run_id: str,
+    candidate_keys: list[str],
+    user_id: str,
+    user_role: str,
+    request_key: str,
+) -> dict[str, Any]:
+    """Create a child Run for explicitly resumed deferred candidates."""
+    _require_candidate_review_role(user_role)
+    request_key = request_key.strip()
+    if not request_key or len(request_key) > 255:
+        raise DomainError("IDEMPOTENCY_KEY_INVALID", "Idempotency-Key 无效", 422)
+    if not candidate_keys or any(not isinstance(key, str) or not key.strip() for key in candidate_keys):
+        raise DomainError("SOURCING_FOLLOWUP_CANDIDATES_INVALID", "必须选择至少一个有效候选", 422)
+    if len(set(candidate_keys)) != len(candidate_keys):
+        raise DomainError("SOURCING_FOLLOWUP_CANDIDATES_INVALID", "candidate_key 不得重复", 422)
+    request_hash = hashlib.sha256(
+        json.dumps({"run_id": run_id, "candidate_keys": candidate_keys}, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    with get_cursor() as (_, cur):
+        parent = get_run_for_update(run_id, cur)
+        _authorize_locked_sourcing_run(parent, user_id, user_role)
+        lock_candidate_followup_request_with_cursor(user_id, request_key, cur)
+        previous = get_candidate_followup_event_by_request_with_cursor(user_id, request_key, cur)
+        if previous is not None:
+            if previous["request_hash"] != request_hash or str(previous["parent_run_id"]) != run_id:
+                raise DomainError("SOURCING_FOLLOWUP_IDEMPOTENCY_CONFLICT", "Idempotency-Key 已用于不同的恢复请求", 409)
+            response = previous.get("response") or {}
+            if isinstance(response, str):
+                response = json.loads(response)
+            return {**dict(response), "_start_required": False}
+
+        if parent["status"] not in {
+            AgentRunStatus.PARTIAL.value,
+            AgentRunStatus.NEEDS_REVIEW.value,
+        }:
+            raise DomainError("SOURCING_FOLLOWUP_PARENT_NOT_TERMINAL", "父任务尚未终态，不能派生恢复任务", 409)
+        policy_snapshot_id = str(parent.get("policy_snapshot_id") or "") or None
+        policy_snapshot = (
+            get_policy_snapshot_by_id_with_cursor(policy_snapshot_id, cur)
+            if policy_snapshot_id else None
+        )
+        if policy_snapshot is None:
+            raise DomainError("SOURCING_POLICY_SNAPSHOT_UNAVAILABLE", "父任务规则快照不可用，不能派生恢复任务", 409)
+
+        candidates = list_candidates_with_cursor(run_id, cur)
+        candidates_by_id = {
+            str(candidate.get("candidate_id") or candidate.get("id")): candidate
+            for candidate in candidates
+        }
+        dispositions = list_sourcing_candidate_dispositions_with_cursor(run_id, cur)
+        disposition_by_id = {str(item["candidate_id"]): item for item in dispositions}
+        selected_candidates: list[dict[str, Any]] = []
+        for candidate_key in candidate_keys:
+            candidate = candidates_by_id.get(candidate_key)
+            disposition = disposition_by_id.get(candidate_key)
+            if candidate is None or disposition is None:
+                raise DomainError("SOURCING_FOLLOWUP_CANDIDATE_NOT_FOUND", "候选不存在或没有可恢复处置", 404)
+            if disposition.get("action") == "exclude":
+                raise DomainError("SOURCING_FOLLOWUP_CANDIDATE_EXCLUDED", "排除候选需先显式改为暂存后才能恢复", 409)
+            if disposition.get("action") != "defer":
+                raise DomainError("SOURCING_FOLLOWUP_CANDIDATE_NOT_DEFERRED", "只有本轮暂存候选可以派生恢复任务", 409)
+            snapshot = {
+                key: value
+                for key, value in candidate.items()
+                if key not in {"id", "candidate_id", "source", "status", "updated_at"}
+            }
+            snapshot.update(
+                candidate_key=f"followup:{run_id}:{candidate_key}",
+                parent_candidate_id=candidate_key,
+            )
+            selected_candidates.append(snapshot)
+
+        child = insert_run(
+            run_type="sourcing_risk_v2",
+            requirement=dict(parent.get("requirement") or {}),
+            user_id=user_id,
+            status=AgentRunStatus.CREATED.value,
+            cur=cur,
+        )
+        update_run_policy_snapshot_with_cursor(str(child["id"]), policy_snapshot_id, cur)
+        child_snapshot = persist_run_snapshot(
+            str(child["id"]), candidates=selected_candidates, cur=cur
+        )
+        child_candidates = list(child_snapshot.get("candidates") or [])
+        child_candidate_ids = [str(item["id"]) for item in child_candidates]
+        insert_candidate_followup_with_cursor(
+            parent_run_id=run_id,
+            child_run_id=str(child["id"]),
+            created_by=user_id,
+            source_candidate_ids=list(candidate_keys),
+            child_candidate_ids=child_candidate_ids,
+            policy_snapshot_id=policy_snapshot_id,
+            cur=cur,
+        )
+        response = {
+            "parent_run_id": run_id,
+            "run_id": str(child["id"]),
+            "resume_url": f"/sourcing?run={child['id']}",
+        }
+        append_event(
+            str(child["id"]),
+            int(child.get("version") or 1),
+            "candidate_followup_created",
+            {"parent_run_id": run_id, "candidate_count": len(child_candidate_ids), "status": child["status"]},
+            cur=cur,
+        )
+        insert_candidate_followup_event_with_cursor(
+            event_id=str(uuid4()),
+            parent_run_id=run_id,
+            child_run_id=str(child["id"]),
+            actor_id=user_id,
+            request_key=request_key,
+            request_hash=request_hash,
+            response=response,
+            cur=cur,
+        )
+    return {**response, "_start_required": True}
+
+
 def cancel_run(
     run_id: str, expected_version: int, user_id: str, user_role: str
 ) -> dict[str, Any]:
     run = _get_authorized_run(run_id, user_id, user_role)
     _require_version(run, expected_version)
+    if run.get("run_type") == "agent_harness" or (run.get("requirement") or {}).get("_managed_chat"):
+        from app.domains.agent_run.coordinator import run_coordinator
+
+        # Authorization above also covers administrators acting on owned Runs.
+        return run_coordinator.cancel(run_id, str(run.get("user_id") or ""), expected_version=expected_version)
     _require_transition(run, AgentRunStatus.CANCELLED)
     with get_cursor() as (_, cur):
         updated = update_run_status(run_id, expected_version, AgentRunStatus.CANCELLED.value, cur=cur)
         if updated is None:
             _raise_version_conflict()
+        if run.get("run_type") == "sourcing_risk_v2":
+            cancel_pending_candidate_review_batches_with_cursor(run_id, cur)
         append_event(run_id, updated["version"], "done", {"status": updated["status"]}, cur=cur)
     return updated
 
@@ -411,78 +911,14 @@ def cancel_active_harness_run(
     user_id: str,
     user_role: str,
 ) -> dict[str, Any] | None:
-    """Cancel the current durable Harness run for a chat session.
+    """Cancel through the same transaction owner used by graph completion."""
+    from app.domains.agent_run.coordinator import run_coordinator
 
-    Harness runs use their own ``RUNNING`` control-plane status and therefore
-    cannot go through the sourcing-risk V2 transition table.  The update is
-    still optimistic and appends the same replayable ``done`` event used by
-    the event-stream endpoint.
-    """
     del user_role
     run = get_latest_harness_run_for_session(session_id, user_id)
     if run is None:
         return None
-    if run.get("status") == AgentRunStatus.CANCELLED.value:
-        return run
-    if run.get("status") in {
-        AgentRunStatus.COMPLETED.value,
-        AgentRunStatus.PARTIAL.value,
-        AgentRunStatus.NEEDS_REVIEW.value,
-        AgentRunStatus.ACTION_FAILED.value,
-        AgentRunStatus.FAILED.value,
-        AgentRunStatus.ROLLBACK_FROZEN.value,
-    }:
-        raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许取消", 409)
-    run_id = str(run["id"])
-    expected_version = int(run["version"])
-    with get_cursor() as (_, cur):
-        cur.execute(
-            """
-            UPDATE agent_runs
-            SET status = 'CANCELLED',
-                version = version + 1,
-                error_code = 'AGENT_RUN_CANCELLED_BY_USER',
-                updated_at = NOW(),
-                completed_at = NOW()
-            WHERE id = %s
-              AND user_id = %s
-              AND version = %s
-              AND status NOT IN ('COMPLETED', 'PARTIAL', 'NEEDS_REVIEW',
-                                 'ACTION_FAILED', 'FAILED', 'CANCELLED',
-                                 'ROLLBACK_FROZEN')
-            RETURNING *
-            """,
-            (run_id, user_id, expected_version),
-        )
-        row = cur.fetchone()
-        updated = (
-            dict(zip((column[0] for column in cur.description), row))
-            if row is not None
-            else None
-        )
-        if updated is None:
-            _raise_version_conflict()
-        append_event(
-            run_id,
-            int(updated["version"]),
-            "done",
-            {
-                "status": "cancelled",
-                "run_id": run_id,
-                "message": "用户已取消本轮 Agent 工作流",
-            },
-            cur=cur,
-        )
-        cur.execute(
-            """
-            UPDATE agent_turns
-            SET status = %s, completed_at = NOW(),
-                assistant_message = COALESCE(assistant_message, '用户已取消本轮 Agent 工作流')
-            WHERE run_id = %s AND status IN ('received', 'running', 'waiting_approval')
-            """,
-            (TurnStatus.CANCELLED.value, run_id),
-        )
-    return updated
+    return run_coordinator.cancel(str(run["id"]), user_id)
 
 
 def decide_action_proposal(
@@ -517,10 +953,72 @@ def stream_events(
         yield {"event_type": "keepalive", "data": {}}
 
 
+def get_harness_run_status(
+    run_id: str, user_id: str, user_role: str
+) -> dict[str, Any]:
+    """Return the durable Run/execution/job state without graph internals."""
+    run = _get_authorized_run(run_id, user_id, user_role)
+    with get_cursor() as (_, cur):
+        cur.execute(
+            """SELECT state,attempt_id,fencing_token,owner_id,lease_until,quality,
+                      pause_reason,recovery_count
+               FROM agent_run_executions WHERE run_id=%s""",
+            (run_id,),
+        )
+        execution_row = cur.fetchone()
+        cur.execute(
+            """SELECT status,attempts,recoveries,max_recoveries,available_at,
+                      lease_owner,lease_until,last_error,completed_at
+               FROM agent_execution_jobs WHERE run_id=%s""",
+            (run_id,),
+        )
+        job_row = cur.fetchone()
+    execution = None
+    if execution_row:
+        execution = {
+            "state": execution_row[0],
+            "attempt_id": str(execution_row[1]) if execution_row[1] else None,
+            "fencing_token": execution_row[2],
+            "owner_id": execution_row[3],
+            "lease_until": execution_row[4],
+            "quality": execution_row[5],
+            "pause_reason": execution_row[6],
+            "recovery_count": execution_row[7],
+        }
+    job = None
+    if job_row:
+        job = {
+            "status": job_row[0],
+            "attempts": job_row[1],
+            "recoveries": job_row[2],
+            "max_recoveries": job_row[3],
+            "available_at": job_row[4],
+            "lease_owner": job_row[5],
+            "lease_until": job_row[6],
+            "last_error": job_row[7],
+            "completed_at": job_row[8],
+        }
+    requirement = dict(run.get("requirement") or {})
+    return {
+        "run_id": str(run["id"]),
+        "session_id": str(run.get("session_id") or ""),
+        "turn_id": str(requirement.get("turn_id") or ""),
+        "status": run["status"],
+        "error_code": run.get("error_code"),
+        "created_at": run.get("created_at"),
+        "updated_at": run.get("updated_at"),
+        "completed_at": run.get("completed_at"),
+        "execution": execution,
+        "job": job,
+    }
+
+
 def stream_harness_events(
     run_id: str, last_event_id: int, user_id: str, user_role: str
 ) -> Iterator[dict[str, Any]]:
     """Replay the chat Harness event log without projecting V2 business tables."""
+    from app.domains.agent_run.coordinator import run_coordinator
+
     cursor = last_event_id
     while True:
         run = _get_authorized_run(run_id, user_id, user_role)
@@ -533,10 +1031,10 @@ def stream_harness_events(
                     "event_type": event["event_type"],
                     "data": dict(event.get("payload") or {}),
                 }
-            if run["status"] in TERMINAL_STATUSES:
+            if run["status"] in TERMINAL_STATUSES or run_coordinator.is_paused(run_id):
                 return
             continue
-        if run["status"] in TERMINAL_STATUSES:
+        if run["status"] in TERMINAL_STATUSES or run_coordinator.is_paused(run_id):
             return
         time.sleep(2)
         yield {"event_type": "keepalive", "data": {}}
@@ -564,10 +1062,18 @@ def persist_supervisor_snapshot(
     durable/SSE boundary without introducing a second store or a business write.
     """
     durable_status = _SUPERVISOR_DURABLE_STATUSES.get(task_status)
+    from app.domains.agent_run.coordinator import current_execution, require_active
+
+    permit = current_execution.get()
     with get_cursor() as (_, cur):
         run = get_orchestration_run_for_update(run_id, cur)
         if run is None:
             return None
+        require_active(cur, run, permit)
+        if permit and durable_status in {"COMPLETED", "PARTIAL", "FAILED", "NEEDS_REVIEW"}:
+            durable_status = None
+        if permit and event_type == "done":
+            event_type = "supervisor_finalized"
         updated = run
         if durable_status and run["status"] != durable_status:
             updated = update_run_status(
@@ -777,7 +1283,7 @@ def create_supervisor_action_proposals(
                 else None
             ),
             user_id=user_id,
-            user_role="purchaser",
+            user_role=_supervisor_actor_role(run),
             expected_version=int(run["version"]),
         )
         persisted.append({**approval, "approval_id": str(proposal["id"]), "expires_at": expires_at})
@@ -823,7 +1329,7 @@ def approve_supervisor_action_proposal(run_id: str, approval_id: str) -> None:
         approval_id,
         ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
         str(run["user_id"]),
-        "purchaser",
+        _supervisor_actor_role(run),
     )
 
 
@@ -840,8 +1346,32 @@ def approve_supervisor_action_proposals(run_id: str, approval_ids: list[str]) ->
         approval_ids,
         ApprovalDecisionRequest(expected_version=int(run["version"]), decision="approved"),
         str(run["user_id"]),
-        "purchaser",
+        _supervisor_actor_role(run),
     )
+
+
+def reject_supervisor_action_proposals(run_id: str, approval_ids: list[str]) -> None:
+    from app.domains.sourcing_risk.action_service import decide_action_proposals
+
+    run = get_orchestration_run(run_id)
+    if run is None:
+        raise ValueError("Agent Run 不存在")
+    decide_action_proposals(run_id, approval_ids,
+        ApprovalDecisionRequest(expected_version=int(run["version"]), decision="rejected"),
+        str(run["user_id"]), _supervisor_actor_role(run))
+
+
+def _supervisor_actor_role(run: dict[str, Any]) -> str:
+    from app.domains.agent_run.coordinator import current_execution
+
+    if current_execution.get() is None:
+        return "purchaser"  # Historical directed graph compatibility only.
+    with get_cursor() as (_, cur):
+        cur.execute("SELECT role,is_active FROM users WHERE id=%s", (run["user_id"],))
+        actor = cur.fetchone()
+        if not actor or not actor[1] or actor[0] not in {"admin", "purchaser", "analyst"}:
+            raise PermissionError("当前用户没有操作权限")
+        return str(actor[0])
 
 
 def record_orchestration_state(
@@ -1018,3 +1548,52 @@ def _require_transition(run: dict[str, Any], target: AgentRunStatus) -> None:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务状态无效", 409) from exc
     if target != current and target not in ALLOWED_STATUS_TRANSITIONS[current]:
         raise DomainError("AGENT_RUN_INVALID_STATE", "任务当前状态不允许此操作", 409)
+
+
+def _require_candidate_review_role(user_role: str) -> None:
+    if user_role not in {"admin", "purchaser", "analyst"}:
+        raise DomainError("SOURCING_CANDIDATE_REVIEW_FORBIDDEN", "当前用户无权审核寻源候选", 403)
+
+
+def _authorize_locked_sourcing_run(
+    run: dict[str, Any] | None, user_id: str, user_role: str,
+) -> None:
+    if run is None or run.get("run_type") != "sourcing_risk_v2":
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+    if user_role != "admin" and str(run.get("user_id") or "") != user_id:
+        raise DomainError("AGENT_RUN_NOT_FOUND", "任务不存在", 404)
+
+
+def _legacy_candidate_review_id(candidate: dict[str, Any]) -> str:
+    return str(
+        candidate.get("company_id")
+        or candidate.get("supplier_id")
+        or candidate.get("supplier_name")
+        or candidate.get("identity_status")
+        or ""
+    )
+
+
+def _candidate_identity_options(candidate: dict[str, Any]) -> set[str]:
+    options = candidate.get("identity_candidates") or []
+    if not isinstance(options, list):
+        return set()
+    return {
+        str(option["company_id"])
+        for option in options
+        if isinstance(option, dict) and option.get("company_id")
+    }
+
+
+def _candidate_disposition_payload(
+    candidate: dict[str, Any], disposition: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        **candidate,
+        "candidate_key": str(candidate.get("candidate_id") or candidate.get("id")),
+        "candidate_company_id": candidate.get("company_id"),
+        "action": disposition.get("action"),
+        "company_id": str(disposition["company_id"]) if disposition.get("company_id") else None,
+        "reason": disposition.get("reason"),
+        "updated_at": disposition.get("updated_at"),
+    }

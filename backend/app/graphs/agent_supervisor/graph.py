@@ -31,7 +31,11 @@ from app.graphs.sourcing_risk_v2.checkpointer import (
 
 
 async def _call_sync(function: Any, *args: Any) -> Any:
+    from app.domains.agent_run.coordinator import check_current_execution
+
+    await asyncio.to_thread(check_current_execution)
     result = await asyncio.to_thread(function, *args)
+    await asyncio.to_thread(check_current_execution)
     return await result if inspect.isawaitable(result) else result
 
 
@@ -673,6 +677,13 @@ async def approval_gate(state: AgentTaskState) -> dict[str, Any]:
             if isinstance(execution_result, dict):
                 action_receipts.append(execution_result)
 
+    else:
+        from app.domains.agent_run.coordinator import current_execution
+
+        if current_execution.get() is not None:
+            await _call_sync(agent_run_service.reject_supervisor_action_proposals,
+                             state["run_id"], [approval["approval_id"] for approval in approvals])
+
     decided = [{**approval, "status": approval_status} for approval in approvals]
     await _persist(
         state,
@@ -732,15 +743,25 @@ def build_agent_supervisor_graph(
     checkpointer: Any = None,
 ) -> CompiledStateGraph:
     """Compile the Supervisor through the Sourcing Risk V2 checkpointer boundary."""
+    from app.domains.agent_run.coordinator import check_current_execution, current_execution, run_coordinator
+
+    def controlled(node):
+        async def execute(state):
+            await asyncio.to_thread(check_current_execution)
+            patch = await node(state)
+            await asyncio.to_thread(check_current_execution)
+            permit = current_execution.get()
+            if permit:
+                await asyncio.to_thread(run_coordinator.save_snapshot, permit, {**state, **patch})
+            return patch
+        return execute
+
     graph = StateGraph(AgentTaskState)
-    graph.add_node("load_task", load_task)
-    graph.add_node("plan_task", plan_task)
-    graph.add_node("execute_ready_tasks", execute_ready_tasks)
-    graph.add_node("merge_evidence", merge_task_evidence)
-    graph.add_node("remediate_evidence", remediate_task_evidence)
-    graph.add_node("build_decision", build_task_decision)
-    graph.add_node("approval_gate", approval_gate)
-    graph.add_node("finalize", finalize)
+    for name, node in (("load_task", load_task), ("plan_task", plan_task),
+                       ("execute_ready_tasks", execute_ready_tasks), ("merge_evidence", merge_task_evidence),
+                       ("remediate_evidence", remediate_task_evidence), ("build_decision", build_task_decision),
+                       ("approval_gate", approval_gate), ("finalize", finalize)):
+        graph.add_node(name, controlled(node))
     graph.add_edge(START, "load_task")
     graph.add_edge("load_task", "plan_task")
     graph.add_edge("plan_task", "execute_ready_tasks")
@@ -757,7 +778,7 @@ def build_agent_supervisor_graph(
     graph.add_edge("build_decision", "approval_gate")
     graph.add_edge("approval_gate", "finalize")
     graph.add_edge("finalize", END)
-    return compile_sourcing_risk_graph(graph, checkpointer=checkpointer)
+    return graph.compile(checkpointer=checkpointer) if checkpointer is not None else compile_sourcing_risk_graph(graph)
 
 
 def _config(run_id: str) -> dict[str, dict[str, str]]:

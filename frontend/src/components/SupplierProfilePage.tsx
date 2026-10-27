@@ -8,10 +8,11 @@ import { api } from '../api';
 import BusinessRiskCard from './BusinessRiskCard';
 import SentimentPanel from './SentimentPanel';
 import { queryKeys } from '../query-keys';
-import type { ProfileBasicInfo, ProfileRiskSnapshotHistory, SupplierProfile } from '../types';
+import type { ProfileBasicInfo, ProfileRiskSnapshotHistory, ScreeningDomesticFinding, SupplierComplianceReadResult, SupplierProfile } from '../types';
 import { getRiskColor, getRiskLevelLabel } from '../riskColors';
 import { SENTIMENT_LABEL } from '../theme';
 import RiskSummary from './RiskSummary';
+import { screeningPresentation } from '../evidencePresentation';
 
 type ProfileTab = 'overview' | 'risk' | 'financial' | 'sentiment' | 'relationships' | 'changelog';
 type PendingAction = 'assess' | 'watch' | 'unwatch' | null;
@@ -27,6 +28,11 @@ export default function SupplierProfilePage() {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.supplierProfile(id!),
     queryFn: () => api.get<SupplierProfile>(`/suppliers/${id}/profile`),
+    enabled: !!id,
+  });
+  const complianceQuery = useQuery({
+    queryKey: queryKeys.supplierComplianceStatus(id!),
+    queryFn: () => api.get<SupplierComplianceReadResult>(`/suppliers/${id}/compliance-status`),
     enabled: !!id,
   });
 
@@ -63,7 +69,10 @@ export default function SupplierProfilePage() {
   if (isLoading) return <ProfileLoading />;
   if (error || !data) return <ProfileLoadError onBack={() => navigate('/suppliers')} />;
 
-  const { basic_info: basicInfo, risk, financial, sentiment, compliance, esg, alerts, relationships, changelog } = data;
+  const { basic_info: basicInfo, risk, financial, sentiment, esg, alerts, relationships, changelog } = data;
+  const screeningState = complianceQuery.isLoading ? 'loading' : complianceQuery.isError ? 'error' : 'ready';
+  const screening = screeningPresentation(complianceQuery.data?.screening, screeningState);
+  const complianceStatus = complianceQuery.data;
   const riskLevel = risk?.risk_level ?? '未知';
   const isBusy = assessMutation.isPending || watchMutation.isPending;
 
@@ -89,8 +98,8 @@ export default function SupplierProfilePage() {
     {pendingAction && <ConfirmationCard message={confirmationCopy[pendingAction]} busy={isBusy} onConfirm={confirmAction} onCancel={() => setPendingAction(null)} />}
     {notice && <p role="status" className="mb-4 rounded-xl border border-[var(--color-border)] bg-gray-50 px-4 py-3 text-sm text-[var(--color-text-secondary)]">{notice}</p>}
     <nav className="flex gap-1 mb-4 overflow-x-auto border-b border-[var(--color-border)] pb-0" aria-label="供应商画像标签">{([['overview', '概览'], ['risk', '风险'], ['financial', '财务'], ['sentiment', '舆情'], ['relationships', '关联'], ['changelog', '日志']] as const).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={`shrink-0 px-4 py-2 text-sm rounded-t-lg transition-colors ${tab === key ? 'bg-[var(--color-surface)] border border-[var(--color-border)] border-b-transparent font-semibold text-[var(--color-primary-bg)]' : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`} style={tab === key ? { marginBottom: -1 } : undefined}>{label}</button>)}</nav>
-    {tab === 'overview' && <OverviewTab basicInfo={basicInfo} risk={risk} sentiment={sentiment} compliance={compliance} alerts={alerts} />}
-    {tab === 'risk' && <RiskTab supplierId={id!} companyName={basicInfo.name} compliance={compliance} esg={esg} />}
+    {tab === 'overview' && <OverviewTab basicInfo={basicInfo} risk={risk} sentiment={sentiment} screening={screening} complianceStatus={complianceStatus} alerts={alerts} />}
+    {tab === 'risk' && <RiskTab supplierId={id!} companyName={basicInfo.name} screening={screening} complianceStatus={complianceStatus} esg={esg} />}
     {tab === 'financial' && <FinancialTab financial={financial} />}
     {tab === 'sentiment' && <section aria-label="舆情新闻详情"><SentimentPanel companyName={basicInfo.name} embedded /></section>}
     {tab === 'relationships' && <RelationshipsTab relationships={relationships} centerName={basicInfo.name} />}
@@ -113,8 +122,102 @@ function SummaryItem({ label, value, tone = 'default' }: { label: string; value:
   return <div className="rounded-lg bg-[var(--color-surface)] px-3 py-2.5"><div className="text-[11px] text-gray-400">{label}</div><div className={`mt-1 text-sm font-medium ${toneClass}`}>{value}</div></div>;
 }
 
-function OverviewTab({ basicInfo, risk, sentiment, compliance, alerts }: { basicInfo: ProfileBasicInfo; risk?: SupplierProfile['risk']; sentiment?: SupplierProfile['sentiment']; compliance?: SupplierProfile['compliance']; alerts: SupplierProfile['alerts'] }) { return <div className="space-y-4"><div className="grid grid-cols-2 sm:grid-cols-4 gap-3"><SummaryCard label="风险评分" value={risk?.risk_score?.toString() ?? '—'} color={risk?.risk_score == null ? '#737373' : getRiskColor(risk.risk_score)} /><SummaryCard label="舆情" value={getSentimentLabel(sentiment?.overall_sentiment)} color="#8b5cf6" /><SummaryCard label="制裁筛查" value={compliance ? (compliance.sanctions_clean ? '正常' : `${compliance.sanctions_match_count}条匹配`) : '暂未查询'} color={compliance ? (compliance.sanctions_clean ? '#2d8c63' : '#e06060') : '#737373'} /><SummaryCard label="告警" value={alerts.length.toString()} color={alerts.length > 0 ? '#e06060' : '#737373'} /></div><ContactAndSourceCard basicInfo={basicInfo} />{risk && risk.trend.length >= 2 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">风险评分趋势（近90天）</h3><ResponsiveContainer width="100%" height={200}><LineChart data={risk.trend}><CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} /><XAxis dataKey="date" tick={{ fontSize: 10, fill: '#999' }} /><YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#999' }} /><Tooltip formatter={(value) => [`${Number(value ?? 0)} 分`, '风险评分']} /><Line type="monotone" dataKey="risk_score" stroke={risk.risk_score == null ? '#737373' : getRiskColor(risk.risk_score)} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></section>}{alerts.length > 0 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">最近告警</h3><div className="space-y-2">{alerts.slice(0, 5).map((alert) => <div key={alert._id} className="rounded-xl bg-gray-50 py-2 px-3 text-sm"><div className="flex items-center justify-between gap-3"><span className="font-medium" style={{ color: alert.severity === 'critical' ? '#e06060' : '#d4a040' }}>{alert.severity === 'critical' ? '🔴 严重' : '🟡 警告'}</span><span className="text-xs text-gray-400">{alert.created_at}</span></div><p className="mt-1 text-xs text-gray-500">{formatAlertChanges(alert.changes)}</p></div>)}</div></section>}</div>; }
-function RiskTab({ supplierId, companyName, compliance, esg }: { supplierId: string; companyName: string; compliance?: SupplierProfile['compliance']; esg?: SupplierProfile['esg'] }) { return <div className="space-y-4"><BusinessRiskCard supplierId={supplierId} /><RiskSnapshotHistory companyName={companyName} />{compliance && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">合规状态</h3><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><Metric label="制裁匹配" value={compliance.sanctions_match_count.toString()} warn={!compliance.sanctions_clean} /><Metric label="诉讼" value={compliance.lawsuit_count.toString()} warn={compliance.lawsuit_count > 10} /><Metric label="被执行" value={compliance.executed_count.toString()} warn={compliance.executed_count > 0} /><Metric label="失信" value={compliance.dishonesty_count.toString()} warn={compliance.dishonesty_count > 0} /><Metric label="经营异常" value={compliance.abnormal_operation_count.toString()} warn={compliance.abnormal_operation_count > 0} /><Metric label="行政处罚" value={compliance.administrative_penalty_count.toString()} warn={compliance.administrative_penalty_count > 3} /></div></section>}{esg && (esg.environmental || esg.social || esg.governance) && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">ESG 评估</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{esg.environmental && <ESGMetric title="环境 (E)" score={esg.environmental.score} level={esg.environmental.level} />}{esg.social && <ESGMetric title="社会 (S)" score={esg.social.score} level={esg.social.level} />}{esg.governance && <ESGMetric title="治理 (G)" score={esg.governance.score} level={esg.governance.level} />}</div></section>}</div>; }
+function OverviewTab({ basicInfo, risk, sentiment, screening, complianceStatus, alerts }: {
+  basicInfo: ProfileBasicInfo;
+  risk?: SupplierProfile['risk'];
+  sentiment?: SupplierProfile['sentiment'];
+  screening: ReturnType<typeof screeningPresentation>;
+  complianceStatus?: SupplierComplianceReadResult;
+  alerts: SupplierProfile['alerts'];
+}) {
+  const shortStatus = screening.label === '范围内未发现匹配' ? '范围内未命中'
+    : screening.label === '名单命中，待人工复核' ? '命中待复核'
+      : screening.label === '疑似名单线索，待核验' ? '疑似待核验'
+        : screening.label === '部分来源已核验' ? '部分来源'
+          : screening.label === '依据已过期，需重新核验' ? '依据过期'
+            : screening.label === '正在核验' ? '正在核验'
+              : '状态未知';
+  const tone = screening.tone === 'danger' ? '#e06060' : screening.tone === 'warning' ? '#d4a040' : '#737373';
+  return <div className="space-y-4">
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <SummaryCard label="风险评分" value={risk?.risk_score?.toString() ?? '—'} color={risk?.risk_score == null ? '#737373' : getRiskColor(risk.risk_score)} />
+      <SummaryCard label="舆情" value={getSentimentLabel(sentiment?.overall_sentiment)} color="#8b5cf6" />
+      <SummaryCard label="名单筛查" value={shortStatus} color={tone} />
+      <SummaryCard label="告警" value={alerts.length.toString()} color={alerts.length > 0 ? '#e06060' : '#737373'} />
+    </div>
+    <ScreeningStatusSummary screening={screening} findings={complianceStatus?.domestic_findings || []} />
+    <ContactAndSourceCard basicInfo={basicInfo} />
+    {risk && risk.trend.length >= 2 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">风险评分趋势（近90天）</h3><ResponsiveContainer width="100%" height={200}><LineChart data={risk.trend}><CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false} /><XAxis dataKey="date" tick={{ fontSize: 10, fill: '#999' }} /><YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: '#999' }} /><Tooltip formatter={(value) => [`${Number(value ?? 0)} 分`, '风险评分']} /><Line type="monotone" dataKey="risk_score" stroke={risk.risk_score == null ? '#737373' : getRiskColor(risk.risk_score)} strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer></section>}
+    {alerts.length > 0 && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">最近告警</h3><div className="space-y-2">{alerts.slice(0, 5).map(alert => <div key={alert._id} className="rounded-xl bg-gray-50 py-2 px-3 text-sm"><div className="flex items-center justify-between gap-3"><span className="font-medium" style={{ color: alert.severity === 'critical' ? '#e06060' : '#d4a040' }}>{alert.severity === 'critical' ? '🔴 严重' : '🟡 警告'}</span><span className="text-xs text-gray-400">{alert.created_at}</span></div><p className="mt-1 text-xs text-gray-500">{formatAlertChanges(alert.changes)}</p></div>)}</div></section>}
+  </div>;
+}
+
+function RiskTab({ supplierId, companyName, screening, complianceStatus, esg }: {
+  supplierId: string;
+  companyName: string;
+  screening: ReturnType<typeof screeningPresentation>;
+  complianceStatus?: SupplierComplianceReadResult;
+  esg?: SupplierProfile['esg'];
+}) {
+  return <div className="space-y-4">
+    <BusinessRiskCard supplierId={supplierId} />
+    <RiskSnapshotHistory companyName={companyName} />
+    <ScreeningStatusSummary screening={screening} findings={complianceStatus?.domestic_findings || []} />
+    <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm">
+      <h3 className="text-sm font-semibold mb-3">已核验的国内合规事实</h3>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {domesticMetric(complianceStatus?.domestic_findings, 'lawsuit', '诉讼', '起')}
+        {domesticMetric(complianceStatus?.domestic_findings, 'court_register', '开庭公告', '条')}
+        {domesticMetric(complianceStatus?.domestic_findings, 'executed_person', '被执行人', '条')}
+        {domesticMetric(complianceStatus?.domestic_findings, 'dishonesty', '失信被执行人', '条')}
+        {domesticMetric(complianceStatus?.domestic_findings, 'abnormal_operation', '经营异常', '条')}
+        {domesticMetric(complianceStatus?.domestic_findings, 'administrative_penalty', '行政处罚', '条')}
+        {domesticMetric(complianceStatus?.domestic_findings, 'tax_arrears', '欠税', '条')}
+      </div>
+    </section>
+    {esg && (esg.environmental || esg.social || esg.governance) && <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><h3 className="text-sm font-semibold mb-3">ESG 评估</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-3">{esg.environmental && <ESGMetric title="环境 (E)" score={esg.environmental.score} level={esg.environmental.level} />}{esg.social && <ESGMetric title="社会 (S)" score={esg.social.score} level={esg.social.level} />}{esg.governance && <ESGMetric title="治理 (G)" score={esg.governance.score} level={esg.governance.level} />}</div></section>}
+  </div>;
+}
+
+function ScreeningStatusSummary({ screening, findings }: {
+  screening: ReturnType<typeof screeningPresentation>;
+  findings: ScreeningDomesticFinding[];
+}) {
+  const toneClass = screening.tone === 'danger' ? 'border-red-200 bg-red-50 text-red-900'
+    : screening.tone === 'warning' ? 'border-amber-200 bg-amber-50 text-amber-900'
+      : 'border-[var(--color-border)] bg-[var(--color-background)] text-[var(--color-text)]';
+  const verified = domesticFindingSummary(findings);
+  return <section className={`rounded-2xl border p-4 ${toneClass}`} aria-label="名单筛查状态">
+    <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-sm font-semibold">名单筛查：{screening.label}</h2><span className="text-[11px] opacity-75">范围内结论不代表整体合规正常</span></div>
+    <p className="mt-2 text-xs leading-5">{screening.detail}</p>
+    <p className="mt-2 text-xs leading-5">{verified.length ? `已核实的国内事实：${verified.join('、')}。` : '国内来源没有可确认的记录数；缺失来源不代表记录数为 0。'}</p>
+  </section>;
+}
+
+function domesticFindingSummary(findings: ScreeningDomesticFinding[]): string[] {
+  const labels: Record<string, [string, string]> = {
+    lawsuit: ['诉讼', '起'], court_register: ['开庭公告', '条'], executed_person: ['被执行人', '条'],
+    dishonesty: ['失信被执行人', '条'], abnormal_operation: ['经营异常', '条'],
+    administrative_penalty: ['行政处罚', '条'], tax_arrears: ['欠税', '条'],
+  };
+  return findings.flatMap(finding => {
+    const label = labels[finding.kind];
+    const status = finding.validity?.status;
+    if (!label || !['available', 'empty'].includes(status) || typeof finding.count !== 'number') return [];
+    return [`${label[0]} ${finding.count} ${label[1]}`];
+  });
+}
+
+function domesticMetric(findings: ScreeningDomesticFinding[] | undefined, kind: string, label: string, unit: string) {
+  const finding = findings?.find(item => item.kind === kind);
+  const verified = Boolean(finding && ['available', 'empty'].includes(finding.validity.status) && typeof finding.count === 'number');
+  return <Metric
+    key={kind}
+    label={label}
+    value={verified ? `${finding!.count} ${unit}` : '暂无法判断'}
+    warn={verified && Number(finding!.count) > 0}
+  />;
+}
 function RiskSnapshotHistory({ companyName }: { companyName: string }) { const { data, isLoading } = useQuery({ queryKey: queryKeys.supplierRiskSnapshots(companyName, 20), queryFn: () => api.get<ProfileRiskSnapshotHistory>('/alert/snapshots', { company_name: companyName, limit: '20' }), }); const snapshots = data?.snapshots ?? []; return <section className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-2xl p-5 shadow-sm"><div className="flex items-center justify-between gap-3 mb-3"><h3 className="text-sm font-semibold">风险评估历史版本</h3><span className="text-xs text-gray-400">追加保存，不覆盖既有结论</span></div>{isLoading ? <p className="text-sm text-gray-400">加载中...</p> : snapshots.length === 0 ? <p className="text-sm text-gray-400">暂无历史评估版本</p> : <div className="space-y-2">{snapshots.map((snapshot, index) => { const hasScore = typeof snapshot.risk_score === 'number' && Number.isFinite(snapshot.risk_score); return <div key={`${snapshot.snapshot_id || 'risk-snapshot'}-${snapshot.snapshot_version}-${snapshot.checked_at ?? 'unknown'}-${index}`} className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2.5 text-sm"><div><span className="font-medium">V{snapshot.snapshot_version}</span><span className="ml-3 text-xs text-gray-500">{snapshot.checked_at ?? '时间未知'}</span><span className="ml-3 text-xs text-gray-400">评分体系 {snapshot.scoring_version ?? 'unknown'}</span></div><div className="shrink-0 font-semibold" style={{ color: hasScore ? getRiskColor(snapshot.risk_score as number) : '#737373' }}>{hasScore ? snapshot.risk_score : '—'} · {hasScore ? getRiskLevelLabel(snapshot.risk_level) : '暂无法判断'}</div></div>; })}</div>}</section>; }
 type FinancialPeriodFilter = 'all' | 'annual' | 'quarter';
 type FinancialHistoryItem = NonNullable<SupplierProfile['financial']>['history'][number];

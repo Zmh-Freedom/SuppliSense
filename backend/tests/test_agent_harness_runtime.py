@@ -11,7 +11,8 @@ from langchain_core.tools import StructuredTool
 
 from app.graphs.agent_core.evidence_ledger import build_evidence_record
 from app.graphs.harness import ExecutionBudget, build_harness_graph, run_harness
-from app.graphs.harness.graph import _summary
+from app.graphs.harness.graph import _mark_live_sourcing_deadline_for_review, _summary
+from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.tools.executor import ToolExecutor
 from app.tools.registry import ToolRegistry, ToolSpec
 
@@ -124,6 +125,23 @@ def test_harness_stops_at_review_when_evidence_is_missing() -> None:
     assert any("risk" in item for item in result["answer"]["limitations"])
     assert result["tool_call_count"] == 2
     assert result["remediation_attempts"] == 1
+
+
+def test_live_sourcing_deadline_keeps_partial_candidates_for_review() -> None:
+    answer = AgentAnswer(status="completed", summary="已找到 1 家外部待核验候选")
+
+    reviewed = _mark_live_sourcing_deadline_for_review(answer, {
+        "loop_exit_reason": "deadline_exceeded",
+        "current_task": {
+            "task_type": "sourcing",
+            "requirement": {"category": "工业相机"},
+        },
+    })
+
+    assert reviewed.status == "needs_review"
+    assert "已找到 1 家外部待核验候选" in reviewed.summary
+    assert "外部寻源未在受限时间内完成" in reviewed.summary
+    assert any("未纳入推荐结论" in item for item in reviewed.limitations)
 
 
 @pytest.mark.agent_e2e

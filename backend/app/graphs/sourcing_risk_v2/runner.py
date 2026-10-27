@@ -44,7 +44,11 @@ def build_sourcing_risk_graph(checkpointer: Any = None) -> Any:
         lambda state: "identity_review" if state.get("status") == "IDENTITY_REVIEW" else "investigate_parallel",
         {"identity_review": "identity_review", "investigate_parallel": "investigate_parallel"},
     )
-    graph.add_edge("identity_review", "investigate_parallel")
+    graph.add_conditional_edges(
+        "identity_review",
+        nodes.route_after_identity_review,
+        {"end": END, "investigate_parallel": "investigate_parallel"},
+    )
     graph.add_edge("investigate_parallel", "validate_evidence")
     graph.add_edge("validate_evidence", "score_candidates")
     graph.add_edge("score_candidates", "ready_for_review")
@@ -60,6 +64,43 @@ async def start_sourcing_risk_graph(run_id: str) -> None:
 async def resume_sourcing_risk_graph(run_id: str, resume_payload: dict[str, Any]) -> None:
     """Resume a checkpointed reviewer pause without any process-local storage."""
     await _resume(run_id, resume_payload)
+
+
+async def resume_candidate_review_batch(batch_id: str) -> dict[str, Any]:
+    """Consume one currently leased durable review intent exactly once."""
+    batch = await asyncio.to_thread(
+        agent_run_service.get_candidate_review_batch_for_execution, batch_id
+    )
+    if batch is None:
+        return {"status": "not_found", "batch_id": batch_id}
+    dispatch_status = str(batch.get("dispatch_status") or "")
+    if dispatch_status == "cancelled" or batch.get("run_status") == "CANCELLED":
+        return {"status": "cancelled", "batch_id": batch_id}
+    if dispatch_status == "consumed":
+        return {"status": "already_consumed", "batch_id": batch_id}
+    if dispatch_status != "processing":
+        return {"status": "not_claimed", "batch_id": batch_id}
+    if batch.get("run_status") in {"CANCELLED", "ROLLBACK_FROZEN"}:
+        return {"status": "cancelled", "batch_id": batch_id}
+    current_version = batch.get("current_run_version")
+    if current_version is not None and int(current_version) != int(batch.get("run_version") or 0):
+        return {"status": "stale", "batch_id": batch_id}
+    if batch.get("run_status") not in {None, "IDENTITY_RESOLVING"}:
+        return {"status": "stale", "batch_id": batch_id}
+
+    run_id = str(batch["run_id"])
+    fencing_token = int(batch.get("fencing_token") or batch.get("lease_token") or 0)
+    await _resume(run_id, {"candidate_review_batch_id": batch_id})
+    consumed = await asyncio.to_thread(
+        agent_run_service.mark_candidate_review_batch_consumed,
+        batch_id,
+        fencing_token,
+    )
+    return {
+        "status": "consumed" if consumed else "lease_lost",
+        "batch_id": batch_id,
+        "run_id": run_id,
+    }
 
 
 async def _start(run_id: str) -> None:

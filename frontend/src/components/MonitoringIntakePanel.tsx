@@ -1,10 +1,16 @@
 import type { MonitorIntake } from '../types';
 
-function statusLabel(status: string): string {
+function isHistoricalDimension(key: string, label: string): boolean {
+  return key === 'history' || key.includes('historical') || label.includes('历史');
+}
+
+function statusLabel(status: string, historical: boolean): string {
+  if (historical && status === 'available') return '历史参考';
   return ({ available: '已获取', missing: '未找到', failed: '查询失败', unavailable: '无访问权限', not_queried: '未查询' } as Record<string, string>)[status] || '待确认';
 }
 
-function statusTone(status: string): string {
+function statusTone(status: string, historical: boolean): string {
+  if (historical && status === 'available') return 'bg-amber-50 text-amber-700';
   if (status === 'available') return 'bg-emerald-50 text-emerald-700';
   if (status === 'failed') return 'bg-red-50 text-red-700';
   return 'bg-amber-50 text-amber-700';
@@ -65,7 +71,7 @@ export default function MonitoringIntakePanel({
 
       <section className="rounded-xl border border-[var(--color-border)] bg-white p-4">
         <h3 className="text-sm font-semibold text-[var(--color-text)]">资料覆盖</h3>
-        <div className="mt-3 divide-y divide-[var(--color-border)]">{intake.data_coverage.dimensions.map(item => <div key={item.key} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><div><div className="font-medium text-[var(--color-text)]">{item.label}</div><div className="mt-1 text-xs text-gray-500">{item.detail}</div></div><span className={`rounded-full px-2 py-1 text-xs ${statusTone(item.status)}`}>{statusLabel(item.status)}</span></div>)}</div>
+        <div className="mt-3 divide-y divide-[var(--color-border)]">{intake.data_coverage.dimensions.map(item => { const historical = isHistoricalDimension(item.key, item.label); return <div key={item.key} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"><div><div className="font-medium text-[var(--color-text)]">{item.label}</div><div className="mt-1 text-xs text-gray-500">{item.detail}</div></div><span className={`rounded-full px-2 py-1 text-xs ${statusTone(item.status, historical)}`}>{statusLabel(item.status, historical)}</span></div>; })}</div>
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-white p-4">

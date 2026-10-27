@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     PG_DB: str = os.getenv("PG_DB", "sra")
     PG_POOL_MIN: int = int(os.getenv("PG_POOL_MIN", "4"))
     PG_POOL_MAX: int = int(os.getenv("PG_POOL_MAX", "20"))
+    PG_POOL_ACQUIRE_TIMEOUT_SECONDS: float = float(
+        os.getenv("PG_POOL_ACQUIRE_TIMEOUT_SECONDS", "5")
+    )
 
     # Agent Run V2 LangGraph checkpoints (managed with a dedicated psycopg3 connection)
     AGENT_RUN_V2_ENABLED: bool = os.getenv("AGENT_RUN_V2_ENABLED", "false").lower() == "true"
@@ -118,8 +121,34 @@ class Settings(BaseSettings):
         default=int(os.getenv("AGENT_RUN_V2_CANARY_PERCENT", "0")), ge=0, le=100
     )
     AGENT_RUN_CHECKPOINT_SCHEMA: str = os.getenv("AGENT_RUN_CHECKPOINT_SCHEMA", "agent_checkpoint")
+    # Agent execution role: inline keeps the API runner for rollback; worker
+    # creates durable jobs and requires an independent Agent worker.
+    AGENT_EXECUTION_MODE: Literal["inline", "worker"] = os.getenv(
+        "AGENT_EXECUTION_MODE", "inline"
+    )
+    AGENT_WORKER_HEARTBEAT_SECONDS: int = Field(default=5, ge=1)
+    AGENT_WORKER_LEASE_SECONDS: int = Field(default=30, ge=3)
+    AGENT_WORKER_POLL_SECONDS: float = Field(default=1.0, gt=0)
+    AGENT_WORKER_MAX_RECOVERIES: int = Field(default=3, ge=0)
+    # Durable scheduler role. Paid/external jobs stay blocked until the
+    # operator explicitly enables execution; service actors must be named.
+    # The API keeps this True for backward compatibility. Deployments that run
+    # the dedicated scheduler entry must set it False to avoid double triggers.
+    SCHEDULER_ROLE_ENABLED: bool = True
+    # Comma-separated legacy job ids already moved to durable plans. The API
+    # skips these while it still owns the remaining in-process cron jobs.
+    SCHEDULER_MIGRATED_KINDS: str = ""
+    SCHEDULER_POLL_SECONDS: float = Field(default=5.0, gt=0)
+    SCHEDULER_WORKER_HEARTBEAT_SECONDS: int = Field(default=5, ge=1)
+    SCHEDULER_WORKER_LEASE_SECONDS: int = Field(default=30, ge=3)
+    SCHEDULER_PAID_EXECUTION_ENABLED: bool = False
+    SCHEDULER_SERVICE_PRINCIPALS: str = ""
     # Transactional Outbox worker
     OUTBOX_WORKER_ENABLED: bool = True
+    # API owns Outbox delivery by default. Set False only when a dedicated
+    # delivery worker is deployed, to keep a single delivery owner.
+    DELIVERY_ROLE_ENABLED: bool = True
+    REALTIME_CHANNEL: str = "supplisense:realtime:events"
     OUTBOX_POLL_SECONDS: int = Field(default=5, ge=1)
     OUTBOX_BATCH_SIZE: int = Field(default=50, ge=1)
     OUTBOX_MAX_ATTEMPTS: int = Field(default=8, ge=1)
@@ -134,6 +163,8 @@ class Settings(BaseSettings):
     # Rate Limiting
     RATE_LIMIT_GLOBAL: str = "60/minute"
     RATE_LIMIT_AUTH: str = "5/minute"
+    PAID_REFRESH_USER_DAILY_LIMIT: int = Field(default=50, ge=1)
+    PAID_REFRESH_GLOBAL_DAILY_LIMIT: int = Field(default=500, ge=1)
 
     # CORS
     CORS_ORIGINS: list[str] = os.getenv("CORS_ORIGINS", "http://127.0.0.1:5174,http://localhost:5174,http://localhost:3000").split(",")

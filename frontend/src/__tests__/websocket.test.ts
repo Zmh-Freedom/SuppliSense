@@ -62,4 +62,36 @@ describe('WSClient reconnect lifecycle', () => {
     expect(sockets).toHaveLength(2);
     client.disconnect();
   });
+
+  it('reports initial connection and reconnect, and unsubscribes cleanly', () => {
+    const client = new WSClient();
+    const connected = vi.fn();
+    const off = client.onConnection(connected);
+    client.connect();
+    vi.advanceTimersByTime(0);
+    sockets[0]?.onopen?.();
+    sockets[0]?.triggerClose();
+    vi.advanceTimersByTime(1_000);
+    sockets[1]?.onopen?.();
+    expect(connected.mock.calls).toEqual([[{ reconnected: false }], [{ reconnected: true }]]);
+    off();
+    client.disconnect();
+    client.connect();
+    vi.advanceTimersByTime(0);
+    sockets[2]?.onopen?.();
+    expect(connected).toHaveBeenCalledTimes(2);
+    client.disconnect();
+  });
+
+  it('ignores late messages from a closed socket', () => {
+    const client = new WSClient();
+    const handler = vi.fn();
+    client.on('company_updated', handler);
+    client.connect();
+    vi.advanceTimersByTime(0);
+    const staleMessage = sockets[0]?.onmessage;
+    client.disconnect();
+    staleMessage?.({ data: JSON.stringify({ event: 'company_updated', data: {} }) });
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
