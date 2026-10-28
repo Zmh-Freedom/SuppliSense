@@ -1,18 +1,17 @@
 # SuppliSense 发布验收清单
 
-本目录描述 Sourcing Risk Agent V2 的上线门槛。发布前必须执行：
+本目录主要描述 Sourcing Risk Agent V2 的发布验收。以下命令从当前检出的项目根目录执行；各环境的真实依赖和审批门槛须分别核验。
 
 ```bash
-cd /Users/zhouminhao/Projects/work/AI_team/SuppliSense/.worktrees/sourcing-risk-agent-v2
-cd backend && python scripts/release_verify.py --skip-commands
+(cd backend && python scripts/release_verify.py --skip-commands)
 ```
 
 生产候选版本在具备依赖环境后执行完整命令：
 
 ```bash
-cd backend && python scripts/release_verify.py
-cd ../frontend && npm run lint && npm run build && npm test -- --run
-cd .. && docker compose --env-file .env.docker config --quiet
+(cd backend && python scripts/release_verify.py)
+(cd frontend && npm run lint && npm run build && npm test -- --run)
+docker compose --env-file .env.docker config --quiet
 ```
 
 首次在本地执行 Compose 校验时，先复制 `.env.docker.example` 为 `.env.docker`，并将所有 `CHANGE_ME` 替换为本机生成的随机值或实际环境凭据。`.env.docker` 已被 `.gitignore` 忽略，禁止提交到版本库；只提交配置模板，不提交密钥。
@@ -35,6 +34,10 @@ CLI 输出 JSON。`PASS` 表示门禁已验证，`FAIL` 表示代码/配置门�
 - Compose：`docker compose --env-file .env.docker config --quiet` 成功；`.env.docker` 必须替换所有 `CHANGE_ME` 占位符。
 
 `migration_schema` 的 V2 测试集合覆盖 agent run models/repository/checkpointer、policy、candidate discovery、evidence 与 approval action；它不是单一 company schema 测试。每个后端安全门禁都执行真实 pytest 命令，pytest 非零退出为 `FAIL`，命令或依赖不可用为 `BLOCKED`。
+
+## 3D worker 隔离预生产
+
+3D 角色迁移、独立 Compose profile、连接预算、测试发送端和逐类调度交接的演练记录见 [3D 预生产就绪记录](../reviews/2026-10-28-3d-preproduction-readiness.md)。该记录仅适用于隔离开发/预生产演练；启用生产角色需要另行完成环境与业务审批。默认保留 API 未迁移任务，付费 full_refresh 保持关闭。
 
 ## Shadow rollout
 

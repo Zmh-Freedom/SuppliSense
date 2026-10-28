@@ -24,7 +24,7 @@
 | MongoDB | `127.0.0.1:27018` | `127.0.0.1:27017` | `tianyancha` |
 | Redis | `127.0.0.1:16379` | `127.0.0.1:6379` | 以 `backend/.env` 的 URL 为准 |
 
-- SSH 主机别名：`supplisense-db`，端口转发由本机 `~/.ssh/config` 管理。现有 `scripts/db-tunnel.sh` 支持 `start`、`status`；也可用 `ssh -f -N supplisense-db` 建立隧道，先检查端口是否已有监听。
+- SSH 主机别名：`supplisense-db`，端口转发由本机 `~/.ssh/config` 管理。若本机另有 `scripts/db-tunnel.sh` 可用于管理隧道；也可用 `ssh -f -N supplisense-db` 建立隧道，先检查端口是否已有监听。
 - 远程检查使用 Alibaba Cloud Workbench CLI：实例 `i-7xv2k7dlyua90lp00gfk`，地域 `cn-guangzhou`。使用现有 Workbench profile；账号、密码和云凭据不写入文档或日志。
 - 开发前先确认隧道与服务认证可用，再启动应用。不要把 `127.0.0.1` 的转发端口误判为本机数据库。
 - 需要写入、清理 fixture 的集成测试使用该服务器上的独立测试库及独立 Redis 数据范围，显式覆盖连接配置；不得把共享开发库 `sra`、`tianyancha` 作为可清空的测试库。离线单元测试继续使用 mock。
@@ -55,7 +55,7 @@ app/
 | 历史 ReAct / Plan-Execute / Multi-Agent 等 | 仅历史定向测试 | 不属于活动聊天路径 |
 
 - 普通聊天和只读旧 mode 名称统一归一化到 Harness；不得新增按 mode 切换执行内核的活动分支
-- `agent.py` 中的 `chat()` 仅作为同步端点回退保留，不得绕过 Harness 的会话、工具、证据和答案契约
+- `app/services/agent.py` 保留共享的历史展示与引用辅助函数；当前没有 `chat()` 同步回退入口，不得绕过 Harness 的会话、工具、证据和答案契约
 - Harness 的 Session/Turn/Run/Task/Entity/ToolCall/Proposal 状态以 PostgreSQL 为唯一事实源；MongoDB 仅保存业务数据、证据和对话展示记录
 - 聊天 API 在每次请求中只加载一次 `execution_context`；路由、澄清和所有图必须消费该同一快照，不得在图内再次加载会话状态
 - 供应商引用只能通过 `graphs/agent_core/adapter.py` 的共享收集器合并；不得在各图复制提取、去重或自然语言回填逻辑
