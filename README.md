@@ -14,6 +14,7 @@ SuppliSense 面向采购团队，把外部企业信息、上市公司财报、�
 | --- | --- |
 | 采购助手 | 通过自然语言获取寻源建议、财务/舆情/合规/ESG/司法/趋势等专项分析；回答按主能力维度路由，并返回结论、证据、数据边界与下一步建议。 |
 | 风险监控 | 面向采购复核的监控对象工作台，保存主体身份、数据覆盖、风险快照、待办动作、审批、执行结果和证据回写。 |
+| 采购事项 | 采购员按权限认领或分派跟进，记录人工回执、搁置和恢复，并申请独立关闭审核。 |
 | 智能寻源 | 优先召回历史合作供应商和飞书正式主数据，再展示盖世等外部待验证候选；外部候选可结合天眼查进行主体与风险核验。 |
 | 供应商库 | 飞书多维表格供应商主数据的只读快照与画像查看。 |
 | 风险通知 | 为已确认的监控对象生成风险信号，按采购员/科室经理隔离站内通知、实时推送和飞书自建应用逐人消息，并记录投递重试结果。 |
@@ -61,7 +62,11 @@ SuppliSense 面向采购团队，把外部企业信息、上市公司财报、�
 
 外部候选只是寻源线索，不等于已准入供应商，也不会自动写入正式供应商主数据。
 
-### 3. 对话可靠性
+### 3. 采购事项跟进
+
+从监控对象创建跟进事项，按权限认领或分派责任人、设置期限并记录处理回执。需要等待时可搁置并安排复查；处理完成后提交关闭申请，由具有权限的另一位审核人决定。事项关闭不自动消除风险或补齐来源数据。
+
+### 4. 对话可靠性
 
 普通聊天统一进入 Harness Runtime。每一轮运行的计划、工具结果、证据和最终结论都持久化；浏览器 SSE 在最终结果前断开时，前端会按运行 ID 自动回放未消费事件，避免用户因网络波动重复提交。
 
@@ -136,30 +141,35 @@ frontend/src/
 - DeepSeek API Key（需要真实 AI 问答时）
 - 可选：天眼查 API、飞书自建应用和飞书多维表格
 
-首次启动时，将 `backend/.env.example` 复制为 `backend/.env`，填写数据库连接与需要启用的数据源密钥。不要提交 `.env` 或任何真实密钥。
+日常开发沿用已有的 backend/.env，连接服务器上的 PostgreSQL、MongoDB 和 Redis。先检查 SSH 别名 supplisense-db 及端口转发；不要覆盖已有配置。新工作区缺少配置时，参考 backend/.env.example 填写已授权的连接信息和所需密钥。
 
 ```bash
-# 首次初始化后端独立 Python 环境
+# 查看约定的三个本地隧道端口；若部分端口已有监听，先确认归属。
+lsof -nP -iTCP:15432 -iTCP:27018 -iTCP:16379 -sTCP:LISTEN
+# 三个端口均未监听、且 SSH 别名已配置时：
+ssh -f -N supplisense-db
+
 cd backend
+# 首次建立虚拟环境时执行
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-cd ..
 
-# 启动基础设施（开发模式）
-./start.sh --dev
+# 使用应用配置验证服务认证，不输出凭据。
+python -c "from app.db.postgres import get_conn, put_conn; c = get_conn(); put_conn(c); print('PostgreSQL OK')"
+python -c "from app.db.mongo import get_db; get_db().command('ping'); print('MongoDB OK')"
+python -c "from app.core.cache import cache_client; cache_client.ping(); print('Redis OK')"
 
-# 终端 1：后端
-cd backend
-source .venv/bin/activate
+# 终端 1：后端（位于 backend/）
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
-# 终端 2：前端
+# 终端 2：前端（从项目根目录）
 cd frontend
 npm install
 npm run dev -- --host 0.0.0.0
 ```
+
+连接失败时检查隧道和认证，不自动切换本地实例。写入或清理测试数据必须使用独立测试库和独立 Redis 数据范围，不能清空共享开发库。仓库的 start.sh --dev 会启动本地容器，仅在明确配置了隔离环境时使用。
 
 打开 `http://127.0.0.1:5174`。后端就绪检查：`http://127.0.0.1:8000/health/ready`。如本地后端使用其他端口，在 `frontend/.env.local` 设置相同的 `SUPPLISENSE_BACKEND_PORT` 后再启动 Vite。
 
@@ -209,6 +219,7 @@ curl -X POST -H "Authorization: Bearer <access-token>" \
 | 总览 | `/` | 查看责任范围内的风险摘要与告警。 |
 | 智能寻源 | `/sourcing` | 对比历史供应商与外部待验证候选。 |
 | 风险监控 | `/assess` | 调查主体、确认绑定、查看风险依据和处理复核任务。 |
+| 采购事项 | `/cases` | 查看、分派和跟进事项，记录回执与关闭审核。 |
 | 供应商库 | `/suppliers` | 查看正式主数据和供应商画像。 |
 
 ## 验证
@@ -221,8 +232,8 @@ python -m pytest -m 'not integration' -q
 python -m pytest -m agent_e2e -v
 python -m pytest tests/test_agent_harness_p0.py tests/test_agent_supervisor_graph.py -q
 
-# 前端
-cd frontend
+# 前端（从 backend 返回项目根目录）
+cd ../frontend
 npm run lint
 npm test -- --run
 npm run build
@@ -236,10 +247,12 @@ npm run build
 - [项目说明书](docs/project-description.md)
 - [需求说明书](docs/requirements-specification.md)
 - [UI 改造计划与验收记录](docs/ui-improvement-plan-2026-09-12.md)
-- [Agent Harness 当前实施计划](docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md)
+- [Agent Harness 历史实施与验收记录](docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md)
 - [问题与修复记录](docs/issue-log.md)
+- [历史代码与脚本盘点](docs/maintenance/legacy-inventory-2026-10-28.md)
+- [历史 Agent 验收证据索引](docs/evidence/README.md)
 - [飞书供应商导入映射](docs/integration/feishu-import-converter.md)
 - [Agent 验收与评估](docs/release/agent-acceptance-and-evaluation.md)
 - [项目协作与代码规则](AGENTS.md)
 
-当前活动 Agent 运行时以 `docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md` 为准；历史 V2/Supervisor 设计不再作为新开发依据。
+当前活动 Agent 架构以 [AGENTS.md](AGENTS.md) 和上方技术架构为准；该实施计划保留为历史验收记录。

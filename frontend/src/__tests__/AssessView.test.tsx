@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RiskResult } from '../types'
-import AssessView from '../components/AssessView'
+import AssessView from './legacy/AssessView'
 
 const mocks = vi.hoisted(() => ({
   get: vi.fn(),
@@ -23,7 +23,7 @@ vi.mock('../hooks', () => ({
   useWatchlist: () => ({ companies: ['企业A'] }),
 }))
 
-vi.mock('../components/WatchlistPanel', () => ({
+vi.mock('./legacy/WatchlistPanel', () => ({
   default: ({ onSelect }: { onSelect: (company: string) => void }) => (
     <button onClick={() => onSelect('企业A')}>选择 URL 企业</button>
   ),
