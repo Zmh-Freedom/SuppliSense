@@ -23,6 +23,8 @@ def _check_mongo() -> str:
             username=settings.MONGO_USER,
             password=settings.MONGO_PASSWORD,
             authSource=settings.MONGO_AUTH_SOURCE,
+            maxPoolSize=1,
+            minPoolSize=0,
             serverSelectionTimeoutMS=3000,
             connectTimeoutMS=3000,
             socketTimeoutMS=3000,

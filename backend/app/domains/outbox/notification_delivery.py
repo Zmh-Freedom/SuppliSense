@@ -2,12 +2,13 @@
 
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from psycopg2.extras import Json
 
+from app.core.config import settings
 from app.db.mongo import get_db
 from app.db.postgres import get_cursor
 from app.domains.outbox.repo import _row_to_dict, enqueue_event
@@ -27,6 +28,26 @@ def _send_with_explicit_retry(open_id: str, text: str) -> bool:
         if send_user_message(open_id, text, raise_on_unknown=True):
             return True
     return False
+
+
+def _dispatch_notification(notification_id: str, open_id: str, text: str) -> bool:
+    if settings.OUTBOX_DELIVERY_SINK == "test":
+        get_db()["delivery_test_sink_receipts"].update_one(
+            {"_id": notification_id},
+            {
+                "$setOnInsert": {
+                    "notification_id": notification_id,
+                    "sink": "test",
+                    "message_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    "created_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True,
+        )
+        return True
+    if settings.OUTBOX_DELIVERY_SINK != "provider":
+        raise RuntimeError("unknown notification delivery sink")
+    return _send_with_explicit_retry(open_id, text)
 
 
 def _read(cur, notification_id: str) -> dict[str, Any]:
@@ -119,8 +140,10 @@ def deliver_notification(event: dict) -> None:
         _project(row)
         return
     try:
-        sent = _send_with_explicit_retry(
-            row["recipient"].get("recipient_open_id", ""), row["message_text"]
+        sent = _dispatch_notification(
+            notification_id,
+            row["recipient"].get("recipient_open_id", ""),
+            row["message_text"],
         )
         status, diagnostic = ("SENT", None) if sent else ("FAILED", "provider_rejected")
     except Exception:

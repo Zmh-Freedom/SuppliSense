@@ -281,6 +281,8 @@ def _add_business_jobs() -> None:
         (_scheduled_proactive, proactive_cron, "proactive_agent"),
     ]
     for func, cron, job_id in jobs:
+        if job_id == "full_refresh" and not settings.SCHEDULER_PAID_EXECUTION_ENABLED:
+            continue
         if job_id not in migrated:
             _add_job(func, cron, job_id)
     if (settings.FEISHU_BITABLE_ENABLED and not settings.DEMO_DATA_FREEZE
@@ -290,10 +292,15 @@ def _add_business_jobs() -> None:
             settings.FEISHU_SUPPLIER_SYNC_CRON,
             "feishu_supplier_sync",
         )
+    refresh_schedule = (
+        paid_cron
+        if settings.SCHEDULER_PAID_EXECUTION_ENABLED and "full_refresh" not in migrated
+        else "disabled"
+    )
     logger.info(
         "Business scheduler started: financial[%s] digest[%s] refresh[%s] "
         "sentiment[%s] notify[%s] proactive[%s]",
-        free_cron, digest_cron, paid_cron, sentiment_cron, notify_cron, proactive_cron,
+        free_cron, digest_cron, refresh_schedule, sentiment_cron, notify_cron, proactive_cron,
     )
 
 

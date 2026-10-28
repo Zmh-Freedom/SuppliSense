@@ -119,8 +119,10 @@ services:
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-4}
       - GUNICORN_THREADS=${GUNICORN_THREADS:-2}
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
-      - PG_POOL_MIN=4
-      - PG_POOL_MAX=20
+      - PG_POOL_MIN=1
+      - PG_POOL_MAX=15
+      - MONGO_MIN_POOL_SIZE=1
+      - MONGO_MAX_POOL_SIZE=25
     tmpfs:
       - /tmp/prometheus
     networks:
@@ -137,6 +139,73 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  worker-migrations:
+    profiles: ["worker-migrations"]
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: "no"
+    command: ["python", "-m", "app.db.worker_migrations", "migrate"]
+    env_file:
+      - .env.docker
+    environment:
+      PG_POOL_MIN: 1
+      PG_POOL_MAX: 2
+      MONGO_MIN_POOL_SIZE: 0
+      MONGO_MAX_POOL_SIZE: 2
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  agent-worker:
+    profiles: ["dedicated-agent"]
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.workers.agent_worker"]
+    env_file:
+      - .env.docker
+    environment:
+      PG_POOL_MIN: 1
+      PG_POOL_MAX: 5
+      MONGO_MIN_POOL_SIZE: 1
+      MONGO_MAX_POOL_SIZE: 10
+    depends_on:
+      mongo:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+          cpus: '1.5'
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.probe"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   scheduler:
     profiles: ["dedicated-scheduler"]
     build:
@@ -146,6 +215,11 @@ services:
     command: ["python", "-m", "app.workers.scheduler"]
     env_file:
       - .env.docker
+    environment:
+      PG_POOL_MIN: 1
+      PG_POOL_MAX: 2
+      MONGO_MIN_POOL_SIZE: 0
+      MONGO_MAX_POOL_SIZE: 5
     depends_on:
       mongo:
         condition: service_healthy
@@ -160,6 +234,12 @@ services:
           cpus: '0.5'
     networks:
       - internal
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.probe"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
     logging:
       driver: "json-file"
       options:
@@ -175,6 +255,11 @@ services:
     command: ["python", "-m", "app.workers.scheduled_worker"]
     env_file:
       - .env.docker
+    environment:
+      PG_POOL_MIN: 1
+      PG_POOL_MAX: 5
+      MONGO_MIN_POOL_SIZE: 1
+      MONGO_MAX_POOL_SIZE: 10
     depends_on:
       mongo:
         condition: service_healthy
@@ -189,6 +274,12 @@ services:
           cpus: '1.0'
     networks:
       - internal
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.probe"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
     logging:
       driver: "json-file"
       options:
@@ -208,6 +299,9 @@ services:
     environment:
       PG_POOL_MIN: 1
       PG_POOL_MAX: 5
+      MONGO_MIN_POOL_SIZE: 1
+      MONGO_MAX_POOL_SIZE: 10
+      OUTBOX_DELIVERY_SINK: test
     depends_on:
       mongo:
         condition: service_healthy
@@ -222,6 +316,12 @@ services:
           cpus: '1.0'
     networks:
       - internal
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.probe"]
+      interval: 15s
+      timeout: 8s
+      retries: 3
+      start_period: 20s
     logging:
       driver: "json-file"
       options:

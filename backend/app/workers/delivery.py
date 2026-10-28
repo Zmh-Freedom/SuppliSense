@@ -11,7 +11,9 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.db.worker_migrations import assert_worker_schema_ready
 from app.domains.outbox.worker import run_outbox_once
+from app.workers.role_config import assert_test_delivery_sink
 
 logger = get_logger(__name__)
 DRAIN_TIMEOUT_SECONDS = 30.0
@@ -42,6 +44,8 @@ def main() -> None:
     args = parser.parse_args()
     if settings.DELIVERY_ROLE_ENABLED:
         raise ValueError("独立投递前必须设置 DELIVERY_ROLE_ENABLED=false，停止 API 领取")
+    assert_test_delivery_sink()
+    assert_worker_schema_ready()
     worker_id = args.worker_id or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)

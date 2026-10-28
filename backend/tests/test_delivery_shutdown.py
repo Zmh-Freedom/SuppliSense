@@ -24,6 +24,8 @@ def blocked_job(worker_id):
     print('FINISHED', flush=True)
     return {'executed': 1, 'terminal': True}
 worker.settings.DELIVERY_ROLE_ENABLED = False
+worker.settings.OUTBOX_DELIVERY_SINK = "test"
+worker.assert_worker_schema_ready = lambda: None
 worker.run_delivery_once = blocked_job
 worker.main()
 """.replace("SLEEP_SECONDS", "60" if blocked else ".1")

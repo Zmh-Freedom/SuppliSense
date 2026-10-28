@@ -13,8 +13,10 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.db.worker_migrations import assert_worker_schema_ready
 from app.domains.scheduling import repo
 from app.domains.scheduling.executor import execute_scheduled_job
+from app.workers.role_config import assert_scheduler_preproduction_safe
 
 logger = get_logger(__name__)
 DRAIN_TIMEOUT_SECONDS = 30.0
@@ -131,6 +133,8 @@ def main() -> None:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--worker-id", default="")
     args = parser.parse_args()
+    assert_scheduler_preproduction_safe()
+    assert_worker_schema_ready()
     worker_id = args.worker_id or _default_worker_id()
     if args.once:
         print(json.dumps(run_scheduled_worker_once(worker_id), ensure_ascii=False, default=str), flush=True)

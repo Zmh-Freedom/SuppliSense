@@ -144,6 +144,36 @@ def test_durable_notification_does_not_retry_unknown_delivery_result(monkeypatch
     assert calls["count"] == 1
 
 
+def test_preproduction_delivery_sink_records_receipt_without_calling_provider(monkeypatch):
+    from app.domains.outbox import notification_delivery
+
+    class SinkCollection:
+        def __init__(self):
+            self.receipts = {}
+
+        def update_one(self, query, update, *, upsert):
+            assert upsert is True
+            self.receipts.setdefault(query["_id"], update["$setOnInsert"])
+
+    sink = SinkCollection()
+    monkeypatch.setattr(settings, "OUTBOX_DELIVERY_SINK", "test")
+    monkeypatch.setattr(notification_delivery, "get_db", lambda: {"delivery_test_sink_receipts": sink})
+    monkeypatch.setattr(
+        notification_delivery,
+        "_send_with_explicit_retry",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("provider must not be called")),
+    )
+
+    assert notification_delivery._dispatch_notification(
+        "notification-test-1", "ou-private", "风险提醒"
+    ) is True
+
+    receipt = sink.receipts["notification-test-1"]
+    assert receipt["sink"] == "test"
+    assert receipt["notification_id"] == "notification-test-1"
+    assert "ou-private" not in str(receipt)
+
+
 def test_notification_scope_uses_feishu_identity_for_non_admin(monkeypatch):
     monkeypatch.setattr("app.domains.supplier.access.feishu_open_id_for_user", lambda _user_id: "ou-purchaser")
     user = UserInDB(
