@@ -243,6 +243,8 @@ npm run build
 - [UI 改造计划与验收记录](docs/ui-improvement-plan-2026-09-12.md)
 - [Agent Harness 历史实施与验收记录](docs/superpowers/plans/2026-09-03-agent-harness-hardening-plan.md)
 - [问题与修复记录](docs/issue-log.md)
+- [历史代码与脚本盘点](docs/maintenance/legacy-inventory-2026-10-28.md)
+- [历史 Agent 验收证据索引](docs/evidence/README.md)
 - [飞书供应商导入映射](docs/integration/feishu-import-converter.md)
 - [Agent 验收与评估](docs/release/agent-acceptance-and-evaluation.md)
 - [项目协作与代码规则](AGENTS.md)
