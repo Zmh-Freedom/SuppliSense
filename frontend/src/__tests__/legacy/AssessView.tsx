@@ -2,19 +2,19 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { api } from '../api';
+import { api } from '../../api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, ReferenceArea, ReferenceLine } from 'recharts';
 import type {
   RiskResult, ESGResult, MacroRiskResult, AlternativeResult,
   ContagionResult, ScenarioResult, SanctionsResult,
-} from '../types';
-import { queryKeys } from '../query-keys';
-import { useWatchlist } from '../hooks';
-import SentimentPanel from './SentimentPanel';
+} from '../../types';
+import { queryKeys } from '../../query-keys';
+import { useWatchlist } from '../../hooks';
+import SentimentPanel from '../../components/SentimentPanel';
 import WatchlistPanel from './WatchlistPanel';
-import { getRiskColor, getRiskColorForLevel, getRiskBgForLevel, getRiskLevel } from '../riskColors';
-import RiskSummary from './RiskSummary';
-import Skeleton, { SkeletonChart } from './Skeleton';
+import { getRiskColor, getRiskColorForLevel, getRiskBgForLevel, getRiskLevel } from '../../riskColors';
+import RiskSummary from '../../components/RiskSummary';
+import Skeleton, { SkeletonChart } from '../../components/Skeleton';
 
 const LEVEL_COLOR: Record<string, string> = {
   '高风险': getRiskColorForLevel('高风险'), '中风险': getRiskColorForLevel('中风险'), '低风险': getRiskColorForLevel('低风险'),
