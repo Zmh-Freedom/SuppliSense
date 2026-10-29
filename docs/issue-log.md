@@ -22,7 +22,7 @@
 - 完整相关离线验证：`tests/test_agent_intent_extractor.py tests/test_agent_harness_task14.py tests/test_agent_input_understanding_rules.py` 共 `208 passed, 1 warning`（15.08 秒，Python 3.12.7）；唯一 warning 是 Starlette/httpx 弃用提示。无真实模型、DB、Redis 或 provider 连接。当时解析器改动后的真实 SCA-005 定向复验尚未执行，后续结果见下一条。
 - 新需求绑定修复后的真实模型复验：固定场景 `SCA-005-camera-no-match` `1/1` 通过，`/api/v1/chat/stream` HTTP 200，SSE 17 个事件，恰好一次 `discover_supplier_candidates` 合成只读工具调用；provider 合成结果为无候选，category=`工业连接器`、candidate_count=3、specification=`工作温度-40到125摄氏度`、region=`华北`、supply_region 为空，均符合契约。pytest `1 passed, 3 warnings in 15.44s`，warning 为已有 Starlette/httpx 与 Pydantic config 弃用提示。运行前断言模型为 `deepseek-v4.1-flash-1017`、PG/Mongo=`run_lifecycle_test`、Redis DB=15；测试内 load/save stub；未访问真实业务 provider/数据或停止用户服务。报告 `/tmp/chat-eval-baseline-sca005-requirement-fix-20261029.json`。
 - SCA-004 状态：完整 6 例初始基线中的一次未澄清失败已保留；当前 cap 700 的一次有界定向复测通过，尚未证明可重复的代码缺陷，未修改该路径或 token cap。
-- 关联提交：修复后关联。
+- 关联提交：`4a1c5bd9`。
 
 ## ISS-20261029-024 真实模型聊天验收未隔离 legacy Mongo 投影
 
@@ -36,7 +36,7 @@
 - 修复方案：真实验收加载模型配置后，显式覆盖 `MONGO_DB=run_lifecycle_test`、`PG_DB=run_lifecycle_test` 与 `REDIS_URL` 到独立测试范围；用运行前断言确认配置，并将 legacy `_save_turn` 投影 stub 到本地捕获器，避免写入 Mongo；真实模型只调用固定只读合成工具。
 - 验证结果：测试进程收到 KeyboardInterrupt 并退出；只读检查确认 `tianyancha.conversations` 中 session `3b096005-975f-4ef3-88ef-d14b3093c9e6` 于 `2026-10-29 09:02:45` 创建，含 2 条消息。按 6 个固定验收 prompt 的精确内容及 `created_at >= 09:02:30` 只读筛查仅匹配这一条当前记录；总计 57 条 prompt 命中包含历史重复场景。未读取或输出消息正文，未清理/修改共享库，未重启或终止用户服务。完整 live report 不存在。
 - 隔离修复验证：实时验收 fixture 现要求 PG/Mongo 为 `run_lifecycle_test`、Redis DB 为 15，并 stub 会话读取/保存。随后按新模型运行 6 例，未写入共享库；该次模型结果和业务场景失败另记 ISS-20261029-025。既有 session 记录保留，不做清理。
-- 关联提交：修复后关联。
+- 关联提交：`4a1c5bd9`。
 
 ## ISS-20261029-023 两轮聊天上下文集成用例的验收支架错误
 
@@ -54,7 +54,7 @@
 - 后续复跑：SSE 解析修正后，两轮 `/chat/stream`、Harness 执行及 PostgreSQL 上下文提交/恢复均完成；目标企业在第二轮恢复并再次传给只读工具。测试最后因断言访问意图提示中不存在的原始 `conversation_state` 字段失败；提示按代码约定是限界快照，供应商名位于顶层 `selected_supplier_names` 和 `previous_task`。更新断言以匹配公开内部提示形状后再验证。数据库仍限定 `run_lifecycle_test`，本次唯一 session/user 和对应 agent_run outbox 按 ID 清理。
 - 最终验证：项目后端 venv 定向运行 `1 passed`（53.32 秒）；真实 `/api/v1/chat/stream` + Harness 两轮链路通过，PostgreSQL `run_lifecycle_test` 中 session state/history/references 跨轮恢复，第二轮只读工具仍收到同一目标。模型与 provider 均为固定替身；只创建随机 UUID 测试用户/session，outbox 通过该 session 关联的 run ID 清理，fixture 清理 session/user；未访问 Mongo/Redis/共享数据库或真实模型。
 - 当前 head 复验：意图解析器改动后再次运行同一真实 `/api/v1/chat/stream` 两轮追问集成用例，`1 passed, 3 warnings in 60.68s`。显式运行目标 PG/Mongo=`run_lifecycle_test`、Redis DB15；PG 中的随机 UUID user/session 在 fixture teardown 清理，关联 outbox 按 session ID 清理；模型/provider为固定替身。
-- 关联提交：修复后关联。
+- 关联提交：`4a1c5bd9`。
 
 ## ISS-20261029-022 财务数据源失败被摘要表述为无查询结果
 
@@ -70,7 +70,7 @@
 - 修复后验证：状态区分实现后，三场景运行 `2 passed, 1 failed`；失败只因 `not_found` 断言仍期待修复前的“没有可验证的财务指标结果”措辞，而实际已改为明确的“本轮财务查询未返回……指标”。provider `failed` 与 `unavailable` 两个断言均通过。失败已保留，更新过期断言后继续验证。
 - 语义边界复核：`not_found` 只说明本轮未取得可验证指标，不足以证明数据源已完整查询且确认无财务数据。将避免“来源确认为空”含义的措辞，明确不据此形成风险结论。
 - 最终验证：更新为“本轮未找到可验证的财务指标”后，三态定向回归 `3 passed`；聊天全链路与上下文合同套件 `22 passed`。`failed` / `unavailable` / `not_found` 分别有稳定摘要和限制，无证据时均不输出财务风险方向。均为真实 API/SSE + 固定假模型和只读 provider，无真实模型或共享业务数据。
-- 关联提交：修复后关联。
+- 关联提交：`4a1c5bd9`。
 
 ## ISS-20261029-021 Supervisor 审批集成回归在首个重启用例后停滞
 
