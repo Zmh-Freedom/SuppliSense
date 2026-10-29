@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
+from app.graphs.agent_core import intent_extractor
 from app.domains.sourcing_risk import discovery_service
 from app.domains.sourcing_risk.requirement_service import resolve_harness_requirement
 from app.graphs.agent_core.adapter import (
@@ -103,6 +106,82 @@ def test_harness_binds_requirement_to_current_task_before_planning(monkeypatch) 
     planned = _build_default_plan({"current_task": task, "execution_context": resolved})
     assert planned[0].tool_name == "discover_supplier_candidates"
     assert planned[0].arguments["requirement"]["category"] == "钢材"
+
+
+def test_harness_clarifies_vague_supplier_request_instead_of_searching(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    message = "帮我找一家合适的供应商。"
+    extraction = intent_extractor._deterministic_extraction_fallback(message)
+    context = {
+        "session_id": "synthetic-vague-sourcing",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "synthetic-vague-sourcing-task",
+            "task_type": extraction.task_type,
+            "user_message": message,
+        },
+    }
+
+    overlaid = apply_extracted_conversation_intent(context, extraction)
+    resolved = _apply_harness_sourcing_requirement(overlaid, message)
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["requirement_status"] == "clarification_required"
+    assert resolved["current_task"]["requirement_missing"] == ["category"]
+    assert planned == []
+
+
+def test_explicit_sourcing_without_model_slots_binds_requirement_and_plans_search(monkeypatch) -> None:
+    message = "寻源3家耐高温工业连接器，规格是工作温度-40到125摄氏度，优先华北。"
+    payload = {
+        "capability": "sourcing",
+        "task_type": "sourcing",
+        "confidence": 0.97,
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    extraction = intent_extractor.extract_conversation_intent(message, [])
+    context = {
+        "session_id": "synthetic-sourcing-eval",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "synthetic-sourcing-task",
+            "task_type": "sourcing",
+            "user_message": message,
+        },
+    }
+    overlaid = apply_extracted_conversation_intent(context, extraction)
+    resolved = _apply_harness_sourcing_requirement(overlaid, message)
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert extraction.sourcing_requirement is not None
+    assert extraction.sourcing_requirement.candidate_count == 3
+    assert resolved["current_task"]["requirement"]["category"] == "工业连接器"
+    assert resolved["current_task"]["requirement"]["region"] == "华北"
+    assert resolved["current_task"]["requirement"]["specification"] == "工作温度-40到125摄氏度"
+    assert len(planned) == 1
+    assert planned[0].tool_name == "discover_supplier_candidates"
+    assert planned[0].arguments["requirement"]["candidate_count"] == 3
 
 
 def test_harness_uses_llm_requirement_slots_before_legacy_wording_fallback() -> None:

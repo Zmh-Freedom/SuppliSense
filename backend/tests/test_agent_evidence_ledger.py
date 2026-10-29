@@ -131,6 +131,36 @@ def test_agent_answer_with_only_formal_supported_claims_is_completed() -> None:
     assert answer.claims[0].validation_status == "supported"
 
 
+def test_agent_answer_requires_evidence_for_each_supplier_item() -> None:
+    ledger = EvidenceLedger([
+        _record("financial-a", entity_id="supplier-a", dimension="financial"),
+    ])
+
+    answer = build_agent_answer(
+        summary="已完成两家供应商的财务分析",
+        ledger=ledger,
+        claims=[],
+        required_dimensions=["financial"],
+        required_evidence=[
+            {"entity_id": "supplier-a", "dimension": "financial", "target_name": "供应商甲"},
+            {"entity_id": "supplier-b", "dimension": "financial", "target_name": "供应商乙"},
+        ],
+    )
+
+    coverage = ledger.coverage(
+        ["financial"],
+        [
+            {"entity_id": "supplier-a", "dimension": "financial"},
+            {"entity_id": "supplier-b", "dimension": "financial"},
+        ],
+    )
+
+    assert answer.status == "needs_review"
+    assert any("供应商乙" in item and "financial" in item for item in answer.limitations)
+    assert coverage.missing_dimensions == ["financial"]
+    assert coverage.missing_items == ["supplier-b:financial:*"]
+
+
 def test_claim_fact_path_rejects_value_mismatch() -> None:
     ledger = EvidenceLedger([
         build_evidence_record(

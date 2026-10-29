@@ -1,7 +1,7 @@
 {
   "answer": {
     "status": "needs_review",
-    "summary": "虚构甲供应链有限公司 存在名称相似的名单线索，主体尚未确认，需要人工核验。以上结论仅基于当前已取得资料，部分维度尚未覆盖；采购动作请先按下方提示核实。",
+    "summary": "虚构甲供应链有限公司 存在名称相似的名单线索，主体尚未确认，需要人工核验。以上结论仅基于当前已取得资料，部分目标或所需证据尚未覆盖；采购动作请先按下方提示核实。",
     "claims": [
       {
         "claim_id": "screening:d7f4286b654f3559b3f2e429:match:a696c25650e8b13a1c21:claim:record_name",
@@ -22,6 +22,7 @@
     ],
     "limitations": [
       "缺少 compliance 维度的正式证据",
+      "缺少 虚构甲供应链有限公司 compliance 维度的正式证据",
       "名称相似线索尚未核实主体身份"
     ],
     "action_proposals": [],

@@ -242,6 +242,169 @@ def _is_quantity_bearing_purchase_request(message: str) -> bool:
     return not is_non_operational_request(message)
 
 
+def is_explicitly_negated_sourcing_request(message: str) -> bool:
+    """Recognize clear instructions not to run supplier discovery."""
+    text = str(message or "").strip()
+    if not text:
+        return False
+    negative = r"(?:不要|不用|不需要|无需|不必|先不|暂不|暂时不|不做|停止|取消|请勿)"
+    sourcing_noun = r"(?:寻源|供应商寻源)"
+    supplier_search = (
+        r"(?:搜寻|搜索|寻找|推荐|找)[^，,。；;！？!?\n]{0,12}"
+        r"(?:供应商|厂家|厂商|候选供应商)"
+    )
+    explicitly_not_real = re.search(
+        rf"{negative}\s*(?:实际|真正|真的)\s*{sourcing_noun}", text
+    )
+    return bool(
+        explicitly_not_real
+        or re.search(rf"{negative}\s*(?:再\s*)?(?:为我\s*)?{sourcing_noun}", text)
+        or re.search(rf"{negative}\s*(?:再\s*)?(?:为我\s*)?{supplier_search}", text)
+    )
+
+
+def is_meta_intent_question(message: str) -> bool:
+    """Identify explicit requests to inspect quoted text rather than execute it."""
+    text = str(message or "").strip()
+    if not text:
+        return False
+    if any(phrase in text for phrase in (
+        "判断这句话的意图",
+        "判断这段话的意图",
+        "判断以下请求的意图",
+        "判断以下内容的意图",
+        "分析这句话的意图",
+        "分析这段话的意图",
+    )):
+        return True
+    has_quoted_text = re.search(r"[“\"「『〔【][^”\"」』〕】]+[”\"」』〕】]", text)
+    inspects_referred_text = any(token in text for token in (
+        "判断这句话", "分析这句话", "评审这句话", "评估这句话",
+        "判断这段话", "分析这段话", "评审这段话", "评估这段话",
+        "判断这个请求", "分析这个请求", "评审这个请求", "评估这个请求",
+        "判断以下内容", "分析以下内容", "评审以下内容", "评估以下内容",
+        "判断以下请求", "分析以下请求", "评审以下请求", "评估以下请求",
+    ))
+    return bool(has_quoted_text and inspects_referred_text)
+
+
+def _without_quoted_text(message: str) -> str:
+    """Remove quoted source text when resolving the current request's action."""
+    text = str(message or "")
+    for pattern in (
+        r"“[^”]*”",
+        r"‘[^’]*’",
+        r"「[^」]*」",
+        r"『[^』]*』",
+        r"〔[^〕]*〕",
+        r"【[^】]*】",
+        r'"[^"]*"',
+        r"'[^']*'",
+    ):
+        text = re.sub(pattern, " ", text)
+    return text
+
+
+def _has_explicit_supplier_risk_analysis_context(message: str) -> bool:
+    """Recognize a stated risk analysis, separate from a candidate discovery action."""
+    text = str(message or "").strip()
+    analysis_action = any(token in text for token in ("分析", "评估", "核查", "审查", "检查"))
+    risk_context = any(token in text for token in ("风险", "合规", "出口管制", "制裁", "禁运"))
+    supplier_context = any(token in text for token in ("供应商", "厂家", "厂商", "公司", "企业"))
+    return bool(text and analysis_action and risk_context and supplier_context)
+
+
+def current_intent_text(message: str) -> str:
+    """Return the current request clause for named supplier risk analysis."""
+    text = str(message or "")
+    if _has_explicit_supplier_risk_analysis_context(text):
+        text = _without_quoted_text(text)
+        # A source label such as “参考采购单原文” is context for the quoted
+        # evidence, not part of the current operation. Removing the label also
+        # prevents its “采购” characters from being mistaken for a search verb.
+        text = re.sub(
+            r"(?:参考|依据|根据)\s*(?:采购单|采购记录|订单|原文|引用内容|记录)\s*(?:原文)?\s*[:：]?",
+            " ",
+            text,
+        )
+        return text
+    return text
+
+
+def _has_explicit_candidate_discovery_action(message: str) -> bool:
+    """Require a discovery verb plus a count, supplier, or concrete product target."""
+    text = str(message or "").strip()
+    sourcing_action = re.compile(r"(?:寻源|搜寻|搜索|寻找|推荐|找|查找|筛选|列出|提供)")
+    candidate_target = re.compile(
+        r"(?:供应商|厂家|厂商|候选)|(?:\d{1,3}|[一二两三四五六七八九十百]+)\s*(?:家|个|款|种|批|套|台|件|组)"
+    )
+    restricted_product_target = re.compile(
+        r"(?:绕过|规避|逃避|避开|躲避|突破)"
+        r"[^，,。；;！？!?\n]{0,12}(?:出口管制|制裁|禁运|贸易限制|受限名单)"
+        r"[^，,。；;！？!?\n]{0,12}的"
+        r"(?!风险|问题|原因|方式|方法|流程|情形|可能性|对策|策略|措施|影响|证据|情况|方案)"
+        r"[A-Za-z0-9\u4e00-\u9fff]{2,}"
+    )
+    clause_break = re.compile(r"[，,。；;！？!?\n]")
+    for action in sourcing_action.finditer(text):
+        end = clause_break.search(text, action.end())
+        clause = text[action.end():end.start() if end else len(text)]
+        if candidate_target.search(clause[:48]) or restricted_product_target.search(clause[:64]):
+            return True
+    return False
+
+
+def is_prohibited_sourcing_request(message: str) -> bool:
+    """Identify candidate-discovery requests to evade trade controls or sanctions.
+
+    A risk query about an already named supplier may mention evasion as a risk
+    indicator; it is not a request to discover suppliers and must keep its
+    ordinary compliance route.
+    """
+    text = str(message or "").strip()
+    if not text:
+        return False
+    if (
+        is_explicitly_negated_sourcing_request(text)
+        or is_meta_intent_question(text)
+        or is_general_sourcing_knowledge_question(text)
+    ):
+        return False
+    controls = r"(?:出口管制|制裁|禁运|贸易限制|受限名单)"
+    evasion = r"(?:绕过|规避|逃避|避开|躲避|突破)"
+    evasion_and_control = (
+        re.search(rf"{evasion}[^，,。；;！？!?\n]{{0,12}}{controls}", text)
+        or re.search(rf"{controls}[^，,。；;！？!?\n]{{0,12}}{evasion}", text)
+    )
+    if not evasion_and_control:
+        return False
+    explicit_risk_analysis = _has_explicit_supplier_risk_analysis_context(text)
+    action_text = _without_quoted_text(text) if explicit_risk_analysis else text
+    has_candidate_action = _has_explicit_candidate_discovery_action(action_text)
+    if explicit_risk_analysis:
+        return has_candidate_action
+    return bool(re.search(r"(?:寻源|搜寻|搜索|寻找|推荐|找|查找|筛选|列出|提供)", text))
+
+
+def is_general_sourcing_knowledge_question(message: str) -> bool:
+    """Identify a discussion of sourcing methods rather than a live search."""
+    text = str(message or "").strip()
+    if not text or not any(token in text for token in ("寻源流程", "供应商开发流程", "供应商筛选流程")):
+        return False
+    return any(token in text for token in (
+        "介绍", "说明", "解释", "讲讲", "讲解", "是什么", "什么是", "一般", "通常", "步骤", "如何",
+    ))
+
+
+def is_generic_sourcing_category(category: str) -> bool:
+    """Return whether a parsed category is only a vague suitability placeholder."""
+    normalized = str(category or "").strip().rstrip("的 ")
+    return normalized in {
+        "合适", "一家合适", "合适供应商", "合适的供应商", "一家合适供应商",
+        "一家合适的供应商", "一家供应商", "供应商", "产品", "合适产品", "厂家", "厂商",
+    }
+
+
 def is_non_operational_request(message: str) -> bool:
     """Identify explicit meta, general-knowledge, or topic-switch requests.
 
@@ -252,6 +415,14 @@ def is_non_operational_request(message: str) -> bool:
     text = str(message or "").strip()
     if not text:
         return False
+
+    if (
+        is_explicitly_negated_sourcing_request(text)
+        or is_meta_intent_question(text)
+        or is_prohibited_sourcing_request(text)
+        or is_general_sourcing_knowledge_question(text)
+    ):
+        return True
 
     if any(token in text for token in ("翻译", "英文怎么说", "英语怎么说", "英文如何表达", "英语如何表达")):
         return True
