@@ -1,6 +1,7 @@
 """Tests for the reusable, real-model sourcing chat acceptance contract."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -155,6 +156,41 @@ def test_sourcing_chat_evaluator_accepts_equivalent_unit_spellings() -> None:
     )
 
     assert result["mismatches"] == {}
+
+
+def test_sourcing_chat_cases_accept_live_qualification_phrasing() -> None:
+    path = Path(__file__).parent / "evals" / "sourcing_chat_acceptance_cases.jsonl"
+    cases = {case["id"]: case for case in load_sourcing_chat_cases(path)}
+    observations = {
+        "SCA-001-camera-full": (
+            "已找到 2 家寻源候选，其中历史合作 1 家、外部待核验 1 家。检索条件：品类：工业相机；"
+            "目标候选数：5家；优先地区：华东；预算：50万元；规格：200万像素，GigE接口；"
+            "资质：支持IATF 16949。"
+        ),
+        "SCA-003-wiring-qualification": (
+            "已按“汽车线束”完成历史合作和外部候选检索，当前没有匹配候选；"
+            "检索条件：品类：汽车线束；优先地区：华南；规格：支持800V高压平台；"
+            "资质：具备IATF 16949资质。"
+        ),
+    }
+
+    for case_id, summary in observations.items():
+        case = cases[case_id]
+        expected = case["expected"]
+        candidate_rows = [{"supplier_name": "测试候选"}] if expected["candidate_result"] == "found" else []
+        result = evaluate_sourcing_chat_case(
+            case,
+            events=[
+                {"event": "agent_answer", "data": {"summary": summary}},
+                {"event": "tool_result", "data": {"result": {"data": {"candidates": candidate_rows}}}},
+            ],
+            tool_calls=[{
+                "tool": expected["tool"],
+                "requirement": expected["requirement"],
+            }],
+        )
+
+        assert result["mismatches"] == {}, f"{case_id}: {result['mismatches']}"
 
 
 def test_sourcing_chat_case_loader_rejects_duplicate_ids(tmp_path) -> None:
