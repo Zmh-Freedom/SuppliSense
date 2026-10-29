@@ -1,5 +1,17 @@
 # 项目问题记录
 
+## ISS-20261029-032 CI Harness 期望快照未同步目标级证据限制
+
+- 发现日期：2026-10-29
+- 状态：静态契约快照已按生成函数同步，模块测试通过；PR #6 新 head CI 待验证
+- 优先级：P2
+- 现象：PR #6 当前 head `fd1d671f27fae143f27fc04e96f7e6256eba2c31` 的 backend `Enforce targeted Harness core coverage` 因 `tests/test_screening_monitoring_harness.py::test_actual_harness_contract_matches_frontend_fixture` 失败。actual 与 `screening_monitoring_harness` 前端契约 fixture 的答案摘要和限制字段不同。
+- 影响：该 CI 门禁使后续隔离数据库集成和 Agent E2E 步骤被跳过；静态 fixture 未反映 Harness 现在按每个目标/必需 evidence item 添加的限制，无法验证当前回答契约。
+- 根因：CI 与本地实际输出新增了“缺少 虚构甲供应链有限公司 compliance 维度的正式证据”目标级限制，并把摘要从“部分维度尚未覆盖”改为“部分目标或所需证据尚未覆盖”；fixture 仍保留 ISS-027 修复前的维度级内容。覆盖率门槛不是根因：该步汇总 `1639 passed, 1 failed, 1 skipped, 111 deselected`，总覆盖率 `86.92%`，高于 80%。
+- 修复方案：按 `public_screening_fixture` 生成的真实 Harness 结果更新该 JSON fixture，不放宽断言、不改业务逻辑；随后定向测试及 CI 全门复跑。
+- 验证结果：本地从 `backend/` 运行 `tests/test_screening_monitoring_harness.py::test_actual_harness_contract_matches_frontend_fixture` 首次 `1 failed, 3 warnings`，与 GitHub Actions run `40883134810` 同为 actual/expected 契约快照不一致；首次 RED 保留。按测试要求调用仓库 `public_screening_fixture` 生成 `/tmp/screeningMonitoringAnswer.actual.json`，人工 diff 只见 summary 语义与新增目标级 limitation 两项，然后同步 `frontend/src/__tests__/fixtures/screeningMonitoringAnswer.json`，不改业务逻辑或断言。重跑该用例 `1 passed, 3 warnings`（3.02 秒），整个 `test_screening_monitoring_harness.py` `8 passed, 3 warnings`（3.33 秒），均无数据库、Redis、真实模型或外部 provider 访问。CI 汇总 1639 passed、1 failed、1 skipped、111 deselected、覆盖率 86.92%；frontend build/typecheck/lint/Vitest 和 commit-messages 通过，后续后端隔离集成/E2E 被跳过；修复后的完整 CI 待启动。
+- 关联提交：`4395fa6b4a714c9ee4f97ce9943d920047bcaebd`（GitHub 快照提交）。
+
 ## ISS-20261029-031 复审发现采购单引述误作候选动作并阻断合规分析
 
 - 发现日期：2026-10-29
@@ -22,6 +34,7 @@
 - 五模块完整离线回归：intent、input-understanding、Harness、evidence ledger 和 API/SSE full-chain 共 `279 passed, 3 warnings`（164.31 秒）。这是 ISS-031 修改后的整体回归，3 个 warning 为既有弃用提示；没有真实模型、DB、Redis 或业务 provider调用。
 - 真实模型单例选择命令错误：首次有界 SCA-004/005 启动在测试选择阶段失败，报告 `unknown live acceptance case IDs: ['SCA-004', 'SCA-005']`；测试没有进入模型 API 调用。运行前模型 `deepseek-v4.1-flash-1017`、API host `maas.qianwenaiapi.com` 以及 PG/Mongo=`run_lifecycle_test`、Redis DB 15 断言均通过；3 个既有弃用 warning。保留这条失败，接下来先按数据集真实 ID 校准选择器再启动真实调用。
 - 真实模型修复后有界复测：使用数据集真实 ID `SCA-004-underspecified` 与 `SCA-005-camera-no-match`，模型 `deepseek-v4.1-flash-1017`、host `maas.qianwenaiapi.com`，活动 `/api/v1/chat/stream` 两案例 `2/2` 通过，报告 `/tmp/chat-eval-baseline-post-iss031-004-005-20261029.json`。SCA-004 只有 `session`/`clarification`、0 次工具调用；SCA-005 17 个 SSE 事件、一次合成只读 `discover_supplier_candidates`，类别、规格、数量、地区约束均符合断言。运行前断言 PG/Mongo=`run_lifecycle_test`、Redis DB 15；session/checkpointer、保存和候选工具均由隔离替身提供，未执行 DB/Redis 或真实供应商 provider 读写。测试未输出密钥。初始 ID 选择错误保留为上一条记录；3 个弃用 warning 为既有提示。
+- 首次 PR CI 结果（快照失败及修复见 ISS-032）：PR #6 head `fd1d671f27fae143f27fc04e96f7e6256eba2c31` 的 backend workflow 在 `Enforce targeted Harness core coverage` 步骤失败；此前容器初始化、依赖、schema、unit/graph 测试成功；因门禁失败，后续多数据库集成及 Agent E2E 步骤被跳过。frontend build/typecheck/lint/Vitest 与 commit message check 成功。首次失败不代表当前 head 最终状态；修复后的 head 需要重新运行完整 CI。
 - 关联提交：`57943eb2`。
 
 ## ISS-20261029-030 复审再复发：规避请求前缀变体绕过受限寻源 guard
