@@ -1,9 +1,12 @@
 from types import SimpleNamespace
 
+import pytest
+
 from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
 from app.graphs.agent_core.narrator import (
     NarrativeDraft,
+    _finding_polarities,
     _validate_draft,
     answer_general_supplier_knowledge,
     narrate_answer,
@@ -40,6 +43,408 @@ def test_narrative_validation_rejects_unverified_number() -> None:
     assert _validate_draft(draft, answer) is False
 
 
+def test_narrative_validation_rejects_reordered_supported_numbers() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 100/7。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_omitted_structured_limitation() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["财务数据未覆盖，无法判断现金流风险"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_reversed_verified_conclusion() -> None:
+    claim = ValidatedClaim(
+        claim_id="major-lawsuit",
+        entity_id="supplier-1",
+        dimension="legal_risk",
+        statement="青岛三祥科技股份有限公司存在重大诉讼标记。",
+        value=True,
+        fact_path="major_lawsuit",
+        evidence_refs=["legal-evidence"],
+        confidence=0.9,
+        validation_status="supported",
+    )
+    answer = AgentAnswer(
+        status="completed",
+        summary="青岛三祥科技股份有限公司存在重大诉讼标记。",
+        claims=[claim],
+    )
+    draft = NarrativeDraft(
+        headline="司法风险核验",
+        body_markdown="青岛三祥科技股份有限公司未发现重大诉讼。",
+        claim_refs=["major-lawsuit"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_negative_conclusion_from_uncertain_source() -> None:
+    answer = _answer().model_copy(update={
+        "summary": "青岛三祥科技股份有限公司的司法信息无法确认是否存在重大诉讼。",
+    })
+    draft = NarrativeDraft(
+        headline="司法风险核验",
+        body_markdown="青岛三祥科技股份有限公司未发现重大诉讼。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_risk_level_from_uncertain_source() -> None:
+    answer = _answer().model_copy(update={
+        "summary": "青岛三祥科技股份有限公司无法确认是否存在重大诉讼。",
+    })
+    draft = NarrativeDraft(
+        headline="司法风险核验",
+        body_markdown="重大诉讼风险较高。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrator_keeps_an_uncertain_legal_conclusion_deterministic(monkeypatch) -> None:
+    answer = _answer().model_copy(update={
+        "summary": "青岛三祥科技股份有限公司无法确认是否存在重大诉讼。",
+    })
+
+    class UnexpectedNarrator:
+        def __init__(self, **_kwargs):
+            raise AssertionError("uncertain legal conclusions must not be rewritten by the model")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
+
+    assert narrate_answer(answer, "查询重大诉讼") is answer
+
+
+def test_finding_polarity_uses_the_clause_nearest_to_the_topic() -> None:
+    text = "财务无法确认，但未发现重大诉讼。"
+
+    assert _finding_polarities(text, "重大诉讼") == {"negative"}
+
+
+def test_narrative_validation_rejects_unverified_qualitative_conclusion() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="司法风险核验",
+        body_markdown="青岛三祥科技股份有限公司存在重大诉讼。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_unverified_supplier_health_assertions() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            "现金流充裕，交付稳定，质量控制良好。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_does_not_use_hidden_headline_for_requested_topic() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="财务数据核验",
+        body_markdown="青岛三祥科技股份有限公司 综合风险评分：7/100",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer, "查看青岛三祥科技股份有限公司的财务数据") is False
+
+
+def test_narrator_falls_back_when_model_adds_unverified_supplier_health(monkeypatch) -> None:
+    answer = _answer()
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司综合风险评分为 7/100。'
+                            '现金流充裕，交付稳定，质量控制良好。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert narrated.summary == answer.summary
+
+
+@pytest.mark.parametrize("unsupported_clause", ["现金流风险很高", "暂停采购"])
+def test_narrative_validation_does_not_let_limitation_cover_neighbor_clause(
+    unsupported_clause: str,
+) -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少 financial 维度的正式证据"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            f"缺少 financial 维度的正式证据，{unsupported_clause}。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_extra_assertion_inside_limitation_clause() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少 financial 维度的正式证据"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            "缺少 financial 维度的正式证据并且现金流风险很高。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrator_falls_back_when_model_hides_claim_behind_limitation(monkeypatch) -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少 financial 维度的正式证据"],
+    })
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司综合风险评分为 7/100。'
+                            '缺少 financial 维度的正式证据，现金流风险很高。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert narrated.summary == answer.summary
+
+
+def test_narrative_validation_rejects_unsupported_procurement_recommendation() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险分析结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100，建议立即扩大采购份额。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer, "分析青岛三祥科技股份有限公司的风险") is False
+
+
+def test_narrative_validation_rejects_unsupported_imperative_procurement_action() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100。请立即暂停采购。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrator_falls_back_when_model_issues_unapproved_procurement_instruction(monkeypatch) -> None:
+    answer = _answer()
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司综合风险评分为 7/100。'
+                            '请立即暂停采购。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert narrated.summary == answer.summary
+
+
+def test_narrative_validation_allows_evidence_supported_procurement_review() -> None:
+    answer = _answer().model_copy(update={
+        "action_proposals": [{
+            "action_type": "procurement_review",
+            "label": "安排采购复核",
+            "reason": "已发现需要人工确认的风险信号，先核实证据再决定是否调整采购策略。",
+        }],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100，"
+            "建议安排采购复核。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is True
+
+
+def test_narrative_validation_rejects_unverified_follow_up_guidance() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险分析结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100，"
+            "建议继续关注风险变化，暂不据此调整采购策略。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+@pytest.mark.parametrize(
+    ("source_summary", "narrative"),
+    [
+        (
+            "青岛三祥科技股份有限公司舆情来源查询失败，无法确认是否存在相关新闻。",
+            "青岛三祥科技股份有限公司舆情查询已完成，已确认未发现相关新闻。",
+        ),
+        (
+            "青岛三祥科技股份有限公司舆情检索已完成，已确认未发现相关新闻。",
+            "青岛三祥科技股份有限公司舆情来源暂不可用，无法确认相关新闻情况。",
+        ),
+    ],
+)
+def test_narrative_validation_preserves_source_failure_and_confirmed_empty_distinction(
+    source_summary: str, narrative: str
+) -> None:
+    answer = _answer().model_copy(update={
+        "status": "partial",
+        "summary": source_summary,
+        "limitations": [],
+    })
+    draft = NarrativeDraft(
+        headline="舆情查询结果",
+        body_markdown=narrative,
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer, "查看青岛三祥科技股份有限公司舆情") is False
+
+
+def test_narrative_validation_accepts_natural_paraphrase_of_limitation() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["财务数据未覆盖，无法判断现金流风险"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            "目前财务资料覆盖不足，暂不能判断现金流风险。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is True
+
+
+def test_narrative_validation_rejects_limitation_that_drops_missing_objects_and_impact() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少现金流量表和审计报告，无法判断短期偿债能力"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100，财务数据覆盖不足。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_limitation_that_drops_not_yet_received_document() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["现金流量表尚未收到，无法判断短期偿债能力"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司财务数据覆盖不足，无法判断短期偿债能力。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_unverified_number_in_headline() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险评分 999 分",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_unverified_company_in_headline() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="虚构材料有限公司风险复核",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
 def test_narrative_validation_accepts_formatting_only_number_changes() -> None:
     answer = AgentAnswer(
         status="completed",
@@ -58,7 +463,7 @@ def test_narrative_validation_accepts_formatting_only_number_changes() -> None:
     )
     draft = NarrativeDraft(
         headline="财务分析",
-        body_markdown="青岛三祥科技股份有限公司资产负债率为 43%，需要结合现金流继续关注。",
+        body_markdown="青岛三祥科技股份有限公司资产负债率为 43%。",
         claim_refs=["debt-ratio"],
     )
 
@@ -151,7 +556,7 @@ def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
                 @staticmethod
                 def create(**_kwargs):
                     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                        content='{"headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司当前综合风险评分为7/100。","claim_refs":["risk-score"]}'
+                        content='{"headline":"现金流充裕","body_markdown":"青岛三祥科技股份有限公司 综合风险评分：7/100","claim_refs":["risk-score"]}'
                     ))])
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
@@ -159,8 +564,38 @@ def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary.startswith("风险复核结果")
+    assert narrated.summary.startswith("核验结果")
+    assert "现金流充裕" not in narrated.summary
     assert "7/100" in narrated.summary
+
+
+def test_narrator_falls_back_when_model_omits_structured_limitation(monkeypatch) -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "summary": "青岛三祥科技股份有限公司综合风险评分为 7/100，财务数据未覆盖。",
+        "limitations": ["财务数据未覆盖，无法判断现金流风险"],
+    })
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司当前综合风险评分为7/100。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司的风险")
+
+    assert narrated.summary == answer.summary
+    assert "财务数据未覆盖，无法判断现金流风险" in narrated.limitations
 
 
 def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
@@ -172,7 +607,7 @@ def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
                 @staticmethod
                 def create(**_kwargs):
                     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                        content='{"type":"json_object","headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司当前综合风险评分为7/100。","claim_refs":["risk-score"]}'
+                        content='{"type":"json_object","headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司 综合风险评分：7/100","claim_refs":["risk-score"]}'
                     ))])
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
@@ -180,7 +615,7 @@ def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary.startswith("风险复核结果")
+    assert narrated.summary.startswith("核验结果")
 
 
 def test_narrator_falls_back_when_llm_is_not_configured(monkeypatch) -> None:

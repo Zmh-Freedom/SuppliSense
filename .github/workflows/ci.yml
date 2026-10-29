@@ -21,7 +21,9 @@ jobs:
         run: ./scripts/check-commit-message.sh --range "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
 
   backend:
-    runs-on: ubuntu-latest
+    # MongoDB 8 is incompatible with current hosted runner kernels 6.19–7.0.13.
+    # Keep the full backend CI on a supported kernel until MongoDB fixes ship.
+    runs-on: ubuntu-22.04
     defaults:
       run:
         working-directory: backend

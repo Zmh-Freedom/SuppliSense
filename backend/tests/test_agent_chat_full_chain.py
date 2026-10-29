@@ -562,3 +562,65 @@ def test_chat_missing_supplier_target_clarifies_without_calling_business_tools(f
     assert "clarification" in event_types
     assert "tool_call" not in event_types
     assert full_chain_chat.calls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_text"),
+    [
+        ("你好！", "你好"),
+        ("谢谢你", "不客气"),
+        ("你能做什么？", "供应商风险分析"),
+    ],
+)
+def test_chat_pure_conversation_returns_natural_completed_answer_without_business_tools(
+    full_chain_chat, message: str, expected_text: str
+):
+    response = full_chain_chat.client.post(
+        "/api/v1/chat/stream",
+        json={"message": message, "session_id": str(uuid4()), "mode": "auto"},
+    )
+
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+    event_types = [event_type for event_type, _ in events]
+    assert "clarification" not in event_types
+    assert "tool_call" not in event_types
+    assert event_types[-1] == "done"
+    assert events[-1][1]["status"] == "completed"
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert answer["status"] == "completed"
+    assert expected_text in answer["summary"]
+    assert "请补充供应商" not in answer["summary"]
+    assert full_chain_chat.calls == []
+
+
+def test_chat_mixed_greeting_and_financial_request_still_runs_business_tool(full_chain_chat):
+    message = "你好，分析测试供应商有限公司的财务风险"
+    full_chain_chat.responses[message] = {
+        "target_supplier_names": ["测试供应商有限公司"],
+        "analysis_dimensions": ["financial"],
+        "capability": "financial",
+        "scope": "single_supplier",
+        "task_type": "analysis",
+        "requested_action": "none",
+        "confidence": 0.98,
+        "interpretation_summary": "分析测试供应商有限公司的财务风险。",
+        "field_sources": {
+            "target_supplier_names": "explicit",
+            "analysis_dimensions": "explicit",
+        },
+    }
+
+    response = full_chain_chat.client.post(
+        "/api/v1/chat/stream",
+        json={"message": message, "session_id": str(uuid4()), "mode": "auto"},
+    )
+
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+    event_types = [event_type for event_type, _ in events]
+    assert "tool_call" in event_types
+    assert "agent_answer" in event_types
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert answer["status"] == "completed"
+    assert full_chain_chat.calls == [{"tool": "query_financials", "company_name": "测试供应商有限公司"}]

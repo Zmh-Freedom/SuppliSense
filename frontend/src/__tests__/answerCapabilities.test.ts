@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentAnswer } from '../types';
-import { getAnswerCapability } from '../components/answerCapabilities';
+import { getAnswerCapability, getAnswerCapabilityMeta } from '../components/answerCapabilities';
 
 function answer(summary: string, dimension = 'risk', factPath?: string): AgentAnswer {
   return {
@@ -38,5 +38,9 @@ describe('answer capability routing', () => {
 
   it('keeps generic answers as the fallback', () => {
     expect(getAnswerCapability(answer('已完成供应商复核'))).toBe('generic');
+  });
+
+  it('does not assign a generic procurement recommendation to an unknown answer', () => {
+    expect(getAnswerCapabilityMeta('generic')).toEqual({ label: '本轮分析结果' });
   });
 });

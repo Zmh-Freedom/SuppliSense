@@ -52,6 +52,41 @@ const evidence: AgentEvidenceRecord[] = [{
 }];
 
 describe('StructuredAgentResult', () => {
+  it('does not render a business card for a pure conversational answer', () => {
+    render(<StructuredAgentResult answer={{
+      ...answer,
+      summary: '你好！我可以帮你查询供应商资料。',
+      claims: [],
+      limitations: [],
+      action_proposals: [],
+      action_receipts: [],
+      evidence_refs: [],
+    }} evidence={[]} />)
+
+    expect(screen.queryByRole('region', { name: 'Agent 分析结果' })).not.toBeInTheDocument()
+    expect(screen.queryByText('0 条数据记录')).not.toBeInTheDocument()
+    expect(screen.queryByText('采购建议')).not.toBeInTheDocument()
+  })
+
+  it('keeps limitations visible without turning needs_review into a risk finding', () => {
+    render(<StructuredAgentResult answer={{
+      ...answer,
+      status: 'needs_review',
+      summary: '当前资料不足，尚未形成明确结论。',
+      claims: [],
+      limitations: ['缺少 risk 维度的正式证据'],
+      action_proposals: [],
+      action_receipts: [],
+      evidence_refs: [],
+    }} evidence={[]} />)
+
+    expect(screen.getByRole('region', { name: 'Agent 分析结果' })).toBeInTheDocument()
+    expect(screen.getByText('需要人工确认')).toBeInTheDocument()
+    expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
+    expect(screen.queryByText('发现信号，需人工复核')).not.toBeInTheDocument()
+    expect(screen.queryByText('0 条数据记录')).not.toBeInTheDocument()
+  })
+
   it('shows current score and explains what stable means for watchlist trends', () => {
     render(<StructuredAgentResult answer={answer} evidence={evidence} />);
 
@@ -62,14 +97,15 @@ describe('StructuredAgentResult', () => {
     expect(screen.getByText('较周期初+0分')).toBeInTheDocument();
   });
 
-  it('shows a scope-level score overview instead of a generic detail instruction', () => {
+  it('shows structured scope data without repeating the chat answer', () => {
     const overviewAnswer: AgentAnswer = {
       ...answer,
       summary: '已完成当前用户责任范围内 3 家供应商的本月风险概览；3 家已有安全评分，平均 76.7/100（分数越高风险越低）；风险等级：中风险 1 家、低风险 2 家；本月变化：恶化 1 家、基本稳定 1 家、仅有1次评分 1 家；需要优先复核 1 家。',
     };
     render(<StructuredAgentResult answer={overviewAnswer} evidence={evidence} />);
 
-    expect(screen.getByText(/平均 76\.7\/100/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '我负责供应商的风险变化' })).toBeInTheDocument();
+    expect(screen.queryByText(/平均 76\.7\/100/)).not.toBeInTheDocument();
     expect(screen.queryByText(/可直接打开详情/)).not.toBeInTheDocument();
   });
 });
@@ -95,7 +131,7 @@ it('consumes the actual Harness answer contract used by backend E2E', async () =
   expect(screen.getAllByText('70.0%').length).toBeGreaterThan(0);
   expect(screen.getAllByText('已取得指标，风险等级待确认')).toHaveLength(2);
   expect(screen.queryByText(/可按正常流程推进/)).not.toBeInTheDocument();
-  expect(screen.getAllByText(fixture.answer.summary).length).toBeGreaterThan(0);
+  expect(screen.queryByText(fixture.answer.summary)).not.toBeInTheDocument();
   expect(screen.queryByText('风险较低')).not.toBeInTheDocument();
 });
 
@@ -117,8 +153,27 @@ it('shows the operational source gap instead of implying a detected risk signal'
     summary:'已完成甲公司的质量/交付查询，但当前没有可验证的指标数据，当前未覆盖，暂不评级。',
     limitations:['来源指标单位、分母和范围契约尚未确认']};
   render(<StructuredAgentResult answer={gap} evidence={[]} />);
-  expect(screen.getAllByText(gap.summary).length).toBeGreaterThan(0);
+  expect(screen.queryByText(gap.summary)).not.toBeInTheDocument();
   expect(screen.getByText('当前未覆盖')).toBeInTheDocument();
+  expect(screen.queryByText('发现信号，需人工复核')).not.toBeInTheDocument();
+});
+
+it.each([
+  ['unavailable', '暂不可用'],
+  ['confirmed_empty', '已确认无记录'],
+])('shows the real sentiment source state %s without an empty article card', (status, label) => {
+  const sourceRecord: AgentEvidenceRecord = {
+    ...evidence[0], evidence_id: `sentiment-${status}`, dimension: 'sentiment', provider: 'news-source',
+    source_type: 'news_search', status, facts: { articles: [] },
+  };
+  const result: AgentAnswer = {
+    ...answer, status: 'partial', summary: '舆情来源状态见下方说明。', claims: [],
+    limitations: ['舆情数据无法形成完整结论'], evidence_refs: [],
+  };
+  render(<StructuredAgentResult answer={result} evidence={[sourceRecord]} />);
+
+  expect(screen.getByText(label)).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: '逐条舆情新闻核验' })).not.toBeInTheDocument();
   expect(screen.queryByText('发现信号，需人工复核')).not.toBeInTheDocument();
 });
 

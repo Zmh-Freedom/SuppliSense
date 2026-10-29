@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from app.graphs.streaming import stream_harness_graph
 
@@ -107,6 +108,58 @@ def test_harness_stream_publishes_progress_before_runner_finishes(monkeypatch):
     assert event_names.index("tool_call") < event_names.index("tool_result")
     assert event_names.index("tool_result") < event_names.index("agent_answer")
     assert '"status": "completed"' in events
+
+
+def test_harness_stream_preserves_empty_turn_snapshot_event_sequence(monkeypatch):
+    async def fake_run_harness(*_args, **kwargs):
+        progress = kwargs["progress"]
+        await progress("load_session", {"status": "loaded"}, True)
+        await progress("resolve_turn", {"status": "turn_resolved"}, True)
+        await progress("build_plan", {"status": "planned", "task_specs": []}, True)
+        return {
+            "answer": {
+                "status": "completed",
+                "summary": "你好！",
+                "claims": [],
+                "limitations": [],
+                "action_proposals": [],
+                "action_receipts": [],
+                "evidence_refs": [],
+            },
+            "tool_outcomes": [],
+        }
+
+    monkeypatch.setattr("app.graphs.harness.run_harness", fake_run_harness)
+    monkeypatch.setattr("app.graphs.agent_core.adapter.save_execution_turn", lambda *_args: None)
+    events = asyncio.run(_collect(stream_harness_graph("你好", "session-greeting", {})))
+
+    published = []
+    for block in events.strip().split("\n\n"):
+        if not block:
+            continue
+        event_name = next(line.removeprefix("event: ") for line in block.splitlines() if line.startswith("event: "))
+        payload = json.loads(next(line.removeprefix("data: ") for line in block.splitlines() if line.startswith("data: ")))
+        published.append((event_name, payload))
+
+    workflow_statuses = [
+        (payload["status"], payload["stage"])
+        for event_name, payload in published
+        if event_name == "workflow_status"
+    ]
+    assert workflow_statuses == [
+        ("running", "understand"),
+        ("loaded", "understand"),
+        ("turn_resolved", "understand"),
+        ("planned", "planning"),
+        ("completed", "completed"),
+    ]
+    plan_index = next(index for index, (name, _) in enumerate(published) if name == "plan")
+    planned_status_index = next(
+        index for index, (name, payload) in enumerate(published)
+        if name == "workflow_status" and payload["status"] == "planned"
+    )
+    assert published[plan_index][1]["steps"] == []
+    assert plan_index < planned_status_index
 
 
 def test_harness_stream_publishes_sourcing_references_before_terminal_event(monkeypatch):

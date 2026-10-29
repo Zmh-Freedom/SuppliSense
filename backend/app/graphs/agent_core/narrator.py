@@ -44,6 +44,40 @@ _COMPANY_PATTERN = re.compile(
 )
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[+-]?\d+(?:\.\d+)?%?")
 _STANDARD_CODE_PATTERN = re.compile(r"\b(?:ISO|IATF|AS|SA)\s*-?\s*\d{4,5}\b", re.IGNORECASE)
+_CONCLUSION_CLAUSE_BOUNDARY_PATTERN = re.compile(r"不过|然而|但是|可是|但|[，,；;。！？\n]")
+_SENTIMENT_SOURCE_MARKERS = ("舆情", "新闻", "报道", "sentiment", "news")
+_SOURCE_UNAVAILABLE_MARKERS = (
+    "unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂不可用",
+    "未完成查询", "未能查询", "未查询", "缺少", "未覆盖", "无法确认",
+)
+_CONFIRMED_EMPTY_MARKERS = (
+    "confirmed_empty", "已确认无记录", "已确认未发现", "已确认没有", "已确认未找到",
+    "确认未发现相关新闻", "确认无相关新闻", "查询已完成，已确认未发现", "检索已完成，已确认未发现",
+)
+_EMPTY_RESULT_MARKERS = (
+    *_CONFIRMED_EMPTY_MARKERS,
+    "未发现相关新闻", "未发现相关报道", "没有相关新闻", "没有相关报道",
+    "未检索到相关新闻", "未检索到相关报道",
+)
+_CONCLUSION_TOPICS = (
+    "重大诉讼", "诉讼", "行政处罚", "制裁", "失信", "经营异常", "负面舆情", "负面新闻", "风险信号",
+)
+_POSITIVE_FINDING_MARKERS = (
+    "存在", "发现", "发生", "命中", "有", "高风险", "风险较高", "风险偏高", "风险较大", "风险严重", "风险突出",
+)
+_NEGATIVE_FINDING_MARKERS = (
+    "未发现", "不存在", "并非存在", "并无", "没有", "无", "未发生", "未命中", "未查到",
+)
+_UNCERTAIN_FINDING_MARKERS = (
+    "是否", "能否", "无法确认", "无法判断", "尚不明确", "不确定", "待核实", "需核实", "可能", "疑似",
+)
+_PROCUREMENT_RECOMMENDATION_PATTERN = re.compile(
+    r"(?P<lead>请\s*(?:立即|马上|尽快|暂时|先)?|必须|务必|立即|马上|尽快|建议|推荐|应当|应该|不建议|避免|可以|可)\s*"
+    r"(?P<phrase>(?:.{0,12}?(?:扩大|增加|提升|降低|减少|暂停|停止|替换|切换|淘汰)"
+    r".{0,8}?(?:采购策略|采购份额|采购量|采购|订单份额|订单量|订单|份额|供应商|合作|物料|原材料|品类)"
+    r"|.{0,8}?(?:采购|下单|合作)"
+    r"(?:.{0,8}?(?:采购策略|采购份额|采购量|采购|订单份额|订单量|订单|份额|供应商|合作|物料|原材料|品类|复核))?))"
+)
 
 
 def _normalized_numbers(text: str) -> set[str]:
@@ -80,24 +114,230 @@ def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
     ]
 
 
-def _requested_topic_terms(user_message: str) -> tuple[str, ...]:
-    """Return a small topic guard so narration cannot erase the question."""
-    topic_rules = (
-        (("寻源", "找供应商", "寻找供应商", "供应商候选"), ("寻源", "供应商候选", "候选供应商")),
-        (("综合风险", "风险情况", "风险评估", "风险分析"), ("综合风险分析", "风险评估", "风险分析")),
-        (("供应链关系", "关联关系", "传染风险", "风险传染"), ("供应链", "关联", "传染")),
-        (("财务", "营收", "净利润"), ("财务", "营收", "净利润")),
-        (("舆情", "新闻", "负面信息"), ("舆情", "新闻", "负面")),
-        (("合规", "制裁", "黑名单"), ("合规", "制裁", "名单")),
-        (("ESG", "esg", "环境社会治理"), ("ESG", "环境", "社会", "治理")),
-        (("趋势", "变化"), ("趋势", "变化", "恶化", "改善", "稳定")),
-        (("司法", "诉讼", "被执行", "失信"), ("司法", "诉讼", "被执行", "失信")),
-        (("报告", "导出"), ("报告", "导出")),
+def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    normalized = text.casefold()
+    return any(marker.casefold() in normalized for marker in markers)
+
+
+def _limitation_is_preserved(limitation: str, narrative_text: str) -> bool:
+    """Require a complete limitation phrase; never trust it as a substring."""
+    return _normalize_limitation_text(limitation) == _normalize_limitation_text(narrative_text)
+
+
+def _narrative_contains_limitation(limitation: str, narrative_text: str) -> bool:
+    sentences = [sentence.strip() for sentence in re.split(r"[。！？；;\n]+", narrative_text) if sentence.strip()]
+    for sentence in sentences:
+        clauses = [clause.strip() for clause in re.split(r"[，,、]+", sentence) if clause.strip()]
+        if len(clauses) > 100:
+            return False
+        for start in range(len(clauses)):
+            for end in range(start + 1, len(clauses) + 1):
+                candidate = "，".join(clauses[start:end])
+                if _limitation_is_preserved(limitation, candidate):
+                    return True
+    return False
+
+
+def _source_state_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    source_text = " ".join([answer.summary, *answer.limitations]).casefold()
+    if not _has_any_marker(source_text, _SENTIMENT_SOURCE_MARKERS):
+        return None
+    source_unavailable = _has_any_marker(source_text, _SOURCE_UNAVAILABLE_MARKERS)
+    source_empty = _has_any_marker(source_text, _CONFIRMED_EMPTY_MARKERS)
+    narrative_unavailable = _has_any_marker(narrative_text, _SOURCE_UNAVAILABLE_MARKERS)
+    narrative_empty = _has_any_marker(narrative_text, _EMPTY_RESULT_MARKERS)
+    if source_unavailable and not narrative_unavailable:
+        return "omitted_sentiment_source_unavailable"
+    if source_empty and not narrative_empty:
+        return "omitted_confirmed_empty_sentiment_result"
+    if narrative_unavailable and not source_unavailable:
+        return "unsupported_sentiment_source_failure"
+    if narrative_empty and not source_empty:
+        return "unsupported_confirmed_empty_sentiment_result"
+    if source_unavailable and not source_empty and narrative_empty:
+        return "sentiment_source_failure_misrepresented_as_empty"
+    if source_empty and not source_unavailable and narrative_unavailable:
+        return "confirmed_empty_sentiment_result_misrepresented_as_failure"
+    return None
+
+
+def _finding_polarities(text: str, topic: str) -> set[str]:
+    polarities: set[str] = set()
+    for match in re.finditer(re.escape(topic), text):
+        previous_boundaries = list(_CONCLUSION_CLAUSE_BOUNDARY_PATTERN.finditer(text, 0, match.start()))
+        following_boundary = _CONCLUSION_CLAUSE_BOUNDARY_PATTERN.search(text, match.end())
+        clause_start = previous_boundaries[-1].end() if previous_boundaries else 0
+        clause_end = following_boundary.start() if following_boundary else len(text)
+        context = _COMPANY_PATTERN.sub("", text[clause_start:clause_end])
+        # Classify within the topic's clause. Unknown stays separate from a
+        # finding, and a negation in an adjacent topic cannot mask it.
+        if _has_any_marker(context, _UNCERTAIN_FINDING_MARKERS):
+            polarities.add("uncertain")
+        elif _has_any_marker(context, _NEGATIVE_FINDING_MARKERS):
+            polarities.add("negative")
+        elif _has_any_marker(context, _POSITIVE_FINDING_MARKERS):
+            polarities.add("positive")
+    return polarities
+
+
+def _conclusion_polarity_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    source_text = " ".join([
+        answer.summary,
+        *(claim.statement for claim in answer.claims if claim.validation_status == "supported"),
+    ])
+    for topic in _CONCLUSION_TOPICS:
+        source_polarities = _finding_polarities(source_text, topic)
+        narrative_polarities = _finding_polarities(narrative_text, topic)
+        if len(narrative_polarities) > 1:
+            return f"conflicting_narrated_conclusion:{topic}"
+        if len(narrative_polarities) == 1 and source_polarities != narrative_polarities:
+            if source_polarities == {"uncertain"}:
+                return f"conclusion_from_uncertain_source:{topic}"
+            if len(source_polarities) == 1:
+                return f"reversed_verified_conclusion:{topic}"
+            return f"unsupported_or_ambiguous_conclusion:{topic}"
+    return None
+
+
+def _has_uncertain_conclusion(answer: AgentAnswer) -> bool:
+    source_text = " ".join([
+        answer.summary,
+        *(claim.statement for claim in answer.claims if claim.validation_status == "supported"),
+    ])
+    return any(
+        "uncertain" in _finding_polarities(source_text, topic)
+        for topic in _CONCLUSION_TOPICS
     )
-    for request_tokens, response_tokens in topic_rules:
+
+
+def _procurement_recommendation_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    proposal_labels = {
+        str(proposal.get("label") or "").strip()
+        for proposal in answer.action_proposals
+        if isinstance(proposal, dict)
+    }
+    for match in _PROCUREMENT_RECOMMENDATION_PATTERN.finditer(narrative_text):
+        lead = match.group("lead").strip()
+        phrase = match.group("phrase").strip(" ，,、；")
+        if re.match(r"^(?:请|必须|务必|立即|马上|尽快)", lead):
+            return "unsupported_procurement_instruction"
+        if phrase not in proposal_labels:
+            return "unsupported_procurement_recommendation"
+    return None
+
+
+def _normalize_fact_clause(text: str) -> str:
+    """Normalize punctuation while preserving numeric values, units, and order."""
+    text = re.sub(r"(?m)^\s*[-+>#]+\s*", "", text)
+    text = re.sub(r"[*_`~]", "", text)
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"[，,。；;！？!：:、（）()【】\[\]{}\"“”‘’]", "", text)
+
+    def number_marker(match: re.Match[str]) -> str:
+        token = match.group(0)
+        try:
+            value = format(float(token.rstrip("%")), "g")
+        except ValueError:
+            value = token.rstrip("%")
+        unit = "%" if token.endswith("%") else ""
+        return f"<number:{value}{unit}>"
+
+    text = _NUMBER_PATTERN.sub(number_marker, text)
+    return re.sub(r"为(?=<number:)", "", text).casefold()
+
+
+def _normalize_limitation_text(text: str) -> str:
+    """Normalize only known wording variants and keep every other word exact."""
+    normalized = text.casefold()
+    for source, equivalent in (
+        ("目前", ""),
+        ("财务资料", "财务数据"),
+        ("覆盖不足", "未覆盖"),
+        ("暂不能判断", "无法判断"),
+    ):
+        normalized = normalized.replace(source, equivalent)
+    return _normalize_fact_clause(normalized)
+
+
+def _clause_matches_structured_proposal(clause: str, answer: AgentAnswer) -> bool:
+    match = _PROCUREMENT_RECOMMENDATION_PATTERN.fullmatch(clause.strip().rstrip("。！？；;，,"))
+    if match is None or re.match(r"^(?:请|必须|务必|立即|马上|尽快)", match.group("lead").strip()):
+        return False
+    phrase = match.group("phrase").strip(" ，,、；")
+    labels = {
+        str(proposal.get("label") or "").strip()
+        for proposal in answer.action_proposals
+        if isinstance(proposal, dict)
+    }
+    return phrase in labels and _normalize_fact_clause(clause) == _normalize_fact_clause(
+        f"{match.group('lead')}{phrase}"
+    )
+
+
+def _narrative_body_is_evidence_bound(body: str, answer: AgentAnswer) -> bool:
+    """Accept only source text, validated limitation paraphrases, or proposal labels."""
+    source_phrases = [answer.summary, *answer.limitations]
+    source_phrases.extend(
+        claim.statement
+        for claim in answer.claims
+        if claim.validation_status == "supported"
+    )
+    normalized_sources = {_normalize_fact_clause(phrase) for phrase in source_phrases if phrase.strip()}
+    normalized_body = _normalize_fact_clause(body)
+    if normalized_body in normalized_sources:
+        return True
+
+    sentences = [sentence.strip() for sentence in re.split(r"[。！？；;\n]+", body) if sentence.strip()]
+    if not sentences:
+        return False
+
+    def sentence_is_supported(sentence: str) -> bool:
+        normalized_sentence = _normalize_fact_clause(sentence)
+        if normalized_sentence in normalized_sources:
+            return True
+        clauses = [clause.strip() for clause in re.split(r"[，,、]+", sentence) if clause.strip()]
+        if len(clauses) > 100:
+            return False
+
+        def clauses_are_supported(index: int) -> bool:
+            if index >= len(clauses):
+                return True
+            clause = clauses[index]
+            if (
+                _normalize_fact_clause(clause) in normalized_sources
+                or _clause_matches_structured_proposal(clause, answer)
+            ) and clauses_are_supported(index + 1):
+                return True
+            for end in range(index + 1, len(clauses) + 1):
+                joined = "，".join(clauses[index:end])
+                if any(_limitation_is_preserved(limitation, joined) for limitation in answer.limitations):
+                    if clauses_are_supported(end):
+                        return True
+            return False
+
+        return clauses_are_supported(0)
+
+    return all(sentence_is_supported(sentence) for sentence in sentences)
+
+
+def _requested_topic_rule(user_message: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return visible wording and supported Claim dimensions for the main request."""
+    topic_rules = (
+        (("寻源", "找供应商", "寻找供应商", "供应商候选"), ("寻源", "供应商候选", "候选供应商"), ("sourcing",)),
+        (("综合风险", "风险情况", "风险评估", "风险分析"), ("综合风险分析", "风险评估", "风险分析"), ("risk", "risk_trend", "risk_comparison", "risk_monitoring")),
+        (("供应链关系", "关联关系", "传染风险", "风险传染"), ("供应链", "关联", "传染"), ()),
+        (("财务", "营收", "净利润"), ("财务", "营收", "净利润"), ("financial",)),
+        (("舆情", "新闻", "负面信息"), ("舆情", "新闻", "负面"), ("sentiment",)),
+        (("合规", "制裁", "黑名单"), ("合规", "制裁", "名单"), ("compliance",)),
+        (("ESG", "esg", "环境社会治理"), ("ESG", "环境", "社会", "治理"), ("esg",)),
+        (("趋势", "变化"), ("趋势", "变化", "恶化", "改善", "稳定"), ("risk_trend",)),
+        (("司法", "诉讼", "被执行", "失信"), ("司法", "诉讼", "被执行", "失信"), ("legal_risk",)),
+        (("报告", "导出"), ("报告", "导出"), ()),
+    )
+    for request_tokens, response_tokens, dimensions in topic_rules:
         if any(token in user_message for token in request_tokens):
-            return response_tokens
-    return ()
+            return response_tokens, dimensions
+    return (), ()
 
 
 def _draft_validation_error(
@@ -108,14 +348,18 @@ def _draft_validation_error(
     """Return a stable rejection reason when prose exceeds validated facts."""
     claims = _claim_payload(answer)
     claim_ids = {str(item["claim_id"]) for item in claims}
+    narrative_text = f"{draft.headline}\n{draft.body_markdown}"
     if claims and not draft.claim_refs:
         return "missing_claim_refs"
     if not set(draft.claim_refs).issubset(claim_ids):
         return "unknown_claim_ref"
-    source_text = " ".join(str(item.get("statement") or "") for item in claims)
-    allowed_numbers = _normalized_numbers(source_text) | _normalized_numbers(answer.summary) | {"100"}
-    allowed_numeric_values = _numeric_values(source_text) | _numeric_values(answer.summary) | {100.0}
-    for number in _normalized_numbers(draft.body_markdown):
+    source_text = " ".join([
+        answer.summary,
+        *(str(item.get("statement") or "") for item in claims),
+    ])
+    allowed_numbers = _normalized_numbers(source_text) | {"100"}
+    allowed_numeric_values = _numeric_values(source_text) | {100.0}
+    for number in _normalized_numbers(narrative_text):
         if number in allowed_numbers:
             continue
         try:
@@ -125,12 +369,18 @@ def _draft_validation_error(
         if not any(math.isclose(numeric_value, allowed, rel_tol=1e-9, abs_tol=1e-9) for allowed in allowed_numeric_values):
             return f"unsupported_number:{number}"
     allowed_companies = set(_COMPANY_PATTERN.findall(source_text))
-    for name in _COMPANY_PATTERN.findall(draft.body_markdown):
+    for name in _COMPANY_PATTERN.findall(narrative_text):
         if name not in allowed_companies:
             return f"unsupported_company:{name}"
-    narrative_text = f"{draft.headline}\n{draft.body_markdown}"
-    topic_terms = _requested_topic_terms(user_message)
-    if topic_terms and not any(term in narrative_text for term in topic_terms):
+    topic_terms, topic_dimensions = _requested_topic_rule(user_message)
+    visible_topic = any(term in draft.body_markdown for term in topic_terms)
+    visible_claim_dimension = any(
+        claim.validation_status == "supported"
+        and claim.dimension in topic_dimensions
+        and _normalize_fact_clause(claim.statement) in _normalize_fact_clause(draft.body_markdown)
+        for claim in answer.claims
+    )
+    if topic_terms and not (visible_topic or visible_claim_dimension):
         return "missing_requested_topic"
     requirement_match = re.search(r"检索条件：(.+?)(?:。|$)", answer.summary)
     if requirement_match:
@@ -138,9 +388,23 @@ def _draft_validation_error(
             label, separator, value = condition.partition("：")
             if separator and value and value not in narrative_text:
                 return f"missing_sourcing_constraint:{label}"
+    source_state_error = _source_state_error(answer, narrative_text)
+    if source_state_error is not None:
+        return source_state_error
+    for limitation in answer.limitations:
+        if not _narrative_contains_limitation(limitation, draft.body_markdown):
+            return "missing_limitation"
+    conclusion_error = _conclusion_polarity_error(answer, narrative_text)
+    if conclusion_error is not None:
+        return conclusion_error
+    recommendation_error = _procurement_recommendation_error(answer, narrative_text)
+    if recommendation_error is not None:
+        return recommendation_error
+    if not _narrative_body_is_evidence_bound(draft.body_markdown, answer):
+        return "unsupported_narrative_clause"
     # A narrative must not turn a recommendation into a completed write action.
     forbidden_success = ("已加入监控", "已完成审批", "已切换供应商", "已暂停采购")
-    if not answer.action_receipts and any(token in draft.body_markdown for token in forbidden_success):
+    if not answer.action_receipts and any(token in narrative_text for token in forbidden_success):
         return "forbidden_success_action"
     return None
 
@@ -157,6 +421,10 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         # normalized sourcing request and candidate result. Rewriting it from
         # evidence claims would drop user-provided filters or add unsupported
         # procurement advice.
+        return answer
+    # A deterministic unknown conclusion is already the safest user-facing
+    # result. Do not ask a model to resolve it through unrestricted paraphrase.
+    if _has_uncertain_conclusion(answer):
         return answer
     if not settings.LLM_API_KEY or not answer.claims:
         return answer
@@ -178,16 +446,14 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         "current_status": answer.status,
         "rules": [
             "Return one JSON object only, matching response_schema.",
-            "只根据 validated_claims 和 limitations 写采购人员能直接理解的结论。",
-            "不得新增公司、数字、日期、风险等级、来源或采购动作。",
-            "如果存在 limitations，只能说明当前资料覆盖不足，不能把缺失数据推断成风险。",
+            "headline 不会直接展示给用户。",
+            "body_markdown 的每个事实分句都必须逐字取自 deterministic_summary、validated_claims 或 limitations；只可调整标点、空格和数字显示格式，不得改写事实。",
+            "如果这些来源不足以回答用户问题，原样复制 deterministic_summary；不得自行补写事实、影响分析或下一步建议。",
+            "不得在标题或正文新增公司、数字、日期、风险等级、来源或采购动作。",
+            "如果存在 limitations，必须保留每条限制的关键含义，不能把缺失数据推断成风险；无法可靠改写时原样复述或保留 deterministic_summary。",
+            "必须区分来源不可用、尚未查询、检索无结果和已确认空结果；不得互相替换，也不得根据 needs_review 推断发现了风险。",
             "如果 deterministic_summary 含有‘检索条件’，最终正文必须保留该行里的每个需求值，包括地区、预算、数量、规格和资质；可以用自然表述，但不可遗漏、替换或新增约束。",
-            "如果 validated_claims 中 articles_count 大于0，必须说明已有新闻可在下方逐条查看，不能写“未包含新闻原文”或“无法逐条列出原文”。",
             "不要输出表格，不要提及 Claim、证据复核点、Harness、工具、任务、模型或内部字段。",
-            "不要只复述综合风险评分或套用‘供应商复核’；必须先回答用户明确请求的主能力。",
-            "用 3-5 个简短段落展开：第一段给出主结论；第二段说明关键依据；第三段解释对采购的影响和数据边界；最后给出下一步核验建议。",
-            "如果用户同时询问多个能力，先回答最明确、最具体的能力，再把其他已验证维度作为补充，不要遗漏主问题。",
-            "关系分析必须区分直接供应链依赖、分支机构和同行业关联；只有 Claim 明确支持时，才能称为直接供应链关系或风险传染路径。",
             "claim_refs 只能填写实际使用的 validated_claims 的 claim_id。",
         ],
         "response_schema": NarrativeDraft.model_json_schema(),
@@ -237,7 +503,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         )
         draft = NarrativeDraft.model_validate(payload)
         if article_count > 0 and any(
-            phrase in draft.body_markdown
+            phrase in f"{draft.headline}\n{draft.body_markdown}"
             for phrase in ("未包含新闻原文", "无法逐条列出原文", "没有新闻原文")
         ):
             return degraded("article_evidence_contradiction", getattr(response, "_request_id", None))
@@ -249,7 +515,10 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             elapsed_ms=round((time.monotonic() - started_at) * 1000),
             request_id=getattr(response, "_request_id", None),
         )
-        return answer.model_copy(update={"summary": f"{draft.headline}\n\n{draft.body_markdown}"})
+        # Never render the model-authored headline. The body is accepted only
+        # when each factual clause is source text or a validated limitation
+        # paraphrase, so use a fixed heading in the user-facing answer.
+        return answer.model_copy(update={"summary": f"核验结果\n\n{draft.body_markdown}"})
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
         return degraded(f"invalid_response:{type(exc).__name__}")
     except Exception as exc:

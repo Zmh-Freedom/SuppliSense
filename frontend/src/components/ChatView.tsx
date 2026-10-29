@@ -313,7 +313,7 @@ export default function ChatView() {
     setLoading(true);
     const initialWorkflow = createWorkflowSnapshot();
     workflowAccRef.current = initialWorkflow;
-    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], agentAnswer: null, evidence: [], workflowStatus: initialWorkflow, queryText: text });
+    setStreamState({ thinking: '', plan: null, agents: null, toolCalls: [], answerChunks: [], answerStarted: false, approval: null, approvalSubmitting: false, charts: [], references: [], agentAnswer: null, evidence: [], workflowStatus: initialWorkflow });
     answerAccRef.current = '';
     approvalAccRef.current = null;
     referencesAccRef.current = [];
@@ -1389,7 +1389,6 @@ export default function ChatView() {
             <button onClick={newChat} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
               + 新对话
             </button>
-            {loading && <span role="status" aria-live="polite" className="text-xs text-[var(--color-text-secondary)]">{streamState?.workflowStatus?.message || '正在提交并等待 Agent 响应…'}</span>}
           </div>
         </div>
       </div>

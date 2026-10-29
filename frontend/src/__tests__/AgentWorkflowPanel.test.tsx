@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ApprovalData } from '../api'
 import AgentWorkflowPanel from '../components/AgentWorkflowPanel'
 import type { AgentWorkflowState } from '../components/AgentWorkflowPanel'
+import type { AgentWorkflowSnapshot } from '../types'
 
 const approval: ApprovalData = {
   message: '准备将候选供应商加入监控清单',
@@ -63,27 +64,113 @@ function createState(overrides: Partial<AgentWorkflowState> = {}): AgentWorkflow
 }
 
 describe('AgentWorkflowPanel', () => {
-  it('renders a risk-focused milestone summary and keeps execution details collapsed', async () => {
-    render(<AgentWorkflowPanel state={createState()} onApproval={vi.fn()} />)
+  it('uses the latest actual workflow message for the concise live status line', () => {
+    const state = createState()
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      stage: 'evidence',
+      message: '正在补充查询正式供应商目录',
+    }
 
-    expect(screen.getByText('确认分析对象')).toBeInTheDocument()
-    expect(screen.getByText('查询企业和风险信息')).toBeInTheDocument()
-    expect(screen.getByText('核对近期风险证据')).toBeInTheDocument()
-    expect(screen.getByText('整理风险要点和来源')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('正在核对近期风险证据')
-    expect(screen.getByText(/已完成\s*1\s*项查询/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '查看执行详情' })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('风险 Agent')).not.toBeInTheDocument()
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
 
-    await userEvent.setup().click(screen.getByRole('button', { name: '查看执行详情' }))
-    expect(screen.getByText('当前状态：正在处理')).toBeInTheDocument()
-    expect(screen.getByLabelText('风险 Agent：进行中')).toBeInTheDocument()
-    expect(screen.getByLabelText('舆情 Agent：异常')).toBeInTheDocument()
-    expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
-    expect(screen.getByText('1. 综合风险核验')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在补充查询正式供应商目录')
+    expect(screen.queryByText('当前阶段：证据汇总')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
   })
 
-  it('shows parsed fields and whether each came from this turn or conversation context', async () => {
+  it('hides completed historical workflow details', () => {
+    const state = createState()
+    state.historical = true
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'completed',
+      stage: 'completed',
+      message: '恢复的历史快照：本轮工作流已完成',
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('does not present a saved running snapshot as a live run or historical status card', () => {
+    const state = createState({ historical: true })
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'running',
+      message: '上次事件：正在执行工具',
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+  })
+
+  it('safely hides completed legacy snapshots that lack optional progress arrays', () => {
+    const legacySnapshot = {
+      status: 'completed',
+      stage: 'completed',
+      message: '旧版本保存的状态',
+    } as AgentWorkflowSnapshot
+
+    expect(() => render(<AgentWorkflowPanel state={createState({ workflowStatus: legacySnapshot })} onApproval={vi.fn()} />)).not.toThrow()
+    expect(screen.queryByText('旧版本保存的状态')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['failed', '执行遇到问题'],
+    ['cancelled', '本轮已取消'],
+  ])('keeps %s distinct without inferred milestones', (status, expectedLabel) => {
+    const state = createState()
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status,
+      message: `服务端状态：${status}`,
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.getByText(expectedLabel)).toBeInTheDocument()
+    const statusRegion = status === 'failed' ? screen.getByRole('alert') : screen.getByRole('status')
+    expect(statusRegion).toHaveTextContent(`服务端状态：${status}`)
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
+  })
+
+  it('shows one concise progress line while a run is active', () => {
+    render(<AgentWorkflowPanel state={createState()} onApproval={vi.fn()} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent('正在汇总证据')
+    expect(screen.queryByText('当前阶段：证据汇总')).not.toBeInTheDocument()
+    expect(screen.queryByText('分析对象：示例供应商')).not.toBeInTheDocument()
+    expect(screen.queryByText('工具查询：已完成 1/2 项')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('风险 Agent')).not.toBeInTheDocument()
+  })
+
+  it('hides completed workflow detail text', () => {
+    const state = createState({ historical: true })
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'completed',
+      stage: 'completed',
+      message: '已完成实际记录的核验',
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('当前状态：本轮查询已完成')).not.toBeInTheDocument()
+    expect(screen.queryByText('已完成实际记录的核验')).not.toBeInTheDocument()
+  })
+
+  it('keeps parsed fields in the saved snapshot without exposing them in completed history', () => {
     const state = createState()
     state.workflowStatus = {
       ...state.workflowStatus!,
@@ -102,16 +189,13 @@ describe('AgentWorkflowPanel', () => {
       },
     }
 
+    state.workflowStatus = { ...state.workflowStatus!, status: 'completed', stage: 'completed' }
+    state.historical = true
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
-    await userEvent.setup().click(screen.getByRole('button', { name: '查看执行详情' }))
 
-    expect(screen.getByText('本轮理解')).toBeInTheDocument()
-    expect(screen.getByText('甲电机有限公司')).toBeInTheDocument()
-    expect(screen.getByText('会话上下文')).toBeInTheDocument()
-    expect(screen.getByText('本轮输入')).toBeInTheDocument()
-    expect(screen.getByText(/财务分析/)).toBeInTheDocument()
-    expect(screen.getByText('用户想看甲电机有限公司的财务表现。')).toBeInTheDocument()
-    expect(screen.getByLabelText('理解中的歧义')).toHaveTextContent('时间范围没有明确指定。')
+    expect(state.workflowStatus.inputUnderstanding?.target_supplier_names).toEqual(['甲电机有限公司'])
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('甲电机有限公司')).not.toBeInTheDocument()
   })
 
   it('keeps review as an explicit human review state instead of marking it as a decision complete', () => {
@@ -125,39 +209,54 @@ describe('AgentWorkflowPanel', () => {
 
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
     expect(screen.getByText('需要人工复核')).toBeInTheDocument()
-    expect(screen.getByText(/最终判断由你确认/)).toBeInTheDocument()
-    expect(screen.getByLabelText('整理风险要点和来源：待你处理')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('结果需要人工复核')
+    expect(screen.queryByText('风险决策')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
     expect(screen.queryByText(/已用时/)).not.toBeInTheDocument()
     expect(screen.getByRole('status').querySelector('span')).toHaveClass('bg-amber-500')
   })
 
-  it('uses sourcing milestones for a sourcing request', () => {
-    render(<AgentWorkflowPanel state={createState({ queryText: '帮我找几家可替代的供应商' })} onApproval={vi.fn()} />)
+  it('keeps specific review details when a generic final status is already covered by the answer', () => {
+    const state = createState({ answerText: '甲公司存在待核实的履约异常。' })
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'needs_review',
+      stage: 'decision',
+      message: '尚未取得后续订单的交付记录，无法判断异常是否持续。',
+    }
 
-    expect(screen.getByText('确认采购条件')).toBeInTheDocument()
-    expect(screen.getByText('搜索候选供应商')).toBeInTheDocument()
-    expect(screen.getByText('核对交付与风险信息')).toBeInTheDocument()
-    expect(screen.getByText('整理候选对比和来源')).toBeInTheDocument()
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent('需要人工复核')
+    expect(screen.getByRole('status')).toHaveTextContent('尚未取得后续订单的交付记录，无法判断异常是否持续。')
   })
 
-  it('uses comparison milestones for a supplier comparison request', () => {
-    render(<AgentWorkflowPanel state={createState({ queryText: '对比示例供应商和华东精密的风险差异' })} onApproval={vi.fn()} />)
+  it('keeps approval actions when a generic final review status is suppressed', () => {
+    const state = createState({ answerText: '甲公司存在已确认的履约异常。', approval })
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'needs_review',
+      stage: 'decision',
+      message: '结果需要人工复核',
+    }
 
-    expect(screen.getByText('确认对比对象')).toBeInTheDocument()
-    expect(screen.getByText('收集双方相关数据')).toBeInTheDocument()
-    expect(screen.getByText('对齐风险与业务差异')).toBeInTheDocument()
-    expect(screen.getByText('整理对比结果和来源')).toBeInTheDocument()
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '需要人工确认' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '批准动作' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '拒绝动作' })).toBeInTheDocument()
   })
 
-  it('does not move the active milestone backward when evidence remediation returns to execution', () => {
+  it('shows the latest server message when evidence remediation returns to execution', () => {
     const state = createState()
     const { rerender } = render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
 
     state.workflowStatus = { ...state.workflowStatus!, stage: 'executing', message: '正在补充查询', toolCallCount: 3 }
     rerender(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('正在核对近期风险证据')
-    expect(screen.getByLabelText('核对近期风险证据：进行中')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在补充查询')
+    expect(screen.queryByText('Agent 执行')).not.toBeInTheDocument()
   })
 
   it('shows clarification as waiting for user input', () => {
@@ -168,6 +267,7 @@ describe('AgentWorkflowPanel', () => {
 
     expect(screen.getByText('需要补充信息')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('请补充供应商名称')
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
   })
 
   it('shows approval details and sends approve or reject decisions', async () => {
@@ -178,6 +278,7 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByRole('button', { name: '批准动作' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '需要人工确认' })).toBeInTheDocument()
     expect(screen.getByText('动作：add_to_watchlist')).toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '批准动作' }))
     expect(onApproval).toHaveBeenCalledWith(true)
     await user.click(screen.getByRole('button', { name: '拒绝动作' }))
