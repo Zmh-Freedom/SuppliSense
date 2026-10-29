@@ -35,6 +35,23 @@ function hasBusinessAnswer(answer?: AgentAnswer | null): boolean {
   );
 }
 
+function hasVerifiedBusinessAnalysis(answer?: AgentAnswer | null, evidence: AgentEvidenceRecord[] = []): boolean {
+  if (!answer || answer.status === 'failed') return false;
+  return answer.claims?.some(claim => {
+    if (claim.validation_status !== 'supported' || !claim.evidence_refs?.length) return false;
+    return evidence.some(record => {
+      if (!claim.evidence_refs.includes(record.evidence_id)
+        || record.entity_id !== claim.entity_id
+        || record.dimension !== claim.dimension
+        || record.status !== 'available'
+        || record.data_mode !== 'formal') return false;
+      if (record.valid_until == null) return true;
+      const validUntil = Date.parse(record.valid_until);
+      return Number.isFinite(validUntil) && validUntil > Date.now();
+    });
+  }) ?? false;
+}
+
 function hasWorkflowActivity(workflow?: AgentWorkflowSnapshot, hasApproval = false, hasEvidence = false, hasReferences = false): boolean {
   return Boolean(
     hasApproval
@@ -142,7 +159,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
           {message.role === 'user' ? '你' : 'AI'}
         </div>
         <div className={`${message.role === 'user' ? 'max-w-[80%]' : 'min-w-0 flex-1 max-w-5xl'} rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${message.role === 'user' ? 'bg-[var(--color-code-bg)] text-[var(--color-text)]' : 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text)]'}`}>
-          <AssistantRichText content={message.agentAnswer?.summary || message.content} label={message.agentAnswer ? '采购分析' : undefined} />
+          <AssistantRichText content={message.agentAnswer?.summary || message.content} label={hasVerifiedBusinessAnalysis(message.agentAnswer, message.evidence) ? '采购分析' : undefined} />
           {message.role === 'assistant' && message.identityCandidates && <SupplierIdentityChoices candidates={message.identityCandidates} originalMessage={message.clarificationMessage} onConfirm={onConfirmSupplier} />}
           {message.role === 'assistant' && message.references && message.references.length > 0 && <details className="group mt-3 border-t border-[var(--color-border)] pt-2">
             <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 py-1 text-left text-xs text-[var(--color-text-secondary)] [&::-webkit-details-marker]:hidden">
@@ -161,7 +178,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
         {shouldShowWorkflowPanel({ answer: streamState.agentAnswer, workflow: streamState.workflowStatus, hasApproval: Boolean(streamState.approval), hasEvidence: Boolean(streamState.evidence.length), hasReferences: Boolean(streamState.references.length), hasPlan: Boolean(streamState.plan?.length), hasToolCalls: Boolean(streamState.toolCalls.length), hasError: Boolean(streamState.error), liveStream: true }) && <AgentWorkflowPanel state={{ ...streamState, answerText: streamState.agentAnswer?.summary || streamState.answerChunks.join('') }} onApproval={onApproval} />}
         {streamState.charts.map((chart, index) => <ChartRenderer key={`chart-${index}`} data={chart} />)}
         {streamState.answerChunks.length > 0 && <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
-          <AssistantRichText content={streamState.agentAnswer?.summary || streamState.answerChunks.join('')} label={streamState.agentAnswer ? '采购分析' : undefined} />
+          <AssistantRichText content={streamState.agentAnswer?.summary || streamState.answerChunks.join('')} label={hasVerifiedBusinessAnalysis(streamState.agentAnswer, streamState.evidence) ? '采购分析' : undefined} />
           <span className="inline-block w-2 h-4 bg-[var(--color-primary-bg)] animate-pulse ml-1" />
           {streamState.references.length > 0 && <div className="mt-3 border-t border-[var(--color-border)] pt-2 text-xs text-gray-500">识别到：{streamState.references.map(reference => reference.name).join('、')}</div>}
           <StructuredAgentResult answer={streamState.agentAnswer ?? undefined} evidence={streamState.evidence} />
