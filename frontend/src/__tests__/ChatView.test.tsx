@@ -222,6 +222,7 @@ describe('ChatView session lifecycle', () => {
     expect(await screen.findByText(reply)).toBeInTheDocument()
     expect(screen.getAllByText(reply)).toHaveLength(1)
     expect(screen.queryByRole('region', { name: 'Agent 分析结果' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
     expect(screen.queryByText('数据说明')).not.toBeInTheDocument()
     expect(screen.queryByText('采购建议')).not.toBeInTheDocument()
   })
@@ -259,7 +260,11 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    expect(await screen.findByText(/连接已结束，但服务端没有返回最终结果/)).toBeInTheDocument()
+    const finalStatusMessage = /连接已结束，但服务端没有返回最终结果/
+    expect(await screen.findByText(finalStatusMessage)).toBeInTheDocument()
+    expect(screen.getAllByText(finalStatusMessage)).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: '查看执行详情' }))
+    expect(screen.getAllByText(finalStatusMessage)).toHaveLength(1)
   })
 
   it('replays a persisted terminal answer after a clean stream close', async () => {
@@ -761,6 +766,46 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
   })
 
+  it('restores only persisted workflow state after refresh when legacy progress fields are missing', () => {
+    const legacyWorkflow = {
+      status: 'running',
+      stage: 'executing',
+      message: '上次事件：正在执行工具',
+    }
+    localStorage.setItem('chat_sessions', JSON.stringify([{
+      ...OLD_SESSION,
+      msgs: [
+        { role: 'user', content: '对比两家供应商' },
+        { role: 'assistant', content: '任务仍在处理。', workflow: legacyWorkflow },
+      ],
+    }]))
+
+    const view = renderChat()
+    expect(screen.getByRole('status')).toHaveTextContent('历史记录仍显示处理中，当前状态未知')
+    expect(screen.getByRole('status')).toHaveTextContent('上次事件：正在执行工具')
+    expect(screen.queryByText(/已用时/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
+
+    view.unmount()
+    renderChat()
+    expect(screen.getByRole('status')).toHaveTextContent('历史记录仍显示处理中，当前状态未知')
+    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
+    expect(mocks.chatStream).not.toHaveBeenCalled()
+  })
+
+  it('does not add a workflow panel to legacy history without a saved workflow snapshot', () => {
+    localStorage.setItem('chat_sessions', JSON.stringify([{
+      ...OLD_SESSION,
+      msgs: [{ role: 'assistant', content: '旧版本保存的回答' }],
+    }]))
+
+    renderChat()
+
+    expect(screen.getByText('旧版本保存的回答')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看执行详情' })).not.toBeInTheDocument()
+  })
+
   it('keeps a Harness needs_review answer visible as a review state', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({
@@ -861,6 +906,51 @@ describe('ChatView session lifecycle', () => {
     expect(resumeHandlers).toBeDefined()
     expect(await screen.findByText('加入监控操作已获批准，服务端已返回执行结果。')).toBeInTheDocument()
     expect(screen.getAllByText('已批准').length).toBeGreaterThan(0)
+  })
+
+  it('restores a pending approval from history and can reject it', async () => {
+    const approval = {
+      message: '确认执行加入监控动作？',
+      tool: 'agent_supervisor',
+      args: { pending_approvals: [{ approval_id: 'approval-history', action_type: 'add_watchlist' }] },
+      session_id: 'old-session',
+      run_id: 'approval-history-run',
+      last_event_id: 9,
+      status: 'pending',
+    }
+    const workflow = {
+      status: 'waiting_approval',
+      stage: 'approval',
+      message: '等待人工确认后继续执行',
+      runId: 'approval-history-run',
+      targetSuppliers: [],
+      sources: [],
+      toolCallCount: 0,
+      completedToolCount: 0,
+    }
+    localStorage.setItem('chat_sessions', JSON.stringify([{
+      ...OLD_SESSION,
+      msgs: [
+        { role: 'user', content: '请加入监控' },
+        { role: 'assistant', content: approval.message, approval, workflow },
+      ],
+    }]))
+    mocks.resumeChat.mockImplementation(async (_sessionId: string, _approved: boolean, handlers: StreamCallbacks) => {
+      handlers.onWorkflowStatus?.({ status: 'rejected', stage: 'approval', message: '操作已拒绝，未写入业务数据' })
+      handlers.onDone?.({ answer: '加入监控操作已拒绝，系统未写入监控清单。', status: 'rejected' })
+      return '操作已拒绝'
+    })
+    const user = userEvent.setup()
+
+    renderChat()
+    expect(await screen.findByRole('button', { name: '拒绝动作' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '拒绝动作' }))
+
+    await waitFor(() => expect(mocks.resumeChat).toHaveBeenCalledOnce())
+    expect(mocks.resumeChat.mock.calls[0][0]).toBe('old-session')
+    expect(mocks.resumeChat.mock.calls[0][1]).toBe(false)
+    expect(await screen.findByRole('heading', { name: '已拒绝' })).toBeInTheDocument()
+    expect(screen.getByText('该操作已拒绝，系统未执行写入。')).toBeInTheDocument()
   })
 
   it('translates internal fields and lists the covered risk items', async () => {

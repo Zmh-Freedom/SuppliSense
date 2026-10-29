@@ -22,7 +22,49 @@ export interface ChatStreamViewState {
   agentAnswer: AgentAnswer | null;
   evidence: AgentEvidenceRecord[];
   workflowStatus: AgentWorkflowSnapshot;
-  queryText?: string;
+}
+
+function hasBusinessAnswer(answer?: AgentAnswer | null): boolean {
+  if (!answer) return false;
+  return Boolean(
+    answer.claims?.length
+    || answer.limitations?.length
+    || answer.action_proposals?.length
+    || answer.action_receipts?.length
+    || answer.evidence_refs?.length,
+  );
+}
+
+function hasWorkflowActivity(workflow?: AgentWorkflowSnapshot, hasApproval = false, hasEvidence = false, hasReferences = false): boolean {
+  return Boolean(
+    hasApproval
+    || hasEvidence
+    || hasReferences
+    || (workflow?.toolCallCount ?? 0) > 0
+    || (workflow?.completedToolCount ?? 0) > 0
+    || workflow?.targetSuppliers?.length
+    || workflow?.sources?.length,
+  );
+}
+
+function shouldShowWorkflowPanel({
+  answer,
+  workflow,
+  hasApproval = false,
+  hasEvidence = false,
+  hasReferences = false,
+}: {
+  answer?: AgentAnswer | null;
+  workflow?: AgentWorkflowSnapshot;
+  hasApproval?: boolean;
+  hasEvidence?: boolean;
+  hasReferences?: boolean;
+}): boolean {
+  if (!workflow) return false;
+  const conversationOnly = answer?.status === 'completed'
+    && !hasBusinessAnswer(answer)
+    && !hasWorkflowActivity(workflow, hasApproval, hasEvidence, hasReferences);
+  return !conversationOnly;
 }
 
 function SupplierReferenceCard({ reference, onAnalyze }: { reference: SupplierReference; onAnalyze: (name: string) => void }) {
@@ -81,14 +123,14 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
             <div className="grid gap-2 pt-2 sm:grid-cols-2">{message.references.map(reference => <SupplierReferenceCard key={`${reference.name}-${reference.source ?? ''}`} reference={reference} onAnalyze={onAnalyzeReference} />)}</div>
           </details>}
           {message.role === 'assistant' && <StructuredAgentResult answer={message.agentAnswer} evidence={message.evidence} />}
-          {message.role === 'assistant' && message.workflow && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, approval: message.approval ?? null, approvalSubmitting: message.approval?.status === 'submitting', workflowStatus: message.workflow, queryText: messages.slice(0, index).reverse().find(previous => previous.role === 'user')?.content }} onApproval={onApproval} />}
+          {message.role === 'assistant' && shouldShowWorkflowPanel({ answer: message.agentAnswer, workflow: message.workflow, hasApproval: Boolean(message.approval), hasEvidence: Boolean(message.evidence?.length), hasReferences: Boolean(message.references?.length) }) && <AgentWorkflowPanel state={{ thinking: '', plan: null, agents: null, toolCalls: [], answerStarted: true, historical: true, answerText: message.agentAnswer?.summary || message.content, approval: message.approval ?? null, approvalSubmitting: message.approval?.status === 'submitting', workflowStatus: message.workflow }} onApproval={onApproval} />}
         </div>
       </div>
     ))}
     {streamState && (loading || streamState.error) && <div className="flex gap-3">
       <div className="w-8 h-8 rounded-full bg-[var(--color-surface-selected)] flex items-center justify-center text-xs font-semibold text-[var(--color-text-secondary)] shrink-0">AI</div>
       <div className="min-w-0 flex-1 max-w-5xl space-y-2">
-        <AgentWorkflowPanel state={streamState} onApproval={onApproval} />
+        {shouldShowWorkflowPanel({ answer: streamState.agentAnswer, workflow: streamState.workflowStatus, hasApproval: Boolean(streamState.approval), hasEvidence: Boolean(streamState.evidence.length), hasReferences: Boolean(streamState.references.length) }) && <AgentWorkflowPanel state={{ ...streamState, answerText: streamState.agentAnswer?.summary || streamState.answerChunks.join('') }} onApproval={onApproval} />}
         {streamState.charts.map((chart, index) => <ChartRenderer key={`chart-${index}`} data={chart} />)}
         {streamState.answerChunks.length > 0 && <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
           <AssistantRichText content={streamState.agentAnswer?.summary || streamState.answerChunks.join('')} label={streamState.agentAnswer ? '采购分析' : undefined} />
