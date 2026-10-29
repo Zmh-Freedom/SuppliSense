@@ -216,6 +216,38 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByRole('status').querySelector('span')).toHaveClass('bg-amber-500')
   })
 
+  it('keeps specific review details when a generic final status is already covered by the answer', () => {
+    const state = createState({ answerText: '甲公司存在待核实的履约异常。' })
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'needs_review',
+      stage: 'decision',
+      message: '尚未取得后续订单的交付记录，无法判断异常是否持续。',
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.getByRole('status')).toHaveTextContent('需要人工复核')
+    expect(screen.getByRole('status')).toHaveTextContent('尚未取得后续订单的交付记录，无法判断异常是否持续。')
+  })
+
+  it('keeps approval actions when a generic final review status is suppressed', () => {
+    const state = createState({ answerText: '甲公司存在已确认的履约异常。', approval })
+    state.workflowStatus = {
+      ...state.workflowStatus!,
+      status: 'needs_review',
+      stage: 'decision',
+      message: '结果需要人工复核',
+    }
+
+    render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '需要人工确认' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '批准动作' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '拒绝动作' })).toBeInTheDocument()
+  })
+
   it('shows the latest server message when evidence remediation returns to execution', () => {
     const state = createState()
     const { rerender } = render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)

@@ -930,7 +930,7 @@ describe('ChatView session lifecycle', () => {
     expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
   })
 
-  it('keeps a Harness needs_review answer visible as a review state', async () => {
+  it('keeps a Harness needs_review answer without a duplicate workflow status', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onAgentAnswer?.({
         status: 'needs_review',
@@ -952,7 +952,8 @@ describe('ChatView session lifecycle', () => {
 
     expect(screen.getAllByText('业务结论').length).toBeGreaterThan(0)
     expect(screen.getByText('数据说明').closest('details')).not.toHaveAttribute('open')
-    expect(await screen.findByRole('status')).toHaveTextContent('需要人工复核')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByText('证据不足')).toBeInTheDocument()
     expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     await user.click(screen.getByText('数据说明'))
     expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
@@ -1395,7 +1396,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    expect(await screen.findByRole('status')).toHaveTextContent('部分结果待复核')
+    expect(await screen.findByText('部分证据已完成')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
     expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     expect(screen.queryByText('当前状态：本轮查询已完成')).not.toBeInTheDocument()
   })

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ComponentType } from 'react';
 import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowSnapshot, ChatMessage } from '../types';
 import ChatMessageList from '../components/ChatMessageList';
+import StructuredAgentResult from '../components/StructuredAgentResult';
 import type { ChatStreamViewState } from '../components/ChatMessageList';
 
 const verifiedAnswer: AgentAnswer = {
@@ -128,7 +129,7 @@ function renderList({ messages, streamState, loading }: {
   messages: ChatMessage[];
   streamState: ChatStreamViewState | null;
   loading: boolean;
-}) {
+}, resultComponent: ComponentType<{ answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }> = ResultStub as ComponentType<{ answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }>) {
   render(<ChatMessageList
     messages={messages}
     streamState={streamState}
@@ -136,7 +137,7 @@ function renderList({ messages, streamState, loading }: {
     onAnalyzeReference={() => undefined}
     onConfirmSupplier={() => undefined}
     onApproval={() => undefined}
-    StructuredAgentResult={ResultStub as ComponentType<{ answer?: AgentAnswer; evidence?: AgentEvidenceRecord[] }>}
+    StructuredAgentResult={resultComponent}
   />);
 }
 
@@ -211,5 +212,49 @@ describe('saved workflow status', () => {
     expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument();
     expect(message.workflow).toBe(workflow);
     expect(message.evidence).toBe(evidence);
+  });
+});
+
+describe.each(['historical', 'live'] as const)('%s final result status', surface => {
+  it.each([
+    ['needs_review', '结果需要人工复核'],
+    ['partial', '本轮 Agent 仅完成部分分析'],
+  ] as const)('does not repeat the generic %s status after the result', (status, genericMessage) => {
+    const answer: AgentAnswer = {
+      ...noEvidenceConversation,
+      status,
+      summary: '甲公司存在已确认的履约异常，但当前资料不足以判断后续交付影响。',
+      limitations: ['尚未取得后续订单的交付记录，无法判断履约异常是否持续。'],
+    };
+    const workflow: AgentWorkflowSnapshot = {
+      status,
+      stage: 'decision',
+      message: genericMessage,
+      targetSuppliers: ['甲公司'],
+      sources: ['delivery_records'],
+      toolCallCount: 1,
+      completedToolCount: 1,
+    };
+
+    if (surface === 'historical') {
+      renderList({
+        messages: [{ role: 'assistant', content: answer.summary, agentAnswer: answer, workflow }],
+        streamState: null,
+        loading: false,
+      }, StructuredAgentResult);
+    } else {
+      const streamState: ChatStreamViewState = {
+        thinking: '', plan: null, agents: null, toolCalls: [],
+        answerChunks: [answer.summary], answerStarted: true,
+        approval: null, approvalSubmitting: false, charts: [], references: [],
+        agentAnswer: answer, evidence: [], workflowStatus: workflow,
+      };
+      renderList({ messages: [], streamState, loading: true }, StructuredAgentResult);
+    }
+
+    expect(screen.getByText(answer.summary)).toBeInTheDocument();
+    expect(screen.getByText(answer.limitations[0])).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText(genericMessage)).not.toBeInTheDocument();
   });
 });

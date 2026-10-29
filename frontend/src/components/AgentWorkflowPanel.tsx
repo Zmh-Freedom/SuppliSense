@@ -51,6 +51,12 @@ function lifecycleLabel(status?: string): string {
   return labels[status || ''] || status || '状态未知';
 }
 
+function isGenericTerminalStatusMessage(status: string, message: string): boolean {
+  if (status === 'needs_review') return ['需要人工复核', '结果需要人工复核'].includes(message);
+  if (status === 'partial') return ['部分结果待复核', '本轮 Agent 仅完成部分分析'].includes(message);
+  return false;
+}
+
 function lifecycleHeading(status: string): string {
   return lifecycleLabel(status);
 }
@@ -116,9 +122,12 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   const isExternalIdentityConfirmation = Boolean(externalProfile);
   const isCompleted = lifecycle === 'completed';
   const isFailure = lifecycle === 'failed';
+  const hideRedundantTerminalStatus = Boolean(state.answerText?.trim())
+    && isGenericTerminalStatusMessage(lifecycle, workflowMessage);
   const visibleStatusMessage = showWorkflowMessage ? workflowMessage : '';
   if (state.historical && !state.approval && ['completed', 'running'].includes(lifecycle)) return null;
   if (isCompleted && !state.approval) return null;
+  if (hideRedundantTerminalStatus && !state.approval) return null;
 
   const handleApproval = (approved: boolean) => {
     setApprovalTarget(approved ? 'approve' : 'reject');
@@ -127,7 +136,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
 
   return (
     <section className="w-full max-w-full" aria-label={state.approval ? '审批状态' : '分析进度'}>
-      {!isCompleted && <p role={isFailure ? 'alert' : 'status'} aria-live={isFailure ? 'assertive' : 'polite'} className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${isFailure ? 'text-red-700' : ['needs_review', 'partial', 'clarifying', 'waiting_approval', 'stopped', 'cancelled', 'rejected'].includes(lifecycle) ? 'text-amber-800' : 'text-[var(--color-text-secondary)]'}`}>
+      {!isCompleted && !hideRedundantTerminalStatus && <p role={isFailure ? 'alert' : 'status'} aria-live={isFailure ? 'assertive' : 'polite'} className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${isFailure ? 'text-red-700' : ['needs_review', 'partial', 'clarifying', 'waiting_approval', 'stopped', 'cancelled', 'rejected'].includes(lifecycle) ? 'text-amber-800' : 'text-[var(--color-text-secondary)]'}`}>
         <span aria-hidden="true" className={`inline-block h-2 w-2 shrink-0 rounded-full ${lifecycleIndicatorClass(lifecycle, isRunning)}`} />
         {isRunning ? <span>{visibleStatusMessage || lifecycleLabel(lifecycle)}</span> : <>
           <span className="font-medium">{lifecycleHeading(lifecycle)}</span>
