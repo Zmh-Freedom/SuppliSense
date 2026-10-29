@@ -44,6 +44,55 @@ _COMPANY_PATTERN = re.compile(
 )
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[+-]?\d+(?:\.\d+)?%?")
 _STANDARD_CODE_PATTERN = re.compile(r"\b(?:ISO|IATF|AS|SA)\s*-?\s*\d{4,5}\b", re.IGNORECASE)
+_LIMITATION_DIMENSIONS = (
+    ("financial", ("financial", "财务", "现金流", "营收", "财报")),
+    ("business", ("business_risk", "商务", "经营", "运营", "交易")),
+    ("quality", ("quality", "质量")),
+    ("delivery", ("delivery", "交付", "履约")),
+    ("compliance", ("compliance", "合规", "制裁", "黑名单")),
+    ("sentiment", ("sentiment", "舆情", "新闻", "报道")),
+    ("esg", ("esg", "环境", "社会责任", "治理")),
+    ("identity", ("identity", "主体", "身份核验")),
+    ("risk", ("risk", "风险")),
+)
+_LIMITATION_STATES = (
+    ("unavailable", ("unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂未获取", "未能查询")),
+    ("missing", ("missing", "缺少", "缺失", "未覆盖", "覆盖不足", "数据不足")),
+    ("stale", ("stale", "过期", "陈旧", "需更新", "需刷新")),
+    ("conflicting", ("conflict", "冲突", "不一致", "矛盾")),
+    ("not_queried", ("not_queried", "未查询", "尚未查询", "未完成查询")),
+    ("synthetic", ("synthetic", "演示数据", "模拟数据")),
+    ("review", ("needs_review", "人工复核", "人工确认", "待核验", "需核实")),
+)
+_SENTIMENT_SOURCE_MARKERS = ("舆情", "新闻", "报道", "sentiment", "news")
+_SOURCE_UNAVAILABLE_MARKERS = (
+    "unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂不可用",
+    "未完成查询", "未能查询", "未查询", "缺少", "未覆盖", "无法确认",
+)
+_CONFIRMED_EMPTY_MARKERS = (
+    "confirmed_empty", "已确认无记录", "已确认未发现", "已确认没有", "已确认未找到",
+    "确认未发现相关新闻", "确认无相关新闻", "查询已完成，已确认未发现", "检索已完成，已确认未发现",
+)
+_EMPTY_RESULT_MARKERS = (
+    *_CONFIRMED_EMPTY_MARKERS,
+    "未发现相关新闻", "未发现相关报道", "没有相关新闻", "没有相关报道",
+    "未检索到相关新闻", "未检索到相关报道",
+)
+_CONCLUSION_TOPICS = (
+    "重大诉讼", "诉讼", "行政处罚", "制裁", "失信", "经营异常", "负面舆情", "负面新闻", "风险信号",
+)
+_POSITIVE_FINDING_MARKERS = ("存在", "发现", "发生", "命中", "有")
+_NEGATIVE_FINDING_MARKERS = (
+    "未发现", "不存在", "并非存在", "并无", "没有", "无", "未发生", "未命中", "未查到",
+)
+_UNCERTAIN_FINDING_MARKERS = ("是否", "能否", "无法确认", "无法判断", "尚不明确", "不确定")
+_PROCUREMENT_RECOMMENDATION_PATTERN = re.compile(
+    r"(?P<lead>建议|推荐|应当|应该|不建议|避免|可以|可)\s*"
+    r"(?P<phrase>(?:.{0,12}?(?:扩大|增加|提升|降低|减少|暂停|停止|替换|切换|淘汰)"
+    r".{0,8}?(?:采购策略|采购份额|采购量|采购|订单份额|订单量|订单|份额|供应商|合作|物料|原材料|品类)"
+    r"|.{0,8}?(?:采购|下单|合作)"
+    r"(?:.{0,8}?(?:采购策略|采购份额|采购量|采购|订单份额|订单量|订单|份额|供应商|合作|物料|原材料|品类|复核))?))"
+)
 
 
 def _normalized_numbers(text: str) -> set[str]:
@@ -80,6 +129,96 @@ def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
     ]
 
 
+def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
+    normalized = text.casefold()
+    return any(marker.casefold() in normalized for marker in markers)
+
+
+def _limitation_is_preserved(limitation: str, narrative_text: str) -> bool:
+    if limitation in narrative_text:
+        return True
+    normalized_limitation = limitation.casefold()
+    required_groups: list[tuple[str, ...]] = []
+    for _, markers in _LIMITATION_DIMENSIONS:
+        if _has_any_marker(normalized_limitation, markers):
+            required_groups.append(markers)
+            break
+    required_groups.extend(
+        markers
+        for _, markers in _LIMITATION_STATES
+        if _has_any_marker(normalized_limitation, markers)
+    )
+    if not required_groups:
+        return False
+    return all(_has_any_marker(narrative_text, markers) for markers in required_groups)
+
+
+def _source_state_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    source_text = " ".join([answer.summary, *answer.limitations]).casefold()
+    if not _has_any_marker(source_text, _SENTIMENT_SOURCE_MARKERS):
+        return None
+    source_unavailable = _has_any_marker(source_text, _SOURCE_UNAVAILABLE_MARKERS)
+    source_empty = _has_any_marker(source_text, _CONFIRMED_EMPTY_MARKERS)
+    narrative_unavailable = _has_any_marker(narrative_text, _SOURCE_UNAVAILABLE_MARKERS)
+    narrative_empty = _has_any_marker(narrative_text, _EMPTY_RESULT_MARKERS)
+    if source_unavailable and not narrative_unavailable:
+        return "omitted_sentiment_source_unavailable"
+    if source_empty and not narrative_empty:
+        return "omitted_confirmed_empty_sentiment_result"
+    if narrative_unavailable and not source_unavailable:
+        return "unsupported_sentiment_source_failure"
+    if narrative_empty and not source_empty:
+        return "unsupported_confirmed_empty_sentiment_result"
+    if source_unavailable and not source_empty and narrative_empty:
+        return "sentiment_source_failure_misrepresented_as_empty"
+    if source_empty and not source_unavailable and narrative_unavailable:
+        return "confirmed_empty_sentiment_result_misrepresented_as_failure"
+    return None
+
+
+def _finding_polarities(text: str, topic: str) -> set[str]:
+    polarities: set[str] = set()
+    for match in re.finditer(re.escape(topic), text):
+        context = text[max(0, match.start() - 12):match.end() + 4]
+        if _has_any_marker(context, _NEGATIVE_FINDING_MARKERS):
+            polarities.add("negative")
+        elif _has_any_marker(context, _UNCERTAIN_FINDING_MARKERS):
+            continue
+        elif _has_any_marker(context, _POSITIVE_FINDING_MARKERS):
+            polarities.add("positive")
+    return polarities
+
+
+def _conclusion_polarity_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    source_text = " ".join([
+        answer.summary,
+        *(claim.statement for claim in answer.claims if claim.validation_status == "supported"),
+    ])
+    for topic in _CONCLUSION_TOPICS:
+        source_polarities = _finding_polarities(source_text, topic)
+        narrative_polarities = _finding_polarities(narrative_text, topic)
+        if len(narrative_polarities) > 1:
+            return f"conflicting_narrated_conclusion:{topic}"
+        if len(narrative_polarities) == 1 and source_polarities != narrative_polarities:
+            if len(source_polarities) == 1:
+                return f"reversed_verified_conclusion:{topic}"
+            return f"unsupported_or_ambiguous_conclusion:{topic}"
+    return None
+
+
+def _procurement_recommendation_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    proposal_labels = {
+        str(proposal.get("label") or "").strip()
+        for proposal in answer.action_proposals
+        if isinstance(proposal, dict)
+    }
+    for match in _PROCUREMENT_RECOMMENDATION_PATTERN.finditer(narrative_text):
+        phrase = match.group("phrase").strip(" ，,、；")
+        if phrase not in proposal_labels:
+            return "unsupported_procurement_recommendation"
+    return None
+
+
 def _requested_topic_terms(user_message: str) -> tuple[str, ...]:
     """Return a small topic guard so narration cannot erase the question."""
     topic_rules = (
@@ -108,14 +247,18 @@ def _draft_validation_error(
     """Return a stable rejection reason when prose exceeds validated facts."""
     claims = _claim_payload(answer)
     claim_ids = {str(item["claim_id"]) for item in claims}
+    narrative_text = f"{draft.headline}\n{draft.body_markdown}"
     if claims and not draft.claim_refs:
         return "missing_claim_refs"
     if not set(draft.claim_refs).issubset(claim_ids):
         return "unknown_claim_ref"
-    source_text = " ".join(str(item.get("statement") or "") for item in claims)
-    allowed_numbers = _normalized_numbers(source_text) | _normalized_numbers(answer.summary) | {"100"}
-    allowed_numeric_values = _numeric_values(source_text) | _numeric_values(answer.summary) | {100.0}
-    for number in _normalized_numbers(draft.body_markdown):
+    source_text = " ".join([
+        answer.summary,
+        *(str(item.get("statement") or "") for item in claims),
+    ])
+    allowed_numbers = _normalized_numbers(source_text) | {"100"}
+    allowed_numeric_values = _numeric_values(source_text) | {100.0}
+    for number in _normalized_numbers(narrative_text):
         if number in allowed_numbers:
             continue
         try:
@@ -125,10 +268,9 @@ def _draft_validation_error(
         if not any(math.isclose(numeric_value, allowed, rel_tol=1e-9, abs_tol=1e-9) for allowed in allowed_numeric_values):
             return f"unsupported_number:{number}"
     allowed_companies = set(_COMPANY_PATTERN.findall(source_text))
-    for name in _COMPANY_PATTERN.findall(draft.body_markdown):
+    for name in _COMPANY_PATTERN.findall(narrative_text):
         if name not in allowed_companies:
             return f"unsupported_company:{name}"
-    narrative_text = f"{draft.headline}\n{draft.body_markdown}"
     topic_terms = _requested_topic_terms(user_message)
     if topic_terms and not any(term in narrative_text for term in topic_terms):
         return "missing_requested_topic"
@@ -138,9 +280,21 @@ def _draft_validation_error(
             label, separator, value = condition.partition("：")
             if separator and value and value not in narrative_text:
                 return f"missing_sourcing_constraint:{label}"
+    source_state_error = _source_state_error(answer, narrative_text)
+    if source_state_error is not None:
+        return source_state_error
+    for limitation in answer.limitations:
+        if not _limitation_is_preserved(limitation, narrative_text):
+            return "missing_limitation"
+    conclusion_error = _conclusion_polarity_error(answer, narrative_text)
+    if conclusion_error is not None:
+        return conclusion_error
+    recommendation_error = _procurement_recommendation_error(answer, narrative_text)
+    if recommendation_error is not None:
+        return recommendation_error
     # A narrative must not turn a recommendation into a completed write action.
     forbidden_success = ("已加入监控", "已完成审批", "已切换供应商", "已暂停采购")
-    if not answer.action_receipts and any(token in draft.body_markdown for token in forbidden_success):
+    if not answer.action_receipts and any(token in narrative_text for token in forbidden_success):
         return "forbidden_success_action"
     return None
 
@@ -179,8 +333,9 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         "rules": [
             "Return one JSON object only, matching response_schema.",
             "只根据 validated_claims 和 limitations 写采购人员能直接理解的结论。",
-            "不得新增公司、数字、日期、风险等级、来源或采购动作。",
-            "如果存在 limitations，只能说明当前资料覆盖不足，不能把缺失数据推断成风险。",
+            "不得在标题或正文新增公司、数字、日期、风险等级、来源或采购动作。",
+            "如果存在 limitations，必须保留每条限制的关键含义，不能把缺失数据推断成风险；无法可靠改写时原样复述或保留 deterministic_summary。",
+            "必须区分来源不可用、尚未查询、检索无结果和已确认空结果；不得互相替换，也不得根据 needs_review 推断发现了风险。",
             "如果 deterministic_summary 含有‘检索条件’，最终正文必须保留该行里的每个需求值，包括地区、预算、数量、规格和资质；可以用自然表述，但不可遗漏、替换或新增约束。",
             "如果 validated_claims 中 articles_count 大于0，必须说明已有新闻可在下方逐条查看，不能写“未包含新闻原文”或“无法逐条列出原文”。",
             "不要输出表格，不要提及 Claim、证据复核点、Harness、工具、任务、模型或内部字段。",
@@ -237,7 +392,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         )
         draft = NarrativeDraft.model_validate(payload)
         if article_count > 0 and any(
-            phrase in draft.body_markdown
+            phrase in f"{draft.headline}\n{draft.body_markdown}"
             for phrase in ("未包含新闻原文", "无法逐条列出原文", "没有新闻原文")
         ):
             return degraded("article_evidence_contradiction", getattr(response, "_request_id", None))
