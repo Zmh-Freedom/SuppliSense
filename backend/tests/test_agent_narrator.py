@@ -43,6 +43,17 @@ def test_narrative_validation_rejects_unverified_number() -> None:
     assert _validate_draft(draft, answer) is False
 
 
+def test_narrative_validation_rejects_reordered_supported_numbers() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 100/7。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
 def test_narrative_validation_rejects_omitted_structured_limitation() -> None:
     answer = _answer().model_copy(update={
         "status": "needs_review",
@@ -141,6 +152,56 @@ def test_narrative_validation_rejects_unverified_qualitative_conclusion() -> Non
     assert _validate_draft(draft, answer) is False
 
 
+def test_narrative_validation_rejects_unverified_supplier_health_assertions() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            "现金流充裕，交付稳定，质量控制良好。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_does_not_use_hidden_headline_for_requested_topic() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="财务数据核验",
+        body_markdown="青岛三祥科技股份有限公司 综合风险评分：7/100",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer, "查看青岛三祥科技股份有限公司的财务数据") is False
+
+
+def test_narrator_falls_back_when_model_adds_unverified_supplier_health(monkeypatch) -> None:
+    answer = _answer()
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司综合风险评分为 7/100。'
+                            '现金流充裕，交付稳定，质量控制良好。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert narrated.summary == answer.summary
+
+
 def test_narrative_validation_rejects_unsupported_procurement_recommendation() -> None:
     answer = _answer()
     draft = NarrativeDraft(
@@ -150,6 +211,42 @@ def test_narrative_validation_rejects_unsupported_procurement_recommendation() -
     )
 
     assert _validate_draft(draft, answer, "分析青岛三祥科技股份有限公司的风险") is False
+
+
+def test_narrative_validation_rejects_unsupported_imperative_procurement_action() -> None:
+    answer = _answer()
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100。请立即暂停采购。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrator_falls_back_when_model_issues_unapproved_procurement_instruction(monkeypatch) -> None:
+    answer = _answer()
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司综合风险评分为 7/100。'
+                            '请立即暂停采购。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert narrated.summary == answer.summary
 
 
 def test_narrative_validation_allows_evidence_supported_procurement_review() -> None:
@@ -164,7 +261,7 @@ def test_narrative_validation_allows_evidence_supported_procurement_review() -> 
         headline="风险复核结果",
         body_markdown=(
             "青岛三祥科技股份有限公司综合风险评分为 7/100，"
-            "建议安排采购复核并先核实证据。"
+            "建议安排采购复核。"
         ),
         claim_refs=["risk-score"],
     )
@@ -172,7 +269,7 @@ def test_narrative_validation_allows_evidence_supported_procurement_review() -> 
     assert _validate_draft(draft, answer) is True
 
 
-def test_narrative_validation_allows_non_procurement_follow_up_guidance() -> None:
+def test_narrative_validation_rejects_unverified_follow_up_guidance() -> None:
     answer = _answer()
     draft = NarrativeDraft(
         headline="风险分析结果",
@@ -183,7 +280,7 @@ def test_narrative_validation_allows_non_procurement_follow_up_guidance() -> Non
         claim_refs=["risk-score"],
     )
 
-    assert _validate_draft(draft, answer) is True
+    assert _validate_draft(draft, answer) is False
 
 
 @pytest.mark.parametrize(
@@ -301,7 +398,7 @@ def test_narrative_validation_accepts_formatting_only_number_changes() -> None:
     )
     draft = NarrativeDraft(
         headline="财务分析",
-        body_markdown="青岛三祥科技股份有限公司资产负债率为 43%，需要结合现金流继续关注。",
+        body_markdown="青岛三祥科技股份有限公司资产负债率为 43%。",
         claim_refs=["debt-ratio"],
     )
 
@@ -394,7 +491,7 @@ def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
                 @staticmethod
                 def create(**_kwargs):
                     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                        content='{"headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司当前综合风险评分为7/100。","claim_refs":["risk-score"]}'
+                        content='{"headline":"现金流充裕","body_markdown":"青岛三祥科技股份有限公司 综合风险评分：7/100","claim_refs":["risk-score"]}'
                     ))])
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
@@ -402,7 +499,8 @@ def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary.startswith("风险复核结果")
+    assert narrated.summary.startswith("核验结果")
+    assert "现金流充裕" not in narrated.summary
     assert "7/100" in narrated.summary
 
 
@@ -444,7 +542,7 @@ def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
                 @staticmethod
                 def create(**_kwargs):
                     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                        content='{"type":"json_object","headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司当前综合风险评分为7/100。","claim_refs":["risk-score"]}'
+                        content='{"type":"json_object","headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司 综合风险评分：7/100","claim_refs":["risk-score"]}'
                     ))])
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
@@ -452,7 +550,7 @@ def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary.startswith("风险复核结果")
+    assert narrated.summary.startswith("核验结果")
 
 
 def test_narrator_falls_back_when_llm_is_not_configured(monkeypatch) -> None:
