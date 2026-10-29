@@ -1218,6 +1218,31 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         financial_claims = [claim for claim in answer.claims if claim.dimension == "financial"]
         values = _claim_values(financial_claims)
         if not financial_claims:
+            financial_outcome = next(
+                (
+                    outcome
+                    for outcome in reversed(outcomes)
+                    if isinstance(outcome, dict)
+                    and str(outcome.get("tool_name") or outcome.get("tool") or "") == "query_financials"
+                ),
+                {},
+            )
+            status = str(financial_outcome.get("status") or "")
+            if status == "failed":
+                return (
+                    f"财务数据查询失败，当前未能核实 {subject} 的财务指标；"
+                    "请检查数据源后重试，暂不形成财务风险结论。"
+                )
+            if status == "unavailable":
+                return (
+                    f"财务数据源暂不可用，当前未能核实 {subject} 的财务指标；"
+                    "稍后可重试，暂不形成财务风险结论。"
+                )
+            if status == "not_found":
+                return (
+                    f"本轮未找到可验证的 {subject} 财务指标，"
+                    "因此暂不形成财务风险结论。"
+                )
             return f"已完成 {subject} 的财务数据查询，但当前没有可验证的财务指标结果。"
         labels = {
             "revenue_growth": "营业收入同比",
@@ -2005,6 +2030,28 @@ def build_harness_graph(
                     *answer.limitations,
                     *[status_limitations.get(status, "名单筛查状态需要人工核验") for status in unresolved_screening],
                 ])),
+            })
+        financial_outcome = next(
+            (
+                outcome
+                for outcome in reversed(state.get("tool_outcomes", []))
+                if isinstance(outcome, dict)
+                and str(outcome.get("tool_name") or outcome.get("tool") or "") == "query_financials"
+            ),
+            {},
+        )
+        financial_status_limitations = {
+            "failed": "财务数据查询失败，本轮未形成可验证指标，不能据此判断财务风险高低。",
+            "unavailable": "财务数据源暂不可用，本轮未形成可验证指标，不能据此判断财务风险高低。",
+            "not_found": "本轮没有找到可验证的财务指标，不能据此判断财务风险高低。",
+        }
+        financial_limitation = financial_status_limitations.get(
+            str(financial_outcome.get("status") or "")
+        )
+        if financial_limitation:
+            answer = answer.model_copy(update={
+                "status": "needs_review",
+                "limitations": list(dict.fromkeys([*answer.limitations, financial_limitation])),
             })
         operational_limits = []
         for record in state.get("evidence_records", []):

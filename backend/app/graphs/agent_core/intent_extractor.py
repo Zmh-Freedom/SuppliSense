@@ -223,19 +223,40 @@ def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtrac
     if not dimensions and quoted:
         dimensions = ["risk", "financial", "business_risk"]
     requested_action = explicit_write_action(message)
-    raw_capability = "business_risk" if any(token in message for token in ("经营", "运营")) else "risk" if dimensions else "none"
+    inferred_task_type = infer_task_type(message)
+    raw_capability = (
+        "sourcing"
+        if inferred_task_type == "sourcing"
+        else "business_risk"
+        if any(token in message for token in ("经营", "运营"))
+        else "risk"
+        if dimensions
+        else "none"
+    )
     capability = normalize_primary_capability(message, raw_capability, requested_action)
     dimensions = normalize_analysis_dimensions(
         message, dimensions, raw_capability, capability, requested_action
     )
     if capability == "sourcing":
         dimensions = []
+    sourcing_requirement = (
+        _deterministic_sourcing_requirement_from_message(message)
+        if capability == "sourcing"
+        else None
+    )
     task_type = "sourcing" if capability == "sourcing" else "analysis" if (capability != "none" or quoted or generic_review) else "none"
     return ConversationIntentExtraction(
         target_supplier_names=quoted,
         analysis_dimensions=dimensions,
         capability=capability,
-        scope="single_supplier" if quoted else "none",
+        scope=(
+            "product_category"
+            if sourcing_requirement and sourcing_requirement.category
+            else "single_supplier"
+            if quoted
+            else "none"
+        ),
+        sourcing_requirement=sourcing_requirement,
         task_type=task_type,
         requested_action=requested_action,
         confidence=0.35 if quoted else 0.0,
@@ -430,6 +451,9 @@ def extract_conversation_intent(
         # return capability. New responses are authoritative and do not pass
         # through keyword-based task classification.
         task_type = inferred_task_type if inferred_task_type != "none" else extracted.task_type
+    sourcing_requirement = extracted.sourcing_requirement
+    if capability == "sourcing" and sourcing_requirement is None:
+        sourcing_requirement = _deterministic_sourcing_requirement_from_message(message)
     extracted_dimensions = _expand_generic_risk_dimensions(
         message,
         list(extracted.analysis_dimensions),
@@ -600,8 +624,8 @@ def extract_conversation_intent(
             else "我还不能确定你希望处理的具体任务，请补充一下目标或分析内容。"
         )
     normalized_requirement = (
-        extracted.sourcing_requirement.model_dump(mode="json", exclude_none=True)
-        if extracted.sourcing_requirement is not None
+        sourcing_requirement.model_dump(mode="json", exclude_none=True)
+        if sourcing_requirement is not None
         else {}
     )
     historical_sourcing = (
@@ -662,6 +686,7 @@ def extract_conversation_intent(
         "provider_capabilities": provider_capabilities,
         "capability": capability,
         "scope": scope,
+        "sourcing_requirement": sourcing_requirement,
         "task_type": task_type,
         "clarification_question": clarification_question,
         "needs_clarification": needs_clarification,
@@ -986,6 +1011,63 @@ def infer_task_type(message: str) -> Literal["sourcing", "analysis", "none"]:
     if any(token in text for token in _ANALYSIS_TOKENS):
         return "analysis"
     return "none"
+
+
+def _deterministic_sourcing_requirement_from_message(
+    message: str,
+) -> SourcingRequirement | None:
+    """Extract a narrow, explicit count/category/spec sourcing request.
+
+    This covers requests that state their sourcing slots in one sentence but
+    arrive without structured requirement fields from the intent model. It is
+    deliberately limited to a counted product request with a concrete spec.
+    """
+    text = str(message or "").strip()
+    if infer_task_type(text) != "sourcing" or is_non_operational_request(text):
+        return None
+
+    request = re.search(
+        r"(?:寻源|寻找|找|推荐|查找|搜索|采购)\s*(?P<count>\d{1,2})\s*家\s*"
+        r"(?P<product>[^，,。；;\n]+)",
+        text,
+    )
+    if not request:
+        return None
+    count = int(request.group("count"))
+    product = re.split(
+        r"(?:规格|技术要求|要求|优先|预算|交付|到货|数量|认证)",
+        request.group("product"),
+        maxsplit=1,
+    )[0]
+    product = re.sub(r"(?:供应商|厂家|厂商)$", "", product).strip(" ：:，,、的")
+    if not product or product in {"合适", "合适的", "供应商", "厂家", "厂商"}:
+        return None
+
+    specification_match = re.search(
+        r"(?:规格|技术要求|要求)\s*(?:是|为|[:：])?\s*(?P<spec>.+?)"
+        r"(?=(?:[，,;；。]\s*(?:优先|预算|交付|到货|地区|区域))|[。；;]|$)",
+        text,
+    )
+    if not specification_match:
+        return None
+    specification = specification_match.group("spec").strip(" ：:，,、")
+    if not specification:
+        return None
+
+    preferred_region = re.search(
+        r"(?:优先(?:考虑|选择)?|倾向(?:于)?)\s*(华东|华南|华北|西南|西北|东北)(?:地区)?",
+        text,
+    )
+    try:
+        return SourcingRequirement(
+            category=product,
+            product=product,
+            specification=specification,
+            candidate_count=count,
+            region=preferred_region.group(1) if preferred_region else None,
+        )
+    except ValidationError:
+        return None
 
 
 def validate_extracted_targets(

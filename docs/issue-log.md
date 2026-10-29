@@ -1,5 +1,77 @@
 # 项目问题记录
 
+## ISS-20261029-025 新模型聊天评测中的寻源澄清与意图失败
+
+- 发现日期：2026-10-29
+- 状态：fallback 与显式需求绑定缺陷已修复；SCA-005 离线及新模型定向复验通过；SCA-004 单次失败未复现，继续列为非确定性观察项
+- 优先级：P2
+- 用例：`backend/tests/test_agent_sourcing_chat_live.py::test_real_minimax_sourcing_api_sse_acceptance`，模型 `deepseek-v4.1-flash-1017`，endpoint host `maas.qianwenaiapi.com`，真实 `/api/v1/chat/stream`；只读寻源 provider 返回固定合成候选。
+- 现象：SCA-004（缺产品/品类的寻源请求）未按期望发出澄清；SCA-005（工业连接器特定约束且期待无候选）没有调用寻源工具，回答为通用“暂未识别出可执行的分析任务”。同轮 6 例中 4 例通过、2 例失败。日志另有多次意图解析响应 `finish_reason=length`，completion tokens 为 700，产生空或截断 JSON 并重试。
+- 影响：真实模型在部分寻源请求中没有把意图/约束可靠地传入活动 Harness，可能导致缺少必要澄清或不执行用户请求。
+- 根因：SCA-005 已确认存在确定性 fallback 缺陷：模型结构化响应无效时，`_deterministic_extraction_fallback` 只从风险/经营维度推导 capability，没有消费 `infer_task_type` 已识别的显式寻源意图，导致“寻源3家耐高温工业连接器……”返回 `capability=none, task_type=none`。该 fallback 已修复并通过红绿回归。修复后真实 SCA-005 仍有一次失败：HTTP 200、计划为空、没有寻源工具调用，最终回答称未识别任务。复核该次 trace 的结构化 `input_understanding` 后，确认归一化 intent 实际是 `capability=sourcing, task_type=sourcing`，但没有 `sourcing_requirement` 字段；因此之前关于有效 no-task 早退的假设已被证伪，当前调查重点改为寻源需求绑定/计划生成。SCA-004 的一次基线失败尚未复现，仍可能受真实模型非确定性影响。Token 上限/兼容 API JSON 输出行为仍是待验证假设，不能单独归因于预算。
+- 修复方案：已为显式寻源 fallback 增加回归并让其消费现有 `infer_task_type` 结果；现依据 SCA-005 trace 增加离线 resolver / Harness 计划红测，验证缺失 `sourcing_requirement` 时确定性需求解析是否覆盖该明确格式。保留现有模型失败和重测记录，暂不提高 token cap；如后续考虑 cap，先提供可配置实现、同场景可比的成功率/耗时/调用成本证据，并保持数据/审批契约。
+- 验证结果：隔离配置运行报告 `/tmp/chat-eval-baseline-new-model-live.json`：6 case，4 pass、2 fail。直接调用 fallback 时，SCA-005 文本及“帮我找一家合适的供应商”均为 `capability=none, task_type=none`，而 `infer_task_type` 返回 `sourcing`。当前 cap 700 的有界重测中，SCA-004 1 次通过；SCA-005 一次失败、一次通过，成功轮日志显示首次响应 `finish_reason=length`、700 completion tokens、空内容，既有 retry 随后成功解析 sourcing；这不构成提高 cap 的可比证据。真实链路隔离断言 PG/Mongo=`run_lifecycle_test`、Redis DB=15，会话加载和保存 stub，provider 候选为合成数据，无真实业务 provider 或供应商数据。
+- 测试执行记录：新增 fallback 回归的前两次启动均未进入 pytest：第一次从 `backend/` 执行却使用 `backend/.venv/bin/python`，第二次使用该 worktree 中不存在的 `./.venv/bin/python`；shell 均返回 `no such file or directory`，用例未执行。保留这两次命令级阻塞，先定位此 worktree 可用的 Python/pytest 环境，再重跑。
+- 红测结果：通过 `/opt/anaconda3/bin/python -m pytest -q tests/test_agent_intent_extractor.py::test_deterministic_fallback_preserves_explicit_sourcing_task` 收集并执行 2 个参数。SCA-005 原文和通用“帮我找一家合适的供应商”均按预期失败：实际 `capability=none`，期望 `sourcing`；无 setup/导入错误，确认回归检测到了缺失行为。环境仅运行离线单测，未调用模型或数据库。
+- 修复后验证：同一红测与数量采购、quoted translation 防误判回归共 4 项通过。改动只将 `infer_task_type(message) == "sourcing"` 反映到 fallback capability；非操作性请求的提前返回保持不变。未调用真实模型、Mongo/PostgreSQL/Redis 或真实 provider；真实 SCA-005 定向复验待执行。SCA-004 未据一次复跑结果修改代码。
+- 完整离线验证：`tests/test_agent_intent_extractor.py` `125 passed, 1 warning`（3.5 秒，Python 3.12.7）；warning 是 Starlette 对 httpx 的弃用提示。未连接数据库/Redis或真实模型。
+- fallback 修复后真实模型定向复验：运行 1 个固定合成场景 `SCA-005-camera-no-match`，HTTP 200，约 70 秒，`0/1` 通过；SSE 有空计划、无 tool call，最终仍为“暂未识别出可执行的分析任务”。结果报告 `/tmp/chat-eval-baseline-sca005-postfix-20261029.json`。运行前断言新模型和隔离目标通过；测试 fixture stub 会话加载/保存并仅注册合成只读工具。进程采样只观察到本地 API 代理连接、无数据库 socket；未重启/停止用户服务。trace 中 `input_understanding` 是 sourcing/sourcing，但缺 `sourcing_requirement`，当前需定位需求解析/计划链路；不把失败归于 token cap。
+- 离线定位：在 `LLM_API_KEY` 明确置空、禁用任何模型调用后，SCA-005 文本的 `_fallback_requirement_from_text` 与 `_natural_language_requirement_from_text` 均返回 `None`，`resolve_harness_requirement` 返回 `clarification_required/missing=['category']`。`build_execution_context` 可确定 `current_task.task_type=sourcing`，但 `_apply_harness_sourcing_requirement` 后仍没有 requirement，标记 `requirement_status=clarification_required` 与 `requirement_missing=['category']`；因此 plan 为空可在无模型条件下复现。将新增 active adapter→Harness plan 回归，要求该明确结构文本的 category/count/spec/region 可以进入只读候选检索路径。仅调用纯函数，未连接数据库或 Redis。
+- 新增 API/adapter→Harness 回归的 RED：fake LLM 返回 `capability=sourcing, task_type=sourcing` 但省略 `sourcing_requirement`；真实提取和规划代码在断言 `sourcing_requirement` 时失败，实测为 `None`，因此计划和工具参数断言尚未执行。假模型/固定合成文本，未连接数据库、Redis、真实模型或 provider。
+- 修复后验证：新增限界的 deterministic sourcing-slot parser，在 intent 模型返回 sourcing 但未给需求结构时，只从显式计数品类、规格和优先区域抽取字段；同一条假模型 API→adapter→Harness 计划回归通过，计划唯一工具为 `discover_supplier_candidates`，工具参数保留 `工业连接器`、候选数 3、工作温度 `-40到125摄氏度` 与地区 `华北`。fallback 源任务回归也通过。未修改 `requirement_service`/API/审批数据契约。
+- 完整相关离线验证：`tests/test_agent_intent_extractor.py tests/test_agent_harness_task14.py tests/test_agent_input_understanding_rules.py` 共 `208 passed, 1 warning`（15.08 秒，Python 3.12.7）；唯一 warning 是 Starlette/httpx 弃用提示。无真实模型、DB、Redis 或 provider 连接。当时解析器改动后的真实 SCA-005 定向复验尚未执行，后续结果见下一条。
+- 新需求绑定修复后的真实模型复验：固定场景 `SCA-005-camera-no-match` `1/1` 通过，`/api/v1/chat/stream` HTTP 200，SSE 17 个事件，恰好一次 `discover_supplier_candidates` 合成只读工具调用；provider 合成结果为无候选，category=`工业连接器`、candidate_count=3、specification=`工作温度-40到125摄氏度`、region=`华北`、supply_region 为空，均符合契约。pytest `1 passed, 3 warnings in 15.44s`，warning 为已有 Starlette/httpx 与 Pydantic config 弃用提示。运行前断言模型为 `deepseek-v4.1-flash-1017`、PG/Mongo=`run_lifecycle_test`、Redis DB=15；测试内 load/save stub；未访问真实业务 provider/数据或停止用户服务。报告 `/tmp/chat-eval-baseline-sca005-requirement-fix-20261029.json`。
+- SCA-004 状态：完整 6 例初始基线中的一次未澄清失败已保留；当前 cap 700 的一次有界定向复测通过，尚未证明可重复的代码缺陷，未修改该路径或 token cap。
+- 关联提交：修复后关联。
+
+## ISS-20261029-024 真实模型聊天验收未隔离 legacy Mongo 投影
+
+- 发现日期：2026-10-29
+- 状态：验收隔离已修复；一条历史共享会话投影保留原样
+- 优先级：P1
+- 用例：`backend/tests/test_agent_sourcing_chat_live.py::test_real_minimax_sourcing_api_sse_acceptance`，显式从原工作区 `backend/.env` 载入模型配置；目标模型 `deepseek-v4.1-flash-1017`，接口 host `maas.qianwenaiapi.com`。
+- 现象：评测 fixture 把 `_optional_agent_user_id` 设为空，非持久化 Harness 路径会在请求结束时调用 legacy `_save_turn`；从原 `.env` 载入时 Mongo 目标没有覆盖到测试库。运行过程中收到的意图结果至少有一次因 `finish_reason=length` 且空内容触发结构化重试，整组评测随后被中止，未生成完整评测报告。
+- 影响：未能完成真实模型场景验收；中止前已向共享 Mongo 保存一条唯一 session 对话投影。按要求保留原样，不清理共享库。
+- 根因：真实 API/SSE 验收复用了会写 Mongo 投影的无用户兼容路径，但在加载原始 dotenv 时未将 Mongo/PG/Redis 配置显式覆盖到隔离范围。
+- 修复方案：真实验收加载模型配置后，显式覆盖 `MONGO_DB=run_lifecycle_test`、`PG_DB=run_lifecycle_test` 与 `REDIS_URL` 到独立测试范围；用运行前断言确认配置，并将 legacy `_save_turn` 投影 stub 到本地捕获器，避免写入 Mongo；真实模型只调用固定只读合成工具。
+- 验证结果：测试进程收到 KeyboardInterrupt 并退出；只读检查确认 `tianyancha.conversations` 中 session `3b096005-975f-4ef3-88ef-d14b3093c9e6` 于 `2026-10-29 09:02:45` 创建，含 2 条消息。按 6 个固定验收 prompt 的精确内容及 `created_at >= 09:02:30` 只读筛查仅匹配这一条当前记录；总计 57 条 prompt 命中包含历史重复场景。未读取或输出消息正文，未清理/修改共享库，未重启或终止用户服务。完整 live report 不存在。
+- 隔离修复验证：实时验收 fixture 现要求 PG/Mongo 为 `run_lifecycle_test`、Redis DB 为 15，并 stub 会话读取/保存。随后按新模型运行 6 例，未写入共享库；该次模型结果和业务场景失败另记 ISS-20261029-025。既有 session 记录保留，不做清理。
+- 关联提交：修复后关联。
+
+## ISS-20261029-023 两轮聊天上下文集成用例的验收支架错误
+
+- 发现日期：2026-10-29
+- 状态：已修复，验证通过
+- 优先级：P2
+- 用例：`backend/tests/test_run_coordinator_integration.py::test_chat_follow_up_restores_supplier_context_from_postgres`，目标数据库为 `run_lifecycle_test`。
+- 现象：用例实现先后出现错误导入 `ToolPayload`、把 SSE `session` 事件裸 UUID 当 JSON、以及假定意图模型提示暴露原始 `conversation_state` 等测试支架错误。
+- 影响：两轮上下文恢复验收需在修正支架后重新运行；没有发现产品上下文恢复故障。
+- 根因：`ToolPayload` 实际定义于 `app.tools.registry`；SSE 中 `session` payload 是裸字符串；意图提取只接收 `_conversation_context_snapshot` 提供的限界快照。
+- 修复方案：从正确模块导入；兼容非 JSON SSE payload；断言提示快照中的 `selected_supplier_names` 与 `previous_task`；使用项目后端虚拟环境重跑隔离 PostgreSQL 用例。
+- 验证结果：首次运行仅到导入阶段失败；`run_factory` 在隔离 `run_lifecycle_test` 数据库创建的随机 UUID 用户由 fixture teardown 清理。尚未创建聊天会话、run 或 outbox 事件，未访问 Mongo/Redis、共享业务库或真实模型。
+- 修复后复跑：导入修正后，真实 `/chat/stream` 首轮已返回 HTTP 200，但 SSE 解析器把 `session` 事件的裸 UUID 当 JSON 解码，报 `JSONDecodeError: Extra data`；这是用例解析器没有保留协议中非 JSON 的 session payload。该次运行只使用假模型/固定 provider；测试 `finally` 按 session 子查询清理已创建的 `agent_run` outbox，fixture 随后清理唯一 session/user。
+- 后续方案：仅对 JSON payload 解码失败的事件保留原始字符串，再重跑隔离库用例。
+- 后续复跑：SSE 解析修正后，两轮 `/chat/stream`、Harness 执行及 PostgreSQL 上下文提交/恢复均完成；目标企业在第二轮恢复并再次传给只读工具。测试最后因断言访问意图提示中不存在的原始 `conversation_state` 字段失败；提示按代码约定是限界快照，供应商名位于顶层 `selected_supplier_names` 和 `previous_task`。更新断言以匹配公开内部提示形状后再验证。数据库仍限定 `run_lifecycle_test`，本次唯一 session/user 和对应 agent_run outbox 按 ID 清理。
+- 最终验证：项目后端 venv 定向运行 `1 passed`（53.32 秒）；真实 `/api/v1/chat/stream` + Harness 两轮链路通过，PostgreSQL `run_lifecycle_test` 中 session state/history/references 跨轮恢复，第二轮只读工具仍收到同一目标。模型与 provider 均为固定替身；只创建随机 UUID 测试用户/session，outbox 通过该 session 关联的 run ID 清理，fixture 清理 session/user；未访问 Mongo/Redis/共享数据库或真实模型。
+- 当前 head 复验：意图解析器改动后再次运行同一真实 `/api/v1/chat/stream` 两轮追问集成用例，`1 passed, 3 warnings in 60.68s`。显式运行目标 PG/Mongo=`run_lifecycle_test`、Redis DB15；PG 中的随机 UUID user/session 在 fixture teardown 清理，关联 outbox 按 session ID 清理；模型/provider为固定替身。
+- 关联提交：修复后关联。
+
+## ISS-20261029-022 财务数据源失败被摘要表述为无查询结果
+
+- 发现日期：2026-10-29
+- 状态：已修复，验证通过
+- 优先级：P1
+- 用例：`backend/tests/test_agent_chat_full_chain.py::test_chat_financial_provider_failure_is_distinct_from_no_result`，真实 `/api/v1/chat/stream` 路由、Harness、ToolExecutor 与 SSE；LLM 和只读财务 provider 使用固定验收替身。
+- 现象：provider 抛出异常后，ToolExecutor 的 `tool_result` 正确标记 `failed` 并带 `tool_execution_failed`；成功查询但无结果的工具则标记 `not_found`。两者最终 `agent_answer.summary` 都是“已完成……财务数据查询，但当前没有可验证的财务指标结果”，没有说明前者实际查询失败。
+- 影响：采购人员无法从最终回答区分数据源故障与本次查询无结果，可能把未完成查询当作已完成查询。
+- 根因：Harness 财务摘要只按“有无可验证 Claim”选择无结果文案，没有读取 `tool_outcomes` 中的 `failed` / `unavailable` / `not_found` 状态。
+- 修复方案：基于结构化 ToolOutcome 状态生成确定性提示，明确区分查询失败/来源不可用与未取得可验证指标；无证据时保持 `needs_review`，不生成正负风险结论，不修改 API 或 SSE 契约。
+- 验证结果：新增的成对 API/SSE 回归首次运行 `1 failed, 1 passed`：失败场景确认最终摘要与 `not_found` 相同；空结果场景通过。输入为合成供应商和固定财务 provider，FakeOpenAI 只用于意图解析，未调用真实模型或业务数据库。`save_turn_failed` 表明本离线运行没有验证 Mongo 会话投影，且未清理或写入共享开发库。
+- 修复后验证：状态区分实现后，三场景运行 `2 passed, 1 failed`；失败只因 `not_found` 断言仍期待修复前的“没有可验证的财务指标结果”措辞，而实际已改为明确的“本轮财务查询未返回……指标”。provider `failed` 与 `unavailable` 两个断言均通过。失败已保留，更新过期断言后继续验证。
+- 语义边界复核：`not_found` 只说明本轮未取得可验证指标，不足以证明数据源已完整查询且确认无财务数据。将避免“来源确认为空”含义的措辞，明确不据此形成风险结论。
+- 最终验证：更新为“本轮未找到可验证的财务指标”后，三态定向回归 `3 passed`；聊天全链路与上下文合同套件 `22 passed`。`failed` / `unavailable` / `not_found` 分别有稳定摘要和限制，无证据时均不输出财务风险方向。均为真实 API/SSE + 固定假模型和只读 provider，无真实模型或共享业务数据。
+- 关联提交：修复后关联。
+
 ## ISS-20261029-021 Supervisor 审批集成回归在首个重启用例后停滞
 
 - 发现日期：2026-10-29

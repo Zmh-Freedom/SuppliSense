@@ -52,6 +52,7 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
 
     tool_calls: list[dict] = []
     model_responses: dict[str, dict] = {}
+    financial_scenario: dict[str, Any] = {"status": "success"}
     sourcing_scenario: dict[str, list[dict]] = {
         "local_candidates": [{
             "candidate_id": "acceptance-local-camera",
@@ -83,6 +84,17 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
 
     def query_financials(company_name: str) -> dict:
         tool_calls.append({"tool": "query_financials", "company_name": company_name})
+        if financial_scenario.get("raise"):
+            raise RuntimeError("acceptance financial provider failure")
+        if financial_scenario.get("status") != "success":
+            return {
+                "company_name": company_name,
+                "status": financial_scenario["status"],
+                "message": financial_scenario.get("message", "验收财务数据源状态"),
+                **({"error": financial_scenario["error"]} if financial_scenario.get("error") else {}),
+                "evidence_records": [],
+                "claims": [],
+            }
         evidence = build_evidence_record(
             evidence_id="acceptance-financial-evidence",
             entity_id=f"entity:{company_name}",
@@ -245,6 +257,7 @@ def full_chain_chat(app, monkeypatch: pytest.MonkeyPatch):
             yield SimpleNamespace(
                 client=client,
                 calls=tool_calls,
+                financial_scenario=financial_scenario,
                 responses=model_responses,
                 sourcing_scenario=sourcing_scenario,
             )
@@ -287,6 +300,97 @@ def test_chat_financial_request_runs_parser_harness_tool_and_returns_evidence_an
     assert full_chain_chat.calls == [{"tool": "query_financials", "company_name": "测试供应商有限公司"}]
     assert answer["status"] == "completed", events
     assert answer["claims"][0]["validation_status"] == "supported"
+
+
+@pytest.mark.parametrize(
+    (
+        "scenario",
+        "expected_tool_status",
+        "expected_message",
+        "expected_error_code",
+        "expected_limitation",
+    ),
+    [
+        (
+            "provider_failure",
+            "failed",
+            "财务数据查询失败",
+            "tool_execution_failed",
+            "财务数据查询失败",
+        ),
+        (
+            "provider_unavailable",
+            "unavailable",
+            "财务数据源暂不可用",
+            "provider_unavailable",
+            "财务数据源暂不可用",
+        ),
+        (
+            "no_result",
+            "not_found",
+            "未找到可验证的",
+            None,
+            "本轮没有找到可验证的财务指标",
+        ),
+    ],
+)
+def test_chat_financial_provider_failure_is_distinct_from_no_result(
+    full_chain_chat,
+    scenario: str,
+    expected_tool_status: str,
+    expected_message: str,
+    expected_error_code: str | None,
+    expected_limitation: str,
+):
+    message = "分析测试供应商有限公司的财务风险"
+    full_chain_chat.responses[message] = {
+        "target_supplier_names": ["测试供应商有限公司"],
+        "analysis_dimensions": ["financial"],
+        "capability": "financial",
+        "scope": "single_supplier",
+        "task_type": "analysis",
+        "requested_action": "none",
+        "confidence": 0.98,
+        "interpretation_summary": "分析测试供应商有限公司的财务风险。",
+        "field_sources": {
+            "target_supplier_names": "explicit",
+            "analysis_dimensions": "explicit",
+        },
+    }
+    if scenario == "provider_failure":
+        full_chain_chat.financial_scenario["raise"] = True
+    elif scenario == "provider_unavailable":
+        full_chain_chat.financial_scenario.update({
+            "status": "unavailable",
+            "message": "财务数据源暂不可用。",
+            "error": {
+                "code": "provider_unavailable",
+                "message": "财务数据源暂不可用。",
+                "retryable": True,
+            },
+        })
+    else:
+        full_chain_chat.financial_scenario.update({
+            "status": "not_found",
+            "message": "本轮查询未返回财务指标。",
+        })
+
+    response = full_chain_chat.client.post(
+        "/api/v1/chat/stream",
+        json={"message": message, "session_id": str(uuid4()), "mode": "auto"},
+    )
+
+    assert response.status_code == 200
+    events = _sse_events(response.text)
+    tool_result = next(payload for event_type, payload in events if event_type == "tool_result")
+    outcome = tool_result["result"]
+    answer = next(payload for event_type, payload in events if event_type == "agent_answer")
+    assert outcome["status"] == expected_tool_status, events
+    assert (outcome.get("error") or {}).get("code") == expected_error_code
+    assert answer["status"] == "needs_review"
+    assert answer["claims"] == []
+    assert expected_message in answer["summary"]
+    assert expected_limitation in " ".join(answer["limitations"])
 
 
 def test_chat_general_supplier_question_returns_without_business_tool_or_supplier_clarification(full_chain_chat):

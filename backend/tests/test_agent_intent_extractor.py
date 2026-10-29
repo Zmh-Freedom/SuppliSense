@@ -947,6 +947,21 @@ def test_deterministic_fallback_keeps_quantity_purchase_on_sourcing_path():
     assert result.analysis_dimensions == []
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "寻源3家耐高温工业连接器，规格是工作温度-40到125摄氏度，优先华北。",
+        "帮我找一家合适的供应商。",
+    ],
+)
+def test_deterministic_fallback_preserves_explicit_sourcing_task(message: str) -> None:
+    result = intent_extractor._deterministic_extraction_fallback(message)
+
+    assert result.capability == "sourcing"
+    assert result.task_type == "sourcing"
+    assert result.analysis_dimensions == []
+
+
 def test_recent_financial_risk_keeps_financial_primary_capability():
     assert explicit_primary_capability(
         "分析上海凯众材料科技股份有限公司近三个月的财务风险"

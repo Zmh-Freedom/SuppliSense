@@ -285,3 +285,199 @@ def test_first_projection_preserves_mongo_only_legacy_history(run_factory):
         assert [message["content"] for message in messages[2:]] == ["分析甲公司", "分析完成"]
     finally:
         collection.delete_many({"session_id": session_id})
+
+
+def test_chat_follow_up_restores_supplier_context_from_postgres(run_factory, app, monkeypatch):
+    """Two chat turns reload only the prior turn committed to the isolated control plane."""
+    import json
+    from contextlib import asynccontextmanager
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+    from langchain_core.tools import StructuredTool
+
+    from app.api import chat as chat_api
+    from app.core.config import settings
+    from app.core.deps import get_current_user
+    from app.graphs.agent_core.evidence_ledger import build_evidence_record
+    from app.graphs.agent_core import intent_extractor, narrator
+    from app.graphs.harness import graph as harness_graph
+    from app.tools.registry import ToolPayload, ToolRegistry, ToolSpec
+
+    create, user_id, session_id, store = run_factory
+    del create  # This test exercises the public chat route, which creates both turns.
+    first_message = "分析验收测试企业有限公司的财务风险"
+    follow_up = "那这家供应商的财务情况呢？"
+    company_name = "验收测试企业有限公司"
+    model_responses = {
+        first_message: {
+            "target_supplier_names": [company_name],
+            "analysis_dimensions": ["financial"],
+            "capability": "financial",
+            "scope": "single_supplier",
+            "task_type": "analysis",
+            "requested_action": "none",
+            "confidence": 0.98,
+            "interpretation_summary": "分析验收测试企业有限公司的财务风险。",
+            "field_sources": {
+                "target_supplier_names": "explicit",
+                "analysis_dimensions": "explicit",
+            },
+        },
+        follow_up: {
+            "target_supplier_names": [],
+            "analysis_dimensions": ["financial"],
+            "capability": "financial",
+            "scope": "single_supplier",
+            "task_type": "analysis",
+            "requested_action": "none",
+            "confidence": 0.98,
+            "interpretation_summary": "继续查看当前供应商的财务情况。",
+            "field_sources": {"analysis_dimensions": "explicit"},
+        },
+    }
+    model_requests = []
+    tool_calls = []
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+        @staticmethod
+        def _create(*, messages, **_kwargs):
+            request = json.loads(messages[1]["content"])
+            model_requests.append(request)
+            response = model_responses[request["current_message"]]
+            return SimpleNamespace(choices=[
+                SimpleNamespace(message=SimpleNamespace(content=json.dumps(response, ensure_ascii=False)))
+            ])
+
+    def query_financials(company_name: str) -> dict:
+        tool_calls.append(company_name)
+        evidence_id = f"context-baseline-{len(tool_calls)}"
+        evidence = build_evidence_record(
+            evidence_id=evidence_id,
+            entity_id=f"entity:{company_name}",
+            dimension="financial",
+            provider="isolated-context-baseline",
+            source_type="internal",
+            payload={"revenue": 1200000, "revenue_unit": "CNY", "fiscal_year": 2025},
+            collected_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ).model_dump(mode="json")
+        claim = {
+            "claim_id": f"context-baseline-claim-{len(tool_calls)}",
+            "entity_id": f"entity:{company_name}",
+            "dimension": "financial",
+            "statement": f"{company_name} 2025 年营业收入为 120 万元。",
+            "value": 1200000,
+            "fact_path": "revenue",
+            "unit": "CNY",
+            "evidence_refs": [evidence_id],
+            "confidence": 0.95,
+        }
+        return {
+            "status": "success",
+            "company_name": company_name,
+            "evidence_records": [evidence],
+            "claims": [claim],
+        }
+
+    registry = ToolRegistry()
+    registry.register(
+        StructuredTool.from_function(query_financials, name="query_financials", description="固定只读验收 provider"),
+        ToolSpec(
+            name="query_financials", capability="financial", side_effect="read",
+            approval_policy="none", max_attempts=1, evidence_required=True,
+        ),
+        output_model=ToolPayload,
+    )
+
+    monkeypatch.setattr(settings, "PG_DB", "run_lifecycle_test")
+    monkeypatch.setattr(settings, "MONGO_DB", "run_lifecycle_test")
+    monkeypatch.setattr(settings, "AGENT_EXECUTION_MODE", "inline")
+    monkeypatch.setattr(settings, "LLM_API_KEY", "isolated-fake-model-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    monkeypatch.setattr(harness_graph, "TOOL_REGISTRY", registry)
+    monkeypatch.setattr(narrator, "narrate_answer", lambda answer, _message: answer)
+    monkeypatch.setattr(chat_api, "_optional_agent_user_id", lambda _request: user_id)
+    monkeypatch.setattr("app.domains.auth.service.get_user_by_id", lambda _uid: SimpleNamespace(
+        role=SimpleNamespace(value="purchaser"),
+    ))
+    monkeypatch.setattr("app.domains.auth.preferences.build_preference_context", lambda _uid: "")
+    monkeypatch.setattr("app.services.agent_session_guard.acquire_agent_session_run", lambda _sid: "test-lease")
+    monkeypatch.setattr("app.services.agent_session_guard.renew_agent_session_run", lambda *_args: True)
+    monkeypatch.setattr("app.services.agent_session_guard.release_agent_session_run", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.formal_supplier_identity_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.review_scope_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.external_assessment_clarification", lambda *_args: None)
+    monkeypatch.setattr("app.services.clarification.detect_clarification_needed", lambda *_args, **_kwargs: None)
+
+    async def no_checkpointer():
+        return None
+
+    monkeypatch.setattr("app.graphs.sourcing_risk_v2.checkpointer.get_sourcing_risk_checkpointer", no_checkpointer)
+
+    @asynccontextmanager
+    async def isolated_lifespan(_app):
+        yield
+
+    monkeypatch.setattr(app.router, "lifespan_context", isolated_lifespan)
+    app.dependency_overrides[get_current_user] = lambda: object()
+
+    def events(response_text: str) -> list[tuple[str, dict]]:
+        parsed = []
+        for block in response_text.split("\n\n"):
+            event = next((line.removeprefix("event: ") for line in block.splitlines() if line.startswith("event: ")), None)
+            data = next((line.removeprefix("data: ") for line in block.splitlines() if line.startswith("data: ")), None)
+            if event and data:
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    payload = {"value": data}
+                parsed.append((event, payload))
+        return parsed
+
+    try:
+        with TestClient(app) as client:
+            first = client.post(
+                "/api/v1/chat/stream",
+                json={"message": first_message, "session_id": session_id, "mode": "auto"},
+            )
+            assert first.status_code == 200
+            first_events = events(first.text)
+            assert next(payload for name, payload in first_events if name == "agent_answer")["status"] == "completed"
+            committed_context = store.get_execution_context(session_id, user_id)
+            assert committed_context is not None
+            assert committed_context["history"][-2]["content"] == first_message
+            assert committed_context["conversation_state"]["selected_supplier_names"] == [company_name]
+            assert [item["name"] for item in committed_context["references"]] == [company_name]
+
+            second = client.post(
+                "/api/v1/chat/stream",
+                json={"message": follow_up, "session_id": session_id, "mode": "auto"},
+            )
+            assert second.status_code == 200
+            second_events = events(second.text)
+            assert next(payload for name, payload in second_events if name == "agent_answer")["status"] == "completed"
+            assert len(model_requests) == 2
+            assert model_requests[1]["known_supplier_references"][0]["name"] == company_name
+            tool_calls_by_turn = [
+                payload["args"]["company_name"]
+                for response_events in (first_events, second_events)
+                for name, payload in response_events
+                if name == "tool_call" and payload["tool"] == "query_financials"
+            ]
+            assert tool_calls == [company_name, company_name]
+            assert tool_calls_by_turn == [company_name, company_name]
+            assert model_requests[1]["conversation_context"]["selected_supplier_names"] == [company_name]
+            assert model_requests[1]["conversation_context"]["previous_task"]["target_supplier_names"] == [company_name]
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        with get_cursor() as (_, cur):
+            cur.execute(
+                """DELETE FROM outbox_events
+                   WHERE aggregate_type='agent_run'
+                     AND aggregate_id IN (SELECT id FROM agent_runs WHERE session_id=%s)""",
+                (session_id,),
+            )

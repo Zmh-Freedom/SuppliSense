@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import pytest
@@ -131,12 +132,23 @@ def real_minimax_sourcing_chat(app, monkeypatch: pytest.MonkeyPatch):
         pytest.skip("set RUN_MINIMAX_SOURCING_ACCEPTANCE=1 to call real MiniMax through chat API/SSE")
     if not settings.LLM_API_KEY:
         pytest.fail("RUN_MINIMAX_SOURCING_ACCEPTANCE=1 requires LLM_API_KEY in backend/.env")
+    redis_db = (urlsplit(settings.REDIS_URL).path or "/0").strip("/") or "0"
+    if (
+        settings.PG_DB != "run_lifecycle_test"
+        or settings.MONGO_DB != "run_lifecycle_test"
+        or redis_db != "15"
+    ):
+        pytest.fail(
+            "real chat acceptance requires PG_DB=MONGO_DB=run_lifecycle_test and Redis DB 15"
+        )
 
     from app.api import chat as chat_api
+    from app.graphs.agent_core import adapter
     from app.graphs.harness import graph as harness_graph
     from app.graphs.sourcing_risk_v2 import checkpointer
 
     tool_calls: list[dict] = []
+    saved_turns: list[dict] = []
     selected_result = {"candidate_result": "found"}
 
     def discover_supplier_candidates(requirement: dict) -> dict:
@@ -166,6 +178,15 @@ def real_minimax_sourcing_chat(app, monkeypatch: pytest.MonkeyPatch):
         "app.services.agent._load_conversation_context",
         lambda _session_id: {"history": [], "references": [], "state": {}},
     )
+    monkeypatch.setattr(
+        adapter,
+        "save_execution_turn",
+        lambda session_id, user_message, answer, references=None, *_args, **_kwargs: saved_turns.append({
+            "session_id": session_id,
+            "answer_length": len(answer),
+            "reference_count": len(references or []),
+        }),
+    )
     monkeypatch.setattr(chat_api, "_optional_agent_user_id", lambda _request: "")
     monkeypatch.setattr("app.services.agent_session_guard.acquire_agent_session_run", lambda _sid: "live-acceptance")
     monkeypatch.setattr("app.services.agent_session_guard.renew_agent_session_run", lambda *_args: True)
@@ -190,6 +211,7 @@ def real_minimax_sourcing_chat(app, monkeypatch: pytest.MonkeyPatch):
                 client=client,
                 tool_calls=tool_calls,
                 selected_result=selected_result,
+                saved_turns=saved_turns,
             )
     finally:
         app.dependency_overrides.pop(get_current_user, None)
@@ -197,6 +219,17 @@ def real_minimax_sourcing_chat(app, monkeypatch: pytest.MonkeyPatch):
 
 def test_real_minimax_sourcing_api_sse_acceptance(real_minimax_sourcing_chat):
     cases = load_sourcing_chat_cases(CASE_PATH)
+    selected_ids = {
+        item.strip()
+        for item in os.getenv("SOURCING_CHAT_LIVE_CASE_IDS", "").split(",")
+        if item.strip()
+    }
+    if selected_ids:
+        known_ids = {case["id"] for case in cases}
+        unknown_ids = selected_ids - known_ids
+        if unknown_ids:
+            pytest.fail(f"unknown live acceptance case IDs: {sorted(unknown_ids)}")
+        cases = [case for case in cases if case["id"] in selected_ids]
     results = []
     traces = []
 
