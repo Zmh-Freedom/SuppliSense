@@ -79,7 +79,7 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
   })
 
-  it('shows only a collapsed process disclosure for a completed historical run', () => {
+  it('hides completed historical workflow details', () => {
     const state = createState()
     state.historical = true
     state.workflowStatus = {
@@ -91,12 +91,12 @@ describe('AgentWorkflowPanel', () => {
 
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
 
-    expect(screen.getByText('查看处理过程').closest('details')).not.toHaveAttribute('open')
-    expect(screen.getByText('恢复的历史快照：本轮工作流已完成')).not.toBeVisible()
-    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('does not present a saved running snapshot as a live run', () => {
+  it('does not present a saved running snapshot as a live run or historical status card', () => {
     const state = createState({ historical: true })
     state.workflowStatus = {
       ...state.workflowStatus!,
@@ -106,12 +106,12 @@ describe('AgentWorkflowPanel', () => {
 
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
 
-    expect(screen.getByRole('status')).toHaveTextContent('历史记录仍显示处理中，当前状态未知')
-    expect(screen.getByRole('status')).toHaveTextContent('上次事件：正在执行工具')
-    expect(screen.queryByText(/已用时/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
   })
 
-  it('renders and expands older history snapshots that lack optional progress arrays', async () => {
+  it('safely hides completed legacy snapshots that lack optional progress arrays', () => {
     const legacySnapshot = {
       status: 'completed',
       stage: 'completed',
@@ -119,11 +119,8 @@ describe('AgentWorkflowPanel', () => {
     } as AgentWorkflowSnapshot
 
     expect(() => render(<AgentWorkflowPanel state={createState({ workflowStatus: legacySnapshot })} onApproval={vi.fn()} />)).not.toThrow()
-    expect(screen.getByText('旧版本保存的状态')).not.toBeVisible()
-    await userEvent.setup().click(screen.getByText('查看处理过程'))
-    expect(screen.getByText('当前状态：本轮查询已完成')).toBeInTheDocument()
-    expect(screen.queryByText(/目标：/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/来源：/)).not.toBeInTheDocument()
+    expect(screen.queryByText('旧版本保存的状态')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
   })
 
   it.each([
@@ -142,6 +139,7 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByText(expectedLabel)).toBeInTheDocument()
     const statusRegion = status === 'failed' ? screen.getByRole('alert') : screen.getByRole('status')
     expect(statusRegion).toHaveTextContent(`服务端状态：${status}`)
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
   })
 
@@ -156,7 +154,7 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.queryByText('风险 Agent')).not.toBeInTheDocument()
   })
 
-  it('reveals only recorded workflow fields when completed details are expanded', async () => {
+  it('hides completed workflow detail text', () => {
     const state = createState({ historical: true })
     state.workflowStatus = {
       ...state.workflowStatus!,
@@ -167,15 +165,12 @@ describe('AgentWorkflowPanel', () => {
 
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
 
-    await userEvent.setup().click(screen.getByText('查看处理过程'))
-    expect(screen.getByText('当前状态：本轮查询已完成')).toBeInTheDocument()
-    expect(screen.getByText('已完成实际记录的核验')).toBeInTheDocument()
-    expect(screen.getByText('目标：示例供应商')).toBeInTheDocument()
-    expect(screen.getByText(/已完成 1\/2 项/)).toBeInTheDocument()
-    expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('当前状态：本轮查询已完成')).not.toBeInTheDocument()
+    expect(screen.queryByText('已完成实际记录的核验')).not.toBeInTheDocument()
   })
 
-  it('shows parsed fields and whether each came from this turn or conversation context', async () => {
+  it('keeps parsed fields in the saved snapshot without exposing them in completed history', () => {
     const state = createState()
     state.workflowStatus = {
       ...state.workflowStatus!,
@@ -197,15 +192,10 @@ describe('AgentWorkflowPanel', () => {
     state.workflowStatus = { ...state.workflowStatus!, status: 'completed', stage: 'completed' }
     state.historical = true
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
-    await userEvent.setup().click(screen.getByText('查看处理过程'))
 
-    expect(screen.getByText('本轮理解')).toBeInTheDocument()
-    expect(screen.getByText('甲电机有限公司')).toBeInTheDocument()
-    expect(screen.getByText('会话上下文')).toBeInTheDocument()
-    expect(screen.getByText('本轮输入')).toBeInTheDocument()
-    expect(screen.getByText(/财务分析/)).toBeInTheDocument()
-    expect(screen.getByText('用户想看甲电机有限公司的财务表现。')).toBeInTheDocument()
-    expect(screen.getByLabelText('理解中的歧义')).toHaveTextContent('时间范围没有明确指定。')
+    expect(state.workflowStatus.inputUnderstanding?.target_supplier_names).toEqual(['甲电机有限公司'])
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    expect(screen.queryByText('甲电机有限公司')).not.toBeInTheDocument()
   })
 
   it('keeps review as an explicit human review state instead of marking it as a decision complete', () => {
@@ -220,7 +210,7 @@ describe('AgentWorkflowPanel', () => {
     render(<AgentWorkflowPanel state={state} onApproval={vi.fn()} />)
     expect(screen.getByText('需要人工复核')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('结果需要人工复核')
-    expect(screen.getByText('风险决策')).not.toBeVisible()
+    expect(screen.queryByText('风险决策')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
     expect(screen.queryByText(/已用时/)).not.toBeInTheDocument()
     expect(screen.getByRole('status').querySelector('span')).toHaveClass('bg-amber-500')
@@ -245,6 +235,7 @@ describe('AgentWorkflowPanel', () => {
 
     expect(screen.getByText('需要补充信息')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('请补充供应商名称')
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
   })
 
   it('shows approval details and sends approve or reject decisions', async () => {
@@ -255,6 +246,7 @@ describe('AgentWorkflowPanel', () => {
     expect(screen.getByRole('button', { name: '批准动作' })).toBeVisible()
     expect(screen.getByRole('heading', { name: '需要人工确认' })).toBeInTheDocument()
     expect(screen.getByText('动作：add_to_watchlist')).toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '批准动作' }))
     expect(onApproval).toHaveBeenCalledWith(true)
     await user.click(screen.getByRole('button', { name: '拒绝动作' }))

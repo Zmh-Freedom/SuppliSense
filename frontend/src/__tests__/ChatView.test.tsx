@@ -80,6 +80,27 @@ describe('ChatView session lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  it('shows the initial processing status after the new user message inside the chat', async () => {
+    let finishStream: (() => void) | undefined;
+    mocks.chatStream.mockImplementation(() => new Promise<string>(resolve => {
+      finishStream = () => resolve('');
+    }));
+    const user = userEvent.setup();
+    renderChat();
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险');
+    await user.click(screen.getByRole('button', { name: '发送' }));
+
+    const userMessage = screen.getAllByText('分析供应商风险').at(-1)!;
+    const processing = screen.getByRole('status');
+    expect(processing).toHaveTextContent('正在分析您的问题');
+    expect(processing.closest('section[aria-label="分析进度"]')).toBeInTheDocument();
+    expect(userMessage.compareDocumentPosition(processing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByLabelText('向 AI 采购助手提问').parentElement?.parentElement?.contains(processing)).toBe(false);
+
+    await act(async () => finishStream?.());
+  });
+
   it('ignores late callbacks from A while B is still running', async () => {
     const pending: Array<{ handlers: StreamCallbacks; resolve: (answer: string) => void }> = []
     mocks.chatStream.mockImplementation((_message: string, _sid: string, handlers: StreamCallbacks) =>
@@ -220,23 +241,24 @@ describe('ChatView session lifecycle', () => {
     await act(async () => {
       streamCallbacks?.onWorkflowStatus?.({ status: 'running', stage: 'understand', message: '正在解析结构化任务上下文' })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('正在解析结构化任务上下文')
     await act(async () => {
       streamCallbacks?.onWorkflowStatus?.({ status: 'loaded', stage: 'understand', message: '正在解析结构化任务上下文' })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     await act(async () => {
       streamCallbacks?.onWorkflowStatus?.({ status: 'turn_resolved', stage: 'understand', message: '已完成会话与当前任务解析' })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     await act(async () => {
       streamCallbacks?.onPlan?.({ steps: [] })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     await act(async () => {
       streamCallbacks?.onWorkflowStatus?.({ status: 'planned', stage: 'planning', message: '已生成受预算约束的任务计划' })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     await act(async () => {
       streamCallbacks?.onAgentAnswer?.({
         status: 'completed', summary: reply, claims: [], limitations: [],
@@ -254,7 +276,7 @@ describe('ChatView session lifecycle', () => {
     expect(screen.queryByText('采购建议')).not.toBeInTheDocument()
   })
 
-  it('keeps the empty initial workflow state lightweight until business or approval facts arrive', async () => {
+  it('keeps the initial workflow state to an in-chat status line until more activity arrives', async () => {
     let streamCallbacks: StreamCallbacks | undefined
     let finishStream: ((answer: string) => void) | undefined
     mocks.chatStream.mockImplementation((_message: string, _sessionId: string, handlers: StreamCallbacks) => {
@@ -267,17 +289,18 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '你好，顺便分析青岛三祥科技股份有限公司风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     expect(screen.getByText('正在分析您的问题…')).toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
 
     await act(async () => {
       streamCallbacks?.onWorkflowStatus?.({ status: 'loaded', stage: 'understand', message: '正在解析结构化任务上下文' })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     await act(async () => {
       streamCallbacks?.onWorkflowStatus?.({ status: 'turn_resolved', stage: 'understand', message: '已完成会话与当前任务解析' })
     })
-    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
     await act(async () => {
       streamCallbacks?.onPlan?.({ steps: [{ tool: 'risk_analysis', args: { supplier: '青岛三祥科技股份有限公司' } }] })
     })
@@ -354,8 +377,8 @@ describe('ChatView session lifecycle', () => {
     const finalStatusMessage = /连接已结束，但服务端没有返回最终结果/
     expect(await screen.findByText(finalStatusMessage)).toBeInTheDocument()
     expect(screen.getAllByText(finalStatusMessage)).toHaveLength(1)
-    await user.click(screen.getByText('查看处理过程'))
-    expect(screen.getAllByText(finalStatusMessage)).toHaveLength(1)
+    expect(screen.getByRole('status')).toHaveTextContent('需要人工复核')
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
   })
 
   it('replays a persisted terminal answer after a clean stream close', async () => {
@@ -641,8 +664,7 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText(/外部寻源在受限时间内未完成/)).toBeInTheDocument()
-    await user.click(screen.getByText('查看处理过程'))
-    expect(await screen.findByText('当前状态：需要人工复核')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('需要人工复核')
   })
 
   it('sends the current input value when Chinese IME composition has not updated React state', async () => {
@@ -843,6 +865,7 @@ describe('ChatView session lifecycle', () => {
   it('persists the completed Agent workflow summary with the answer', async () => {
     mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
       handlers.onWorkflowStatus?.({ status: 'completed', stage: 'completed', message: '本轮 Agent 工作流已完成', target_suppliers: ['华东钢材供应有限公司'], sources: ['local_snapshot'], evidence_status: '证据充分', loop_exit_reason: 'evidence_sufficient' })
+      handlers.onEvidence?.({ records: [{ evidence_id: 'workflow-evidence', entity_id: 'supplier:steel', dimension: 'risk', provider: 'assess_risk', source_type: 'risk_service_result', status: 'available', data_mode: 'formal', collected_at: '2026-10-29T00:00:00Z' }] })
       handlers.onDone?.({ answer: '已完成分析。' })
       return '已完成分析。'
     })
@@ -852,9 +875,15 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    await user.click(await screen.findByText('查看处理过程'))
-    expect(await screen.findByText('当前状态：本轮查询已完成')).toBeInTheDocument()
-    expect(screen.getByText('本轮结果：所需证据已覆盖')).toBeInTheDocument()
+    expect(await screen.findByText('已完成分析。')).toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
+    await waitFor(() => {
+      const storedSessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]') as Array<{ msgs: Array<{ workflow?: { targetSuppliers?: string[]; loopExitReason?: string }; evidence?: Array<{ evidence_id: string }> }> }>
+      expect(storedSessions[0].msgs.at(-1)).toMatchObject({
+        workflow: { targetSuppliers: ['华东钢材供应有限公司'], loopExitReason: 'evidence_sufficient' },
+        evidence: [{ evidence_id: 'workflow-evidence' }],
+      })
+    })
   })
 
   it('restores only persisted workflow state after refresh when legacy progress fields are missing', () => {
@@ -872,14 +901,18 @@ describe('ChatView session lifecycle', () => {
     }]))
 
     const view = renderChat()
-    expect(screen.getByRole('status')).toHaveTextContent('历史记录仍显示处理中，当前状态未知')
-    expect(screen.getByRole('status')).toHaveTextContent('上次事件：正在执行工具')
+    expect(screen.getByText('任务仍在处理。')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     expect(screen.queryByText(/已用时/)).not.toBeInTheDocument()
     expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
 
     view.unmount()
     renderChat()
-    expect(screen.getByRole('status')).toHaveTextContent('历史记录仍显示处理中，当前状态未知')
+    expect(screen.getByText('任务仍在处理。')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument()
     expect(screen.queryByLabelText('分析进度里程碑')).not.toBeInTheDocument()
     expect(mocks.chatStream).not.toHaveBeenCalled()
   })
@@ -919,8 +952,8 @@ describe('ChatView session lifecycle', () => {
 
     expect(screen.getAllByText('业务结论').length).toBeGreaterThan(0)
     expect(screen.getByText('数据说明').closest('details')).not.toHaveAttribute('open')
-    await user.click(await screen.findByText('查看处理过程'))
-    expect(await screen.findByText('当前状态：需要人工复核')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('需要人工复核')
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     await user.click(screen.getByText('数据说明'))
     expect(screen.getByText('综合风险数据覆盖不足')).toBeInTheDocument()
   })
@@ -943,6 +976,7 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByRole('button', { name: '批准动作' })).toBeInTheDocument()
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     const sessions = JSON.parse(localStorage.getItem('chat_sessions') || '[]')
     expect(sessions[0].msgs.at(-1).approval.status).toBe('pending')
   })
@@ -1361,8 +1395,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析供应商风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    await user.click(await screen.findByText('查看处理过程'))
-    expect(await screen.findByText('当前状态：部分结果待复核')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('部分结果待复核')
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument()
     expect(screen.queryByText('当前状态：本轮查询已完成')).not.toBeInTheDocument()
   })
 })

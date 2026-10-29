@@ -1389,7 +1389,6 @@ export default function ChatView() {
             <button onClick={newChat} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">
               + 新对话
             </button>
-            {loading && <span role="status" aria-live="polite" className="text-xs text-[var(--color-text-secondary)]">{streamState?.workflowStatus?.message || '正在提交并等待 Agent 响应…'}</span>}
           </div>
         </div>
       </div>

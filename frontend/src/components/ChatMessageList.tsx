@@ -70,9 +70,6 @@ function shouldShowWorkflowPanel({
   hasApproval = false,
   hasEvidence = false,
   hasReferences = false,
-  hasPlan = false,
-  hasToolCalls = false,
-  hasError = false,
   liveStream = false,
 }: {
   answer?: AgentAnswer | null;
@@ -80,32 +77,10 @@ function shouldShowWorkflowPanel({
   hasApproval?: boolean;
   hasEvidence?: boolean;
   hasReferences?: boolean;
-  hasPlan?: boolean;
-  hasToolCalls?: boolean;
-  hasError?: boolean;
   liveStream?: boolean;
 }): boolean {
   if (!workflow) return false;
-  const understanding = workflow.inputUnderstanding;
-  const hasBusinessIntent = Boolean(understanding && (
-    understanding.needs_clarification
-    || ['analysis', 'sourcing'].includes(understanding.task_type || '')
-    || (understanding.capability && understanding.capability !== 'none')
-    || understanding.target_supplier_names?.length
-    || understanding.analysis_dimensions?.length
-    || understanding.sourcing_requirement
-  ));
-  const hasActivity = hasWorkflowActivity(workflow, hasApproval, hasEvidence, hasReferences)
-    || hasPlan
-    || hasToolCalls
-    || hasError;
-  const initialPlaceholder = liveStream
-    && ['understand', 'planning'].includes(workflow.stage || '')
-    && !answer
-    && !hasApproval
-    && !hasBusinessIntent
-    && !hasActivity;
-  if (initialPlaceholder) return false;
+  if (!liveStream && !hasApproval && ['completed', 'running'].includes(workflow.status || '')) return false;
   const conversationOnly = workflow.status === 'completed'
     && answer?.status === 'completed'
     && !hasBusinessAnswer(answer)
@@ -176,7 +151,7 @@ export default function ChatMessageList({ messages, streamState, loading, onAnal
     {streamState && (loading || streamState.error) && <div className="flex gap-3">
       <div className="w-8 h-8 rounded-full bg-[var(--color-surface-selected)] flex items-center justify-center text-xs font-semibold text-[var(--color-text-secondary)] shrink-0">AI</div>
       <div className="min-w-0 flex-1 max-w-5xl space-y-2">
-        {shouldShowWorkflowPanel({ answer: streamState.agentAnswer, workflow: streamState.workflowStatus, hasApproval: Boolean(streamState.approval), hasEvidence: Boolean(streamState.evidence.length), hasReferences: Boolean(streamState.references.length), hasPlan: Boolean(streamState.plan?.length), hasToolCalls: Boolean(streamState.toolCalls.length), hasError: Boolean(streamState.error), liveStream: true }) && <AgentWorkflowPanel state={{ ...streamState, answerText: streamState.agentAnswer?.summary || streamState.answerChunks.join('') }} onApproval={onApproval} />}
+        {shouldShowWorkflowPanel({ answer: streamState.agentAnswer, workflow: streamState.workflowStatus, hasApproval: Boolean(streamState.approval), hasEvidence: Boolean(streamState.evidence.length), hasReferences: Boolean(streamState.references.length), liveStream: true }) && <AgentWorkflowPanel state={{ ...streamState, answerText: streamState.agentAnswer?.summary || streamState.answerChunks.join('') }} onApproval={onApproval} />}
         {streamState.charts.map((chart, index) => <ChartRenderer key={`chart-${index}`} data={chart} />)}
         {streamState.answerChunks.length > 0 && <div className="bg-[var(--color-surface)] glass-surface border border-[var(--color-border)] rounded-2xl px-4 py-3 text-sm text-[var(--color-text)] shadow-sm">
           <AssistantRichText content={streamState.agentAnswer?.summary || streamState.answerChunks.join('')} label={hasVerifiedBusinessAnalysis(streamState.agentAnswer, streamState.evidence) ? '采购分析' : undefined} />

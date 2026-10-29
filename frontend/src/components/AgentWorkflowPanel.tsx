@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ApprovalData } from '../api';
-import type { AgentInputUnderstanding, AgentWorkflowSnapshot } from '../types';
+import type { AgentWorkflowSnapshot } from '../types';
 
 export type AgentStatus = 'running' | 'complete' | 'error';
 
@@ -35,72 +35,6 @@ interface AgentWorkflowPanelProps {
   onApproval: (approved: boolean) => void;
 }
 
-function statusText(status: AgentStatus): string {
-  if (status === 'running') return '进行中';
-  if (status === 'complete') return '已完成';
-  if (status === 'error') return '异常';
-  return status;
-}
-
-const INPUT_FIELD_LABELS: Record<string, string> = {
-  target_supplier_names: '分析对象',
-  analysis_dimensions: '分析维度',
-  sourcing_requirement: '采购条件',
-  time_range: '时间范围',
-};
-
-const INPUT_SOURCE_LABELS: Record<string, string> = {
-  explicit: '本轮输入',
-  explicit_alias: '本轮别名',
-  alias_resolution: '名称别名解析',
-  conversation_state: '会话上下文',
-  pending_task: '待确认任务',
-  merged_with_conversation_state: '与历史条件合并',
-  explicit_override: '本轮修改',
-};
-
-const CAPABILITY_LABELS: Record<string, string> = {
-  sourcing: '供应商寻源',
-  risk: '综合风险',
-  financial: '财务分析',
-  business_risk: '经营风险',
-  quality: '质量风险',
-  delivery: '交付风险',
-  esg: 'ESG',
-  sentiment: '舆情分析',
-  compliance: '合规分析',
-  risk_trend: '风险趋势',
-  risk_prediction: '风险预测',
-  risk_network: '供应链关系',
-  report: '报告生成',
-  identity_review: '主体核验',
-  company_profile: '工商资料',
-};
-
-function inputValue(value: unknown): string {
-  if (Array.isArray(value)) return value.map(String).join('、');
-  if (typeof value !== 'object' || value === null) return String(value ?? '');
-  const labels: Record<string, string> = {
-    category: '品类', product: '产品', specification: '规格', quantity: '数量',
-    budget: '预算', region: '地区', supply_region: '供货地区', delivery: '交付',
-    qualifications: '资质', optional_conditions: '偏好',
-  };
-  return Object.entries(value as Record<string, unknown>)
-    .filter(([, item]) => item !== null && item !== undefined && item !== '')
-    .map(([key, item]) => `${labels[key] || key}：${Array.isArray(item) ? item.join('、') : String(item)}`)
-    .join('；');
-}
-
-function inputFieldRows(input: AgentInputUnderstanding): Array<[string, string, string]> {
-  return Object.entries(INPUT_FIELD_LABELS)
-    .flatMap(([key, label]) => {
-      const value = input[key as keyof AgentInputUnderstanding];
-      const rendered = inputValue(value);
-      const source = input.field_sources?.[key];
-      return rendered ? [[label, rendered, INPUT_SOURCE_LABELS[source || ''] || source || '来源未记录']] : [];
-    });
-}
-
 function lifecycleLabel(status?: string): string {
   const labels: Record<string, string> = {
     running: '正在处理',
@@ -117,11 +51,8 @@ function lifecycleLabel(status?: string): string {
   return labels[status || ''] || status || '状态未知';
 }
 
-function lifecycleHeading(status: string, historical: boolean): string {
-  const label = lifecycleLabel(status);
-  if (!historical) return label;
-  if (status === 'running') return '历史记录仍显示处理中，当前状态未知';
-  return `历史记录：${label}`;
+function lifecycleHeading(status: string): string {
+  return lifecycleLabel(status);
 }
 
 function lifecycleIndicatorClass(status: string, isRunning: boolean): string {
@@ -138,73 +69,6 @@ function compactJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function agentLabel(agent: string): string {
-  const labels: Record<string, string> = {
-    sourcing: '寻源 Agent',
-    risk: '风险 Agent',
-    compliance: '合规 Agent',
-    sentiment: '舆情 Agent',
-  };
-  return labels[agent] || agent;
-}
-
-function toolLabel(tool: string): string {
-  const labels: Record<string, string> = {
-    assess_risk: '综合风险核验',
-    assess_business_risk: '交易与结算核验',
-    assess_operational_risk: '运营风险核验',
-    query_financials: '财务数据核验',
-    sentiment_analysis: '舆情信息核验',
-    check_sanctions: '合规信息核验',
-    list_formal_suppliers: '正式供应商目录查询',
-    search_suppliers: '历史供应商查询',
-    discover_supplier_candidates: '外部候选寻源',
-    investigate_supplier_monitoring: '监控对象调查',
-    get_watchlist: '监控清单查询',
-    analyze_watchlist_trend: '风险变化分析',
-    get_monitor_review_queue: '待复核事项查询',
-    add_to_watchlist: '加入风险监控',
-  };
-  return labels[tool] || tool;
-}
-
-function loopExitLabel(reason: string): string {
-  const labels: Record<string, string> = {
-    all_tasks_processed: '已完成本轮核验',
-    evidence_sufficient: '所需证据已覆盖',
-    no_remediation_spec: '暂无可用的补充数据来源',
-    iteration_budget_exhausted: '已完成允许范围内的补充查询',
-    tool_budget_exhausted: '本轮查询数量已达上限',
-    deadline_exceeded: '本轮查询超时，建议稍后重试',
-    llm_budget_exhausted: '本轮分析次数已达上限',
-  };
-  return labels[reason] || reason;
-}
-
-function sourceLabel(source: string): string {
-  const labels: Record<string, string> = {
-    local_snapshot: '内部供应商数据',
-    feishu_bitable: '飞书供应商数据',
-    feishu_formal_supplier_snapshot: '飞书正式供应商主数据',
-    formal_supplier_directory: '正式供应商目录',
-    tianyancha: '天眼查企业数据',
-  };
-  return labels[source] || source;
-}
-
-function stageLabel(stage?: string): string {
-  const labels: Record<string, string> = {
-    understand: '理解需求',
-    planning: '任务规划',
-    executing: 'Agent 执行',
-    evidence: '证据汇总',
-    decision: '风险决策',
-    approval: '人工确认',
-    completed: '已完成',
-  };
-  return labels[stage || ''] || stage || '阶段未记录';
 }
 
 function approvalStatusLabel(status?: ApprovalData['status']): string {
@@ -241,22 +105,20 @@ function externalIdentityFromApprovalArgs(args: Record<string, unknown>): Record
 }
 
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);
   const workflow = state.workflowStatus;
   const lifecycle = state.error ? 'failed' : workflow?.status || (state.done ? 'completed' : 'running');
-  const isRunning = !state.historical && lifecycle === 'running' && !state.done && !state.error;
-  const workflowTargets = workflow?.targetSuppliers ?? [];
-  const workflowSources = workflow?.sources ?? [];
-  const toolCallCount = typeof workflow?.toolCallCount === 'number' ? workflow.toolCallCount : 0;
-  const completedToolCount = typeof workflow?.completedToolCount === 'number' ? workflow.completedToolCount : 0;
-  const workflowMessage = workflow?.message?.trim() || state.error || (state.historical ? '历史快照未保存进度消息' : lifecycleLabel(lifecycle));
+  const endedLifecycles = ['waiting_approval', 'completed', 'partial', 'failed', 'needs_review', 'clarifying', 'stopped', 'cancelled', 'rejected'];
+  const isRunning = !state.historical && !endedLifecycles.includes(lifecycle) && !state.done && !state.error;
+  const workflowMessage = workflow?.message?.trim() || state.error || (state.historical ? '状态消息未保存' : lifecycleLabel(lifecycle));
   const showWorkflowMessage = workflowMessage !== state.answerText?.trim();
   const externalProfile = state.approval ? externalIdentityFromApprovalArgs(state.approval.args) : null;
   const isExternalIdentityConfirmation = Boolean(externalProfile);
   const isCompleted = lifecycle === 'completed';
   const isFailure = lifecycle === 'failed';
   const visibleStatusMessage = showWorkflowMessage ? workflowMessage : '';
+  if (state.historical && !state.approval && ['completed', 'running'].includes(lifecycle)) return null;
+  if (isCompleted && !state.approval) return null;
 
   const handleApproval = (approved: boolean) => {
     setApprovalTarget(approved ? 'approve' : 'reject');
@@ -264,97 +126,14 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   };
 
   return (
-    <section className="w-full max-w-full" aria-label={isCompleted ? '处理过程' : '分析进度'}>
+    <section className="w-full max-w-full" aria-label={state.approval ? '审批状态' : '分析进度'}>
       {!isCompleted && <p role={isFailure ? 'alert' : 'status'} aria-live={isFailure ? 'assertive' : 'polite'} className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${isFailure ? 'text-red-700' : ['needs_review', 'partial', 'clarifying', 'waiting_approval', 'stopped', 'cancelled', 'rejected'].includes(lifecycle) ? 'text-amber-800' : 'text-[var(--color-text-secondary)]'}`}>
         <span aria-hidden="true" className={`inline-block h-2 w-2 shrink-0 rounded-full ${lifecycleIndicatorClass(lifecycle, isRunning)}`} />
         {isRunning ? <span>{visibleStatusMessage || lifecycleLabel(lifecycle)}</span> : <>
-          <span className="font-medium">{lifecycleHeading(lifecycle, Boolean(state.historical))}</span>
+          <span className="font-medium">{lifecycleHeading(lifecycle)}</span>
           {visibleStatusMessage && <span>{visibleStatusMessage}</span>}
         </>}
       </p>}
-
-      {!isRunning && <details className="mt-2 text-sm">
-        <summary className="group flex min-h-8 cursor-pointer list-none items-center justify-between gap-2 py-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
-          <span>查看处理过程</span>
-          <span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span>
-        </summary>
-        <div className="mt-3 space-y-4 border-l border-[var(--color-border)] pl-3">
-          {workflow?.inputUnderstanding && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3" aria-label="本轮理解">
-            <h3 className="text-xs font-semibold text-[var(--color-text)]">本轮理解</h3>
-            {workflow.inputUnderstanding.interpretation_summary && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{workflow.inputUnderstanding.interpretation_summary}</p>}
-            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
-              {workflow.inputUnderstanding.task_type === 'sourcing' ? '供应商寻源' : workflow.inputUnderstanding.task_type === 'analysis' ? '分析任务' : '对话请求'}
-              {workflow.inputUnderstanding.capability && workflow.inputUnderstanding.capability !== 'none' ? ` · ${CAPABILITY_LABELS[workflow.inputUnderstanding.capability] || workflow.inputUnderstanding.capability}` : ''}
-            </p>
-            {inputFieldRows(workflow.inputUnderstanding).length > 0 && <dl className="mt-2 space-y-2">
-              {inputFieldRows(workflow.inputUnderstanding).map(([label, value, source]) => <div key={label} className="flex flex-wrap items-start justify-between gap-2 text-xs">
-                <dt className="text-[var(--color-text-secondary)]">{label}</dt>
-                <dd className="flex flex-wrap items-center justify-end gap-1.5 text-right text-[var(--color-text)]">
-                  <span>{value}</span>
-                  <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]">{source}</span>
-                </dd>
-              </div>)}
-            </dl>}
-            {workflow.inputUnderstanding.ambiguities?.length ? <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-amber-700" aria-label="理解中的歧义">
-              {workflow.inputUnderstanding.ambiguities.map((ambiguity, index) => <li key={`${index}-${ambiguity}`}>{ambiguity}</li>)}
-            </ul> : null}
-          </div>}
-          {workflow && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-[var(--color-text)]">当前状态：{lifecycleLabel(workflow.status)}</p>
-              {workflow.stage && <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">{stageLabel(workflow.stage)}</span>}
-            </div>
-            {showWorkflowMessage && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{workflowMessage}</p>}
-            {workflowTargets.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">目标：{workflowTargets.join('、')}</p>}
-            {workflowSources.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{workflowSources.map(sourceLabel).join('、')}</p>}
-            {(toolCallCount > 0 || completedToolCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">工具查询：{toolCallCount > 0 ? `已完成 ${completedToolCount}/${toolCallCount} 项` : `已记录完成 ${completedToolCount} 项`}</p>}
-            {workflow.evidenceStatus && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">证据：{workflow.evidenceStatus}</p>}
-            {workflow.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">本轮结果：{loopExitLabel(workflow.loopExitReason)}</p>}
-          </div>}
-
-          {state.thinking && <p className="truncate text-xs text-gray-500" aria-live="polite">{state.thinking}</p>}
-
-          {state.plan && state.plan.length > 0 && (
-            <details className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
-              <summary className="cursor-pointer text-xs font-medium text-[var(--color-text)]">任务计划（{state.plan.length} 项）</summary>
-              <div className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-gray-500">
-                {state.plan.map((step, index) => <p key={`${step.tool}-${index}`} className="truncate">{index + 1}. {toolLabel(step.tool)}{step.parallel ? ' · 并行' : ''}</p>)}
-              </div>
-            </details>
-          )}
-
-          {state.agents && state.agents.selected.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-xs font-semibold text-[var(--color-text)]">Agent 执行</h3>
-              {state.agents.reasoning && <p className="text-[11px] text-gray-500">{state.agents.reasoning}</p>}
-              <div className="grid gap-2 sm:grid-cols-2">
-                {state.agents.selected.map(agent => {
-                  const status = state.agents?.status[agent] || 'running';
-                  return <div key={agent} className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2 text-xs" aria-label={`${agentLabel(agent)}：${statusText(status)}`}>
-                    <span aria-hidden="true" className={status === 'complete' ? 'text-emerald-600' : status === 'error' ? 'text-red-600' : 'text-blue-600'}>{status === 'complete' ? '✓' : status === 'error' ? '!' : '…'}</span>
-                    <span className="min-w-0 flex-1 truncate font-medium text-[var(--color-text)]">{agentLabel(agent)}</span>
-                    <span className="shrink-0 text-gray-500">{statusText(status)}</span>
-                  </div>;
-                })}
-              </div>
-            </div>
-          )}
-
-          {state.toolCalls.length > 0 && (
-            <div className="rounded-xl border border-[var(--color-border)]">
-              <button type="button" onClick={() => setDetailsOpen(value => !value)} aria-expanded={detailsOpen} className="flex min-h-[44px] w-full items-center justify-between px-3 text-left text-xs font-medium text-[var(--color-text)]">
-                <span>工具与证据摘要（{state.toolCalls.length}）</span><span aria-hidden="true">{detailsOpen ? '⌃' : '⌄'}</span>
-              </button>
-              {detailsOpen && <div className="max-h-64 space-y-2 overflow-auto border-t border-[var(--color-border)] p-3">
-                {state.toolCalls.map((call, index) => <details key={`${call.tool}-${index}`} className="min-w-0 rounded-lg bg-[var(--color-code-bg)] p-2">
-                  <summary className="cursor-pointer truncate text-xs text-[var(--color-text)]">{toolLabel(call.tool)}{call.result !== undefined ? ' · 已返回结果' : ' · 执行中'}</summary>
-                  <pre className="mt-2 max-w-full overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-gray-500">{compactJson({ args: call.args, result: call.result })}</pre>
-                </details>)}
-              </div>}
-            </div>
-          )}
-        </div>
-      </details>}
 
       {state.approval && (
         <div className="mx-4 mb-4 space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-3" aria-label="人工审批">

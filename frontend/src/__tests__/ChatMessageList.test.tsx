@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import type { ComponentType } from 'react';
-import type { AgentAnswer, AgentEvidenceRecord, ChatMessage } from '../types';
+import type { AgentAnswer, AgentEvidenceRecord, AgentWorkflowSnapshot, ChatMessage } from '../types';
 import ChatMessageList from '../components/ChatMessageList';
 import type { ChatStreamViewState } from '../components/ChatMessageList';
 
@@ -165,7 +165,7 @@ describe('saved workflow status', () => {
     const message: ChatMessage = {
       role: 'assistant',
       content: '请补充供应商名称。',
-      agentAnswer: noEvidenceConversation,
+      agentAnswer: { ...noEvidenceConversation, summary: '已完成供应商分析。' },
       workflow: {
         status: 'clarifying',
         stage: 'understand',
@@ -181,29 +181,35 @@ describe('saved workflow status', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent('需要补充信息');
     expect(screen.getByRole('status')).toHaveTextContent('请补充供应商名称。');
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument();
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument();
   });
 
-  it('shows a completed workflow only under the collapsed process disclosure', () => {
+  it('hides completed history workflow UI without deleting saved state or evidence', () => {
+    const workflow: AgentWorkflowSnapshot = {
+      status: 'completed',
+      stage: 'completed',
+      message: '完成实际记录的风险核验',
+      targetSuppliers: ['华东钢材供应有限公司'],
+      sources: ['local_snapshot'],
+      toolCallCount: 1,
+      completedToolCount: 1,
+    };
+    const evidence = [verifiedEvidence];
     const message: ChatMessage = {
       role: 'assistant',
       content: '已完成供应商分析。',
-      agentAnswer: noEvidenceConversation,
-      workflow: {
-        status: 'completed',
-        stage: 'completed',
-        message: '完成实际记录的风险核验',
-        targetSuppliers: ['华东钢材供应有限公司'],
-        sources: ['local_snapshot'],
-        toolCallCount: 1,
-        completedToolCount: 1,
-      },
+      agentAnswer: { ...noEvidenceConversation, summary: '已完成供应商分析。' },
+      workflow,
+      evidence,
     };
 
     renderList({ messages: [message], streamState: null, loading: false });
 
-    const details = screen.getByText('查看处理过程').closest('details');
-    expect(details).not.toHaveAttribute('open');
-    expect(screen.getByText('当前状态：本轮查询已完成')).not.toBeVisible();
-    expect(screen.getByText('完成实际记录的风险核验')).not.toBeVisible();
+    expect(screen.getByText('已完成供应商分析。')).toBeInTheDocument();
+    expect(screen.queryByText(/历史记录/)).not.toBeInTheDocument();
+    expect(screen.queryByText('查看处理过程')).not.toBeInTheDocument();
+    expect(message.workflow).toBe(workflow);
+    expect(message.evidence).toBe(evidence);
   });
 });
