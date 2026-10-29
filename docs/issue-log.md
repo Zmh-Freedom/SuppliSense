@@ -22,7 +22,7 @@
 - 五模块完整离线回归：intent、input-understanding、Harness、evidence ledger 和 API/SSE full-chain 共 `279 passed, 3 warnings`（164.31 秒）。这是 ISS-031 修改后的整体回归，3 个 warning 为既有弃用提示；没有真实模型、DB、Redis 或业务 provider调用。
 - 真实模型单例选择命令错误：首次有界 SCA-004/005 启动在测试选择阶段失败，报告 `unknown live acceptance case IDs: ['SCA-004', 'SCA-005']`；测试没有进入模型 API 调用。运行前模型 `deepseek-v4.1-flash-1017`、API host `maas.qianwenaiapi.com` 以及 PG/Mongo=`run_lifecycle_test`、Redis DB 15 断言均通过；3 个既有弃用 warning。保留这条失败，接下来先按数据集真实 ID 校准选择器再启动真实调用。
 - 真实模型修复后有界复测：使用数据集真实 ID `SCA-004-underspecified` 与 `SCA-005-camera-no-match`，模型 `deepseek-v4.1-flash-1017`、host `maas.qianwenaiapi.com`，活动 `/api/v1/chat/stream` 两案例 `2/2` 通过，报告 `/tmp/chat-eval-baseline-post-iss031-004-005-20261029.json`。SCA-004 只有 `session`/`clarification`、0 次工具调用；SCA-005 17 个 SSE 事件、一次合成只读 `discover_supplier_candidates`，类别、规格、数量、地区约束均符合断言。运行前断言 PG/Mongo=`run_lifecycle_test`、Redis DB 15；session/checkpointer、保存和候选工具均由隔离替身提供，未执行 DB/Redis 或真实供应商 provider 读写。测试未输出密钥。初始 ID 选择错误保留为上一条记录；3 个弃用 warning 为既有提示。
-- 关联提交：待修复后补充。
+- 关联提交：`57943eb2`。
 
 ## ISS-20261029-030 复审再复发：规避请求前缀变体绕过受限寻源 guard
 
@@ -37,7 +37,7 @@
 - 验证结果：不再用固定请求前缀集合证明寻源意图；受限 guard 检查当前消息中的规避词和候选发现动作。对明确供应商风险分析，仅当同一消息没有明确候选动作与目标时保留只读分析；有真实候选动作的混合输入 fail closed。引述内容评审/分析先进入元问题边界，不执行其中指令。
 - 复现 RED：增加“可以帮忙寻源3家…”请求变体、对被引述请求的明确合规分析，以及“分析具名供应商风险+真实候选发现”的混合输入，相关 intent/fallback/API/SSE 共 `30` 项，结果 `9 failed, 21 passed, 3 warnings`。前缀变体和混合输入未被禁止 guard 识别；引用合规分析也因缺少特定意图问句标记落入 sourcing 并调用工具。已有合法具名供应商风险分析回归通过。FakeOpenAI/合成候选，无真实模型、DB、Redis 或 provider 访问；保留本次 RED。
 - 修复后定向回归：覆盖上述三个新边界、ISS-028/029 引述/否定/无供应商字样案例、合法合规风险分析及正向寻源，共 `36 passed, 3 warnings`（36.98 秒）；五个相关模块 `268 passed, 3 warnings`（137.01 秒）。最新代码下真实 DeepSeek SCA-004/005 API/SSE `2/2`，无 mismatch；分别为 0 次工具调用、1 次合成只读候选工具。运行前断言 PG/Mongo=`run_lifecycle_test`、Redis DB 15；会话和 checkpointer stub，没有 DB/Redis I/O。报告 `/tmp/chat-eval-baseline-post-iss030-004-005-20261029.json`。SCA-004/005 不覆盖 ISS-030 的新无前缀/引述/混合输入；上述边界新例本身由 FakeOpenAI 验证，没有使用真实模型、DB、Redis 或供应商 provider。
-- 关联提交：待修复后补充。
+- 关联提交：`57943eb2`。
 
 ## ISS-20261029-029 复审复发：无“供应商”字样及意图询问中的受限寻源绕过 guard
 
@@ -52,7 +52,7 @@
 - 验证结果：独立复审给出两条具体路径；先保存 RED，再将检测限定到当前主句确实以寻源动作发起候选发现，并先识别明确的意图判断/分析问题。
 - 复现 RED：增加无“供应商”字样的受限寻源和“请判断这句话的意图：〔…〕”元问题到 intent/fallback/API/SSE 用例，运行 `23` 项，结果 `7 failed, 16 passed, 3 warnings`。受限请求的 `is_prohibited_sourcing_request` 返回 False，fallback / API/SSE 继续生成 sourcing 和 `tool_call`；元问题未被 `is_non_operational_request` 识别，同样在 API/SSE 发出工具调用。此前“分析测试供应商有限公司绕过出口管制的风险”合法分析回归仍通过。测试用 FakeOpenAI、固定 API fixtures 与合成候选，不调用真实模型、DB、Redis 或供应商服务；保留本次 RED。
 - 修复后定向回归：新增元意图识别，并取消禁止规则对“供应商/厂家/候选”字样的要求；当时曾使用句首/请求前缀判定，后续遗漏见 ISS-030。无供应商字样受限请求、意图询问、ISS-028 两例、合法合规风险分析及正向寻源回归共 `26 passed, 3 warnings`（20.01 秒）。ISS-030 修复后五模块回归 `268 passed, 3 warnings`（137.01 秒）。API 用 FakeOpenAI 和合成候选；真实模型只覆盖 SCA-004/005，不是新增边界。
-- 关联提交：待修复后补充。
+- 关联提交：`57943eb2`。
 
 ## ISS-20261029-028 复审发现元问题误触发寻源及合规风险误拦截
 
@@ -67,7 +67,7 @@
 - 验证结果：修改 `is_explicitly_negated_sourcing_request`，识别“不要实际/真正/真的寻源”这一明确否定；`is_prohibited_sourcing_request` 仅在文本含供应商候选发现动作及对象时检查规避管制条件，因此“分析某供应商绕过出口管制的风险”保留为分析意图。引用验收用例在 FakeOpenAI API/SSE 链路中不发 `tool_call`，实际受限寻源仍被阻止。定向回归 `19 passed, 3 warnings`；当前相关五模块回归 `251 passed, 3 warnings`（109.04 秒）。新模型 `deepseek-v4.1-flash-1017` SCA-004/005 API/SSE 有界复验 `2/2`，分别为 0/1 次工具调用且 1 次合成候选工具，无 mismatch；这两例不是 ISS-028 的新增边界输入。隔离断言通过，PG/Mongo 为 `run_lifecycle_test`、Redis DB 15；会话/checkpointer stub，没有数据库或 Redis I/O。新问题具体边界回归使用 FakeOpenAI，不计作真实模型验收。独立复审与 CI 待完成。
 - 复现 RED：新增 quoted acceptance case 的 intent、fallback 与 API/SSE 回归，以及合法合规风险分析意图回归；运行 16 项，`4 failed, 12 passed`。当前 quoted review 在 infer/fallback 中都成了 `sourcing`，API/SSE 发出 `tool_call`；“分析测试供应商有限公司绕过出口管制的风险”被 `is_prohibited_sourcing_request` 返回 True，且被 `is_non_operational_request` 提前清空。其余既有否定/元问题/受限寻源 12 例通过。API fixture 使用 FakeOpenAI 和合成只读候选，无真实模型或 DB/Redis/provider 访问；有 3 个既有弃用 warning。
 - 修复后定向回归：覆盖新 quoted review 的 infer/fallback/API/SSE、正向风险分析，以及既有否定/讨论/受限寻源场景，共 `19 passed, 3 warnings`（25.66 秒）；之后五模块回归 `251 passed, 3 warnings`（109.04 秒）。FakeOpenAI 与合成只读候选；未调用真实模型、DB、Redis 或供应商 provider。新模型 SCA-004/005 另行通过有界 API/SSE 复验，但不包含这两条新增边界提示。初始 RED 保留，不以本次通过覆盖。
-- 关联提交：待提交后补充。
+- 关联提交：`57943eb2`。
 
 ## ISS-20261029-027 多供应商财务证据覆盖按维度聚合而掩盖目标缺口
 
@@ -84,7 +84,7 @@
 - 定向复跑命令记录：尝试用参数化测试的展示 ID 逐项选择上述三例，但给出的 nodeid 因 pytest 参数 ID 编码/匹配格式不正确而收集到 0 项（`ERROR: not found`，3 warnings）；这次命令未运行测试逻辑，作为测试选择命令错误保留，后续按函数 nodeid 运行整组参数化用例。
 - 定向重跑：按函数 nodeid 重跑 3 个状态参数，`2 passed, 1 failed`。`failed` 与 `unavailable` 通过；`not_found` 的摘要关键字通过，但限制断言仍要求旧文案“本轮没有找到可验证的财务指标”，新限制刻意写明“至少一项查询未找到可验证指标，且不表示已确认来源为空”。这是过期的断言文案，非状态判断失败；测试修订后继续跑相关模块全量。
 - 最终离线验证：更新 `not_found` 限制断言以保留“未找到不等于已确认来源为空”的边界后，状态参数化用例 `3 passed`；intent、input-understanding、Task14、EvidenceLedger、chat full-chain 五个相关模块共 `247 passed, 3 warnings`（103.90s）。未运行数据库服务、真实模型或真实 provider；3 个 warning 是既有 Starlette/httpx 与 Pydantic config 弃用提示。
-- 关联提交：待修复后补充。
+- 关联提交：`57943eb2`。
 
 ## ISS-20261029-026 否定、讨论或规避管制的请求进入寻源执行路径
 
@@ -100,7 +100,7 @@
 - API/SSE 红测：`tests/test_agent_chat_full_chain.py::test_chat_does_not_execute_negated_meta_or_prohibited_sourcing` 三种输入均未得到预期的无工具安全答复：否定和规避管制输入发出 `tool_call`；流程介绍输入没有 `agent_answer`（意图虽标记需要澄清，但测试端点未完成预期问答契约）。同次运行 `test_chat_reports_missing_financial_evidence_for_each_supplier` 在意图 fixture 校验前因测试提供了非法 `scope=multi_supplier` 而未执行财务工具；该项暂记夹具缺陷，不据此判产品根因，修正为 schema 支持的 scope 后重跑。3 条运行均通过合成 API/SSE fixture，日志显示 `save_turn_failed`，未写共享业务库；有 3 个既有 Starlette/Pydantic 弃用 warning。
 - 修复后验证：routing 在否定操作、寻源流程讨论、明确规避出口管制/制裁时 fail closed；对话仅发送确定性无工具答复或澄清，正向明确寻源回归仍可执行。`tests/test_agent_intent_extractor.py` 相关意图/fallback 用例与 `tests/test_agent_chat_full_chain.py` 安全请求回归均通过；完整定向集合 `21 passed`。流程介绍验证符合 API 已有 `clarification`/no-plan 合同，不要求必须有 `agent_answer`；无 tool call。没有真实模型/共享业务数据访问。
 - 最终离线验证：上述五个相关模块共 `247 passed, 3 warnings`。FakeOpenAI API/SSE 安全输入三例均无供应商工具调用；同模块正向 sourcing 与原有写审批契约回归均保持通过。
-- 关联提交：待修复后补充。
+- 关联提交：`57943eb2`。
 
 ## ISS-20261029-025 新模型聊天评测中的寻源澄清与意图失败
 
