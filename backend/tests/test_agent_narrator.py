@@ -198,6 +198,20 @@ def test_narrative_validation_accepts_natural_paraphrase_of_limitation() -> None
     assert _validate_draft(draft, answer) is True
 
 
+def test_narrative_validation_rejects_limitation_that_drops_missing_objects_and_impact() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少现金流量表和审计报告，无法判断短期偿债能力"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100，财务数据覆盖不足。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
 def test_narrative_validation_rejects_unverified_number_in_headline() -> None:
     answer = _answer()
     draft = NarrativeDraft(

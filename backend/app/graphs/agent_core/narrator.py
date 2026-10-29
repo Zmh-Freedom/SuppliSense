@@ -64,6 +64,16 @@ _LIMITATION_STATES = (
     ("synthetic", ("synthetic", "演示数据", "模拟数据")),
     ("review", ("needs_review", "人工复核", "人工确认", "待核验", "需核实")),
 )
+_LIMITATION_MISSING_OBJECT_PATTERN = re.compile(
+    r"(?:缺少|缺失|缺乏|未提供|未取得)\s*([^，。；;]{2,80}?)(?=无法|不能|暂不能|难以|[，。；;]|$)"
+)
+_LIMITATION_IMPACT_PATTERN = re.compile(
+    r"(?:无法|不能|暂不能|难以|不足以)\s*(?:判断|评估|确认|核实|分析|测算|计算)\s*([^，。；;]{2,80})"
+)
+_LIMITATION_OBJECT_SEPARATOR_PATTERN = re.compile(r"以及|和|与|及|、|/")
+_LIMITATION_CONCRETE_OBJECT_MARKERS = (
+    "表", "报告", "合同", "发票", "凭证", "流水", "台账", "资质", "许可证", "证书", "证明", "清单", "记录", "文件", "协议",
+)
 _SENTIMENT_SOURCE_MARKERS = ("舆情", "新闻", "报道", "sentiment", "news")
 _SOURCE_UNAVAILABLE_MARKERS = (
     "unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂不可用",
@@ -134,6 +144,23 @@ def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker.casefold() in normalized for marker in markers)
 
 
+def _specific_limitation_anchors(limitation: str) -> list[str]:
+    """Find explicitly named missing objects and decision impacts to preserve."""
+    anchors: list[str] = []
+    missing_match = _LIMITATION_MISSING_OBJECT_PATTERN.search(limitation)
+    if missing_match:
+        for item in _LIMITATION_OBJECT_SEPARATOR_PATTERN.split(missing_match.group(1)):
+            normalized_item = item.strip()
+            if len(normalized_item) >= 2 and _has_any_marker(normalized_item, _LIMITATION_CONCRETE_OBJECT_MARKERS):
+                anchors.append(normalized_item)
+    impact_match = _LIMITATION_IMPACT_PATTERN.search(limitation)
+    if impact_match:
+        impact = impact_match.group(1).strip()
+        if len(impact) >= 2:
+            anchors.append(impact)
+    return anchors
+
+
 def _limitation_is_preserved(limitation: str, narrative_text: str) -> bool:
     if limitation in narrative_text:
         return True
@@ -150,7 +177,12 @@ def _limitation_is_preserved(limitation: str, narrative_text: str) -> bool:
     )
     if not required_groups:
         return False
-    return all(_has_any_marker(narrative_text, markers) for markers in required_groups)
+    if not all(_has_any_marker(narrative_text, markers) for markers in required_groups):
+        return False
+    # Coarse dimension/state markers alone can make "财务数据覆盖不足" look
+    # equivalent to a limitation naming specific missing documents and the
+    # decision they prevent. Keep those explicit anchors or reject the draft.
+    return all(anchor.casefold() in narrative_text.casefold() for anchor in _specific_limitation_anchors(limitation))
 
 
 def _source_state_error(answer: AgentAnswer, narrative_text: str) -> str | None:
