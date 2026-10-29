@@ -16,6 +16,9 @@
 | 缺少供应商主体 | `test_chat_missing_supplier_target_clarifies_without_calling_business_tools` | 发出主体澄清，不调用业务工具 | 离线全链路套件通过 |
 | 来源失败/不可用/未找到 | `test_chat_financial_provider_failure_is_distinct_from_no_result` | `failed`、`unavailable`、`not_found` 保持独立；不产生财务 Claim，答案保留对应限制 | 离线全链路套件通过；`not_found` 表示本轮未找到可验证指标，不表示已确认来源完整且为空 |
 | 有约束及无候选寻源 | `test_chat_sourcing_request_passes_normalized_constraints_to_tool_executor`、`test_chat_sourcing_request_reports_no_candidates_without_supplier_clarification` | 类别、地区、交付地区、预算、规格、资质、数量和候选数进入正确字段；仅在明确候选查询结果时说本轮无匹配候选 | 离线全链路套件通过；候选由合成夹具提供 |
+| 否定、讨论和受限寻源 | `test_deterministic_fallback_does_not_execute_negated_meta_or_prohibited_sourcing`、`test_quoted_compliance_instruction_is_analyzed_without_candidate_execution`、`test_chat_does_not_execute_prohibited_or_quoted_sourcing_without_supplier_noun`、`test_chat_fallback_keeps_main_clause_compliance_analysis_when_llm_is_unavailable` | “不要实际寻源”包裹引用验收请求时不执行；明确分析/评审引述文本时不执行其中指令；无数量/供应商字样的受限产品候选动作、混合请求和不成对引号 fail closed；明确供应商合规分析从未引述主句恢复目标，即使无 key 或 LLM 超时也继续分析；正向寻源仍执行 | ISS-028/029/030/031 RED 均保留；FakeOpenAI、无 key、fake timeout API/SSE 与 intent/fallback 回归通过。ISS-031 两个新增具体边界另有真实模型 SCA-004/005 回归，但不是这些 guard 边界本身 |
+| 泛化候选请求 | `test_harness_clarifies_vague_supplier_request_instead_of_searching`、`test_chat_clarifies_generic_supplier_request_without_searching` | “找一家合适的供应商”不把泛化词当品类；询问采购品类/产品并且不调用工具 | 离线回归及最新 DeepSeek SCA-004 API/SSE 通过；模型收到真实提示，工具端不运行 |
+| 多供应商部分覆盖 | `test_agent_answer_requires_evidence_for_each_supplier_item`、`test_chat_reports_missing_financial_evidence_for_each_supplier` | 每个目标及必需 evidence item 单独判覆盖；甲失败、乙成功时整体 `needs_review`，列出甲缺证且摘要不声称两家都已完成 | 离线 answer-contract 与 API/SSE 合成结果回归通过 |
 | 显式寻源但模型缺结构化槽位 | `test_explicit_sourcing_without_model_slots_binds_requirement_and_plans_search` | 在模型只输出 sourcing 能力/任务而缺少 `sourcing_requirement` 时，从明确文本恢复类别、数量、规格、偏好地区并生成只读寻源计划 | 离线红绿回归通过；真实模型 SCA-005 定向复验通过 |
 | 追问及上下文恢复 | `test_clarification_persists_confirmed_slots_to_postgres_state`、`test_chat_follow_up_restores_supplier_context_from_postgres` | 已确认槽位进入 PostgreSQL 状态；下一轮恢复供应商上下文 | API 合约测试通过；隔离 PostgreSQL 两轮集成测试通过 |
 | 审批确认/拒绝 | `test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_results[approve/reject]` | 保持暂停、恢复和决策状态；外部写执行器在验收中为替身 | 独立 PostgreSQL `run_lifecycle_test` 两种决策均通过；没有真实业务写入 |
@@ -29,6 +32,9 @@
 - 隔离 PostgreSQL 两轮上下文恢复：**1 passed**。使用独立 `run_lifecycle_test` 数据库及随机用户/会话 ID；仅删除本测试创建的记录。
 - 隔离 PostgreSQL 审批确认/拒绝：**2 passed**。数据库为 `run_lifecycle_test`，拒绝路径不产生执行结果；审批测试的外部写执行器由替身提供。
 
+- ISS-028 修复后定向回归：quoted acceptance 的 intent/fallback/API/SSE、合法合规风险分析及既有否定/讨论/受限寻源场景：**19 passed, 3 warnings**（25.66 秒）。初始 `4 failed, 12 passed` 保留在问题记录中，没有用重跑覆盖 RED。
+- ISS-031 修复后当前相关模块合并回归：`test_agent_intent_extractor.py`、`test_agent_input_understanding_rules.py`、`test_agent_harness_task14.py`、`test_agent_evidence_ledger.py`、`test_agent_chat_full_chain.py`：**279 passed, 3 warnings**（164.31 秒）。3 个 warning 是已有 Starlette/httpx 与 Pydantic config 弃用提示。此前失败、断言更新和重跑都记在 ISS-20261029-025 至 ISS-20261029-031，没有删除首次 RED 或失败结果。
+
 以上测试的通过结果可以作为当前代码的离线回归基线；它们不等同真实浏览器登录后的交互验收。
 
 ### 真实模型 API/SSE 寻源评测
@@ -39,8 +45,13 @@
 | 确定性 fallback 修复后 | SCA-005，1 例 | **0/1** | trace 实际已识别 `capability=sourcing` 和 `task_type=sourcing`，但没有 `sourcing_requirement`，仍未规划工具；这推翻了“有效 no-task 早退”的初始假设。记录保存在 `/tmp/chat-eval-baseline-sca005-postfix-20261029.json`。 |
 | 显式需求绑定修复后 | SCA-005，1 例 | **1/1** | 真实 `/api/v1/chat/stream` HTTP 200，17 个 SSE 事件，恰好一次 `discover_supplier_candidates`；类别、候选数、规格、偏好地区均匹配。记录保存在 `/tmp/chat-eval-baseline-sca005-requirement-fix-20261029.json`。 |
 | SCA-004 有界定向复测 | SCA-004，1 例 | **1/1** | 一次复测通过，未证明稳定复现或稳定修复，因此保留初始失败并标作非确定性观察；不据此改代码或提高 token 上限。记录保存在 `/tmp/chat-eval-baseline-sca004-current-700.json`。 |
+| 泛化品类与显式槽位修复后 | SCA-004、SCA-005，各 1 例 | **2/2** | 当前模型配置下真实 `/api/v1/chat/stream` 均 HTTP 200。SCA-004 只收到 `session`、`clarification`，工具调用数为 0，澄清品类/产品；SCA-005 收到 17 个 SSE 事件并且只调用一次合成只读 `discover_supplier_candidates`，约束字段符合评测。报告 `/tmp/chat-eval-baseline-latest-004-005-20261029.json`。完整 SCA-001 至 SCA-006 修复后未重跑。 |
+| ISS-028 guard 修复后复验 | SCA-004、SCA-005，各 1 例 | **2/2** | `deepseek-v4.1-flash-1017` 下两例 HTTP 200 且无 mismatch；SCA-004 仅 `session`/`clarification`、0 次工具调用；SCA-005 17 个 SSE 事件、1 次合成只读候选工具。配置在运行前断言，隔离为 PG/Mongo `run_lifecycle_test`、Redis DB 15；会话/checkpointer stub，无数据库或 Redis I/O。报告 `/tmp/chat-eval-baseline-review-004-005-20261029.json`。这两例不包含 ISS-028/029 的新增边界输入，不能替代其离线回归。 |
+| ISS-029 guard 修复后复验 | SCA-004、SCA-005，各 1 例 | **2/2** | `deepseek-v4.1-flash-1017` 下两例 HTTP 200、无 mismatch；SCA-004 2 个 SSE 事件且 0 次工具调用；SCA-005 17 个事件且 1 次合成只读候选工具。配置在运行前断言，PG/Mongo=`run_lifecycle_test`、Redis DB 15；会话/checkpointer stub，无数据库或 Redis I/O。报告 `/tmp/chat-eval-baseline-post-iss029-004-005-20261029.json`。这两例不覆盖 ISS-029 新增的无供应商字样受限请求与意图询问，不能替代其离线回归。 |
+| ISS-030 guard 修复后复验 | SCA-004、SCA-005，各 1 例 | **2/2** | `deepseek-v4.1-flash-1017` 下两例 HTTP 200、无 mismatch；SCA-004 2 个 SSE 事件且 0 次工具调用；SCA-005 17 个事件且 1 次合成只读候选工具。配置在运行前断言，PG/Mongo=`run_lifecycle_test`、Redis DB 15；会话/checkpointer stub，无数据库或 Redis I/O。报告 `/tmp/chat-eval-baseline-post-iss030-004-005-20261029.json`。这两例不覆盖 ISS-030 新增的无前缀请求变体、引述分析或混合请求，不能替代离线回归。 |
+| ISS-031 fallback/guard 修复后复验 | SCA-004-underspecified、SCA-005-camera-no-match，各 1 例 | **2/2** | 当前 `deepseek-v4.1-flash-1017` 下真实 `/api/v1/chat/stream` 均 HTTP 200、无 mismatch；SCA-004 2 个 SSE 事件、0 次工具调用，SCA-005 17 个 SSE 事件、1 次合成只读候选调用且约束匹配。运行前确认 API host `maas.qianwenaiapi.com`、PG/Mongo=`run_lifecycle_test`、Redis DB 15；会话/checkpointer/save 和候选检索均隔离替身，没有 DB/Redis 或真实供应商 provider I/O。报告 `/tmp/chat-eval-baseline-post-iss031-004-005-20261029.json`。一次旧别名 case ID 选择失败、未发起模型调用，保留在 ISS-031；按数据集真实 ID 重跑通过。 |
 
-真实模型测试运行前断言了模型 ID 和隔离范围：PostgreSQL/MongoDB `run_lifecycle_test`，Redis DB 15。SCA-005 的会话加载/保存和候选检索均为隔离替身；本轮候选替身返回“当前没有匹配候选”。这验证模型输入理解到活动 API/SSE 和只读工具计划的边界，不证明真实候选源返回空，也没有访问生产供应商数据。完整 6 例没有在修复后重跑。
+真实模型测试运行前断言了模型 ID (`deepseek-v4.1-flash-1017`) 与 endpoint host (`maas.qianwenaiapi.com`)，并将 PostgreSQL/MongoDB 覆盖为 `run_lifecycle_test`、Redis DB 覆盖为 15。SCA-004/005 的会话加载/保存、checkpointer 和候选检索均为隔离替身；SCA-005 候选替身返回“当前没有匹配候选”。测试关闭应用 lifespan，没有执行数据库或 Redis 读写。这验证模型输入理解到活动 API/SSE 与只读工具计划的边界，不证明真实候选源返回空，也没有访问生产供应商数据。初始完整 6 例与修复后两例结果分别保留，完整 6 例尚未在所有修复后重跑。
 
 历史 MiniMax 结果与本轮模型和配置不同，不并入新模型基线。
 
@@ -81,3 +92,9 @@ LangSmith 的离线/在线评测、数据集与实验对长期比较有价值，
 - [`ISS-20261029-023`](../issue-log.md)：修复并验证隔离 PostgreSQL 的两轮上下文测试夹具。
 - [`ISS-20261029-024`](../issue-log.md)：记录意外共享 Mongo 写入，原记录保留不清理，并收紧后续评测隔离断言。
 - [`ISS-20261029-025`](../issue-log.md)：记录新模型评测失败、确定性 fallback 与结构化寻源需求绑定修复、保留的失败和定向真实复验。
+- [`ISS-20261029-026`](../issue-log.md)：记录否定/讨论/受限寻源 fail-closed 修复与离线/API/SSE 回归。
+- [`ISS-20261029-027`](../issue-log.md)：记录多目标证据缺口、全量财务状态汇总及目标级限制修复。
+- [`ISS-20261029-028`](../issue-log.md)：记录复审发现的引用验收文本误触发寻源、合规风险分析误拦截及保留的 RED/GREEN 证据。
+- [`ISS-20261029-029`](../issue-log.md)：记录受限寻源缺少供应商字样及意图判断文本绕过 guard 的复发与 RED/GREEN 证据。
+- [`ISS-20261029-030`](../issue-log.md)：记录受限寻源请求前缀变体、引述合规分析和混合请求的复发与 RED/GREEN 证据。
+- [`ISS-20261029-031`](../issue-log.md)：记录具名供应商合规风险分析中的采购单引述误判、无数量混合受限候选动作及模型降级路径复发，保留 RED、279 项离线回归和新模型定向复验。

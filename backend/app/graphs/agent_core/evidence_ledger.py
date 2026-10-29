@@ -202,11 +202,12 @@ class EvidenceLedger:
             covered = [
                 dimension
                 for dimension in required
-                if any(
-                    item["dimension"] == dimension
-                    and _coverage_item_key(item) in covered_items
-                    for item in normalized_items
+                if (
+                    dimension_items := [
+                        item for item in normalized_items if item["dimension"] == dimension
+                    ]
                 )
+                and all(_coverage_item_key(item) in covered_items for item in dimension_items)
             ]
             missing = [dimension for dimension in required if dimension not in covered]
             return EvidenceCoverage(

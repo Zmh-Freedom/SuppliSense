@@ -41,10 +41,24 @@ def build_agent_answer(
         limitations.extend(claim.validation_reasons)
     coverage = ledger.coverage(required_dimensions or [], required_evidence)
     limitations.extend(f"缺少 {dimension} 维度的正式证据" for dimension in coverage.missing_dimensions)
+    missing_items = set(coverage.missing_items)
+    for item in required_evidence or []:
+        if not item.get("entity_id") or not item.get("dimension"):
+            continue
+        key = ":".join((
+            str(item["entity_id"]),
+            str(item["dimension"]),
+            str(item.get("fact_path") or "*"),
+        ))
+        target_name = str(item.get("target_name") or "").strip()
+        if key in missing_items and target_name:
+            limitations.append(
+                f"缺少 {target_name} {item['dimension']} 维度的正式证据"
+            )
     limitations = list(dict.fromkeys(limitations))
     has_review_condition = any(
         claim.validation_status in {"unsupported", "conflicting"} for claim in validated
-    ) or bool(coverage.missing_dimensions)
+    ) or bool(coverage.missing_dimensions or coverage.missing_items)
     has_partial = any(claim.validation_status == "partial" for claim in validated)
     status: Literal["completed", "partial", "needs_review", "failed"]
     if has_review_condition:

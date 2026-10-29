@@ -23,8 +23,11 @@ from langgraph.graph import END, START, StateGraph
 from app.graphs.agent_core.answer_contract import AgentAnswer, build_agent_answer
 from app.graphs.agent_core.capability_routing import (
     detect_explicit_capabilities,
+    is_explicitly_negated_sourcing_request,
+    is_general_sourcing_knowledge_question,
     is_general_supplier_knowledge_question,
     is_out_of_scope_request,
+    is_prohibited_sourcing_request,
     is_translation_request,
     normalize_primary_capability,
     pure_conversation_kind,
@@ -803,6 +806,11 @@ def _required_evidence_items(tasks: list[HarnessTask]) -> list[dict[str, str]]:
             items.append({
                 "entity_id": task.entity_id,
                 "dimension": task.dimension,
+                "target_name": str(
+                    task.arguments.get("company_name")
+                    or task.arguments.get("supplier_name")
+                    or task.entity_id
+                ),
                 "fact_path": (
                     requirement
                     if requirement not in {task.dimension, "supplier_candidate"}
@@ -810,6 +818,38 @@ def _required_evidence_items(tasks: list[HarnessTask]) -> list[dict[str, str]]:
                 ),
             })
     return items
+
+
+def _missing_target_names(state: HarnessState, dimension: str | None = None) -> list[str]:
+    """Map missing evidence items back to the user-visible task targets."""
+    coverage = state.get("evidence_coverage") or {}
+    missing = set(coverage.get("missing_items") or [])
+    names: list[str] = []
+    for task in state.get("task_specs") or []:
+        if not isinstance(task, dict) or not task.get("required"):
+            continue
+        task_dimension = str(task.get("dimension") or "")
+        if dimension and task_dimension != dimension:
+            continue
+        entity_id = str(task.get("entity_id") or "")
+        requirements = task.get("evidence_requirements") or [task_dimension]
+        arguments = task.get("arguments") or {}
+        target_name = str(
+            arguments.get("company_name")
+            or arguments.get("supplier_name")
+            or entity_id
+        ).strip()
+        for requirement in requirements:
+            fact_path = (
+                str(requirement)
+                if requirement not in {task_dimension, "supplier_candidate"}
+                else "*"
+            )
+            if f"{entity_id}:{task_dimension}:{fact_path}" in missing:
+                if target_name:
+                    names.append(target_name)
+                break
+    return list(dict.fromkeys(names))
 
 
 _SUMMARY_ROUTE_DEFINITIONS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
@@ -988,7 +1028,7 @@ def _summary_subject(target_names: list[str]) -> str:
 
 def _summary_with_boundary(answer: AgentAnswer, result: str, normal_suffix: str) -> str:
     if answer.status in {"partial", "needs_review"} or answer.limitations:
-        return result + "以上结论仅基于当前已取得资料，部分维度尚未覆盖；采购动作请先按下方提示核实。"
+        return result + "以上结论仅基于当前已取得资料，部分目标或所需证据尚未覆盖；采购动作请先按下方提示核实。"
     return result + normal_suffix
 
 
@@ -1217,31 +1257,50 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if primary_capability == "financial":
         financial_claims = [claim for claim in answer.claims if claim.dimension == "financial"]
         values = _claim_values(financial_claims)
-        if not financial_claims:
-            financial_outcome = next(
-                (
-                    outcome
-                    for outcome in reversed(outcomes)
-                    if isinstance(outcome, dict)
-                    and str(outcome.get("tool_name") or outcome.get("tool") or "") == "query_financials"
-                ),
-                {},
+        financial_statuses = list(dict.fromkeys(
+            str(outcome.get("status") or "")
+            for outcome in outcomes
+            if isinstance(outcome, dict)
+            and str(outcome.get("tool_name") or outcome.get("tool") or "") == "query_financials"
+        ))
+        missing_targets = _missing_target_names(state, "financial")
+        if missing_targets:
+            missing_text = "、".join(missing_targets)
+            if financial_claims:
+                return (
+                    f"本轮财务分析未覆盖全部目标；{missing_text}缺少可验证的财务指标。"
+                    "其他目标已取得的证据可在下方查看，不能据此代表全部供应商。"
+                )
+            status_labels = {
+                "failed": "财务数据查询失败",
+                "unavailable": "财务数据源暂不可用",
+                "not_found": "本轮未找到可验证的财务指标",
+            }
+            causes = list(dict.fromkeys(
+                status_labels[status]
+                for status in financial_statuses
+                if status in status_labels
+            ))
+            cause_text = "；".join(causes) if causes else "本轮未取得足够的正式财务证据"
+            return (
+                f"本轮未能完整核实所有目标的财务信息：{missing_text}缺少可验证的财务指标；"
+                f"{cause_text}。"
             )
-            status = str(financial_outcome.get("status") or "")
-            if status == "failed":
+        if not financial_claims:
+            status_labels = {
+                "failed": "财务数据查询失败",
+                "unavailable": "财务数据源暂不可用",
+                "not_found": "本轮未找到可验证的财务指标",
+            }
+            causes = list(dict.fromkeys(
+                status_labels[status]
+                for status in financial_statuses
+                if status in status_labels
+            ))
+            if causes:
                 return (
-                    f"财务数据查询失败，当前未能核实 {subject} 的财务指标；"
-                    "请检查数据源后重试，暂不形成财务风险结论。"
-                )
-            if status == "unavailable":
-                return (
-                    f"财务数据源暂不可用，当前未能核实 {subject} 的财务指标；"
-                    "稍后可重试，暂不形成财务风险结论。"
-                )
-            if status == "not_found":
-                return (
-                    f"本轮未找到可验证的 {subject} 财务指标，"
-                    "因此暂不形成财务风险结论。"
+                    f"{subject} 的财务数据未能完整核实（{'；'.join(causes)}），"
+                    "本轮未形成足够的可验证指标，不能据此判断财务风险高低。"
                 )
             return f"已完成 {subject} 的财务数据查询，但当前没有可验证的财务指标结果。"
         labels = {
@@ -2031,27 +2090,26 @@ def build_harness_graph(
                     *[status_limitations.get(status, "名单筛查状态需要人工核验") for status in unresolved_screening],
                 ])),
             })
-        financial_outcome = next(
-            (
-                outcome
-                for outcome in reversed(state.get("tool_outcomes", []))
-                if isinstance(outcome, dict)
-                and str(outcome.get("tool_name") or outcome.get("tool") or "") == "query_financials"
-            ),
-            {},
-        )
+        financial_outcomes = [
+            outcome
+            for outcome in state.get("tool_outcomes", [])
+            if isinstance(outcome, dict)
+            and str(outcome.get("tool_name") or outcome.get("tool") or "") == "query_financials"
+        ]
         financial_status_limitations = {
-            "failed": "财务数据查询失败，本轮未形成可验证指标，不能据此判断财务风险高低。",
-            "unavailable": "财务数据源暂不可用，本轮未形成可验证指标，不能据此判断财务风险高低。",
-            "not_found": "本轮没有找到可验证的财务指标，不能据此判断财务风险高低。",
+            "failed": "至少一项财务数据查询失败，本轮未形成该项可验证指标，不能据此判断财务风险高低。",
+            "unavailable": "至少一项财务数据源暂不可用，本轮未形成该项可验证指标，不能据此判断财务风险高低。",
+            "not_found": "至少一项财务查询未找到可验证指标；这不表示已确认来源为空，也不能据此判断财务风险高低。",
         }
-        financial_limitation = financial_status_limitations.get(
-            str(financial_outcome.get("status") or "")
-        )
-        if financial_limitation:
+        financial_limitations = list(dict.fromkeys(
+            financial_status_limitations[str(outcome.get("status") or "")]
+            for outcome in financial_outcomes
+            if str(outcome.get("status") or "") in financial_status_limitations
+        ))
+        if financial_limitations:
             answer = answer.model_copy(update={
                 "status": "needs_review",
-                "limitations": list(dict.fromkeys([*answer.limitations, financial_limitation])),
+                "limitations": list(dict.fromkeys([*answer.limitations, *financial_limitations])),
             })
         operational_limits = []
         for record in state.get("evidence_records", []):
@@ -2076,10 +2134,16 @@ def build_harness_graph(
             user_message = str(state.get("user_message") or "")
             translation = no_plan and is_translation_request(user_message)
             out_of_scope = no_plan and is_out_of_scope_request(user_message)
+            prohibited_sourcing = no_plan and is_prohibited_sourcing_request(user_message)
+            negated_sourcing = no_plan and is_explicitly_negated_sourcing_request(user_message)
+            general_sourcing_knowledge = no_plan and is_general_sourcing_knowledge_question(user_message)
             general_knowledge = (
                 no_plan
                 and not translation
                 and not out_of_scope
+                and not prohibited_sourcing
+                and not negated_sourcing
+                and not general_sourcing_knowledge
                 and is_general_supplier_knowledge_question(user_message)
             )
             current_task = state.get("current_task") or {}
@@ -2092,6 +2156,9 @@ def build_harness_graph(
                 no_plan
                 and not translation
                 and not out_of_scope
+                and not prohibited_sourcing
+                and not negated_sourcing
+                and not general_sourcing_knowledge
                 and not general_knowledge
                 and not follow_up
                 and not (isinstance(pending_clarification, dict) and pending_clarification)
@@ -2135,6 +2202,25 @@ def build_harness_graph(
                         ),
                     }
                 )
+            elif prohibited_sourcing:
+                answer = answer.model_copy(update={
+                    "status": "completed",
+                    "summary": "不能协助规避出口管制、制裁或其他贸易限制；本轮未执行寻源或供应商查询。",
+                })
+            elif negated_sourcing:
+                answer = answer.model_copy(update={
+                    "status": "completed",
+                    "summary": "已按你的说明不启动寻源；本轮保留原始条件作为输入，但未执行供应商检索。",
+                })
+            elif general_sourcing_knowledge:
+                answer = answer.model_copy(update={
+                    "status": "completed",
+                    "summary": _general_sourcing_knowledge_fallback(),
+                    "limitations": list(dict.fromkeys([
+                        *answer.limitations,
+                        "以上为通用流程说明，不代表对具体供应商的检索结果。",
+                    ])),
+                })
             elif general_knowledge:
                 summary = _general_supplier_knowledge_fallback()
                 general_budget = new_budget(state.get("budget"))
@@ -2276,6 +2362,15 @@ def build_harness_graph(
 def _no_plan_summary(state: HarnessState) -> str:
     """Explain missing intent/data instead of mislabeling it as an empty finding."""
     message = str((state.get("current_task") or {}).get("user_message") or state.get("user_message") or "")
+    current_task = state.get("current_task") or {}
+    if current_task.get("requirement_status") == "clarification_required":
+        missing = [
+            str(item).strip()
+            for item in current_task.get("requirement_missing", [])
+            if str(item).strip()
+        ]
+        if "category" in missing:
+            return "我还缺少采购品类，暂未执行寻源检索；请说明要寻找的产品或材料。"
     if any(token in message for token in ("推荐供应商", "寻找供应商", "找供应商")):
         return "我还不能开始寻源：请补充物料号、零件名称或采购品类。"
     if any(token in message for token in ("趋势", "变化", "复核")):
@@ -2291,6 +2386,14 @@ def _general_supplier_knowledge_fallback() -> str:
         "影响范围和整改情况，区分风险信号与已核实事实。\n\n"
         "这是一套通用检查思路，不代表对任何具体供应商的评估结论。"
         "如果你希望分析某家供应商，请提供名称，并说明关注的风险维度。"
+    )
+
+
+def _general_sourcing_knowledge_fallback() -> str:
+    """Explain the ordinary sourcing workflow without implying a live search."""
+    return (
+        "供应商寻源流程一般包括：明确采购品类和技术规格，设置数量、预算、交期、地区及资质等条件；"
+        "检索候选后核验主体身份、供货能力和质量交付记录，再比较报价与风险，最后由采购人员确认下一步。"
     )
 
 

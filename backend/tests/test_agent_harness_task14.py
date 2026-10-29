@@ -108,6 +108,33 @@ def test_harness_binds_requirement_to_current_task_before_planning(monkeypatch) 
     assert planned[0].arguments["requirement"]["category"] == "钢材"
 
 
+def test_harness_clarifies_vague_supplier_request_instead_of_searching(monkeypatch) -> None:
+    monkeypatch.setattr("app.domains.sourcing_risk.requirement_service.settings.LLM_API_KEY", "")
+    message = "帮我找一家合适的供应商。"
+    extraction = intent_extractor._deterministic_extraction_fallback(message)
+    context = {
+        "session_id": "synthetic-vague-sourcing",
+        "references": [],
+        "conversation_state": {},
+        "current_task": {
+            "task_id": "synthetic-vague-sourcing-task",
+            "task_type": extraction.task_type,
+            "user_message": message,
+        },
+    }
+
+    overlaid = apply_extracted_conversation_intent(context, extraction)
+    resolved = _apply_harness_sourcing_requirement(overlaid, message)
+    planned = _build_default_plan({
+        "current_task": resolved["current_task"],
+        "execution_context": resolved,
+    })
+
+    assert resolved["current_task"]["requirement_status"] == "clarification_required"
+    assert resolved["current_task"]["requirement_missing"] == ["category"]
+    assert planned == []
+
+
 def test_explicit_sourcing_without_model_slots_binds_requirement_and_plans_search(monkeypatch) -> None:
     message = "寻源3家耐高温工业连接器，规格是工作温度-40到125摄氏度，优先华北。"
     payload = {
