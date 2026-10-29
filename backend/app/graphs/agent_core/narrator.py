@@ -180,10 +180,12 @@ def _finding_polarities(text: str, topic: str) -> set[str]:
     polarities: set[str] = set()
     for match in re.finditer(re.escape(topic), text):
         context = text[max(0, match.start() - 12):match.end() + 4]
-        if _has_any_marker(context, _NEGATIVE_FINDING_MARKERS):
-            polarities.add("negative")
-        elif _has_any_marker(context, _UNCERTAIN_FINDING_MARKERS):
+        # Unknown is not a negative finding. Check uncertainty first because
+        # the broad substring marker "无" also appears inside "无法".
+        if _has_any_marker(context, _UNCERTAIN_FINDING_MARKERS):
             continue
+        elif _has_any_marker(context, _NEGATIVE_FINDING_MARKERS):
+            polarities.add("negative")
         elif _has_any_marker(context, _POSITIVE_FINDING_MARKERS):
             polarities.add("positive")
     return polarities

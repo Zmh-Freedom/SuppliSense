@@ -82,6 +82,19 @@ def test_narrative_validation_rejects_reversed_verified_conclusion() -> None:
     assert _validate_draft(draft, answer) is False
 
 
+def test_narrative_validation_rejects_negative_conclusion_from_uncertain_source() -> None:
+    answer = _answer().model_copy(update={
+        "summary": "青岛三祥科技股份有限公司的司法信息无法确认是否存在重大诉讼。",
+    })
+    draft = NarrativeDraft(
+        headline="司法风险核验",
+        body_markdown="青岛三祥科技股份有限公司未发现重大诉讼。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
 def test_narrative_validation_rejects_unverified_qualitative_conclusion() -> None:
     answer = _answer()
     draft = NarrativeDraft(
