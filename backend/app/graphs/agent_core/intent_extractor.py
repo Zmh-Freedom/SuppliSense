@@ -23,6 +23,7 @@ from app.graphs.agent_core.capability_routing import (
     is_non_operational_request,
     normalize_analysis_dimensions,
     normalize_primary_capability,
+    pure_conversation_kind,
 )
 from app.graphs.agent_core.entity_normalization import normalize_company_mention
 
@@ -138,6 +139,8 @@ def should_extract_conversation_intent(message: str) -> bool:
     """
     normalized = "".join(str(message or "").strip().lower().split())
     if not normalized:
+        return False
+    if pure_conversation_kind(normalized) is not None:
         return False
     if normalized in _NON_AGENT_TURN_PATTERNS:
         return False

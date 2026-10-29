@@ -108,6 +108,44 @@ _TREND_ACTION_MARKERS = (
     "变化", "变动", "怎么变", "走势", "趋势", "环比", "同比", "相比", "对比上月",
 )
 
+_PURE_GREETING_PHRASES = {
+    "你好", "您好", "嗨", "哈喽", "hello", "hi", "早上好", "上午好", "中午好",
+    "下午好", "晚上好", "在吗",
+}
+_PURE_THANKS_PHRASES = {
+    "谢谢", "谢谢你", "非常感谢", "感谢", "感谢你", "多谢", "多谢你", "辛苦了", "辛苦你了",
+}
+_PURE_CAPABILITY_PHRASES = {
+    "你能做什么", "你可以做什么", "能做什么", "可以做什么", "你能帮我什么",
+    "你可以帮我什么", "你能帮我做什么", "你可以帮我做什么", "可以帮我做什么",
+    "你能帮我分析什么", "你可以帮我分析什么", "你是谁", "你是做什么的",
+    "介绍一下你自己", "介绍一下你的能力", "介绍一下你的功能", "你的能力是什么",
+    "你的功能是什么", "你有什么能力", "你有哪些能力", "你可以提供什么帮助",
+    "你能提供什么帮助", "请介绍你的能力", "请介绍一下你的功能",
+}
+_PURE_CONVERSATION_PUNCTUATION = re.compile(r"[\s，。！？；：、,.!?;:~～…\"'“”‘’（）()【】\[\]{}<>《》]+")
+
+
+def pure_conversation_kind(message: str) -> str | None:
+    """Recognize only standalone greetings, thanks, and capability questions."""
+    normalized = _PURE_CONVERSATION_PUNCTUATION.sub("", str(message or "").lower())
+    if normalized in _PURE_GREETING_PHRASES:
+        return "greeting"
+    if normalized in _PURE_THANKS_PHRASES:
+        return "thanks"
+    if normalized in _PURE_CAPABILITY_PHRASES:
+        return "capability"
+
+    for greeting in ("你好", "您好", "嗨", "哈喽", "早上好", "上午好", "下午好"):
+        if not normalized.startswith(greeting):
+            continue
+        remainder = normalized[len(greeting):]
+        if remainder.startswith("今天"):
+            remainder = remainder[len("今天"):]
+        if remainder in _PURE_CAPABILITY_PHRASES:
+            return "capability"
+    return None
+
 _CAPABILITY_PRIMARY_DIMENSIONS = {
     "sentiment": "sentiment",
     "financial": "financial",

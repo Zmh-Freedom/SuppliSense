@@ -27,6 +27,7 @@ from app.graphs.agent_core.capability_routing import (
     is_out_of_scope_request,
     is_translation_request,
     normalize_primary_capability,
+    pure_conversation_kind,
 )
 from app.graphs.agent_core.evidence_ledger import (
     Claim,
@@ -2036,6 +2037,19 @@ def build_harness_graph(
             )
             current_task = state.get("current_task") or {}
             follow_up = str(current_task.get("sourcing_follow_up") or "")
+            execution_context = state.get("execution_context") or {}
+            conversation_state = execution_context.get("conversation_state") or {}
+            pending_clarification = conversation_state.get("pending_clarification")
+            pure_kind = pure_conversation_kind(user_message)
+            pure_conversation = (
+                no_plan
+                and not translation
+                and not out_of_scope
+                and not general_knowledge
+                and not follow_up
+                and not (isinstance(pending_clarification, dict) and pending_clarification)
+                and pure_kind is not None
+            )
             if translation:
                 summary = "我暂时无法完成这段翻译，请稍后重试。"
                 translation_budget = new_budget(state.get("budget"))
@@ -2097,6 +2111,11 @@ def build_harness_graph(
                         *answer.limitations,
                         "以上为通用风险评估方法说明，不代表对任何具体供应商的评估结论。",
                     ])),
+                })
+            elif pure_conversation:
+                answer = answer.model_copy(update={
+                    "status": "completed",
+                    "summary": _pure_conversation_reply(pure_kind),
                 })
             else:
                 summary = (
@@ -2225,6 +2244,18 @@ def _general_supplier_knowledge_fallback() -> str:
         "影响范围和整改情况，区分风险信号与已核实事实。\n\n"
         "这是一套通用检查思路，不代表对任何具体供应商的评估结论。"
         "如果你希望分析某家供应商，请提供名称，并说明关注的风险维度。"
+    )
+
+
+def _pure_conversation_reply(kind: str | None) -> str:
+    """Answer clear non-business turns locally, without creating a task."""
+    if kind == "greeting":
+        return "你好！需要查询供应商资料、分析风险或寻源时，直接告诉我目标和关注点即可。"
+    if kind == "thanks":
+        return "不客气！需要继续查询或分析时，告诉我供应商名称和关注点即可。"
+    return (
+        "我可以协助供应商资料查询、供应商风险分析、供应商比较和寻源；"
+        "涉及监控变更时仍按原审批流程处理。具体结论会说明查询结果和数据范围。"
     )
 
 

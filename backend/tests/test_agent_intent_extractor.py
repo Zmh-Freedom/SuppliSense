@@ -502,7 +502,48 @@ def test_llm_extractor_rejects_watchlist_action_for_identity_verification(monkey
 def test_small_talk_does_not_call_llm():
     assert intent_extractor.should_extract_conversation_intent("你好") is False
     assert intent_extractor.should_extract_conversation_intent("谢谢") is False
+    assert intent_extractor.should_extract_conversation_intent("你能做什么？") is False
+    assert intent_extractor.should_extract_conversation_intent("你好，今天可以帮我做什么？") is False
+    assert intent_extractor.should_extract_conversation_intent("好的") is False
     assert intent_extractor.should_extract_conversation_intent("上海汽车制动系统有限公司") is True
+    assert intent_extractor.should_extract_conversation_intent(
+        "你好，分析上海汽车制动系统有限公司的财务风险"
+    ) is True
+
+
+def test_short_confirmation_preserves_pending_clarification_context():
+    context = {
+        "session_id": "pending-confirmation",
+        "references": [],
+        "conversation_state": {
+            "pending_clarification": {
+                "task_type": "analysis",
+                "capability": "financial",
+                "scope": "single_supplier",
+                "target_supplier_names": [],
+                "analysis_dimensions": ["financial"],
+                "missing_fields": ["target_supplier_names"],
+            },
+        },
+        "current_task": {
+            "user_message": "好的",
+            "task_type": "none",
+            "capability": "none",
+            "scope": "none",
+            "target_supplier_names": [],
+            "analysis_dimensions": [],
+            "subtasks": [],
+        },
+    }
+
+    result = adapter.apply_extracted_conversation_intent(context, None)
+
+    assert result["current_task"]["task_type"] == "analysis"
+    assert result["current_task"]["analysis_dimensions"] == ["financial"]
+    assert result["conversation_state"]["pending_clarification"]["missing_fields"] == [
+        "target_supplier_names"
+    ]
+    assert intent_extractor.should_extract_conversation_intent("好的") is False
 
 
 def test_watchlist_action_detection_accepts_common_phrases_and_rejects_negation():
