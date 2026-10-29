@@ -44,39 +44,6 @@ _COMPANY_PATTERN = re.compile(
 )
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[+-]?\d+(?:\.\d+)?%?")
 _STANDARD_CODE_PATTERN = re.compile(r"\b(?:ISO|IATF|AS|SA)\s*-?\s*\d{4,5}\b", re.IGNORECASE)
-_LIMITATION_DIMENSIONS = (
-    ("financial", ("financial", "财务", "现金流", "营收", "财报")),
-    ("business", ("business_risk", "商务", "经营", "运营", "交易")),
-    ("quality", ("quality", "质量")),
-    ("delivery", ("delivery", "交付", "履约")),
-    ("compliance", ("compliance", "合规", "制裁", "黑名单")),
-    ("sentiment", ("sentiment", "舆情", "新闻", "报道")),
-    ("esg", ("esg", "环境", "社会责任", "治理")),
-    ("identity", ("identity", "主体", "身份核验")),
-    ("risk", ("risk", "风险")),
-)
-_LIMITATION_STATES = (
-    ("unavailable", ("unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂未获取", "未能查询")),
-    ("missing", ("missing", "缺少", "缺失", "未覆盖", "覆盖不足", "数据不足", "未收到", "尚未收到", "尚未提供")),
-    ("stale", ("stale", "过期", "陈旧", "需更新", "需刷新")),
-    ("conflicting", ("conflict", "冲突", "不一致", "矛盾")),
-    ("not_queried", ("not_queried", "未查询", "尚未查询", "未完成查询")),
-    ("synthetic", ("synthetic", "演示数据", "模拟数据")),
-    ("review", ("needs_review", "人工复核", "人工确认", "待核验", "需核实")),
-)
-_LIMITATION_MISSING_OBJECT_PATTERN = re.compile(
-    r"(?:缺少|缺失|缺乏|未提供|未取得|未收到|尚未收到|尚未提供)\s*([^，。；;]{2,80}?)(?=无法|不能|暂不能|难以|[，。；;]|$)"
-)
-_LIMITATION_MISSING_OBJECT_SUFFIX_PATTERN = re.compile(
-    r"([^，。；;]{2,80}?)(?:尚未收到|未收到|尚未提供|未提供)(?=无法|不能|暂不能|难以|[，。；;]|$)"
-)
-_LIMITATION_IMPACT_PATTERN = re.compile(
-    r"(?:无法|不能|暂不能|难以|不足以)\s*(?:判断|评估|确认|核实|分析|测算|计算)\s*([^，。；;]{2,80})"
-)
-_LIMITATION_OBJECT_SEPARATOR_PATTERN = re.compile(r"以及|和|与|及|、|/")
-_LIMITATION_CONCRETE_OBJECT_MARKERS = (
-    "表", "报告", "合同", "发票", "凭证", "流水", "台账", "资质", "许可证", "证书", "证明", "清单", "记录", "文件", "协议",
-)
 _CONCLUSION_CLAUSE_BOUNDARY_PATTERN = re.compile(r"不过|然而|但是|可是|但|[，,；;。！？\n]")
 _SENTIMENT_SOURCE_MARKERS = ("舆情", "新闻", "报道", "sentiment", "news")
 _SOURCE_UNAVAILABLE_MARKERS = (
@@ -152,48 +119,23 @@ def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker.casefold() in normalized for marker in markers)
 
 
-def _specific_limitation_anchors(limitation: str) -> list[str]:
-    """Find explicitly named missing objects and decision impacts to preserve."""
-    anchors: list[str] = []
-    missing_match = (
-        _LIMITATION_MISSING_OBJECT_PATTERN.search(limitation)
-        or _LIMITATION_MISSING_OBJECT_SUFFIX_PATTERN.search(limitation)
-    )
-    if missing_match:
-        for item in _LIMITATION_OBJECT_SEPARATOR_PATTERN.split(missing_match.group(1)):
-            normalized_item = item.strip()
-            if len(normalized_item) >= 2 and _has_any_marker(normalized_item, _LIMITATION_CONCRETE_OBJECT_MARKERS):
-                anchors.append(normalized_item)
-    impact_match = _LIMITATION_IMPACT_PATTERN.search(limitation)
-    if impact_match:
-        impact = impact_match.group(1).strip()
-        if len(impact) >= 2:
-            anchors.append(impact)
-    return anchors
-
-
 def _limitation_is_preserved(limitation: str, narrative_text: str) -> bool:
-    if limitation in narrative_text:
-        return True
-    normalized_limitation = limitation.casefold()
-    required_groups: list[tuple[str, ...]] = []
-    for _, markers in _LIMITATION_DIMENSIONS:
-        if _has_any_marker(normalized_limitation, markers):
-            required_groups.append(markers)
-            break
-    required_groups.extend(
-        markers
-        for _, markers in _LIMITATION_STATES
-        if _has_any_marker(normalized_limitation, markers)
-    )
-    if not required_groups:
-        return False
-    if not all(_has_any_marker(narrative_text, markers) for markers in required_groups):
-        return False
-    # Coarse dimension/state markers alone can make "财务数据覆盖不足" look
-    # equivalent to a limitation naming specific missing documents and the
-    # decision they prevent. Keep those explicit anchors or reject the draft.
-    return all(anchor.casefold() in narrative_text.casefold() for anchor in _specific_limitation_anchors(limitation))
+    """Require a complete limitation phrase; never trust it as a substring."""
+    return _normalize_limitation_text(limitation) == _normalize_limitation_text(narrative_text)
+
+
+def _narrative_contains_limitation(limitation: str, narrative_text: str) -> bool:
+    sentences = [sentence.strip() for sentence in re.split(r"[。！？；;\n]+", narrative_text) if sentence.strip()]
+    for sentence in sentences:
+        clauses = [clause.strip() for clause in re.split(r"[，,、]+", sentence) if clause.strip()]
+        if len(clauses) > 100:
+            return False
+        for start in range(len(clauses)):
+            for end in range(start + 1, len(clauses) + 1):
+                candidate = "，".join(clauses[start:end])
+                if _limitation_is_preserved(limitation, candidate):
+                    return True
+    return False
 
 
 def _source_state_error(answer: AgentAnswer, narrative_text: str) -> str | None:
@@ -302,6 +244,19 @@ def _normalize_fact_clause(text: str) -> str:
 
     text = _NUMBER_PATTERN.sub(number_marker, text)
     return re.sub(r"为(?=<number:)", "", text).casefold()
+
+
+def _normalize_limitation_text(text: str) -> str:
+    """Normalize only known wording variants and keep every other word exact."""
+    normalized = text.casefold()
+    for source, equivalent in (
+        ("目前", ""),
+        ("财务资料", "财务数据"),
+        ("覆盖不足", "未覆盖"),
+        ("暂不能判断", "无法判断"),
+    ):
+        normalized = normalized.replace(source, equivalent)
+    return _normalize_fact_clause(normalized)
 
 
 def _clause_matches_structured_proposal(clause: str, answer: AgentAnswer) -> bool:
@@ -437,7 +392,7 @@ def _draft_validation_error(
     if source_state_error is not None:
         return source_state_error
     for limitation in answer.limitations:
-        if not _limitation_is_preserved(limitation, narrative_text):
+        if not _narrative_contains_limitation(limitation, draft.body_markdown):
             return "missing_limitation"
     conclusion_error = _conclusion_polarity_error(answer, narrative_text)
     if conclusion_error is not None:

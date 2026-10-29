@@ -202,6 +202,71 @@ def test_narrator_falls_back_when_model_adds_unverified_supplier_health(monkeypa
     assert narrated.summary == answer.summary
 
 
+@pytest.mark.parametrize("unsupported_clause", ["现金流风险很高", "暂停采购"])
+def test_narrative_validation_does_not_let_limitation_cover_neighbor_clause(
+    unsupported_clause: str,
+) -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少 financial 维度的正式证据"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            f"缺少 financial 维度的正式证据，{unsupported_clause}。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_extra_assertion_inside_limitation_clause() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少 financial 维度的正式证据"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown=(
+            "青岛三祥科技股份有限公司综合风险评分为 7/100。"
+            "缺少 financial 维度的正式证据并且现金流风险很高。"
+        ),
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrator_falls_back_when_model_hides_claim_behind_limitation(monkeypatch) -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["缺少 financial 维度的正式证据"],
+    })
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**_kwargs):
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=(
+                            '{"headline":"风险复核结果",'
+                            '"body_markdown":"青岛三祥科技股份有限公司综合风险评分为 7/100。'
+                            '缺少 financial 维度的正式证据，现金流风险很高。",'
+                            '"claim_refs":["risk-score"]}'
+                        )
+                    ))])
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert narrated.summary == answer.summary
+
+
 def test_narrative_validation_rejects_unsupported_procurement_recommendation() -> None:
     answer = _answer()
     draft = NarrativeDraft(
