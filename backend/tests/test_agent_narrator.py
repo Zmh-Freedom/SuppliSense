@@ -6,6 +6,7 @@ from app.graphs.agent_core.answer_contract import AgentAnswer
 from app.graphs.agent_core.evidence_ledger import ValidatedClaim
 from app.graphs.agent_core.narrator import (
     NarrativeDraft,
+    _finding_polarities,
     _validate_draft,
     answer_general_supplier_knowledge,
     narrate_answer,
@@ -93,6 +94,40 @@ def test_narrative_validation_rejects_negative_conclusion_from_uncertain_source(
     )
 
     assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_risk_level_from_uncertain_source() -> None:
+    answer = _answer().model_copy(update={
+        "summary": "青岛三祥科技股份有限公司无法确认是否存在重大诉讼。",
+    })
+    draft = NarrativeDraft(
+        headline="司法风险核验",
+        body_markdown="重大诉讼风险较高。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrator_keeps_an_uncertain_legal_conclusion_deterministic(monkeypatch) -> None:
+    answer = _answer().model_copy(update={
+        "summary": "青岛三祥科技股份有限公司无法确认是否存在重大诉讼。",
+    })
+
+    class UnexpectedNarrator:
+        def __init__(self, **_kwargs):
+            raise AssertionError("uncertain legal conclusions must not be rewritten by the model")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
+
+    assert narrate_answer(answer, "查询重大诉讼") is answer
+
+
+def test_finding_polarity_uses_the_clause_nearest_to_the_topic() -> None:
+    text = "财务无法确认，但未发现重大诉讼。"
+
+    assert _finding_polarities(text, "重大诉讼") == {"negative"}
 
 
 def test_narrative_validation_rejects_unverified_qualitative_conclusion() -> None:
@@ -206,6 +241,20 @@ def test_narrative_validation_rejects_limitation_that_drops_missing_objects_and_
     draft = NarrativeDraft(
         headline="风险复核结果",
         body_markdown="青岛三祥科技股份有限公司综合风险评分为 7/100，财务数据覆盖不足。",
+        claim_refs=["risk-score"],
+    )
+
+    assert _validate_draft(draft, answer) is False
+
+
+def test_narrative_validation_rejects_limitation_that_drops_not_yet_received_document() -> None:
+    answer = _answer().model_copy(update={
+        "status": "needs_review",
+        "limitations": ["现金流量表尚未收到，无法判断短期偿债能力"],
+    })
+    draft = NarrativeDraft(
+        headline="风险复核结果",
+        body_markdown="青岛三祥科技股份有限公司财务数据覆盖不足，无法判断短期偿债能力。",
         claim_refs=["risk-score"],
     )
 

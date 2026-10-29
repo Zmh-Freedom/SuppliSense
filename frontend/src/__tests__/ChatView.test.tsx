@@ -205,13 +205,11 @@ describe('ChatView session lifecycle', () => {
 
   it('shows a pure conversational answer once without an analysis card', async () => {
     const reply = '你好！需要查询供应商资料时，直接告诉我目标即可。'
-    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
-      handlers.onAgentAnswer?.({
-        status: 'completed', summary: reply, claims: [], limitations: [],
-        action_proposals: [], action_receipts: [], evidence_refs: [],
-      } satisfies AgentAnswer)
-      handlers.onDone?.({ answer: reply, status: 'completed' })
-      return reply
+    let streamCallbacks: StreamCallbacks | undefined
+    let finishStream: ((answer: string) => void) | undefined
+    mocks.chatStream.mockImplementation((_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      streamCallbacks = handlers
+      return new Promise<string>(resolve => { finishStream = resolve })
     })
     const user = userEvent.setup()
     renderChat()
@@ -219,12 +217,105 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '你好')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'running', stage: 'understand', message: '正在解析结构化任务上下文' })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'loaded', stage: 'understand', message: '正在解析结构化任务上下文' })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'turn_resolved', stage: 'understand', message: '已完成会话与当前任务解析' })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onPlan?.({ steps: [] })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'planned', stage: 'planning', message: '已生成受预算约束的任务计划' })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onAgentAnswer?.({
+        status: 'completed', summary: reply, claims: [], limitations: [],
+        action_proposals: [], action_receipts: [], evidence_refs: [],
+      } satisfies AgentAnswer)
+      streamCallbacks?.onDone?.({ answer: reply, status: 'completed' })
+      finishStream?.(reply)
+    })
+
     expect(await screen.findByText(reply)).toBeInTheDocument()
     expect(screen.getAllByText(reply)).toHaveLength(1)
     expect(screen.queryByRole('region', { name: 'Agent 分析结果' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
     expect(screen.queryByText('数据说明')).not.toBeInTheDocument()
     expect(screen.queryByText('采购建议')).not.toBeInTheDocument()
+  })
+
+  it('keeps the empty initial workflow state lightweight until business or approval facts arrive', async () => {
+    let streamCallbacks: StreamCallbacks | undefined
+    let finishStream: ((answer: string) => void) | undefined
+    mocks.chatStream.mockImplementation((_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      streamCallbacks = handlers
+      return new Promise<string>(resolve => { finishStream = resolve })
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '你好，顺便分析青岛三祥科技股份有限公司风险')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    expect(screen.getByText('正在分析您的问题…')).toBeInTheDocument()
+
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'loaded', stage: 'understand', message: '正在解析结构化任务上下文' })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'turn_resolved', stage: 'understand', message: '已完成会话与当前任务解析' })
+    })
+    expect(screen.queryByRole('region', { name: '分析进度' })).not.toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onPlan?.({ steps: [{ tool: 'risk_analysis', args: { supplier: '青岛三祥科技股份有限公司' } }] })
+    })
+    expect(await screen.findByRole('region', { name: '分析进度' })).toBeInTheDocument()
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({ status: 'planned', stage: 'planning', message: '已生成受预算约束的任务计划' })
+    })
+    expect(screen.getByRole('region', { name: '分析进度' })).toBeInTheDocument()
+
+    await act(async () => {
+      streamCallbacks?.onWorkflowStatus?.({
+        status: 'running',
+        stage: 'executing',
+        message: '正在查询风险数据',
+        target_suppliers: ['青岛三祥科技股份有限公司'],
+        input_understanding: {
+          task_type: 'analysis',
+          capability: 'risk',
+          target_supplier_names: ['青岛三祥科技股份有限公司'],
+        },
+      })
+    })
+    expect(await screen.findByRole('region', { name: '分析进度' })).toBeInTheDocument()
+
+    await act(async () => {
+      streamCallbacks?.onApprovalRequired?.({
+        message: '确认执行加入监控动作？',
+        tool: 'agent_supervisor',
+        args: { pending_approvals: [{ approval_id: 'approval-initial-panel', action_type: 'add_watchlist' }] },
+        session_id: 'current-session',
+      })
+    })
+    expect(screen.getByRole('button', { name: '批准动作' })).toBeInTheDocument()
+
+    await act(async () => {
+      streamCallbacks?.onDone?.({ answer: '等待人工确认', status: 'needs_review' })
+      finishStream?.('等待人工确认')
+    })
   })
 
   it('does not repeat streamed text when the structured final answer arrives', async () => {

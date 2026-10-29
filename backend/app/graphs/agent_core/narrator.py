@@ -57,7 +57,7 @@ _LIMITATION_DIMENSIONS = (
 )
 _LIMITATION_STATES = (
     ("unavailable", ("unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂未获取", "未能查询")),
-    ("missing", ("missing", "缺少", "缺失", "未覆盖", "覆盖不足", "数据不足")),
+    ("missing", ("missing", "缺少", "缺失", "未覆盖", "覆盖不足", "数据不足", "未收到", "尚未收到", "尚未提供")),
     ("stale", ("stale", "过期", "陈旧", "需更新", "需刷新")),
     ("conflicting", ("conflict", "冲突", "不一致", "矛盾")),
     ("not_queried", ("not_queried", "未查询", "尚未查询", "未完成查询")),
@@ -65,7 +65,10 @@ _LIMITATION_STATES = (
     ("review", ("needs_review", "人工复核", "人工确认", "待核验", "需核实")),
 )
 _LIMITATION_MISSING_OBJECT_PATTERN = re.compile(
-    r"(?:缺少|缺失|缺乏|未提供|未取得)\s*([^，。；;]{2,80}?)(?=无法|不能|暂不能|难以|[，。；;]|$)"
+    r"(?:缺少|缺失|缺乏|未提供|未取得|未收到|尚未收到|尚未提供)\s*([^，。；;]{2,80}?)(?=无法|不能|暂不能|难以|[，。；;]|$)"
+)
+_LIMITATION_MISSING_OBJECT_SUFFIX_PATTERN = re.compile(
+    r"([^，。；;]{2,80}?)(?:尚未收到|未收到|尚未提供|未提供)(?=无法|不能|暂不能|难以|[，。；;]|$)"
 )
 _LIMITATION_IMPACT_PATTERN = re.compile(
     r"(?:无法|不能|暂不能|难以|不足以)\s*(?:判断|评估|确认|核实|分析|测算|计算)\s*([^，。；;]{2,80})"
@@ -74,6 +77,7 @@ _LIMITATION_OBJECT_SEPARATOR_PATTERN = re.compile(r"以及|和|与|及|、|/")
 _LIMITATION_CONCRETE_OBJECT_MARKERS = (
     "表", "报告", "合同", "发票", "凭证", "流水", "台账", "资质", "许可证", "证书", "证明", "清单", "记录", "文件", "协议",
 )
+_CONCLUSION_CLAUSE_BOUNDARY_PATTERN = re.compile(r"不过|然而|但是|可是|但|[，,；;。！？\n]")
 _SENTIMENT_SOURCE_MARKERS = ("舆情", "新闻", "报道", "sentiment", "news")
 _SOURCE_UNAVAILABLE_MARKERS = (
     "unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂不可用",
@@ -91,11 +95,15 @@ _EMPTY_RESULT_MARKERS = (
 _CONCLUSION_TOPICS = (
     "重大诉讼", "诉讼", "行政处罚", "制裁", "失信", "经营异常", "负面舆情", "负面新闻", "风险信号",
 )
-_POSITIVE_FINDING_MARKERS = ("存在", "发现", "发生", "命中", "有")
+_POSITIVE_FINDING_MARKERS = (
+    "存在", "发现", "发生", "命中", "有", "高风险", "风险较高", "风险偏高", "风险较大", "风险严重", "风险突出",
+)
 _NEGATIVE_FINDING_MARKERS = (
     "未发现", "不存在", "并非存在", "并无", "没有", "无", "未发生", "未命中", "未查到",
 )
-_UNCERTAIN_FINDING_MARKERS = ("是否", "能否", "无法确认", "无法判断", "尚不明确", "不确定")
+_UNCERTAIN_FINDING_MARKERS = (
+    "是否", "能否", "无法确认", "无法判断", "尚不明确", "不确定", "待核实", "需核实", "可能", "疑似",
+)
 _PROCUREMENT_RECOMMENDATION_PATTERN = re.compile(
     r"(?P<lead>建议|推荐|应当|应该|不建议|避免|可以|可)\s*"
     r"(?P<phrase>(?:.{0,12}?(?:扩大|增加|提升|降低|减少|暂停|停止|替换|切换|淘汰)"
@@ -147,7 +155,10 @@ def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
 def _specific_limitation_anchors(limitation: str) -> list[str]:
     """Find explicitly named missing objects and decision impacts to preserve."""
     anchors: list[str] = []
-    missing_match = _LIMITATION_MISSING_OBJECT_PATTERN.search(limitation)
+    missing_match = (
+        _LIMITATION_MISSING_OBJECT_PATTERN.search(limitation)
+        or _LIMITATION_MISSING_OBJECT_SUFFIX_PATTERN.search(limitation)
+    )
     if missing_match:
         for item in _LIMITATION_OBJECT_SEPARATOR_PATTERN.split(missing_match.group(1)):
             normalized_item = item.strip()
@@ -211,11 +222,15 @@ def _source_state_error(answer: AgentAnswer, narrative_text: str) -> str | None:
 def _finding_polarities(text: str, topic: str) -> set[str]:
     polarities: set[str] = set()
     for match in re.finditer(re.escape(topic), text):
-        context = text[max(0, match.start() - 12):match.end() + 4]
-        # Unknown is not a negative finding. Check uncertainty first because
-        # the broad substring marker "无" also appears inside "无法".
+        previous_boundaries = list(_CONCLUSION_CLAUSE_BOUNDARY_PATTERN.finditer(text, 0, match.start()))
+        following_boundary = _CONCLUSION_CLAUSE_BOUNDARY_PATTERN.search(text, match.end())
+        clause_start = previous_boundaries[-1].end() if previous_boundaries else 0
+        clause_end = following_boundary.start() if following_boundary else len(text)
+        context = _COMPANY_PATTERN.sub("", text[clause_start:clause_end])
+        # Classify within the topic's clause. Unknown stays separate from a
+        # finding, and a negation in an adjacent topic cannot mask it.
         if _has_any_marker(context, _UNCERTAIN_FINDING_MARKERS):
-            continue
+            polarities.add("uncertain")
         elif _has_any_marker(context, _NEGATIVE_FINDING_MARKERS):
             polarities.add("negative")
         elif _has_any_marker(context, _POSITIVE_FINDING_MARKERS):
@@ -234,10 +249,23 @@ def _conclusion_polarity_error(answer: AgentAnswer, narrative_text: str) -> str 
         if len(narrative_polarities) > 1:
             return f"conflicting_narrated_conclusion:{topic}"
         if len(narrative_polarities) == 1 and source_polarities != narrative_polarities:
+            if source_polarities == {"uncertain"}:
+                return f"conclusion_from_uncertain_source:{topic}"
             if len(source_polarities) == 1:
                 return f"reversed_verified_conclusion:{topic}"
             return f"unsupported_or_ambiguous_conclusion:{topic}"
     return None
+
+
+def _has_uncertain_conclusion(answer: AgentAnswer) -> bool:
+    source_text = " ".join([
+        answer.summary,
+        *(claim.statement for claim in answer.claims if claim.validation_status == "supported"),
+    ])
+    return any(
+        "uncertain" in _finding_polarities(source_text, topic)
+        for topic in _CONCLUSION_TOPICS
+    )
 
 
 def _procurement_recommendation_error(answer: AgentAnswer, narrative_text: str) -> str | None:
@@ -345,6 +373,10 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         # normalized sourcing request and candidate result. Rewriting it from
         # evidence claims would drop user-provided filters or add unsupported
         # procurement advice.
+        return answer
+    # A deterministic unknown conclusion is already the safest user-facing
+    # result. Do not ask a model to resolve it through unrestricted paraphrase.
+    if _has_uncertain_conclusion(answer):
         return answer
     if not settings.LLM_API_KEY or not answer.claims:
         return answer
