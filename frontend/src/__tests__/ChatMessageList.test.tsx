@@ -159,3 +159,51 @@ describe.each(surfaces)('$name', surface => {
     expect(screen.getByTestId('business-result')).toHaveTextContent(verifiedAnswer.summary);
   });
 });
+
+describe('saved workflow status', () => {
+  it('keeps a clarification visible when the answer itself has no business claims', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      content: '请补充供应商名称。',
+      agentAnswer: noEvidenceConversation,
+      workflow: {
+        status: 'clarifying',
+        stage: 'understand',
+        message: '请补充供应商名称。',
+        targetSuppliers: [],
+        sources: [],
+        toolCallCount: 0,
+        completedToolCount: 0,
+      },
+    };
+
+    renderList({ messages: [message], streamState: null, loading: false });
+
+    expect(screen.getByRole('status')).toHaveTextContent('需要补充信息');
+    expect(screen.getByRole('status')).toHaveTextContent('请补充供应商名称。');
+  });
+
+  it('shows a completed workflow only under the collapsed process disclosure', () => {
+    const message: ChatMessage = {
+      role: 'assistant',
+      content: '已完成供应商分析。',
+      agentAnswer: noEvidenceConversation,
+      workflow: {
+        status: 'completed',
+        stage: 'completed',
+        message: '完成实际记录的风险核验',
+        targetSuppliers: ['华东钢材供应有限公司'],
+        sources: ['local_snapshot'],
+        toolCallCount: 1,
+        completedToolCount: 1,
+      },
+    };
+
+    renderList({ messages: [message], streamState: null, loading: false });
+
+    const details = screen.getByText('查看处理过程').closest('details');
+    expect(details).not.toHaveAttribute('open');
+    expect(screen.getByText('当前状态：本轮查询已完成')).not.toBeVisible();
+    expect(screen.getByText('完成实际记录的风险核验')).not.toBeVisible();
+  });
+});

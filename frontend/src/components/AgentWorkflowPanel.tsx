@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ApprovalData } from '../api';
 import type { AgentInputUnderstanding, AgentWorkflowSnapshot } from '../types';
 
@@ -96,7 +96,8 @@ function inputFieldRows(input: AgentInputUnderstanding): Array<[string, string, 
     .flatMap(([key, label]) => {
       const value = input[key as keyof AgentInputUnderstanding];
       const rendered = inputValue(value);
-      return rendered ? [[label, rendered, INPUT_SOURCE_LABELS[input.field_sources?.[key] || ''] || '本轮解析']] : [];
+      const source = input.field_sources?.[key];
+      return rendered ? [[label, rendered, INPUT_SOURCE_LABELS[source || ''] || source || '来源未记录']] : [];
     });
 }
 
@@ -113,7 +114,7 @@ function lifecycleLabel(status?: string): string {
     cancelled: '本轮已取消',
     rejected: '操作已拒绝',
   };
-  return labels[status || ''] || '正在处理';
+  return labels[status || ''] || status || '状态未知';
 }
 
 function lifecycleHeading(status: string, historical: boolean): string {
@@ -129,11 +130,6 @@ function lifecycleIndicatorClass(status: string, isRunning: boolean): string {
   if (status === 'failed') return 'bg-red-600';
   if (['needs_review', 'partial', 'waiting_approval', 'clarifying', 'stopped', 'cancelled', 'rejected'].includes(status)) return 'bg-amber-500';
   return 'bg-emerald-600';
-}
-
-function elapsedLabel(seconds: number): string {
-  if (seconds < 60) return `已用时 ${seconds} 秒`;
-  return `已用时 ${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 
 function compactJson(value: unknown): string {
@@ -171,7 +167,7 @@ function toolLabel(tool: string): string {
     get_monitor_review_queue: '待复核事项查询',
     add_to_watchlist: '加入风险监控',
   };
-  return labels[tool] || '采购数据核验';
+  return labels[tool] || tool;
 }
 
 function loopExitLabel(reason: string): string {
@@ -184,7 +180,7 @@ function loopExitLabel(reason: string): string {
     deadline_exceeded: '本轮查询超时，建议稍后重试',
     llm_budget_exhausted: '本轮分析次数已达上限',
   };
-  return labels[reason] || '本轮核验已结束';
+  return labels[reason] || reason;
 }
 
 function sourceLabel(source: string): string {
@@ -195,7 +191,7 @@ function sourceLabel(source: string): string {
     formal_supplier_directory: '正式供应商目录',
     tianyancha: '天眼查企业数据',
   };
-  return labels[source] || '已核验数据来源';
+  return labels[source] || source;
 }
 
 function stageLabel(stage?: string): string {
@@ -208,7 +204,7 @@ function stageLabel(stage?: string): string {
     approval: '人工确认',
     completed: '已完成',
   };
-  return labels[stage || ''] || stage || '执行中';
+  return labels[stage || ''] || stage || '阶段未记录';
 }
 
 function approvalStatusLabel(status?: ApprovalData['status']): string {
@@ -245,12 +241,10 @@ function externalIdentityFromApprovalArgs(args: Record<string, unknown>): Record
 }
 
 export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowPanelProps) {
-  const [expanded, setExpanded] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [approvalTarget, setApprovalTarget] = useState<'approve' | 'reject' | null>(null);
   const workflow = state.workflowStatus;
-  const lifecycle = workflow?.status || (state.error ? 'failed' : state.done ? 'completed' : 'running');
+  const lifecycle = state.error ? 'failed' : workflow?.status || (state.done ? 'completed' : 'running');
   const isRunning = !state.historical && lifecycle === 'running' && !state.done && !state.error;
   const workflowTargets = workflow?.targetSuppliers ?? [];
   const workflowSources = workflow?.sources ?? [];
@@ -260,14 +254,9 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   const showWorkflowMessage = workflowMessage !== state.answerText?.trim();
   const externalProfile = state.approval ? externalIdentityFromApprovalArgs(state.approval.args) : null;
   const isExternalIdentityConfirmation = Boolean(externalProfile);
-
-  useEffect(() => {
-    if (!isRunning) return;
-    const startedAt = Date.now();
-    const updateElapsed = () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    const intervalId = window.setInterval(updateElapsed, 1000);
-    return () => window.clearInterval(intervalId);
-  }, [isRunning, workflow?.runId]);
+  const isCompleted = lifecycle === 'completed';
+  const isFailure = lifecycle === 'failed';
+  const visibleStatusMessage = showWorkflowMessage ? workflowMessage : '';
 
   const handleApproval = (approved: boolean) => {
     setApprovalTarget(approved ? 'approve' : 'reject');
@@ -275,28 +264,21 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
   };
 
   return (
-    <section className="w-full max-w-full overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm" aria-label="分析进度">
-      <div className="space-y-4 p-4 sm:p-5">
-        <div className="rounded-xl bg-[var(--color-code-bg)] px-4 py-3" role="status" aria-live="polite">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="flex items-center gap-2 text-sm font-semibold text-[var(--color-text)]">
-              <span aria-hidden="true" className={`inline-block h-2.5 w-2.5 rounded-full ${lifecycleIndicatorClass(lifecycle, isRunning)}`} />
-              {lifecycleHeading(lifecycle, Boolean(state.historical))}
-            </p>
-            {isRunning && <span className="text-xs text-[var(--color-text-secondary)]">{elapsedLabel(elapsedSeconds)}</span>}
-          </div>
-          {showWorkflowMessage && <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{workflowMessage}</p>}
-          {workflow?.stage && <p className="mt-1 text-xs text-[var(--color-text-secondary)]">当前阶段：{stageLabel(workflow.stage)}</p>}
-          {workflowTargets.length > 0 && <p className="mt-1 text-xs text-[var(--color-text-secondary)]">分析对象：{workflowTargets.join('、')}</p>}
-          {toolCallCount > 0 && <p className="mt-1 text-xs text-[var(--color-text-secondary)]">工具查询：已完成 {completedToolCount}/{toolCallCount} 项</p>}
-        </div>
-        <button type="button" onClick={() => setExpanded(value => !value)} aria-expanded={expanded} className="flex min-h-[44px] w-full items-center justify-between border-t border-[var(--color-border)] pt-3 text-left text-sm font-medium text-[var(--color-text)]">
-          <span>{expanded ? '收起执行详情' : '查看执行详情'}</span><span aria-hidden="true" className="text-gray-400">{expanded ? '⌃' : '⌄'}</span>
-        </button>
-      </div>
+    <section className="w-full max-w-full" aria-label={isCompleted ? '处理过程' : '分析进度'}>
+      {!isCompleted && <p role={isFailure ? 'alert' : 'status'} aria-live={isFailure ? 'assertive' : 'polite'} className={`flex flex-wrap items-center gap-x-2 gap-y-1 text-sm ${isFailure ? 'text-red-700' : ['needs_review', 'partial', 'clarifying', 'waiting_approval', 'stopped', 'cancelled', 'rejected'].includes(lifecycle) ? 'text-amber-800' : 'text-[var(--color-text-secondary)]'}`}>
+        <span aria-hidden="true" className={`inline-block h-2 w-2 shrink-0 rounded-full ${lifecycleIndicatorClass(lifecycle, isRunning)}`} />
+        {isRunning ? <span>{visibleStatusMessage || lifecycleLabel(lifecycle)}</span> : <>
+          <span className="font-medium">{lifecycleHeading(lifecycle, Boolean(state.historical))}</span>
+          {visibleStatusMessage && <span>{visibleStatusMessage}</span>}
+        </>}
+      </p>}
 
-      {expanded && (
-        <div className="space-y-4 border-t border-[var(--color-border)] px-4 py-4">
+      {!isRunning && <details className="mt-2 text-sm">
+        <summary className="group flex min-h-8 cursor-pointer list-none items-center justify-between gap-2 py-1 text-[var(--color-text-secondary)] hover:text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
+          <span>查看处理过程</span>
+          <span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span>
+        </summary>
+        <div className="mt-3 space-y-4 border-l border-[var(--color-border)] pl-3">
           {workflow?.inputUnderstanding && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3" aria-label="本轮理解">
             <h3 className="text-xs font-semibold text-[var(--color-text)]">本轮理解</h3>
             {workflow.inputUnderstanding.interpretation_summary && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{workflow.inputUnderstanding.interpretation_summary}</p>}
@@ -320,11 +302,12 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
           {workflow && <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-code-bg)] p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold text-[var(--color-text)]">当前状态：{lifecycleLabel(workflow.status)}</p>
-              <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">{stageLabel(workflow.stage)}</span>
+              {workflow.stage && <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)]">{stageLabel(workflow.stage)}</span>}
             </div>
             {showWorkflowMessage && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{workflowMessage}</p>}
             {workflowTargets.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">目标：{workflowTargets.join('、')}</p>}
-            {(workflowSources.length > 0 || toolCallCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{workflowSources.length > 0 ? workflowSources.map(sourceLabel).join('、') : '已核验数据'} · 已完成 {completedToolCount}/{toolCallCount} 项</p>}
+            {workflowSources.length > 0 && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">来源：{workflowSources.map(sourceLabel).join('、')}</p>}
+            {(toolCallCount > 0 || completedToolCount > 0) && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">工具查询：{toolCallCount > 0 ? `已完成 ${completedToolCount}/${toolCallCount} 项` : `已记录完成 ${completedToolCount} 项`}</p>}
             {workflow.evidenceStatus && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">证据：{workflow.evidenceStatus}</p>}
             {workflow.loopExitReason && <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">本轮结果：{loopExitLabel(workflow.loopExitReason)}</p>}
           </div>}
@@ -371,7 +354,7 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
             </div>
           )}
         </div>
-      )}
+      </details>}
 
       {state.approval && (
         <div className="mx-4 mb-4 space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-3" aria-label="人工审批">
@@ -410,7 +393,6 @@ export default function AgentWorkflowPanel({ state, onApproval }: AgentWorkflowP
         </div>
       )}
 
-      {state.error && <p role="alert" className="mx-4 mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">工作流异常：{state.error}</p>}
     </section>
   );
 }

@@ -106,7 +106,8 @@ function shouldShowWorkflowPanel({
     && !hasBusinessIntent
     && !hasActivity;
   if (initialPlaceholder) return false;
-  const conversationOnly = answer?.status === 'completed'
+  const conversationOnly = workflow.status === 'completed'
+    && answer?.status === 'completed'
     && !hasBusinessAnswer(answer)
     && !hasWorkflowActivity(workflow, hasApproval, hasEvidence, hasReferences);
   return !conversationOnly;
