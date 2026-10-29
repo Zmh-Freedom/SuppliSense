@@ -254,14 +254,19 @@ function readableProvider(provider: string, sourceType: string): string {
 function readableEvidenceStatus(status: string): string {
   const labels: Record<string, string> = {
     available: '已获取',
-    confirmed_empty: '已确认无记录',
-    missing: '缺失',
-    unavailable: '暂不可用',
-    stale: '需要更新',
-    conflicting: '存在冲突',
+    confirmed_empty: '范围内未发现记录',
+    missing: '当前未覆盖',
+    unavailable: '查询未成功或暂不可用',
+    stale: '数据已过期',
+    conflicting: '数据存在冲突',
     synthetic: '演示数据',
+    failed: '查询失败',
+    not_configured: '来源未配置',
+    not_found: '范围内未发现记录',
+    denied: '无访问权限',
+    invalid: '查询条件无效',
   };
-  return labels[status] || '已获取';
+  return labels[status] || '状态未知';
 }
 
 function readableValidationStatus(status: AgentAnswer['claims'][number]['validation_status']): string {
@@ -328,8 +333,11 @@ function claimAssessment(claim: AgentAnswer['claims'][number], coverageLimited =
     if ((leafPath === 'current_ratio' && value > 0 && value < 1) || (leafPath === 'quick_ratio' && value > 0 && value < 0.8)) {
       return { label: '流动性需关注', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
-    if (['settlement_change_ratio', 'receipt_record_change_ratio'].includes(leafPath) && Math.abs(value) >= 0.3) {
-      return { label: '波动需复核', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+    if (leafPath === 'receipt_record_change_ratio') {
+      return { label: '记录数变化，仅反映源明细行数', className: 'border-stone-200 bg-stone-50 text-stone-700' };
+    }
+    if (leafPath === 'settlement_change_ratio' && Math.abs(value) >= 0.3) {
+      return { label: '结算波动需复核', className: 'border-amber-200 bg-amber-50 text-amber-700' };
     }
     if (['missing_month_count', 'settlement_without_receipts_month_count'].includes(leafPath) && value > 0) {
       return { label: '需核实', className: 'border-amber-200 bg-amber-50 text-amber-700' };
@@ -680,9 +688,21 @@ function numericFact(facts: Record<string, unknown> | undefined, key: string): n
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function evidenceStatusSummary(evidence: AgentEvidenceRecord[]): string[] {
+  const visibleStatuses = new Set(['missing', 'unavailable', 'confirmed_empty', 'stale', 'conflicting', 'failed', 'not_configured', 'denied', 'invalid']);
+  const seen = new Set<string>();
+  return evidence.flatMap(record => {
+    if (!visibleStatuses.has(record.status) || ['business_risk', 'financial'].includes(record.dimension)) return [];
+    const item = `${readableDimension(record.dimension)}：${readableEvidenceStatus(record.status)}`;
+    if (seen.has(item)) return [];
+    seen.add(item);
+    return [item];
+  });
+}
+
 function reviewClaims(answer: AgentAnswer, paths: string[]): string[] {
   return answer.claims
-    .filter(claim => claim.fact_path !== null && claim.fact_path !== undefined && paths.includes(claim.fact_path))
+    .filter(claim => claim.validation_status === 'supported' && claim.fact_path !== null && claim.fact_path !== undefined && paths.includes(claim.fact_path))
     .map(readableClaimStatement);
 }
 
@@ -740,6 +760,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const isWatchlist = Boolean(watchlistClaims.length > 0 || (answer?.summary.includes('监控清单') && !isTrend));
   const scopeQuery = isWatchlist || isTrend;
   const hasDataExplanation = limitations.length > 0 || riskItems.length > 0 || Boolean(evidence?.length);
+  const evidenceStates = evidenceStatusSummary(evidence || []);
   const capability = getAnswerCapability(answer);
   const capabilityMeta = getAnswerCapabilityMeta(capability);
 
@@ -755,6 +776,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
           <span aria-hidden="true">{status.icon}</span>{status.label}
         </span>}
       </div>
+      {evidenceStates.length > 0 && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs leading-5 text-amber-950"><span className="font-medium">数据状态：</span>{evidenceStates.slice(0, 4).join('；')}{evidenceStates.length > 4 ? `；另有 ${evidenceStates.length - 4} 项状态见数据说明` : ''}</p>}
       {watchlistClaims.length > 0 && <div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th className="px-3 py-2.5 font-medium">供应商</th><th className="px-3 py-2.5 font-medium">监控状态</th><th className="px-3 py-2.5 font-medium">当前说明</th></tr></thead>
@@ -779,8 +801,11 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
         </table>
       </div>}
       {answer.claims.length > 0 && !scopeQuery && capability === 'sourcing' && <SourcingCandidateList answer={answer} evidence={evidence || []} />}
-      {answer.claims.length > 0 && !scopeQuery && capability !== 'sourcing' && <EvidenceTable><div className="mt-4 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <table className="w-full table-fixed border-collapse text-left text-sm">
+      {answer.claims.length > 0 && !scopeQuery && capability !== 'sourcing' && <details className="mt-3 border-t border-[var(--color-border)] pt-2">
+        <summary className="min-h-9 cursor-pointer py-1 text-sm font-medium text-[var(--color-primary-bg)]">展开字段明细（{answer.claims.filter(shouldShowClaim).length} 项）</summary>
+        <EvidenceTable><div className="mt-2 w-full overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+        <table aria-label="已核验字段明细" className="w-full table-fixed border-collapse text-left text-sm">
+          <caption className="sr-only">已核验字段明细，包括数据状态、依据状态和可信度</caption>
           <thead className="bg-[var(--color-code-bg)]/75 text-xs text-[var(--color-text-secondary)]"><tr><th scope="col" className="w-[15%] px-2 py-2.5 font-medium sm:px-3">风险维度</th><th scope="col" className="w-[20%] px-2 py-2.5 font-medium sm:px-3">指标/检查项</th><th scope="col" className="w-[32%] px-2 py-2.5 font-medium sm:px-3">当前数据</th><th scope="col" className="w-[18%] px-2 py-2.5 font-medium sm:px-3">判断</th><th scope="col" className="hidden w-[8%] px-3 py-2.5 font-medium md:table-cell">依据状态</th><th scope="col" className="hidden w-[7%] px-3 py-2.5 font-medium md:table-cell">可信度</th></tr></thead>
           <tbody className="divide-y divide-[var(--color-border)]">{(['summary', 'risk', 'financial', 'other'] as const).map(group => {
             const claims = answer.claims.filter(claim => claimGroup(claim) === group && shouldShowClaim(claim));
@@ -804,7 +829,8 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
             })}</Fragment>;
           })}</tbody>
         </table>
-      </div></EvidenceTable>}
+      </div></EvidenceTable>
+      </details>}
       {!scopeQuery && <SentimentEvidence evidence={evidence || []} />}
     </div>}
 
