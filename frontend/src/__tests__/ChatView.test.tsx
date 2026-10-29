@@ -203,6 +203,54 @@ describe('ChatView session lifecycle', () => {
     })
   })
 
+  it('shows a pure conversational answer once without an analysis card', async () => {
+    const reply = '你好！需要查询供应商资料时，直接告诉我目标即可。'
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAgentAnswer?.({
+        status: 'completed', summary: reply, claims: [], limitations: [],
+        action_proposals: [], action_receipts: [], evidence_refs: [],
+      } satisfies AgentAnswer)
+      handlers.onDone?.({ answer: reply, status: 'completed' })
+      return reply
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '你好')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText(reply)).toBeInTheDocument()
+    expect(screen.getAllByText(reply)).toHaveLength(1)
+    expect(screen.queryByRole('region', { name: 'Agent 分析结果' })).not.toBeInTheDocument()
+    expect(screen.queryByText('数据说明')).not.toBeInTheDocument()
+    expect(screen.queryByText('采购建议')).not.toBeInTheDocument()
+  })
+
+  it('does not repeat streamed text when the structured final answer arrives', async () => {
+    const reply = '华东钢材供应有限公司综合风险评分为 73/100。'
+    mocks.chatStream.mockImplementation(async (_message: string, _sessionId: string, handlers: StreamCallbacks) => {
+      handlers.onAnswerChunk?.({ text: reply })
+      handlers.onAgentAnswer?.({
+        status: 'completed', summary: reply, claims: [{
+          claim_id: 'risk-score', entity_id: 'supplier:steel', dimension: 'risk',
+          statement: '华东钢材供应有限公司综合风险评分为 73/100', value: 73, fact_path: 'risk_score',
+          evidence_refs: ['risk-evidence'], confidence: 0.9, validation_status: 'supported', validation_reasons: [],
+        }],
+        limitations: [], action_proposals: [], action_receipts: [], evidence_refs: ['risk-evidence'],
+      } satisfies AgentAnswer)
+      handlers.onDone?.({ answer: reply, status: 'completed' })
+      return reply
+    })
+    const user = userEvent.setup()
+    renderChat()
+
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析华东钢材供应有限公司')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+
+    expect(await screen.findByText(reply)).toBeInTheDocument()
+    expect(screen.getAllByText(reply)).toHaveLength(1)
+  })
+
   it('persists a visible status when the stream closes without a terminal event', async () => {
     mocks.chatStream.mockResolvedValue('')
     const user = userEvent.setup()
@@ -895,7 +943,7 @@ describe('ChatView session lifecycle', () => {
 
     expect(screen.getByText('86/100')).toBeInTheDocument()
     expect(screen.getByText('86/100').closest('tr')?.textContent).not.toContain('risk_score')
-    expect(screen.getByText(/本轮围绕综合风险、财务风险形成 2 条判断，其中 2 条已有证据支持/)).toBeInTheDocument()
+    expect(screen.getAllByText('已完成风险分析。')).toHaveLength(1)
     expect(screen.getByRole('columnheader', { name: '指标/检查项' })).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '判断' })).toBeInTheDocument()
     expect(screen.getAllByText('综合风险评分').length).toBeGreaterThan(0)
@@ -1009,8 +1057,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析华东钢材供应有限公司的财务情况')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    expect((await screen.findAllByRole('heading', { name: '财务分析' })).length).toBe(2)
-    expect(screen.getByText('财务分析建议')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '财务分析' })).toBeInTheDocument()
+    expect(screen.queryByText('财务分析建议')).not.toBeInTheDocument()
     expect(screen.getByText('财务分析复核结论')).toBeInTheDocument()
     expect(screen.queryByText('采购复核结论')).not.toBeInTheDocument()
   })
@@ -1043,8 +1091,8 @@ describe('ChatView session lifecycle', () => {
     await user.type(screen.getByLabelText('向 AI 采购助手提问'), '分析青岛三祥科技股份有限公司的供应链关系和传染风险')
     await user.click(screen.getByRole('button', { name: '发送' }))
 
-    expect((await screen.findAllByRole('heading', { name: '供应链关系与传染风险' })).length).toBe(2)
-    expect(screen.getByText('关系分析建议')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '供应链关系与传染风险' })).toBeInTheDocument()
+    expect(screen.queryByText('关系分析建议')).not.toBeInTheDocument()
     expect(screen.queryByText('采购复核结论')).not.toBeInTheDocument()
   })
 
@@ -1092,9 +1140,9 @@ describe('ChatView session lifecycle', () => {
     await user.click(screen.getByRole('button', { name: '发送' }))
 
     expect(await screen.findByText('采购复核结论')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '建议复核' })).toBeInTheDocument()
-    expect(screen.getByText('核对复核事项')).toBeInTheDocument()
-    expect(screen.getByText('2 / 2 条已支持')).toBeInTheDocument()
+    expect(screen.getByText('当前未覆盖')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '建议复核' })).not.toBeInTheDocument()
+    expect(screen.queryByText('2 / 2 条已支持')).not.toBeInTheDocument()
     expect(screen.getByText('发现了什么')).toBeInTheDocument()
     expect(screen.getByText('依据是什么')).toBeInTheDocument()
     expect(screen.getByText('采购人员需要核实什么')).toBeInTheDocument()
