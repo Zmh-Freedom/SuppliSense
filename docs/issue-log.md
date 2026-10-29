@@ -1,5 +1,30 @@
 # 项目问题记录
 
+## ISS-20261029-021 Supervisor 审批集成回归在首个重启用例后停滞
+
+- 发现日期：2026-10-29
+- 状态：待定位（`[api]` 审批恢复参数首轮超过 4 分钟未完成）
+- 优先级：P1
+- 用例：`backend/tests/test_supervisor_lifecycle_integration.py`，显式设置 `PG_DB=run_lifecycle_test` 与 `SUPPLISENSE_TEST_PG_DB=run_lifecycle_test`。
+- 现象：定向审批生命周期集收集 21 项后，`-q` 输出约 4:14 未出现新标记；在约 4:57 时仅该 pytest 进程收到 SIGINT。最终报告为 `13 passed, 3 warnings in 297.51s`，停滞用例是 `test_persistent_supervisor_pause_restart_and_resume_keeps_run_and_results[api]`，其余 7 项未执行。独立只读查询确认连接数据库为 `run_lifecycle_test`；当时 PostgreSQL 有 8 个 idle client 连接及 1 个 active 查询，堆栈/等待点尚未收集。
+- 影响：审批 pause/approve/reject/restart 集成验收尚无完整结果，不能声称该验证通过或跳过它。
+- 根因：尚未确认；不能将停止前的 5 个标记外推为剩余用例通过，也不能归因于本聊天改动。
+- 修复方案：保留首轮停滞记录；先中断单个 pytest 进程收集堆栈和当前用例，再隔离运行、检查 checkpointer/PostgreSQL 等待。仅在确认根因后改测试或代码。
+- 验证结果：首轮被 SIGINT 中断，保留 `13 passed` 和 `[api]` 参数未完成的结果；不得把它表述为全套通过。其 `[api]` 参数单独在显式设置 `PG_DB=run_lifecycle_test`、`SUPPLISENSE_TEST_PG_DB=run_lifecycle_test` 后复跑 `1 passed in 38.92s`；首次漏设该变量的定向调用按 fixture 约定 skipped，不计入通过。首轮停滞根因尚未确认，完整 21 项集仍待复跑。测试只连接独立 `run_lifecycle_test` 数据库，fixture 使用 UUID 并清理自身 session/user。未停止应用服务或清理开发库。
+- 关联提交：诊断及验证后关联。
+
+## ISS-20261029-020 GitHub Actions MongoDB 8 服务容器与 hosted runner 内核不兼容
+
+- 发现日期：2026-10-29
+- 状态：复现，runner 兼容调整中
+- 优先级：P1
+- 现象：PR head `bcaed01e` 的 push、pull_request 与一次 backend job 重跑共 3 次均在测试前失败；`mongo:8` 容器日志为 `MongoDB cannot start: Linux kernel versions 6.19 and newer has a known incompatibility`，PostgreSQL 和 Redis service 正常。
+- 影响：必需的 GitHub backend check 未开始执行，PR 状态 `UNSTABLE`，不能据此合并。
+- 根因：CI backend job 使用会移动的 `ubuntu-latest`，其 hosted runner 内核进入 MongoDB 8 当前 TCMalloc 不兼容范围；MongoDB 8.0 官方发行说明指出 Linux kernel 6.19 至 7.0.13 可能导致 MongoDB 崩溃并在启动时退出。
+- 修复方案：仅 backend job 固定到当前 GitHub 官方 Ubuntu 22.04 runner（其发布镜像内核为 6.8），继续运行 MongoDB 8 和完整后端测试；不跳过测试、不降低数据库主版本。MongoDB 8.0 发行说明：https://www.mongodb.com/docs/v8.0/release-notes/8.0/；GitHub Ubuntu 22.04 runner 镜像：https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2204-Readme.md。待 MongoDB 兼容 GitHub runner 内核或 runner 更新到兼容内核后再迁移标签。
+- 验证结果：同一 head 三次 backend CI 均因 MongoDB service 启动失败，测试未运行；frontend 与 PR commit-message checks 成功。上述 Ubuntu 22.04 runner 调整尚待新 head CI 实际验证。
+- 关联提交：runner 修复提交待关联。
+
 ## ISS-20261029-018 Worker shutdown 子进程回归偶发超时
 
 - 发现日期：2026-10-29
