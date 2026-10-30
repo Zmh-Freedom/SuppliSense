@@ -148,6 +148,16 @@ def _claim_payload(answer: AgentAnswer) -> list[dict[str, Any]]:
     ]
 
 
+def _narration_provider_options() -> dict[str, Any]:
+    """Disable DeepSeek V4 reasoning for the presentation-only rewrite."""
+    model = settings.LLM_MODEL.strip().lower()
+    if model == "deepseek-flash" or model.startswith("deepseek-v4"):
+        # V4 enables high-effort thinking by default; its reasoning can consume
+        # the bounded completion budget before it returns the formatting JSON.
+        return {"extra_body": {"thinking": {"type": "disabled"}}}
+    return {}
+
+
 def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     normalized = text.casefold()
     return any(marker.casefold() in normalized for marker in markers)
@@ -238,15 +248,22 @@ def _company_profile_markdown_fallback(answer: AgentAnswer, user_message: str = 
 
     lines: list[str] = []
     source_labels = dict(_COMPANY_PROFILE_SOURCE_LABELS)
+    limitations = list(dict.fromkeys(_profile_limitations_for_focus(answer.limitations, focused_domains)))
     for section, _paths in _COMPANY_PROFILE_SECTIONS:
         if focused_domains and _COMPANY_PROFILE_SECTION_DOMAINS[section] not in focused_domains:
             continue
         items = section_items[section]
+        represented_text = [*items, *limitations]
         boundary_items = [
             f"{source_labels[section]}：{status}"
             for status in _COMPANY_PROFILE_SOURCE_STATUSES
             if _normalize_fact_clause(f"{source_labels[section]}：{status}")
             in _normalize_fact_clause(answer.summary)
+            and not any(
+                _normalize_fact_clause(f"{source_labels[section]}：{status}")
+                in _normalize_fact_clause(item)
+                for item in represented_text
+            )
         ]
         items.extend(item for item in boundary_items if item not in items)
         if items:
@@ -257,7 +274,6 @@ def _company_profile_markdown_fallback(answer: AgentAnswer, user_message: str = 
         lines.append("### 其他工商资料")
         lines.extend(f"- {item}" for item in section_items["其他工商资料"])
 
-    limitations = list(dict.fromkeys(_profile_limitations_for_focus(answer.limitations, focused_domains)))
     uncertain_clauses = _uncertain_summary_clauses(answer)
     if limitations or uncertain_clauses:
         lines.append("### 资料边界与待核实事项")
@@ -698,6 +714,7 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             "本轮是工商资料排版任务：你可以决定现有资料字段的分组、顺序和 Markdown 呈现方式；可使用 ##/### 小标题、项目列表、加粗和引用来改善阅读，不要套用固定模板，也不要增写字段值。",
             "小标题只能从以下现有资料域中选择：企业基本信息、登记信息、股东信息、对外投资、历史变更、分支机构、当前资料状态、查询边界、资料边界、待核实事项；只有输入中存在对应内容时才能使用。",
             "每个公司名称、字段值、日期、数字、来源状态、未知结论和限制条件都必须与 deterministic_summary、validated_claims 或 limitations 一致；不得遗漏未查询、查询失败、明确无记录、当前未覆盖或无法确认等边界。",
+            "严格逐字保留完整事实片段：每条项目符号必须完整复制 deterministic_summary 或 validated_claims 中的一整条事实，不得缩写成字段标签和值，不得省略公司主体或资料域。来源包含完整公司主体、字段和值时，不可只输出字段和值；来源状态必须与资料域绑定，保留完整‘资料域：状态’短语，不得只写未查询、查询失败、明确无记录或当前未覆盖等状态词。不要添加‘以下为’、‘如下’等来源中没有的说明句。",
             "不得新增来源、URL 或 Markdown 链接，也不得插入图片、原始 HTML、模型解释或未在输入中出现的事实。",
         ])
         if profile_domains:
@@ -743,7 +760,8 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             temperature=0.1,
             response_format={"type": "json_object"},
             **completion_token_options(1800),
-            timeout=float(os.getenv("LLM_NARRATION_TIMEOUT", "8")),
+            **_narration_provider_options(),
+            timeout=float(os.getenv("LLM_NARRATION_TIMEOUT", "20")),
         )
         payload = parse_json_object_content(
             response.choices[0].message.content,

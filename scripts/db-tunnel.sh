@@ -7,13 +7,67 @@ set -euo pipefail
 HOST="supplisense-db"
 LOCAL_PORTS=(15432 16379 27018)
 
-is_running() {
-    pgrep -f "ssh -f -N ${HOST}" >/dev/null 2>&1
+listener_pid() {
+    local port="$1"
+    local output pid found_pid=""
+
+    output=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null) || return 1
+    while IFS= read -r pid; do
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        if [[ -z "$found_pid" ]]; then
+            found_pid="$pid"
+        elif [[ "$found_pid" != "$pid" ]]; then
+            return 1
+        fi
+    done <<< "$output"
+
+    [[ -n "$found_pid" ]] || return 1
+    printf '%s\n' "$found_pid"
+}
+
+is_expected_tunnel() {
+    local pid="$1"
+    local process_name command arg has_no_command=0
+    local -a argv=()
+
+    process_name=$(ps -p "$pid" -o comm= 2>/dev/null) || return 1
+    process_name="${process_name##*/}"
+    [[ "$process_name" == "ssh" ]] || return 1
+
+    command=$(ps -ww -p "$pid" -o command= 2>/dev/null) || return 1
+    read -r -a argv <<< "$command"
+    [[ ${#argv[@]} -ge 3 ]] || return 1
+    [[ "${argv[${#argv[@]}-1]}" == "$HOST" ]] || return 1
+
+    for arg in "${argv[@]}"; do
+        if [[ "$arg" == "-N" ]]; then
+            has_no_command=1
+            break
+        fi
+    done
+    [[ "$has_no_command" -eq 1 ]]
+}
+
+find_tunnel_pid() {
+    local port pid tunnel_pid=""
+
+    for port in "${LOCAL_PORTS[@]}"; do
+        pid=$(listener_pid "$port") || return 1
+        if [[ -z "$tunnel_pid" ]]; then
+            tunnel_pid="$pid"
+        elif [[ "$tunnel_pid" != "$pid" ]]; then
+            return 1
+        fi
+    done
+
+    [[ -n "$tunnel_pid" ]] || return 1
+    is_expected_tunnel "$tunnel_pid" || return 1
+    printf '%s\n' "$tunnel_pid"
 }
 
 case "${1:-start}" in
     start)
-        if is_running; then
+        if find_tunnel_pid >/dev/null; then
             echo "隧道已在运行"
             exit 0
         fi
@@ -27,17 +81,16 @@ case "${1:-start}" in
         echo "隧道已启动: pg=127.0.0.1:15432 redis=127.0.0.1:16379 mongo=127.0.0.1:27018"
         ;;
     stop)
-        if is_running; then
-            pkill -f "ssh -f -N ${HOST}"
+        if tunnel_pid=$(find_tunnel_pid); then
+            env kill -TERM "$tunnel_pid"
             echo "隧道已停止"
         else
             echo "隧道未运行"
         fi
         ;;
     status)
-        if is_running; then
-            echo "隧道运行中"
-            pgrep -af "ssh -f -N ${HOST}"
+        if tunnel_pid=$(find_tunnel_pid); then
+            echo "隧道运行中 (PID $tunnel_pid)"
         else
             echo "隧道未运行"
             exit 1

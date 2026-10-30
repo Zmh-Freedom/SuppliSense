@@ -111,6 +111,64 @@ def test_profile_layout_accepts_count_only_profile_domains() -> None:
     assert _is_company_profile_answer(answer) is True
 
 
+def test_profile_fallback_deduplicates_statuses_already_in_claims_or_limitations(monkeypatch) -> None:
+    company = "测试样例有限公司"
+    answer = AgentAnswer(
+        status="partial",
+        summary=(
+            f"工商资料：{company}股东：未查询；"
+            "对外投资：未查询；分支机构：明确无记录。"
+        ),
+        claims=[ValidatedClaim(
+            claim_id="fixture-branch-status",
+            entity_id="fixture-company",
+            dimension="company_profile",
+            statement=f"{company}工商资料，分支机构：明确无记录",
+            value=0,
+            fact_path="counts.branch",
+            evidence_refs=["fixture-evidence"],
+            confidence=0.9,
+            validation_status="supported",
+        )],
+        limitations=["对外投资未查询，当前无法确认其情况"],
+        evidence_refs=["fixture-evidence"],
+    )
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "")
+
+    narrated = narrate_answer(answer, f"查询{company}工商资料")
+
+    assert narrated.summary.count("分支机构：明确无记录") == 1
+    assert narrated.summary.count("未查询") == 2
+    assert "对外投资未查询，当前无法确认其情况" in narrated.summary
+
+
+def test_profile_narration_rejects_status_without_its_source_domain() -> None:
+    answer = AgentAnswer(
+        status="partial",
+        summary="工商资料：测试样例有限公司股东：未查询。",
+        claims=[ValidatedClaim(
+            claim_id="fixture-holder-status",
+            entity_id="fixture-company",
+            dimension="company_profile",
+            statement="测试样例有限公司股东：未查询",
+            value="未查询",
+            fact_path="counts.holder",
+            evidence_refs=["fixture-evidence"],
+            confidence=0.9,
+            validation_status="supported",
+        )],
+        evidence_refs=["fixture-evidence"],
+    )
+    draft = NarrativeDraft(
+        headline="工商资料",
+        body_markdown="### 股东信息\n- 未查询",
+        claim_refs=["fixture-holder-status"],
+    )
+
+    assert _validate_draft(draft, answer, "查询测试样例有限公司工商资料", profile_layout=True) is False
+
+
 def _fake_narrator_client(body_markdown: str, prompt_capture: list[dict] | None = None):
     class FakeClient:
         class chat:
@@ -415,7 +473,8 @@ def test_narrator_uses_claim_based_markdown_when_model_is_not_configured(monkeyp
     assert narrated.summary.startswith("工商资料\n\n")
     assert "- 青岛三祥科技股份有限公司法定代表人：张敏" in narrated.summary
     assert "- 青岛三祥科技股份有限公司股东：甲股东" in narrated.summary
-    assert "对外投资：未查询" in narrated.summary
+    assert "对外投资未查询，当前无法确认其情况" in narrated.summary
+    assert narrated.summary.count("未查询") == 1
     assert "历史变更：查询失败" in narrated.summary
     assert "分支机构：明确无记录" in narrated.summary
     assert "重大诉讼情况无法确认" in narrated.summary
@@ -976,14 +1035,39 @@ def test_narrator_disables_sdk_retries_and_marks_safe_fallback(monkeypatch):
         client_options.append(kwargs)
         return FakeClient()
 
+    monkeypatch.delenv("LLM_NARRATION_TIMEOUT", raising=False)
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_MODEL", "deepseek-v4.1-flash-1017")
     monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", create_client)
 
     result = narrate_answer(_answer(), "复核青岛三祥科技股份有限公司")
 
     assert len(calls) == 1
     assert client_options[0]["max_retries"] == 0
+    assert calls[0]["timeout"] == 20
+    assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
     assert any("润色" in item for item in result.limitations)
+
+
+def test_narrator_does_not_send_deepseek_options_to_other_models(monkeypatch):
+    calls = []
+
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    calls.append(kwargs)
+                    raise TimeoutError("provider timeout")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_MODEL", "other-compatible-model")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
+
+    narrate_answer(_answer(), "复核测试样例有限公司")
+
+    assert len(calls) == 1
+    assert "extra_body" not in calls[0]
 
 
 def test_general_knowledge_answer_returns_provider_guidance_without_entity_facts(monkeypatch):
