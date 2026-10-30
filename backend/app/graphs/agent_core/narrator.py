@@ -17,6 +17,11 @@ from app.core.llm_compat import completion_token_options
 from app.core.logging import get_logger
 from app.core.structured_response import parse_json_object_content
 from app.graphs.agent_core.answer_contract import AgentAnswer
+from app.graphs.agent_core.profile_scope import (
+    mentioned_profile_domains,
+    profile_claim_domain,
+    requested_profile_domains,
+)
 
 logger = get_logger()
 
@@ -44,7 +49,36 @@ _COMPANY_PATTERN = re.compile(
 )
 _NUMBER_PATTERN = re.compile(r"(?<![A-Za-z])[+-]?\d+(?:\.\d+)?%?")
 _STANDARD_CODE_PATTERN = re.compile(r"\b(?:ISO|IATF|AS|SA)\s*-?\s*\d{4,5}\b", re.IGNORECASE)
+_URL_PATTERN = re.compile(r"(?:https?://|www\.)[^\s)\]>]+", re.IGNORECASE)
+_MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\([^)]*\)")
+_RAW_HTML_PATTERN = re.compile(r"</?\s*[A-Za-z][^>]*>|<!--", re.IGNORECASE)
 _CONCLUSION_CLAUSE_BOUNDARY_PATTERN = re.compile(r"不过|然而|但是|可是|但|[，,；;。！？\n]")
+_COMPANY_PROFILE_LAYOUT_HEADINGS = {
+    "工商资料", "企业基本信息", "登记信息", "股东信息", "股东", "对外投资",
+    "历史变更", "分支机构", "当前资料状态", "查询边界", "资料边界", "待核实事项",
+}
+_COMPANY_PROFILE_SECTIONS = (
+    ("企业基本信息", ("profile.baseinfo", "counts.baseinfo")),
+    ("股东信息", ("profile.holder_names", "profile.holder", "counts.holder")),
+    ("对外投资", ("profile.invest", "counts.invest")),
+    ("历史变更", ("profile.changeInfo", "counts.changeInfo")),
+    ("分支机构", ("profile.branch", "counts.branch")),
+)
+_COMPANY_PROFILE_SECTION_DOMAINS = {
+    "企业基本信息": "baseinfo",
+    "股东信息": "holder",
+    "对外投资": "invest",
+    "历史变更": "change",
+    "分支机构": "branch",
+}
+_COMPANY_PROFILE_SOURCE_LABELS = (
+    ("企业基本信息", "企业基本信息"),
+    ("股东信息", "股东"),
+    ("对外投资", "对外投资"),
+    ("历史变更", "历史变更"),
+    ("分支机构", "分支机构"),
+)
+_COMPANY_PROFILE_SOURCE_STATUSES = ("明确无记录", "查询失败", "未查询", "当前未覆盖")
 _SENTIMENT_SOURCE_MARKERS = ("舆情", "新闻", "报道", "sentiment", "news")
 _SOURCE_UNAVAILABLE_MARKERS = (
     "unavailable", "failed", "failure", "不可用", "查询失败", "来源失败", "暂不可用",
@@ -119,6 +153,125 @@ def _has_any_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker.casefold() in normalized for marker in markers)
 
 
+def _is_company_profile_answer(answer: AgentAnswer) -> bool:
+    """Use validated claim scope so a subject-confirmation reply keeps profile context."""
+    return bool(answer.claims) and all(
+        claim.dimension == "company_profile"
+        and (
+            str(claim.fact_path or "").startswith("profile.")
+            or str(claim.fact_path or "").startswith("counts.")
+        )
+        for claim in answer.claims
+    )
+
+
+def _is_allowed_company_profile_heading(text: str) -> bool:
+    heading = re.sub(r"^\s{0,3}#{1,6}\s*", "", text.strip())
+    heading = re.sub(r"[*_`~]", "", heading).strip().rstrip("：:").strip()
+    return heading in _COMPANY_PROFILE_LAYOUT_HEADINGS
+
+
+def _company_profile_source_boundary_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+    source_summary = _normalize_fact_clause(answer.summary)
+    normalized_narrative = _normalize_fact_clause(narrative_text)
+    for _section, source_label in _COMPANY_PROFILE_SOURCE_LABELS:
+        for status in _COMPANY_PROFILE_SOURCE_STATUSES:
+            boundary = f"{source_label}：{status}"
+            if (
+                _normalize_fact_clause(boundary) in source_summary
+                and _normalize_fact_clause(boundary) not in normalized_narrative
+            ):
+                return "omitted_company_profile_source_boundary"
+    if any(
+        _normalize_fact_clause(clause) not in normalized_narrative
+        for clause in _uncertain_summary_clauses(answer)
+    ):
+        return "omitted_company_profile_uncertain_conclusion"
+    return None
+
+
+def _uncertain_summary_clauses(answer: AgentAnswer) -> list[str]:
+    clauses: list[str] = []
+    for clause in re.split(r"[。！？；;\n]+", answer.summary):
+        clause = clause.strip()
+        if clause and any(
+            _finding_polarities(clause, topic) == {"uncertain"}
+            for topic in _CONCLUSION_TOPICS
+        ):
+            clauses.append(clause)
+    return list(dict.fromkeys(clauses))
+
+
+def _profile_limitations_for_focus(limitations: list[str], focused_domains: set[str]) -> list[str]:
+    if not focused_domains:
+        return list(limitations)
+    return [
+        limitation for limitation in limitations
+        if not (mentioned := mentioned_profile_domains(limitation)) or bool(mentioned & focused_domains)
+    ]
+
+
+def _company_profile_markdown_fallback(answer: AgentAnswer, user_message: str = "") -> AgentAnswer:
+    """Format only validated profile facts and known source states when narration fails."""
+    focused_domains = requested_profile_domains(user_message)
+    section_items: dict[str, list[str]] = {section: [] for section, _paths in _COMPANY_PROFILE_SECTIONS}
+    section_items["其他工商资料"] = []
+    for claim in answer.claims:
+        if claim.dimension != "company_profile" or claim.validation_status != "supported":
+            continue
+        domain = profile_claim_domain(claim.fact_path)
+        if focused_domains and domain not in focused_domains:
+            continue
+        fact_path = str(claim.fact_path or "")
+        section = next(
+            (
+                label
+                for label, prefixes in _COMPANY_PROFILE_SECTIONS
+                if any(fact_path == prefix or fact_path.startswith(f"{prefix}.") for prefix in prefixes)
+            ),
+            "其他工商资料",
+        )
+        section_items[section].append(claim.statement)
+
+    for section in section_items:
+        section_items[section] = list(dict.fromkeys(section_items[section]))
+
+    lines: list[str] = []
+    source_labels = dict(_COMPANY_PROFILE_SOURCE_LABELS)
+    for section, _paths in _COMPANY_PROFILE_SECTIONS:
+        if focused_domains and _COMPANY_PROFILE_SECTION_DOMAINS[section] not in focused_domains:
+            continue
+        items = section_items[section]
+        boundary_items = [
+            f"{source_labels[section]}：{status}"
+            for status in _COMPANY_PROFILE_SOURCE_STATUSES
+            if _normalize_fact_clause(f"{source_labels[section]}：{status}")
+            in _normalize_fact_clause(answer.summary)
+        ]
+        items.extend(item for item in boundary_items if item not in items)
+        if items:
+            lines.append(f"### {section}")
+            lines.extend(f"- {item}" for item in items)
+
+    if section_items["其他工商资料"]:
+        lines.append("### 其他工商资料")
+        lines.extend(f"- {item}" for item in section_items["其他工商资料"])
+
+    limitations = list(dict.fromkeys(_profile_limitations_for_focus(answer.limitations, focused_domains)))
+    uncertain_clauses = _uncertain_summary_clauses(answer)
+    if limitations or uncertain_clauses:
+        lines.append("### 资料边界与待核实事项")
+        lines.extend(f"- {item}" for item in limitations)
+        lines.extend(f"- {item}" for item in uncertain_clauses if item not in limitations)
+
+    if not lines:
+        lines = ["### 工商资料", f"- {answer.summary}"]
+
+    return answer.model_copy(update={
+        "summary": "工商资料\n\n" + "\n".join(lines),
+    })
+
+
 def _limitation_is_preserved(limitation: str, narrative_text: str) -> bool:
     """Require a complete limitation phrase; never trust it as a substring."""
     return _normalize_limitation_text(limitation) == _normalize_limitation_text(narrative_text)
@@ -180,7 +333,12 @@ def _finding_polarities(text: str, topic: str) -> set[str]:
     return polarities
 
 
-def _conclusion_polarity_error(answer: AgentAnswer, narrative_text: str) -> str | None:
+def _conclusion_polarity_error(
+    answer: AgentAnswer,
+    narrative_text: str,
+    *,
+    require_uncertain_conclusions: bool = False,
+) -> str | None:
     source_text = " ".join([
         answer.summary,
         *(claim.statement for claim in answer.claims if claim.validation_status == "supported"),
@@ -188,6 +346,12 @@ def _conclusion_polarity_error(answer: AgentAnswer, narrative_text: str) -> str 
     for topic in _CONCLUSION_TOPICS:
         source_polarities = _finding_polarities(source_text, topic)
         narrative_polarities = _finding_polarities(narrative_text, topic)
+        if (
+            require_uncertain_conclusions
+            and source_polarities == {"uncertain"}
+            and not narrative_polarities
+        ):
+            return f"omitted_uncertain_conclusion:{topic}"
         if len(narrative_polarities) > 1:
             return f"conflicting_narrated_conclusion:{topic}"
         if len(narrative_polarities) == 1 and source_polarities != narrative_polarities:
@@ -274,9 +438,20 @@ def _clause_matches_structured_proposal(clause: str, answer: AgentAnswer) -> boo
     )
 
 
-def _narrative_body_is_evidence_bound(body: str, answer: AgentAnswer) -> bool:
+def _narrative_body_is_evidence_bound(
+    body: str,
+    answer: AgentAnswer,
+    *,
+    allow_profile_headings: bool = False,
+) -> bool:
     """Accept only source text, validated limitation paraphrases, or proposal labels."""
     source_phrases = [answer.summary, *answer.limitations]
+    if allow_profile_headings:
+        source_phrases.extend(
+            clause.strip()
+            for clause in re.split(r"[。！？；;\n]+", answer.summary)
+            if clause.strip()
+        )
     source_phrases.extend(
         claim.statement
         for claim in answer.claims
@@ -292,6 +467,8 @@ def _narrative_body_is_evidence_bound(body: str, answer: AgentAnswer) -> bool:
         return False
 
     def sentence_is_supported(sentence: str) -> bool:
+        if allow_profile_headings and _is_allowed_company_profile_heading(sentence):
+            return True
         normalized_sentence = _normalize_fact_clause(sentence)
         if normalized_sentence in normalized_sources:
             return True
@@ -344,6 +521,8 @@ def _draft_validation_error(
     draft: NarrativeDraft,
     answer: AgentAnswer,
     user_message: str = "",
+    *,
+    profile_layout: bool = False,
 ) -> str | None:
     """Return a stable rejection reason when prose exceeds validated facts."""
     claims = _claim_payload(answer)
@@ -357,6 +536,20 @@ def _draft_validation_error(
         answer.summary,
         *(str(item.get("statement") or "") for item in claims),
     ])
+    if _MARKDOWN_LINK_PATTERN.search(narrative_text):
+        return "narrative_link_not_allowed"
+    if _RAW_HTML_PATTERN.search(narrative_text):
+        return "narrative_html_not_allowed"
+    source_urls = {
+        url.rstrip(".,，。；;!?！？")
+        for url in _URL_PATTERN.findall(source_text)
+    }
+    narrative_urls = {
+        url.rstrip(".,，。；;!?！？")
+        for url in _URL_PATTERN.findall(narrative_text)
+    }
+    if not narrative_urls.issubset(source_urls):
+        return "unsupported_source_link"
     allowed_numbers = _normalized_numbers(source_text) | {"100"}
     allowed_numeric_values = _numeric_values(source_text) | {100.0}
     for number in _normalized_numbers(narrative_text):
@@ -394,13 +587,25 @@ def _draft_validation_error(
     for limitation in answer.limitations:
         if not _narrative_contains_limitation(limitation, draft.body_markdown):
             return "missing_limitation"
-    conclusion_error = _conclusion_polarity_error(answer, narrative_text)
+    conclusion_error = _conclusion_polarity_error(
+        answer,
+        narrative_text,
+        require_uncertain_conclusions=profile_layout,
+    )
     if conclusion_error is not None:
         return conclusion_error
+    if profile_layout:
+        profile_boundary_error = _company_profile_source_boundary_error(answer, draft.body_markdown)
+        if profile_boundary_error is not None:
+            return profile_boundary_error
     recommendation_error = _procurement_recommendation_error(answer, narrative_text)
     if recommendation_error is not None:
         return recommendation_error
-    if not _narrative_body_is_evidence_bound(draft.body_markdown, answer):
+    if not _narrative_body_is_evidence_bound(
+        draft.body_markdown,
+        answer,
+        allow_profile_headings=profile_layout,
+    ):
         return "unsupported_narrative_clause"
     # A narrative must not turn a recommendation into a completed write action.
     forbidden_success = ("已加入监控", "已完成审批", "已切换供应商", "已暂停采购")
@@ -409,9 +614,15 @@ def _draft_validation_error(
     return None
 
 
-def _validate_draft(draft: NarrativeDraft, answer: AgentAnswer, user_message: str = "") -> bool:
+def _validate_draft(
+    draft: NarrativeDraft,
+    answer: AgentAnswer,
+    user_message: str = "",
+    *,
+    profile_layout: bool = False,
+) -> bool:
     """Fail closed when the prose adds entities or numeric facts."""
-    return _draft_validation_error(draft, answer, user_message) is None
+    return _draft_validation_error(draft, answer, user_message, profile_layout=profile_layout) is None
 
 
 def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
@@ -422,13 +633,36 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         # evidence claims would drop user-provided filters or add unsupported
         # procurement advice.
         return answer
+    profile_layout = _is_company_profile_answer(answer)
     # A deterministic unknown conclusion is already the safest user-facing
-    # result. Do not ask a model to resolve it through unrestricted paraphrase.
-    if _has_uncertain_conclusion(answer):
+    # result. Profile layout is allowed only through the stricter evidence and
+    # uncertainty checks below; other capabilities keep the deterministic path.
+    if _has_uncertain_conclusion(answer) and not profile_layout:
         return answer
-    if not settings.LLM_API_KEY or not answer.claims:
+    if not answer.claims:
         return answer
-    claims = _claim_payload(answer)
+    profile_domains = requested_profile_domains(user_message) if profile_layout else set()
+    narrative_answer = answer
+    if profile_domains:
+        focused_claims = [
+            claim for claim in answer.claims
+            if profile_claim_domain(claim.fact_path) in profile_domains
+        ]
+        narrative_answer = answer.model_copy(update={
+            "claims": focused_claims,
+            "limitations": _profile_limitations_for_focus(answer.limitations, profile_domains),
+        })
+    if not settings.LLM_API_KEY:
+        if profile_layout:
+            logger.info(
+                "answer_narration_skipped",
+                reason="missing_api_key",
+                presentation_mode="company_profile_markdown_layout",
+                fallback_mode="validated_company_profile_markdown",
+            )
+            return _company_profile_markdown_fallback(answer, user_message)
+        return answer
+    claims = _claim_payload(narrative_answer)
     article_count = next(
         (
             int(item["value"])
@@ -442,8 +676,9 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         "user_question": user_message,
         "deterministic_summary": answer.summary,
         "validated_claims": claims,
-        "limitations": answer.limitations,
+        "limitations": narrative_answer.limitations,
         "current_status": answer.status,
+        "presentation_mode": "company_profile_markdown_layout" if profile_layout else "evidence_bound_narrative",
         "rules": [
             "Return one JSON object only, matching response_schema.",
             "headline 不会直接展示给用户。",
@@ -458,6 +693,16 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
         ],
         "response_schema": NarrativeDraft.model_json_schema(),
     }
+    if profile_layout:
+        prompt["rules"].extend([
+            "本轮是工商资料排版任务：你可以决定现有资料字段的分组、顺序和 Markdown 呈现方式；可使用 ##/### 小标题、项目列表、加粗和引用来改善阅读，不要套用固定模板，也不要增写字段值。",
+            "小标题只能从以下现有资料域中选择：企业基本信息、登记信息、股东信息、对外投资、历史变更、分支机构、当前资料状态、查询边界、资料边界、待核实事项；只有输入中存在对应内容时才能使用。",
+            "每个公司名称、字段值、日期、数字、来源状态、未知结论和限制条件都必须与 deterministic_summary、validated_claims 或 limitations 一致；不得遗漏未查询、查询失败、明确无记录、当前未覆盖或无法确认等边界。",
+            "不得新增来源、URL 或 Markdown 链接，也不得插入图片、原始 HTML、模型解释或未在输入中出现的事实。",
+        ])
+        if profile_domains:
+            prompt["requested_profile_domains"] = sorted(profile_domains)
+            prompt["rules"].append("用户本次只询问当前请求的资料域；只回答该资料域，不得重复其他资料域的字段或状态。")
     started_at = time.monotonic()
 
     def degraded(reason: str, request_id: str | None = None) -> AgentAnswer:
@@ -467,7 +712,11 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             reason=reason,
             elapsed_ms=elapsed_ms,
             request_id=request_id,
+            presentation_mode="company_profile_markdown_layout" if profile_layout else "evidence_bound_narrative",
+            fallback_mode="validated_company_profile_markdown" if profile_layout else None,
         )
+        if profile_layout:
+            return _company_profile_markdown_fallback(answer, user_message)
         limitation = "自然语言润色暂不可用；以下结论仍基于已校验的证据。"
         limitations = list(answer.limitations)
         if limitation not in limitations:
@@ -507,18 +756,25 @@ def narrate_answer(answer: AgentAnswer, user_message: str) -> AgentAnswer:
             for phrase in ("未包含新闻原文", "无法逐条列出原文", "没有新闻原文")
         ):
             return degraded("article_evidence_contradiction", getattr(response, "_request_id", None))
-        validation_error = _draft_validation_error(draft, answer, user_message)
+        validation_error = _draft_validation_error(
+            draft,
+            narrative_answer,
+            user_message,
+            profile_layout=profile_layout,
+        )
         if validation_error is not None:
             return degraded(validation_error, getattr(response, "_request_id", None))
         logger.info(
             "answer_narration_completed",
             elapsed_ms=round((time.monotonic() - started_at) * 1000),
             request_id=getattr(response, "_request_id", None),
+            presentation_mode="company_profile_markdown_layout" if profile_layout else "evidence_bound_narrative",
         )
         # Never render the model-authored headline. The body is accepted only
         # when each factual clause is source text or a validated limitation
         # paraphrase, so use a fixed heading in the user-facing answer.
-        return answer.model_copy(update={"summary": f"核验结果\n\n{draft.body_markdown}"})
+        heading = "工商资料" if profile_layout else "核验结果"
+        return answer.model_copy(update={"summary": f"{heading}\n\n{draft.body_markdown}"})
     except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
         return degraded(f"invalid_response:{type(exc).__name__}")
     except Exception as exc:

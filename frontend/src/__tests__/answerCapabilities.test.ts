@@ -36,6 +36,14 @@ describe('answer capability routing', () => {
     expect(getAnswerCapability(answer('已完成供应商复核', 'risk_network', 'risk_network.related_count'))).toBe('network');
   });
 
+  it('prefers a profile request over generic identity wording in the same summary', () => {
+    expect(getAnswerCapability(answer(
+      '已完成工商资料检索；企业名称：示例公司；统一社会信用代码：91370200TEST001。',
+      'company_profile',
+      'profile.baseinfo.creditCode',
+    ))).toBe('profile');
+  });
+
   it('keeps generic answers as the fallback', () => {
     expect(getAnswerCapability(answer('已完成供应商复核'))).toBe('generic');
   });

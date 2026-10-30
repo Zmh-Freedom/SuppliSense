@@ -51,7 +51,92 @@ const evidence: AgentEvidenceRecord[] = [{
   },
 }];
 
+const profileEvidence: AgentEvidenceRecord[] = [
+  { collection: 'baseinfo', label: '企业基本信息', status: 'available', collectionStatus: 'has_records', count: 1 },
+  { collection: 'holder', label: '股东信息', status: 'available', collectionStatus: 'has_records', count: 2 },
+  { collection: 'invest', label: '对外投资', status: 'unavailable', collectionStatus: 'query_failed', count: 0 },
+  { collection: 'changeInfo', label: '历史变更', status: 'missing', collectionStatus: 'not_queried', count: 0 },
+  { collection: 'branch', label: '分支机构', status: 'confirmed_empty', collectionStatus: 'no_records', count: 0 },
+].map(({ collection, label, status, collectionStatus, count }) => ({
+  evidence_id: `profile-${collection}`,
+  entity_id: 'company:profile',
+  dimension: 'company_profile',
+  provider: 'tianyancha',
+  source_type: 'tianyancha_api',
+  status,
+  data_mode: 'formal',
+  collected_at: '2026-10-30T08:00:00Z',
+  facts: {
+    company_name: '青岛三祥科技股份有限公司',
+    collection,
+    collection_status: collectionStatus,
+    collection_label: label,
+    counts: { [collection]: count },
+  },
+}));
+
+const profileAnswer: AgentAnswer = {
+  status: 'partial',
+  summary: '工商资料：青岛三祥科技股份有限公司法定代表人：张敏；股东：甲股东、乙股东；对外投资：查询失败；历史变更：未查询；分支机构：明确无记录。',
+  claims: [
+    {
+      claim_id: 'profile-legal-person',
+      entity_id: 'company:profile',
+      dimension: 'company_profile',
+      statement: '青岛三祥科技股份有限公司法定代表人：张敏',
+      value: '张敏',
+      fact_path: 'profile.baseinfo.legalPersonName',
+      evidence_refs: ['profile-baseinfo'],
+      confidence: 0.95,
+      validation_status: 'supported',
+      validation_reasons: [],
+    },
+    {
+      claim_id: 'profile-holder-a',
+      entity_id: 'company:profile',
+      dimension: 'company_profile',
+      statement: '青岛三祥科技股份有限公司股东：甲股东',
+      value: '甲股东',
+      fact_path: 'profile.holder_names',
+      evidence_refs: ['profile-holder'],
+      confidence: 0.95,
+      validation_status: 'supported',
+      validation_reasons: [],
+    },
+  ],
+  limitations: [],
+  action_proposals: [],
+  action_receipts: [],
+  evidence_refs: profileEvidence.map(record => record.evidence_id),
+};
+
 describe('StructuredAgentResult', () => {
+  it('labels each company profile evidence status by its data domain', () => {
+    render(<StructuredAgentResult answer={profileAnswer} evidence={profileEvidence} />);
+
+    expect(screen.getByRole('heading', { name: '工商资料' })).toBeInTheDocument();
+    expect(screen.getByText('本次已核验的资料项')).toBeInTheDocument();
+    expect(screen.getByText(/对外投资：查询失败/)).toBeInTheDocument();
+    expect(screen.getByText(/历史变更：未查询/)).toBeInTheDocument();
+    expect(screen.getByText(/分支机构：明确无记录/)).toBeInTheDocument();
+    expect(screen.queryByText(/company_profile：/)).not.toBeInTheDocument();
+  });
+
+  it('reports company profile evidence as domains rather than data records', () => {
+    render(<StructuredAgentResult answer={profileAnswer} evidence={profileEvidence} />);
+
+    expect(screen.getByText('5 个资料域')).toBeInTheDocument();
+    expect(screen.queryByText('5 条数据记录')).not.toBeInTheDocument();
+  });
+
+  it('shows profile domain labels and actual business record counts in source details', () => {
+    render(<StructuredAgentResult answer={profileAnswer} evidence={profileEvidence} />);
+
+    expect(screen.getByText('天眼查 · 企业基本信息')).toBeInTheDocument();
+    expect(screen.getByText('天眼查 · 股东信息')).toBeInTheDocument();
+    expect(screen.getByText(/2 条业务记录/)).toBeInTheDocument();
+  });
+
   it('does not render a business card for a pure conversational answer', () => {
     render(<StructuredAgentResult answer={{
       ...answer,

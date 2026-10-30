@@ -1288,6 +1288,87 @@ def test_summary_repairs_legacy_generic_capability_for_explicit_request(
     assert "综合风险分析" not in summary
 
 
+def test_profile_follow_up_summary_focuses_on_requested_data_domain() -> None:
+    answer = AgentAnswer(
+        status="partial",
+        summary="待生成",
+        claims=[
+            ValidatedClaim(
+                claim_id="profile-legal-person",
+                entity_id="entity:qingdao",
+                dimension="company_profile",
+                statement="青岛三祥科技股份有限公司工商资料，法定代表人：魏增祥",
+                value="魏增祥",
+                fact_path="profile.baseinfo.legalPersonName",
+                evidence_refs=["profile-baseinfo"],
+                confidence=0.95,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profile-capital",
+                entity_id="entity:qingdao",
+                dimension="company_profile",
+                statement="青岛三祥科技股份有限公司工商资料，注册资本：9803万人民币",
+                value="9803万人民币",
+                fact_path="profile.baseinfo.regCapital",
+                evidence_refs=["profile-baseinfo"],
+                confidence=0.95,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profile-holder-a",
+                entity_id="entity:qingdao",
+                dimension="company_profile",
+                statement="青岛三祥科技股份有限公司工商资料，股东：甲投资控股有限公司",
+                value="甲投资控股有限公司",
+                fact_path="profile.holder_names",
+                evidence_refs=["profile-holder"],
+                confidence=0.95,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profile-holder-b",
+                entity_id="entity:qingdao",
+                dimension="company_profile",
+                statement="青岛三祥科技股份有限公司工商资料，股东：乙产业投资有限公司",
+                value="乙产业投资有限公司",
+                fact_path="profile.holder_names",
+                evidence_refs=["profile-holder"],
+                confidence=0.95,
+                validation_status="supported",
+            ),
+        ],
+    )
+
+    summary = _summary(answer, {
+        "current_task": {
+            "capability": "company_profile",
+            "user_message": "它的股东有哪些",
+            "target_supplier_names": ["青岛三祥科技股份有限公司"],
+            "analysis_dimensions": [],
+        },
+        "task_specs": [{"tool_name": "lookup_company_profile"}],
+        "tool_outcomes": [{
+            "tool_name": "lookup_company_profile",
+            "data": {
+                "collection_statuses": {
+                    "baseinfo": {"label": "企业基本信息", "status": "has_records"},
+                    "holder": {"label": "股东信息", "status": "has_records"},
+                    "invest": {"label": "对外投资", "status": "query_failed"},
+                    "changeInfo": {"label": "历史变更", "status": "not_queried"},
+                    "branch": {"label": "分支机构", "status": "no_records"},
+                },
+            },
+        }],
+    })
+
+    assert "股东：甲投资控股有限公司" in summary
+    assert "股东：乙产业投资有限公司" in summary
+    assert "法定代表人" not in summary
+    assert "注册资本" not in summary
+    assert "对外投资：查询失败" not in summary
+
+
 @pytest.mark.parametrize(
     ("message", "tool_name", "expected"),
     [

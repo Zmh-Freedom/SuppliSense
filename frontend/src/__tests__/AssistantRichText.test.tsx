@@ -22,4 +22,19 @@ describe('AssistantRichText', () => {
     expect(screen.getByRole('table')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '指标' })).toBeInTheDocument()
   })
+
+  it('renders profile Markdown while keeping raw HTML inert', () => {
+    const { container } = render(<AssistantRichText content={[
+      '### 企业基本信息',
+      '',
+      '- **法定代表人：张敏**',
+      '',
+      '<img src=x onerror=alert(1) />',
+    ].join('\n')} />)
+
+    expect(screen.getByRole('heading', { name: '企业基本信息' })).toBeInTheDocument()
+    expect(screen.getByRole('listitem')).toHaveTextContent('法定代表人：张敏')
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.textContent).toContain('<img src=x onerror=alert(1) />')
+  })
 })

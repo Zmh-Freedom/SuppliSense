@@ -36,6 +36,12 @@ from app.graphs.agent_core.evidence_ledger import (
     EvidenceStatus,
     build_evidence_record,
 )
+from app.graphs.agent_core.profile_scope import (
+    PROFILE_DOMAINS,
+    profile_claim_domain,
+    profile_collection_domain,
+    requested_profile_domains,
+)
 from app.tools import TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor, ToolOutcome
 from app.core.logging import get_logger
@@ -1426,6 +1432,16 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
     if primary_capability == "company_profile":
         profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]
         data = _latest_tool_data(outcomes, {"lookup_company_profile"})
+        profile_message = str(current_task.get("user_message") or state.get("user_message") or "")
+        focused_domains = requested_profile_domains(profile_message)
+        selected_domains = focused_domains or set(PROFILE_DOMAINS)
+        domain_labels = {
+            "baseinfo": "企业基本信息",
+            "holder": "股东信息",
+            "invest": "对外投资",
+            "change": "历史变更",
+            "branch": "分支机构",
+        }
         field_labels = {
             "profile.baseinfo.name": "企业名称",
             "profile.baseinfo.creditCode": "统一社会信用代码",
@@ -1439,6 +1455,9 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         }
         details: list[str] = []
         for claim in profile_claims:
+            domain = profile_claim_domain(claim.fact_path)
+            if domain is None or domain not in selected_domains:
+                continue
             label = field_labels.get(str(claim.fact_path or ""))
             value = claim.value
             if label and value is not None:
@@ -1460,14 +1479,25 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
             for collection, item in collection_statuses.items():
                 if not isinstance(item, dict):
                     continue
+                domain = profile_collection_domain(collection)
+                if domain is None or domain not in selected_domains:
+                    continue
                 status_label = status_labels.get(str(item.get("status") or ""))
                 if status_label:
                     details.append(f"{collection_labels.get(collection, collection)}：{status_label}")
         details = list(dict.fromkeys(details))
         if not details:
+            if focused_domains:
+                requested_label = "、".join(domain_labels[domain] for domain in PROFILE_DOMAINS if domain in focused_domains)
+                return f"已完成 {subject} 的{requested_label}检索，但当前没有可验证结果。"
             return f"已完成 {subject} 的工商资料检索，但当前没有可验证的工商资料结果。"
         result = f"已完成 {subject} 的工商资料检索；" + "；".join(details) + "。"
-        return _summary_with_boundary(answer, result, "可继续查看注册信息、股东、变更和分支机构明细。")
+        suffix = (
+            "已按当前问题展示相关工商资料；其他资料域未在本轮展开。"
+            if focused_domains
+            else "可继续查看注册信息、股东、变更和分支机构明细。"
+        )
+        return _summary_with_boundary(answer, result, suffix)
     if primary_capability == "identity_review":
         identity_claims = [claim for claim in answer.claims if claim.dimension == "identity_review"]
         if not identity_claims:

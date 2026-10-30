@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +8,7 @@ from app.graphs.agent_core.evidence_ledger import ValidatedClaim
 from app.graphs.agent_core.narrator import (
     NarrativeDraft,
     _finding_polarities,
+    _is_company_profile_answer,
     _validate_draft,
     answer_general_supplier_knowledge,
     narrate_answer,
@@ -30,6 +32,119 @@ def _answer() -> AgentAnswer:
             validation_status="supported",
         )],
     )
+
+
+def _profile_answer() -> AgentAnswer:
+    company = "青岛三祥科技股份有限公司"
+    return AgentAnswer(
+        status="partial",
+        summary=(
+            f"工商资料：{company}法定代表人：张敏；注册资本：5000万元；"
+            "股东：甲股东、乙股东；对外投资：未查询；历史变更：查询失败；"
+            "分支机构：明确无记录；重大诉讼情况无法确认。"
+        ),
+        claims=[
+            ValidatedClaim(
+                claim_id="profile-legal-person",
+                entity_id="supplier-profile-1",
+                dimension="company_profile",
+                statement=f"{company}法定代表人：张敏",
+                value="张敏",
+                fact_path="profile.baseinfo.legalPersonName",
+                evidence_refs=["profile-evidence"],
+                confidence=0.9,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profile-capital",
+                entity_id="supplier-profile-1",
+                dimension="company_profile",
+                statement=f"{company}注册资本：5000万元",
+                value="5000万元",
+                fact_path="profile.baseinfo.regCapital",
+                evidence_refs=["profile-evidence"],
+                confidence=0.9,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profile-holder-a",
+                entity_id="supplier-profile-1",
+                dimension="company_profile",
+                statement=f"{company}股东：甲股东",
+                value="甲股东",
+                fact_path="profile.holder_names",
+                evidence_refs=["profile-evidence"],
+                confidence=0.9,
+                validation_status="supported",
+            ),
+            ValidatedClaim(
+                claim_id="profile-holder-b",
+                entity_id="supplier-profile-1",
+                dimension="company_profile",
+                statement=f"{company}股东：乙股东",
+                value="乙股东",
+                fact_path="profile.holder_names",
+                evidence_refs=["profile-evidence"],
+                confidence=0.9,
+                validation_status="supported",
+            ),
+        ],
+        limitations=["对外投资未查询，当前无法确认其情况"],
+        evidence_refs=["profile-evidence"],
+    )
+
+
+def test_profile_layout_accepts_count_only_profile_domains() -> None:
+    answer = _profile_answer()
+    answer.claims.append(ValidatedClaim(
+        claim_id="profile-branch-count",
+        entity_id="supplier-profile-1",
+        dimension="company_profile",
+        statement="青岛三祥科技股份有限公司工商资料，分支机构：明确无记录",
+        value=0,
+        fact_path="counts.branch",
+        evidence_refs=["profile-evidence"],
+        confidence=0.9,
+        validation_status="supported",
+    ))
+
+    assert _is_company_profile_answer(answer) is True
+
+
+def _fake_narrator_client(body_markdown: str, prompt_capture: list[dict] | None = None):
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    if prompt_capture is not None:
+                        prompt_capture.append(kwargs)
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=json.dumps({
+                            "headline": "工商资料",
+                            "body_markdown": body_markdown,
+                            "claim_refs": [
+                                "profile-legal-person",
+                                "profile-capital",
+                                "profile-holder-a",
+                                "profile-holder-b",
+                            ],
+                        }, ensure_ascii=False)
+                    ))])
+
+    return FakeClient
+
+
+def _capture_narration_events(monkeypatch) -> list[tuple[str, str, dict]]:
+    events: list[tuple[str, str, dict]] = []
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.logger",
+        SimpleNamespace(
+            info=lambda event, **fields: events.append(("info", event, fields)),
+            warning=lambda event, **fields: events.append(("warning", event, fields)),
+        ),
+    )
+    return events
 
 
 def test_narrative_validation_rejects_unverified_number() -> None:
@@ -133,6 +248,205 @@ def test_narrator_keeps_an_uncertain_legal_conclusion_deterministic(monkeypatch)
     monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
 
     assert narrate_answer(answer, "查询重大诉讼") is answer
+
+
+def test_narrator_uses_model_markdown_layout_for_partial_company_profile(monkeypatch) -> None:
+    answer = _profile_answer()
+    prompt_capture: list[dict] = []
+    body = (
+        "### 企业基本信息\n\n"
+        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
+        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
+        "### 股东信息\n\n"
+        "- 青岛三祥科技股份有限公司股东：甲股东\n"
+        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
+        "### 查询边界\n\n"
+        "- 对外投资：未查询\n"
+        "- 历史变更：查询失败\n"
+        "- 分支机构：明确无记录\n"
+        "- 对外投资未查询，当前无法确认其情况\n"
+        "- 重大诉讼情况无法确认"
+    )
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
+
+    assert len(prompt_capture) == 1
+    assert narrated.summary.startswith("工商资料\n\n")
+    assert "### 企业基本信息" in narrated.summary
+    assert "### 股东信息" in narrated.summary
+    assert "对外投资：未查询" in narrated.summary
+    assert "历史变更：查询失败" in narrated.summary
+    assert "分支机构：明确无记录" in narrated.summary
+    assert "重大诉讼情况无法确认" in narrated.summary
+    prompt = json.loads(prompt_capture[0]["messages"][1]["content"])
+    assert prompt["presentation_mode"] == "company_profile_markdown_layout"
+    assert any("不得新增来源、URL 或 Markdown 链接" in rule for rule in prompt["rules"])
+
+
+def test_narrator_keeps_profile_layout_after_subject_confirmation_reply(monkeypatch) -> None:
+    answer = _profile_answer()
+    prompt_capture: list[dict] = []
+    body = (
+        "### 企业基本信息\n\n"
+        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
+        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
+        "### 股东信息\n\n"
+        "- 青岛三祥科技股份有限公司股东：甲股东\n"
+        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
+        "### 查询边界\n\n"
+        "- 对外投资：未查询\n"
+        "- 历史变更：查询失败\n"
+        "- 分支机构：明确无记录\n"
+        "- 对外投资未查询，当前无法确认其情况\n"
+        "- 重大诉讼情况无法确认"
+    )
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "青岛三祥科技股份有限公司")
+
+    assert len(prompt_capture) == 1
+    assert "### 股东信息" in narrated.summary
+    assert "重大诉讼情况无法确认" in narrated.summary
+
+
+def test_narrator_rejects_profile_layout_that_changes_an_uncertain_conclusion(monkeypatch) -> None:
+    answer = _profile_answer()
+    prompt_capture: list[dict] = []
+    log_events = _capture_narration_events(monkeypatch)
+    body = (
+        "### 企业基本信息\n\n"
+        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
+        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
+        "### 股东信息\n\n"
+        "- 青岛三祥科技股份有限公司股东：甲股东\n"
+        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
+        "### 查询边界\n\n"
+        "- 对外投资：未查询\n"
+        "- 历史变更：查询失败\n"
+        "- 分支机构：明确无记录\n"
+        "- 对外投资未查询，当前无法确认其情况\n"
+        "- 重大诉讼未发现"
+    )
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
+
+    assert len(prompt_capture) == 1
+    assert "重大诉讼未发现" not in narrated.summary
+    assert "重大诉讼情况无法确认" in narrated.summary
+    assert "工商资料" in narrated.summary
+    assert "模型排版" not in narrated.summary
+    assert any(
+        level == "warning" and event == "answer_narration_degraded"
+        and fields["fallback_mode"] == "validated_company_profile_markdown"
+        for level, event, fields in log_events
+    )
+
+
+def test_narrator_rejects_profile_layout_that_injects_a_link(monkeypatch) -> None:
+    answer = _profile_answer()
+    prompt_capture: list[dict] = []
+    log_events = _capture_narration_events(monkeypatch)
+    body = (
+        "### 企业基本信息\n\n"
+        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
+        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
+        "### 股东信息\n\n"
+        "- 青岛三祥科技股份有限公司股东：甲股东\n"
+        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
+        "### 查询边界\n\n"
+        "- 对外投资：未查询\n"
+        "- 历史变更：查询失败\n"
+        "- 分支机构：明确无记录\n"
+        "- 对外投资未查询，当前无法确认其情况\n"
+        "- 重大诉讼情况无法确认\n"
+        "[外部来源](https://example.invalid/profile)"
+    )
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
+
+    assert len(prompt_capture) == 1
+    assert narrated.summary != answer.summary
+    assert "### 股东信息" in narrated.summary
+    assert "https://" not in narrated.summary
+    assert "模型排版" not in narrated.summary
+    assert any(
+        level == "warning" and event == "answer_narration_degraded"
+        and fields["reason"] == "narrative_link_not_allowed"
+        for level, event, fields in log_events
+    )
+
+
+def test_narrator_uses_claim_based_markdown_when_model_is_not_configured(monkeypatch) -> None:
+    answer = _profile_answer()
+    log_events = _capture_narration_events(monkeypatch)
+
+    class UnexpectedNarrator:
+        def __init__(self, **_kwargs):
+            raise AssertionError("no configured model should be called")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
+
+    narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
+
+    assert narrated.summary.startswith("工商资料\n\n")
+    assert "- 青岛三祥科技股份有限公司法定代表人：张敏" in narrated.summary
+    assert "- 青岛三祥科技股份有限公司股东：甲股东" in narrated.summary
+    assert "对外投资：未查询" in narrated.summary
+    assert "历史变更：查询失败" in narrated.summary
+    assert "分支机构：明确无记录" in narrated.summary
+    assert "重大诉讼情况无法确认" in narrated.summary
+    assert narrated.limitations == answer.limitations
+    assert "模型" not in narrated.summary
+    assert any(
+        level == "info" and event == "answer_narration_skipped"
+        and fields["reason"] == "missing_api_key"
+        and fields["fallback_mode"] == "validated_company_profile_markdown"
+        for level, event, fields in log_events
+    )
+
+
+def test_profile_fallback_focuses_follow_up_on_requested_domain(monkeypatch) -> None:
+    answer = _profile_answer()
+
+    class UnexpectedNarrator:
+        def __init__(self, **_kwargs):
+            raise AssertionError("no configured model should be called")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
+
+    narrated = narrate_answer(answer, "它的股东有哪些")
+
+    assert "### 股东信息" in narrated.summary
+    assert "甲股东" in narrated.summary
+    assert "乙股东" in narrated.summary
+    assert "法定代表人" not in narrated.summary
+    assert "注册资本" not in narrated.summary
+    assert "对外投资" not in narrated.summary
 
 
 def test_finding_polarity_uses_the_clause_nearest_to_the_topic() -> None:

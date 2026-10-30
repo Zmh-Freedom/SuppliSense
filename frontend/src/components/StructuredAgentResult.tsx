@@ -31,6 +31,7 @@ const DIMENSION_LABELS: Record<string, string> = {
   risk_network: '供应链关系与传染风险',
   risk_monitoring: '风险监控',
   identity_review: '主体身份',
+  company_profile: '工商资料',
 };
 
 const DIMENSION_BADGE_CLASSES: Record<string, string> = {
@@ -46,10 +47,54 @@ const DIMENSION_BADGE_CLASSES: Record<string, string> = {
   sourcing: 'border-violet-200 bg-violet-50 text-violet-700',
   risk_network: 'border-purple-200 bg-purple-50 text-purple-700',
   identity_review: 'border-purple-200 bg-purple-50 text-purple-700',
+  company_profile: 'border-amber-200 bg-amber-50 text-amber-700',
+};
+
+const PROFILE_COLLECTION_LABELS: Record<string, string> = {
+  baseinfo: '企业基本信息',
+  holder: '股东信息',
+  invest: '对外投资',
+  changeinfo: '历史变更',
+  branch: '分支机构',
+};
+
+const PROFILE_COLLECTION_STATUS_LABELS: Record<string, string> = {
+  has_records: '已获取',
+  no_records: '明确无记录',
+  not_queried: '未查询',
+  query_failed: '查询失败',
 };
 
 function readableDimension(dimension: string): string {
   return DIMENSION_LABELS[dimension] || dimension;
+}
+
+function evidenceDomainLabel(record: AgentEvidenceRecord): string {
+  if (record.dimension !== 'company_profile') return readableDimension(record.dimension);
+  const collectionLabel = record.facts?.collection_label;
+  if (typeof collectionLabel === 'string' && collectionLabel.trim()) return collectionLabel.trim();
+  const collection = record.facts?.collection;
+  if (typeof collection === 'string') return PROFILE_COLLECTION_LABELS[collection] || readableDimension(record.dimension);
+  return readableDimension(record.dimension);
+}
+
+function evidenceStatusLabel(record: AgentEvidenceRecord): string {
+  if (record.dimension === 'company_profile') {
+    const collectionStatus = record.facts?.collection_status;
+    if (typeof collectionStatus === 'string' && PROFILE_COLLECTION_STATUS_LABELS[collectionStatus]) {
+      return PROFILE_COLLECTION_STATUS_LABELS[collectionStatus];
+    }
+  }
+  return readableEvidenceStatus(record.status);
+}
+
+function claimDomainLabel(claim: AgentAnswer['claims'][number]): string {
+  if (claim.dimension !== 'company_profile') return readableDimension(claim.dimension);
+  const factPath = canonicalFactPath(claim.fact_path || '');
+  const collection = factPath.startsWith('profile.') || factPath.startsWith('counts.')
+    ? factPath.split('.')[1] || ''
+    : '';
+  return PROFILE_COLLECTION_LABELS[collection] || readableDimension(claim.dimension);
 }
 
 function dimensionBadgeClass(dimension: string): string {
@@ -121,6 +166,20 @@ const FACT_LABELS: Record<string, string> = {
   dependency_count: '供应链依赖数量',
   same_industry_count: '同行业关联数量',
   high_risk_related_count: '高风险关联主体数量',
+  'profile.baseinfo.name': '企业名称',
+  'profile.baseinfo.credit_code': '统一社会信用代码',
+  'profile.baseinfo.legal_person_name': '法定代表人',
+  'profile.baseinfo.reg_status': '登记状态',
+  'profile.baseinfo.reg_capital': '注册资本',
+  'profile.baseinfo.reg_location': '注册地址',
+  'profile.baseinfo.industry': '所属行业',
+  'profile.baseinfo.established_date': '成立日期',
+  'profile.holder_names': '股东',
+  'counts.baseinfo': '企业基本信息记录数',
+  'counts.holder': '股东信息记录数',
+  'counts.invest': '对外投资记录数',
+  'counts.changeinfo': '历史变更记录数',
+  'counts.branch': '分支机构记录数',
 };
 
 function canonicalFactPath(path: string): string {
@@ -243,6 +302,7 @@ function readableProvider(provider: string, sourceType: string): string {
     sentiment_analysis: '舆情分析',
     check_sanctions: '合规筛查',
     list_formal_suppliers: '正式供应商目录',
+    tianyancha: '天眼查',
   };
   if (labels[provider]) return labels[provider];
   if (sourceType === 'risk_service_result') return '风险评估数据';
@@ -693,11 +753,29 @@ function evidenceStatusSummary(evidence: AgentEvidenceRecord[]): string[] {
   const seen = new Set<string>();
   return evidence.flatMap(record => {
     if (!visibleStatuses.has(record.status) || ['business_risk', 'financial'].includes(record.dimension)) return [];
-    const item = `${readableDimension(record.dimension)}：${readableEvidenceStatus(record.status)}`;
+    const item = `${evidenceDomainLabel(record)}：${evidenceStatusLabel(record)}`;
     if (seen.has(item)) return [];
     seen.add(item);
     return [item];
   });
+}
+
+function evidenceCountLabel(evidence: AgentEvidenceRecord[]): string {
+  if (evidence.length === 0) return '';
+  if (evidence.every(record => record.dimension === 'company_profile')) {
+    const domains = new Set(evidence.map(evidenceDomainLabel));
+    if (domains.size === evidence.length) return `${domains.size} 个资料域`;
+  }
+  return `${evidence.length} 项证据`;
+}
+
+function profileBusinessRecordCount(record: AgentEvidenceRecord): number | null {
+  if (record.dimension !== 'company_profile') return null;
+  const collection = record.facts?.collection;
+  const counts = record.facts?.counts;
+  if (typeof collection !== 'string' || !counts || typeof counts !== 'object' || Array.isArray(counts)) return null;
+  const count = (counts as Record<string, unknown>)[collection];
+  return typeof count === 'number' && Number.isFinite(count) ? count : null;
 }
 
 function reviewClaims(answer: AgentAnswer, paths: string[]): string[] {
@@ -761,6 +839,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
   const scopeQuery = isWatchlist || isTrend;
   const hasDataExplanation = limitations.length > 0 || riskItems.length > 0 || Boolean(evidence?.length);
   const evidenceStates = evidenceStatusSummary(evidence || []);
+  const evidenceTotalLabel = evidenceCountLabel(evidence || []);
   const capability = getAnswerCapability(answer);
   const capabilityMeta = getAnswerCapabilityMeta(capability);
 
@@ -825,7 +904,7 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
                 ? { label: screeningClaimMeta.label, className: 'className' in screeningClaimMeta ? screeningClaimMeta.className : 'border-amber-200 bg-amber-50 text-amber-700' }
                 : presentation ? { label: presentation.label, className: ({ neutral: 'border-stone-200 bg-stone-50 text-stone-700', positive: 'border-emerald-200 bg-emerald-50 text-emerald-700', warning: 'border-amber-200 bg-amber-50 text-amber-700', danger: 'border-red-200 bg-red-50 text-red-700' })[presentation.tone] } : claimAssessment(claim, answer.status !== 'completed' || limitations.length > 0);
               const claimValue = isScreeningClaim && !hasCurrentScreeningEvidence ? '旧筛查结果仅供历史参考' : presentation?.value ?? readableClaimDetail(claim);
-              return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{readableDimension(claim.dimension)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{claimValue}{presentation?.context && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{presentation.context}</p>}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>;
+              return <tr key={claim.claim_id} className="align-top"><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-[11px] font-medium ${dimensionBadgeClass(claim.dimension)}`}>{claimDomainLabel(claim)}</span></td><td className="break-words px-2 py-3 font-medium leading-6 text-[var(--color-text)] sm:px-3">{presentation?.metric ?? claimMetric(claim)}</td><td className="break-words px-2 py-3 leading-6 text-[var(--color-text)] sm:px-3">{claimValue}{presentation?.context && <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{presentation.context}</p>}</td><td className="break-words px-2 py-3 sm:px-3"><span className={`inline-flex max-w-full rounded-md border px-2 py-0.5 text-xs font-medium ${assessment.className}`}>{assessment.label}</span></td><td className="hidden px-3 py-3 text-xs text-[var(--color-text-secondary)] md:table-cell">{readableValidationStatus(claim.validation_status)}</td><td className="hidden px-3 py-3 text-xs tabular-nums text-[var(--color-text-secondary)] md:table-cell">{claim.confidence > 0 ? `${Math.round(claim.confidence * 100)}%` : '—'}</td></tr>;
             })}</Fragment>;
           })}</tbody>
         </table>
@@ -841,11 +920,11 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
     {hasDataExplanation && <details className="group border-t border-[var(--color-border)]">
       <summary className="flex min-h-[48px] cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-left text-sm font-medium text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
         <span className="flex items-center gap-2"><span aria-hidden="true" className="text-[var(--color-primary-bg)]">▤</span><span>数据说明</span><span className="text-[var(--color-text-secondary)]">（来源与边界）</span></span>
-        <span className="flex items-center gap-2 text-xs font-normal text-[var(--color-text-secondary)]">{evidence && evidence.length > 0 && <span>{evidence.length} 条数据记录</span>}<span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span></span>
+        <span className="flex items-center gap-2 text-xs font-normal text-[var(--color-text-secondary)]">{evidenceTotalLabel && <span>{evidenceTotalLabel}</span>}<span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span></span>
       </summary>
       <div className="space-y-3 border-t border-[var(--color-border)] bg-[var(--color-code-bg)]/45 px-4 py-4 text-xs">
         {riskItems.length > 0 && <div className="rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-sky-950">
-          <p className="font-medium">本次已评估的风险项</p>
+          <p className="font-medium">{capability === 'profile' ? '本次已核验的资料项' : '本次已评估的风险项'}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {riskItems.map(item => <span key={item} className="rounded-full border border-sky-200 bg-white/80 px-2.5 py-1 text-[11px]">{item}</span>)}
           </div>
@@ -861,14 +940,21 @@ export default function StructuredAgentResult({ answer, evidence }: { answer?: A
         </div>}
         {evidence && evidence.length > 0 && <div className="space-y-2">
           <p className="font-medium text-[var(--color-text)]">数据来源</p>
-          {evidence.map(record => <div key={record.evidence_id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[var(--color-text)]"><span className="font-medium">{readableProvider(record.provider, record.source_type)}</span><span className="text-[var(--color-text-secondary)]">{readableEvidenceStatus(record.status)}</span></div>
-            <p className="mt-1 leading-5 text-[var(--color-text-secondary)]">{record.data_mode === 'synthetic' ? '演示数据' : '正式数据'} · 本次采集时间：{formatEvidenceDate(record.collected_at)} · 来源观察时间：{typeof record.facts?.observed_at === 'string' ? formatEvidenceDate(record.facts.observed_at) : '未知'}</p>
-            <details className="mt-2 rounded-lg bg-[var(--color-code-bg)] px-2.5 py-2">
-              <summary className="cursor-pointer text-[11px] text-[var(--color-text-secondary)]">查看审计原始数据（含系统字段）</summary>
-              <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--color-text-secondary)]">{JSON.stringify({ evidence_id: record.evidence_id, entity_id: record.entity_id, facts: record.facts || {} }, null, 2)}</pre>
-            </details>
-          </div>)}
+          {evidence.map(record => {
+            const providerLabel = readableProvider(record.provider, record.source_type);
+            const sourceLabel = record.dimension === 'company_profile'
+              ? `${providerLabel} · ${evidenceDomainLabel(record)}`
+              : providerLabel;
+            const businessRecordCount = profileBusinessRecordCount(record);
+            return <div key={record.evidence_id} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[var(--color-text)]"><span className="font-medium">{sourceLabel}</span><span className="text-[var(--color-text-secondary)]">{evidenceStatusLabel(record)}</span></div>
+              <p className="mt-1 leading-5 text-[var(--color-text-secondary)]">{record.data_mode === 'synthetic' ? '演示数据' : '正式数据'}{businessRecordCount != null && businessRecordCount > 0 ? ` · ${businessRecordCount} 条业务记录` : ''} · 本次采集时间：{formatEvidenceDate(record.collected_at)} · 来源观察时间：{typeof record.facts?.observed_at === 'string' ? formatEvidenceDate(record.facts.observed_at) : '未知'}</p>
+              <details className="mt-2 rounded-lg bg-[var(--color-code-bg)] px-2.5 py-2">
+                <summary className="cursor-pointer text-[11px] text-[var(--color-text-secondary)]">查看审计原始数据（含系统字段）</summary>
+                <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--color-text-secondary)]">{JSON.stringify({ evidence_id: record.evidence_id, entity_id: record.entity_id, facts: record.facts || {} }, null, 2)}</pre>
+              </details>
+            </div>;
+          })}
         </div>}
       </div>
     </details>}
