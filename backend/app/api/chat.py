@@ -748,11 +748,55 @@ async def chat_stream_endpoint(
                 or []
             )
             from app.graphs.agent_core.intent_extractor import explicit_write_action
+            from app.graphs.agent_core.capability_routing import (
+                detect_explicit_capabilities,
+                has_risk_scope_intent,
+            )
 
             requested_write_action = explicit_write_action(req.message)
             is_write_action = requested_write_action != "none"
             llm_intent = execution_context.get("llm_intent")
             llm_intent = llm_intent if isinstance(llm_intent, dict) else {}
+            current_task_capability = str(current_task.get("capability") or "")
+            intent_capability = str(llm_intent.get("capability") or "")
+            provider_capabilities = [
+                str(capability)
+                for source in (current_task, llm_intent)
+                for capability in (
+                    source.get("provider_capabilities")
+                    if isinstance(source.get("provider_capabilities"), list)
+                    else []
+                )
+            ]
+            profile_route_present = (
+                current_task_capability == "company_profile"
+                or intent_capability == "company_profile"
+                or "profile" in provider_capabilities
+            )
+            has_other_capability = any(
+                capability and capability != "company_profile"
+                for capability in (current_task_capability, intent_capability)
+            )
+            has_other_dimension = any(
+                isinstance(source.get("analysis_dimensions"), list)
+                and any(str(dimension).strip() for dimension in source["analysis_dimensions"])
+                for source in (current_task, llm_intent)
+            )
+            has_other_explicit_capability = any(
+                capability != "company_profile"
+                for capability in detect_explicit_capabilities(req.message)
+            )
+            has_other_provider = any(
+                capability != "profile" for capability in provider_capabilities
+            )
+            is_company_profile_request = (
+                profile_route_present
+                and not has_other_capability
+                and not has_other_dimension
+                and not has_other_explicit_capability
+                and not has_other_provider
+                and not has_risk_scope_intent(req.message)
+            )
             explicitly_no_business_task = (
                 not is_write_action
                 and llm_intent.get("task_type") == "none"
@@ -800,7 +844,12 @@ async def chat_stream_endpoint(
                     user_role,
                     req.message,
                 )
-                if _is_uuid(user_id) and not is_write_action and not explicitly_no_business_task
+                if (
+                    _is_uuid(user_id)
+                    and not is_write_action
+                    and not explicitly_no_business_task
+                    and not is_company_profile_request
+                )
                 else None
             )
             if scope_clarification:

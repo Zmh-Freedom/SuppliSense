@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -129,6 +130,116 @@ def test_authenticated_chat_stream_preserves_current_context_for_supervisor(
     assert execution_context["agent_user_id"]
     assert execution_context["current_task"]["target_supplier_names"] == expected_targets
     assert execution_context["current_task"]["analysis_dimensions"] == expected_dimensions
+
+
+def test_profile_query_bypasses_supplier_risk_scope_preflight(
+    authenticated_chat_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Profile lookup should reach Harness without watchlist risk authorization."""
+    from app.services.clarification import review_scope_clarification
+
+    user_id = str(uuid4())
+    context = _context(["青岛三祥"], [])
+    context["current_task"].update({
+        "capability": "company_profile",
+        "provider_capabilities": ["profile"],
+    })
+    context["llm_intent"].update({
+        "capability": "company_profile",
+        "provider_capabilities": ["profile"],
+        "task_type": "analysis",
+    })
+    calls: list[str] = []
+    monkeypatch.setattr(chat_api, "_optional_agent_user_id", lambda _request: user_id)
+    monkeypatch.setattr("app.graphs.agent_core.adapter.load_execution_context", lambda *_args: context)
+    monkeypatch.setattr("app.domains.alert.service.get_watchlist_targets", lambda **_kwargs: [])
+    monkeypatch.setattr("app.domains.supplier.access.formal_supplier_exists_by_name", lambda _name: False)
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.start_harness_turn",
+        lambda *_args, **_kwargs: {
+            "turn": SimpleNamespace(id="profile-turn"),
+            "run": SimpleNamespace(id="profile-run"),
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.clarification.review_scope_clarification",
+        lambda *args: calls.append("scope") or review_scope_clarification(*args),
+    )
+
+    async def harness_stream(_sid, _message, _preferences, execution_context=None):
+        calls.append("harness")
+        assert execution_context["current_task"]["capability"] == "company_profile"
+        yield 'event: done\ndata: {"answer": "资料查询已进入处理"}\n\n'
+
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", harness_stream)
+
+    response = authenticated_chat_client.post(
+        "/api/v1/chat/stream",
+        json={
+            "message": "我想查询青岛三祥的资料",
+            "session_id": "profile-query-scope-guard",
+            "mode": "auto",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "资料查询已进入处理" in response.text
+    assert calls == ["harness"]
+
+
+def test_mixed_profile_and_risk_query_keeps_supplier_risk_scope_preflight(
+    authenticated_chat_client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A profile provider must not exempt a combined risk-assessment request."""
+    user_id = str(uuid4())
+    message = "查询青岛三祥工商资料并评估风险"
+    context = _context(["青岛三祥"], [])
+    context["current_task"].update({
+        "capability": "company_profile",
+        "provider_capabilities": ["profile"],
+    })
+    context["llm_intent"].update({
+        "capability": "company_profile",
+        "provider_capabilities": ["profile"],
+        "task_type": "analysis",
+    })
+    calls: list[str] = []
+    monkeypatch.setattr(chat_api, "_optional_agent_user_id", lambda _request: user_id)
+    monkeypatch.setattr("app.graphs.agent_core.adapter.load_execution_context", lambda *_args: context)
+    monkeypatch.setattr(
+        "app.domains.agent_run.state_store.session_state_store.start_harness_turn",
+        lambda *_args, **_kwargs: {
+            "turn": SimpleNamespace(id="mixed-turn"),
+            "run": SimpleNamespace(id="mixed-run"),
+        },
+    )
+
+    def block_risk_scope(*args):
+        calls.append("scope")
+        assert args[-1] == message
+        return SimpleNamespace(
+            message="责任范围校验阻止风险评分",
+            missing=["formal_supplier_or_monitor_target"],
+        )
+
+    monkeypatch.setattr("app.services.clarification.review_scope_clarification", block_risk_scope)
+
+    async def harness_stream(*_args, **_kwargs):
+        calls.append("harness")
+        yield 'event: done\ndata: {"answer": "不应启动风险分析"}\n\n'
+
+    monkeypatch.setattr(chat_api, "_langgraph_harness_stream", harness_stream)
+
+    response = authenticated_chat_client.post(
+        "/api/v1/chat/stream",
+        json={"message": message, "session_id": "mixed-profile-risk", "mode": "auto"},
+    )
+
+    assert response.status_code == 200
+    assert "责任范围校验阻止风险评分" in response.text
+    assert calls == ["scope"]
 
 
 def test_chat_stream_rejects_anonymous_request(client) -> None:

@@ -1452,6 +1452,25 @@ def apply_extracted_conversation_intent(
         current_task["target_supplier_names"] = []
         conversation_state["selected_supplier_names"] = []
         conversation_state["selected_suppliers"] = []
+        missing_fields = list(getattr(extracted, "missing_fields", []) or [])
+        if "target_supplier_names" not in missing_fields:
+            missing_fields.append("target_supplier_names")
+        candidates = "、".join(resolved.candidate_names)
+        clarification_question = (
+            f"这个简称对应多个供应商{f'（{candidates}）' if candidates else ''}，"
+            "请提供完整企业名称或统一社会信用代码。"
+        )
+        extracted = extracted.model_copy(update={
+            "target_supplier_names": [],
+            "scope": "pending_confirmation",
+            "needs_clarification": True,
+            "missing_fields": missing_fields,
+            "ambiguities": list(dict.fromkeys([
+                *getattr(extracted, "ambiguities", []),
+                "简称无法唯一匹配到企业主体",
+            ]))[:5],
+            "clarification_question": clarification_question,
+        })
     else:
         # LLM-extracted explicit names are validated for this turn. The
         # deterministic resolver also handles pronouns/aliases, but must not
@@ -1511,6 +1530,8 @@ def apply_extracted_conversation_intent(
     elif task_type == "comparison":
         current_task["task_type"] = "comparison"
         current_task["comparison"] = True
+    elif task_type == "analysis" and getattr(extracted, "needs_clarification", False):
+        current_task["task_type"] = "analysis"
     elif (target_names or dimensions) and not is_write_action:
         current_task["task_type"] = "analysis"
     conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
@@ -1548,6 +1569,18 @@ def apply_extracted_conversation_intent(
     conversation_state["current_task"] = current_task
     intent_snapshot = extracted.model_dump(mode="json")
     conversation_state["input_understanding"] = intent_snapshot
+    if extracted.needs_clarification:
+        conversation_state["pending_clarification"] = {
+            "task_type": task_type,
+            "capability": capability,
+            "scope": extracted.scope,
+            "missing_fields": list(extracted.missing_fields),
+            "target_supplier_names": target_names,
+            "analysis_dimensions": dimensions,
+            "provider_capabilities": provider_capabilities,
+            "clarification_question": extracted.clarification_question,
+            "interpretation_summary": extracted.interpretation_summary,
+        }
     logger.info(
         "conversation_intent_execution_overlay",
         session_id=execution_context.get("session_id"),
