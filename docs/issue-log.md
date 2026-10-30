@@ -10,7 +10,7 @@
 - 根因：脚本按固定进程命令子串 `ssh -f -N supplisense-db` 匹配，无法识别带连接选项的正常 SSH 隧道。
 - 修复方案：要求同一 SSH PID 同时监听三个预期端口，且进程参数含 `-N` 和精确主机别名；stop 只向该 PID 发送 SIGTERM。其他端口占用仍阻止 start。
 - 验证结果：新增 6 个离线回归场景，先有 3 项按预期失败，再全部通过；测试替身拦截 lsof/ps/pgrep/ssh/pkill/kill。`bash -n scripts/db-tunnel.sh` 通过；只读 `status` 实际识别 PID 95987，未连接、停止或重启当前隧道。pytest 输出 1 条既有 Starlette deprecation warning。
-- 关联提交：本修复提交，提交号见 Git 历史。
+- 关联提交：f0e70cb6（本次修复及问题记录）。
 
 ## ISS-20261030-015 工商资料模型排版超时并回退
 
@@ -24,7 +24,7 @@
 - 根因：排版请求默认硬超时为 8 秒；同一网关的 DeepSeek V4 thinking 默认开启。实测请求耗尽 1800-token completion 上限，返回 `finish_reason=length`、`completion_tokens=1800` 且正文为空；结合 V4 默认 thinking 设置，推理占满输出预算是根因判断（网关未单独记录 reasoning-token 子项）。fallback 另外把 supported claim、摘要状态和 limitation 分别拼入 Markdown，只按整串相等去重，语义相同的状态因此重复展示。
 - 修复方案：默认超时调整为有界的 20 秒；仅对 DeepSeek V4 型号禁用 thinking，其他模型不传该参数；排版提示要求原样保留完整事实和“资料域：状态”短语；fallback 先检查状态是否已由 claim 或 limitation 覆盖再补状态行。事实和来源状态校验保持不变。
 - 验证结果：新增重复状态与来源域校验测试、默认超时及 provider 参数兼容测试，修复前 2 项 RED，修复后 narrator 全文件 `53 passed`（1 条既有 Starlette deprecation warning）。同一配置网关以纯虚构工商资料实测，thinking disabled、1800 token/20 秒预算下 1.681 秒返回，`answer_narration_completed`，严格校验通过且“未查询/查询失败/明确无记录”均保留；未调用数据库或天眼查。真实企业快照浏览器复验见本条补充。
-- 关联提交：本修复提交，提交号见 Git 历史。
+- 关联提交：f0e70cb6（本次修复及问题记录）。
 
 ## ISS-20261030-016 浏览器验收启动时数据库隧道不可用
 
@@ -36,7 +36,7 @@
 - 根因：当次启动时三个本地 SSH 转发端口均无监听；现有记录无法确定原隧道退出原因，本次脚本修复也不构成退出原因证据。
 - 修复方案：依项目开发连接约定检查并恢复 SSH 隧道，不切换本地数据库；单独修正 status/stop 的安全识别逻辑。
 - 验证结果：既有记录确认按配置重新建立隧道后，三个端口恢复监听，隔离库后端启动、账号登录及浏览器对话成功。本次离线回归通过，另以只读 `status` 识别 PID 95987；未连接、停止或重启当前隧道，也未查明原退出原因。
-- 关联提交：本修复提交，提交号见 Git 历史。
+- 关联提交：f0e70cb6（本次修复及问题记录）。
 
 ## ISS-20261030-014 采购工作台真实 PostgreSQL 分页回归误用旧权限桩
 
