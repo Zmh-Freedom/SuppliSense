@@ -1,5 +1,53 @@
 # 项目问题记录
 
+## ISS-20261030-005 隔离浏览器验收期间凭据回显与旧快照误删
+
+- 发现日期：2026-10-30
+- 状态：待用户处理凭据；旧快照待恢复
+- 优先级：P1
+- 现象：隔离测试管理员登录时，Playwright CLI 的页面快照工具返回将密码输入值以明文回显；随后清理操作误删了仓库 `.playwright-cli/` 中 2026-09 的旧快照，而非本次生成的快照。
+- 影响：该隔离账号凭据已出现在本次工具调用返回中，应视为泄露；旧快照为 Git 忽略文件，无法通过当前仓库版本恢复。本记录不包含凭据或快照内容。
+- 根因：验收时未避免对已填密码的表单进行快照；清理时使用了跨历史文件的匹配结果，而非严格限定本次产生的文件。
+- 修复方案：停止相关删除；由账号所有者更换受影响的隔离账号凭据；后续验收不快照已填密码的表单，仅清理本次明确创建的文件。查找可恢复备份，无法恢复时明确报告。
+- 验证结果：`git ls-files` 未找到所列快照，`.gitignore` 忽略该目录；`tmutil` 未发现配置的备份目标或本地快照，同名文件检索未发现副本。未修改密码；目前尚未恢复误删文件。
+- 关联提交：待定。
+
+## ISS-20261030-006 意图提取不可用时维度词澄清候选被提前清理
+
+- 发现日期：2026-10-30
+- 状态：已修复（离线及隔离 API/PG 回归通过）
+- 优先级：P2
+- 现象：需要检查当意图提取器返回 `None` 时，“分析财务风险”是否仍能从缺主体路径生成供应商澄清。
+- 影响：若复现，系统仍会因维度候选过滤避免误选供应商，但不会向用户提出必要的补充问题。
+- 根因：`build_execution_context` 已执行 `_clear_dimension_only_target`；`load_execution_context` 随后把该已清理结果命名为 `pre_sanitized_context`。提取器不可用时，`_clarify_dimension_only_intent` 可能无法再找到原始候选和澄清条件。
+- 修复方案：对真实 `load_execution_context` 且仅将意图提取器替换为返回 `None` 的路径，基于仍保留的分析维度和“当前无有效主体”条件生成 `target_supplier_names` 澄清；不恢复或执行已清理的候选主体。
+- 验证结果：新 loader 回归先 RED（`llm_intent.needs_clarification` 为假），随后 GREEN：真实 `load_execution_context`、仅将意图提取器替换为返回 `None`，检查目标仍为空、`llm_intent` 与 `input_understanding` 均包含 `target_supplier_names` 澄清；loader 不负责持久化 `pending_clarification`，故该层不对此作断言。已确认有焦点的“它的财务风险”、正式公司名新主体和精确已知别名不触发缺主体 fallback。新恢复测试文件 `24 passed`；计划相关离线集 `199 passed`；`agent_e2e and not integration` `126 passed`。首次 live API/PG 扩展测试仅因断言预期为 `['financial']`、而确定性解析实际返回 `['financial', 'risk']` 失败；ISS-006 已记录该测试期望差异，未更改生产意图。更新断言后，完整隔离 FastAPI `/api/v1/chat/stream` + Harness + PostgreSQL/Mongo fixture `1 passed`（119.83s）：extractor=None 时返回缺主体澄清、无工具调用且未触发模型输入，pending clarification 写入 PG；所有本次 session、用户及合成供应商记录由 fixture 精确清理并归零。使用 `run_lifecycle_test` / `tianyancha_test` 显式测试库。未运行浏览器或真实模型验收。
+- 关联提交：待审阅后补充。
+
+## ISS-20261030-003 聊天会话上下文的任务类型校验失败
+
+- 发现日期：2026-10-30
+- 状态：实现及隔离 API/PG 验收通过；浏览器验收未完成，P0 门禁仍未通过
+- 优先级：P1
+- 现象：用户查询供应商资料时，聊天显示“会话上下文暂不可用，已停止执行”；错误在消息中重复展示。后端请求 `ed466876-e92a-40ce-949f-3a4b2536e1a4` 记录 `chat_context_load_failed`，Pydantic 校验指出 `AgentTask.task_type` 输入为 `none`。
+- 影响：该轮供应商查询在加载上下文时终止，未形成业务查询结果；截图显示错误文案重复。定向回归还发现显式换题后新主体名称可能把“改问”误包含在目标值中。
+- 根因：已确认 `AgentTask` 仅允许 `sourcing`、`analysis`、`comparison`、`action_draft`，任务转换会透传非空 `task_type`，而上游意图处理可能给普通问候保留 `none`；离线两轮中“你好”保存 `current_task.task_type=none`，下一轮 `_migrate_task` 因此触发 Pydantic ValidationError。用户原始请求的上一轮状态仍未取证。前端 `onError` 同时保存失败答案并保留带错误的实时状态，导致终态可能被两个渲染区域重复展示。换题解析的 `conversation_state._COMPANY_NAME_PREFIXES` 缺少“改问”，会把操作前缀拼到新主体。真实 API/PG 用例还确认“分析一下财务风险”会被短名称解析为目标“财务”，继而误走主体/范围澄清；三条离线回归均先 RED 复现。往返 fixture 原先把显式 `PG_DB=run_lifecycle_test` 错判成未覆盖，在任何写入前中断测试。后续回归又显示，只要历史引用列表非空，初版维度候选过滤也会被绕过；应只在维度词与某条已知供应商别名完全匹配时保留其主体语义，不能因无关引用而沿用误识别。
+- 修复方案：持久状态用 `current_task: null` 表达无任务；仅当历史 `none` 没有目标、维度及待恢复业务字段时视为空任务，带 capability、scope、requested_action、pending clarification 等事实时 fail closed 并保留诊断；纯问候/感谢保留待澄清、需求和审批事实，澄清回复可从 `current_task=null` 恢复。Agent adapter 在确定性目标与 LLM overlay 边界排除没有已知主体、且候选仅等于分析维度的短名称，将其转为缺主体澄清；“改问”被加入公司提及前缀。错误终态只落入一个持久答案并清除重复实时错误状态。往返 fixture 以显式测试库变量拒绝共享库，并通过 `current_database()` 确认实际连接。
+- 验证结果：历史离线两轮故障、维度误识别与兼容回归均有 RED→GREEN 记录；本轮复跑计划相关离线集（含新回归）`199 passed`，此前 `agent_e2e and not integration` `126 passed`。真实 FastAPI `/api/v1/chat/stream` + Harness + 显式隔离 `run_lifecycle_test` PostgreSQL / `tianyancha_test` Mongo 用例 `1 passed`（119.83s），覆盖问候→查询、A→“它”→A→明确改问 B、无主体澄清→补充（含 extractor=None 的缺主体澄清）、历史空 `none` 恢复、跨用户拒绝，以及新增共享简称“三祥”→澄清→完整名称确认：模型候选 A 被确定性歧义覆盖，确认前零工具调用，确认 A 后只调用 A；检查终态/目标/工具/evidence/PG 状态与单次上下文加载，按确切 session ID 清理并验证归零。dimension-only 回归确认裸财务维度不绑定无关历史主体，但已知供应商别名“财务”仍解析到该正式主体。隔离 PG Supervisor/Control Plane `22 passed`，审批暂停/恢复/批准/拒绝、取消、撤权和并发边界均有覆盖，未批准前 writer 未调用。前端此前全量 `31 files / 293 passed` 且 typecheck/lint/build 通过；本轮 ChatView/ChatMessageList 定向 `2 files / 74 passed`。浏览器验收未完成：只打开隔离登录页并填入现存测试凭据，未提交登录或聊天；因登录页快照回显凭据，按安全指示关闭本次 session 和本地服务。真实模型、真实供应商数据及用户实际权限均未验证；临时受控边界和测试证据均为 synthetic。P0 不得标记全部完成。
+- 关联提交：待审阅后补充。
+
+## ISS-20261030-004 多轮集成 API 的 Mongo 会话投影清理边界曾被误判
+
+- 发现日期：2026-10-30
+- 状态：已澄清（非缺陷；精确 session 清理防护已验证）
+- 优先级：P3
+- 现象：检查旧 helper `_save_turn` 时，曾担心真实聊天 API 往返测试会在 Mongo `conversations` 留下展示文档，而当前 fixture 没有按会话 ID 清理。
+- 影响：未发现实际数据残留；共享开发库和生产数据未涉及。若未来测试路径改为兼容 fallback，显式按本次会话 ID 复核清理仍有价值。
+- 根因：当前 API/Harness 使用持久化 `ExecutionPermit`，流式终态由 PostgreSQL `next_context` 提交，不走会写 Mongo 的 `_save_turn` 分支；只根据 helper 的存在推断活动路径会造成误判。
+- 修复方案：测试 `finally` 按本测试确切 session ID 删除并断言 Mongo 投影数量归零，覆盖未来 fallback 变化；不做全库清理。
+- 验证结果：独立 `tianyancha_test` 中按两轮测试 marker 查询 `conversations` 均为 0；真实 API/PG 扩展往返用例 `1 passed`（123.28s），finally 按四个精确测试 session IDs 清理并断言投影归零。未发现任何旧残留，也未执行全库清理。
+- 关联提交：待审阅后补充。
+
 ## ISS-20261029-022 聊天业务卡片层级冗余且趋势图遗漏缺月信息
 
 - 发现日期：2026-10-29

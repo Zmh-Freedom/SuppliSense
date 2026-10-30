@@ -80,6 +80,22 @@ describe('ChatView session lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  it('shows a terminal context error once and keeps it once after remount', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sid: string, handlers: StreamCallbacks) => {
+      handlers.onError?.({ message: '会话上下文暂不可用，已停止执行，请稍后重试。' })
+      return ''
+    })
+    const user = userEvent.setup()
+    const view = renderChat()
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '查看供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(screen.getAllByText(/会话上下文暂不可用/)).toHaveLength(1))
+    expect(screen.queryByRole('button', { name: '停止' })).not.toBeInTheDocument()
+    view.unmount()
+    renderChat()
+    expect(screen.getAllByText(/会话上下文暂不可用/)).toHaveLength(1)
+  })
+
   it('shows the initial processing status after the new user message inside the chat', async () => {
     let finishStream: (() => void) | undefined;
     mocks.chatStream.mockImplementation(() => new Promise<string>(resolve => {

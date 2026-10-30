@@ -594,20 +594,12 @@ export default function ChatView() {
             setLoading(false);
             return;
           }
-          const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: data.message };
+          const failureMessage = `错误：${data.message}`;
+          const failedWorkflow = { ...workflowAccRef.current, status: 'failed' as const, message: failureMessage };
           workflowAccRef.current = failedWorkflow;
-          const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: `错误：${data.message}`, workflow: failedWorkflow }];
+          const failedMsgs: ChatMessage[] = [...newMsgs, { role: 'assistant', content: failureMessage, workflow: failedWorkflow }];
           persist(sid, failedMsgs);
-          setStreamState(prev => prev ? {
-            ...prev,
-            error: data.message,
-            workflowStatus: failedWorkflow,
-            approvalSubmitting: false,
-            agents: prev.agents ? {
-              ...prev.agents,
-              status: Object.fromEntries(Object.entries(prev.agents.status).map(([agent, status]) => [agent, status === 'running' ? 'error' : status])) as Record<string, AgentStatus>,
-            } : null,
-          } : null);
+          setStreamState(null);
           setLoading(false);
         },
         onClarification: (data) => {
