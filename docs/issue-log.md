@@ -10,7 +10,7 @@
 - 根因：`status_list` 同时展示状态 chip 和原始 limitation；当 limitation 已表达同域同状态时两者重复。另有 `counts.branch=0` fact list 与 `branch:no_records` 状态重复。
 - 修复方案：只在 limitation 明确包含同一资料域和状态时隐藏对应 chip，原限制文本及其他 limitation 均逐条保留；仅在唯一、受证据支持的计数为 0 且同域状态为 `no_records` 时，将计数显示在状态项并从主布局移除重复计数行，底层 claim 保留。
 - 验证结果：真实浏览器使用隔离库缓存复现；先加 RED，分别命中状态 chip/limitation 重复及零计数/无记录跨组重复；修复后绿。完整资料字段网格及股东 5+6 展开、刷新回放均正常；状态区“对外投资：未查询”“历史变更：未查询”各一次，分支机构明确无记录并显示 0 条，股东追问聚焦股东列表。另有独立限制保留测试。AssistantRichText、ChatMessageList、ChatView 85 项及完整前端 306 项通过；TypeScript typecheck、改动文件 ESLint、`git diff --check` 通过。使用隔离库缓存复验，没有调用天眼查。
-- 关联提交：待处理。
+- 关联提交：96bedc35（布局实现及问题记录）。
 
 ## ISS-20261030-020 Narrator 超时后工商资料没有呈现确定性布局
 
@@ -22,7 +22,7 @@
 - 根因：同一 run 的 `agent_answer.summary` 有有效布局标记（1255 字），SSE 同时携带 21 条 claims 和 5 条证据记录；前端整体校验拒绝 `expandable_list(g=holder)`，因为后端将 `counts.holder` 与 `profile.holder_names` 一并放入 holder block，而前端只允许后者。Narrator 超时触发了确定性布局 fallback，但 fallback 的元数据在前端因此校验失败，整块回退到 Markdown。
 - 修复方案：先添加包含 `counts.holder` 和股东名单的前端失败回归，再调整受控 block 的验证与展示，让记录数作为摘要字段、只把真实股东姓名计入长列表；保持整块拒绝未知/无证据 claim 的安全校验。不调用天眼查、不改变 API 返回结构。
 - 验证结果：已关闭本地连接池并从明确隔离的 `run_lifecycle_test` 只读读取 run `e8f7e46e-84e9-4e6d-97d4-f99c060a34bc`，确认 21 条 supported claims、5 条 formal 证据与 1255 字布局摘要。逐项检查实际 claim 路径后，只有 `counts.holder` 不符合 `expandable_list(holder)` 的前端白名单；8 个 baseinfo 字段、`counts.branch`、status/limitation 与证据均能通过现有约束。先新增失败回归（布局组件缺失，显示 Markdown），再允许 `counts.holder` 并单独渲染“股东信息记录数”，长列表仅统计姓名；目标回归转绿。复用同一缓存回答的真实浏览器刷新已看到字段网格、股东展开和状态区；本次浏览器 session 日志无法回取，因此这次回答的 LLM 排版成功或确定性 fallback 模式无法确认。AssistantRichText、ChatMessageList、ChatView 85 项及完整前端 306 项通过，TypeScript typecheck、改动文件 ESLint、`git diff --check` 通过。未调用天眼查。
-- 关联提交：待处理。
+- 关联提交：96bedc35（布局实现及问题记录）。
 
 ## ISS-20261030-019 布局改造浏览器验收中首轮出现工作流失败
 
@@ -48,7 +48,7 @@
 - 根因：答案只在 `AgentAnswer.summary` 中承载自由文本；Narrator 同时负责撰写事实表述和 Markdown，前端只有通用 Markdown renderer，没有安全的布局计划承载/映射机制。
 - 修复方案：建立通用内容原子和白名单积木布局契约；系统只提供权限可见、证据已验证的原子及状态/限制，LLM 只选择积木类型并组织原子 ID；服务端验证后将布局编码在现有 `summary` 字符串内，同时保留确定性 Markdown fallback。前端将受控布局映射到 React 积木；坏版本或无效布局回退 Markdown。首批覆盖工商字段组、股东长列表、资料域状态与限制，保持 SSE、持久化、刷新回放及现有 API 返回字段不变。
 - 验证结果：已先新增 narrator 与前端安全失败用例，再实现修复。后端 `test_agent_narrator.py` 57 项通过；SSE/full-chain/task14 共 85 项通过；前端 AssistantRichText、ChatMessageList、ChatView 共 83 项通过，覆盖布局在历史消息和实时 SSE 两种路径的同构渲染，以及漏 claim/边界、重复 block、未知 href、无证据、unsupported、synthetic 和过期证据时整页回退；TypeScript typecheck、所改文件 ESLint 和 `git diff --check` 通过。布局模型测试使用受控响应，无真实模型、浏览器或实时数据源验收；没有调用天眼查。SSE 与持久化继续使用原有 `agent_answer`、`evidence` 及摘要字符串承载，未修改 API route/schema。
-- 关联提交：待集成（遵照任务要求未提交）。
+- 关联提交：96bedc35（布局实现及问题记录）。
 
 ## ISS-20261030-017 数据库隧道管理脚本误判带参数的运行中隧道
 
