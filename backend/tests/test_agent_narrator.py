@@ -1,4 +1,6 @@
+import base64
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +33,7 @@ def _answer() -> AgentAnswer:
             confidence=0.9,
             validation_status="supported",
         )],
+        evidence_refs=["risk-evidence"],
     )
 
 
@@ -193,6 +196,150 @@ def _fake_narrator_client(body_markdown: str, prompt_capture: list[dict] | None 
     return FakeClient
 
 
+def _fake_layout_client(blocks: list[dict], prompt_capture: list[dict] | None = None):
+    class FakeClient:
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    if prompt_capture is not None:
+                        prompt_capture.append(kwargs)
+                    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=json.dumps({"blocks": blocks}, ensure_ascii=False)
+                    ))])
+
+    return FakeClient
+
+
+def _layout_from_summary(summary: str) -> dict | None:
+    marker = re.search(r'^\[//\]: # "ss-answer-layout:v1:([A-Za-z0-9_-]+)"$', summary, re.MULTILINE)
+    if marker is None:
+        return None
+    payload = marker.group(1)
+    payload += "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+
+
+def test_narrator_uses_layout_only_for_generic_answer_and_preserves_system_content(monkeypatch) -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="青岛三祥科技股份有限公司综合风险评分：7/100。",
+        claims=[_answer().claims[0]],
+        evidence_refs=["risk-evidence"],
+    )
+    prompt_capture: list[dict] = []
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_layout_client([
+            {"block_id": "dimension:risk", "component": "fact_list"},
+            {"block_id": "summary", "component": "overview"},
+        ], prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+
+    assert len(prompt_capture) == 1
+    assert narrated.summary.startswith(answer.summary)
+    assert "综合风险评分：7/100" in narrated.summary
+    assert "body_markdown" not in narrated.summary
+    layout = _layout_from_summary(narrated.summary)
+    assert layout == {
+        "v": 1,
+        "b": [
+            {"t": "fact_list", "g": "risk", "c": [0]},
+            {"t": "overview", "g": "summary"},
+        ],
+    }
+    prompt = json.loads(prompt_capture[0]["messages"][1]["content"])
+    assert prompt["available_blocks"]
+    assert any("不能输出事实、字段标签、来源、数字、链接、HTML 或 Markdown 正文" in rule for rule in prompt["rules"])
+
+
+def test_profile_layout_uses_only_requested_holder_claims_and_keeps_boundaries(monkeypatch) -> None:
+    answer = _profile_answer()
+    prompt_capture: list[dict] = []
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_layout_client([
+            {"block_id": "profile:holder", "component": "expandable_list"},
+        ], prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "它的股东有哪些")
+
+    assert len(prompt_capture) == 1
+    layout = _layout_from_summary(narrated.summary)
+    assert layout == {
+        "v": 1,
+        "b": [{"t": "expandable_list", "g": "holder", "c": [2, 3]}],
+    }
+    prompt = json.loads(prompt_capture[0]["messages"][1]["content"])
+    assert "甲股东" in json.dumps(prompt, ensure_ascii=False)
+    assert "法定代表人" not in json.dumps(prompt, ensure_ascii=False)
+    assert "对外投资" not in json.dumps(prompt, ensure_ascii=False)
+
+
+def test_invalid_layout_falls_back_without_dropping_missing_states_or_claims(monkeypatch) -> None:
+    answer = _profile_answer()
+    prompt_capture: list[dict] = []
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "app.graphs.agent_core.narrator.OpenAI",
+        lambda **_kwargs: _fake_layout_client([
+            {"block_id": "profile:holder", "component": "expandable_list"},
+            {"block_id": "profile:baseinfo", "component": "field_group", "text": "伪造字段"},
+        ], prompt_capture),
+    )
+
+    narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
+
+    assert len(prompt_capture) == 1
+    assert "伪造字段" not in narrated.summary
+    assert narrated.summary.count("青岛三祥科技股份有限公司股东：甲股东") == 1
+    layout = _layout_from_summary(narrated.summary)
+    assert layout is not None
+    assert {block["g"] for block in layout["b"]} == {"baseinfo", "holder", "boundaries"}
+    assert {tuple(item) for block in layout["b"] for item in block.get("s", [])} == {
+        ("invest", "not_queried"),
+        ("change", "query_failed"),
+        ("branch", "no_records"),
+    }
+
+
+def test_deterministic_layout_fallback_and_summary_budget(monkeypatch) -> None:
+    answer = AgentAnswer(
+        status="completed",
+        summary="边界摘要" + "可见" * 5974,
+        claims=[_answer().claims[0]],
+        evidence_refs=["risk-evidence"],
+    )
+
+    class UnexpectedNarrator:
+        def __init__(self, **_kwargs):
+            raise AssertionError("missing model key must not call a provider")
+
+    monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "")
+    monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+    assert narrated.summary.startswith(answer.summary)
+    # Layout metadata is optional, and must be omitted rather than exceeding
+    # the existing AgentAnswer.summary size boundary.
+    assert _layout_from_summary(narrated.summary) is None
+    assert len(narrated.summary) <= 12000
+
+    compact = answer.model_copy(update={"summary": "边界摘要"})
+    compact_narrated = narrate_answer(compact, "复核青岛三祥科技股份有限公司")
+    assert _layout_from_summary(compact_narrated.summary) == {
+        "v": 1,
+        "b": [
+            {"t": "overview", "g": "summary"},
+            {"t": "fact_list", "g": "risk", "c": [0]},
+        ],
+    }
+
+
 def _capture_narration_events(monkeypatch) -> list[tuple[str, str, dict]]:
     events: list[tuple[str, str, dict]] = []
     monkeypatch.setattr(
@@ -305,76 +452,61 @@ def test_narrator_keeps_an_uncertain_legal_conclusion_deterministic(monkeypatch)
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
     monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", UnexpectedNarrator)
 
-    assert narrate_answer(answer, "查询重大诉讼") is answer
+    narrated = narrate_answer(answer, "查询重大诉讼")
+    assert narrated is not answer
+    assert "无法确认是否存在重大诉讼" in narrated.summary
+    assert _layout_from_summary(narrated.summary) is not None
 
 
 def test_narrator_uses_model_markdown_layout_for_partial_company_profile(monkeypatch) -> None:
     answer = _profile_answer()
     prompt_capture: list[dict] = []
-    body = (
-        "### 企业基本信息\n\n"
-        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
-        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
-        "### 股东信息\n\n"
-        "- 青岛三祥科技股份有限公司股东：甲股东\n"
-        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
-        "### 查询边界\n\n"
-        "- 对外投资：未查询\n"
-        "- 历史变更：查询失败\n"
-        "- 分支机构：明确无记录\n"
-        "- 对外投资未查询，当前无法确认其情况\n"
-        "- 重大诉讼情况无法确认"
-    )
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
     monkeypatch.setattr(
         "app.graphs.agent_core.narrator.OpenAI",
-        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+        lambda **_kwargs: _fake_layout_client([
+            {"block_id": "profile:holder", "component": "expandable_list"},
+            {"block_id": "profile:baseinfo", "component": "field_group"},
+            {"block_id": "profile:boundaries", "component": "status_list"},
+        ], prompt_capture),
     )
 
     narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
 
     assert len(prompt_capture) == 1
     assert narrated.summary.startswith("工商资料\n\n")
-    assert "### 企业基本信息" in narrated.summary
-    assert "### 股东信息" in narrated.summary
-    assert "对外投资：未查询" in narrated.summary
-    assert "历史变更：查询失败" in narrated.summary
-    assert "分支机构：明确无记录" in narrated.summary
+    layout = _layout_from_summary(narrated.summary)
+    assert layout["b"][0]["g"] == "holder"
+    assert {tuple(item) for block in layout["b"] for item in block.get("s", [])} == {
+        ("invest", "not_queried"),
+        ("change", "query_failed"),
+        ("branch", "no_records"),
+    }
     assert "重大诉讼情况无法确认" in narrated.summary
     prompt = json.loads(prompt_capture[0]["messages"][1]["content"])
-    assert prompt["presentation_mode"] == "company_profile_markdown_layout"
-    assert any("不得新增来源、URL 或 Markdown 链接" in rule for rule in prompt["rules"])
+    assert prompt["presentation_mode"] == "company_profile_components"
+    assert any("不能输出事实、字段标签、来源、数字、链接、HTML 或 Markdown 正文" in rule for rule in prompt["rules"])
 
 
 def test_narrator_keeps_profile_layout_after_subject_confirmation_reply(monkeypatch) -> None:
     answer = _profile_answer()
     prompt_capture: list[dict] = []
-    body = (
-        "### 企业基本信息\n\n"
-        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
-        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
-        "### 股东信息\n\n"
-        "- 青岛三祥科技股份有限公司股东：甲股东\n"
-        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
-        "### 查询边界\n\n"
-        "- 对外投资：未查询\n"
-        "- 历史变更：查询失败\n"
-        "- 分支机构：明确无记录\n"
-        "- 对外投资未查询，当前无法确认其情况\n"
-        "- 重大诉讼情况无法确认"
-    )
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
     monkeypatch.setattr(
         "app.graphs.agent_core.narrator.OpenAI",
-        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+        lambda **_kwargs: _fake_layout_client([
+            {"block_id": "profile:baseinfo", "component": "field_group"},
+            {"block_id": "profile:holder", "component": "expandable_list"},
+            {"block_id": "profile:boundaries", "component": "status_list"},
+        ], prompt_capture),
     )
 
     narrated = narrate_answer(answer, "青岛三祥科技股份有限公司")
 
     assert len(prompt_capture) == 1
-    assert "### 股东信息" in narrated.summary
+    assert _layout_from_summary(narrated.summary) is not None
     assert "重大诉讼情况无法确认" in narrated.summary
 
 
@@ -382,25 +514,15 @@ def test_narrator_rejects_profile_layout_that_changes_an_uncertain_conclusion(mo
     answer = _profile_answer()
     prompt_capture: list[dict] = []
     log_events = _capture_narration_events(monkeypatch)
-    body = (
-        "### 企业基本信息\n\n"
-        "- 青岛三祥科技股份有限公司法定代表人：张敏\n"
-        "- 青岛三祥科技股份有限公司注册资本：5000万元\n\n"
-        "### 股东信息\n\n"
-        "- 青岛三祥科技股份有限公司股东：甲股东\n"
-        "- 青岛三祥科技股份有限公司股东：乙股东\n\n"
-        "### 查询边界\n\n"
-        "- 对外投资：未查询\n"
-        "- 历史变更：查询失败\n"
-        "- 分支机构：明确无记录\n"
-        "- 对外投资未查询，当前无法确认其情况\n"
-        "- 重大诉讼未发现"
-    )
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
     monkeypatch.setattr(
         "app.graphs.agent_core.narrator.OpenAI",
-        lambda **_kwargs: _fake_narrator_client(body, prompt_capture),
+        lambda **_kwargs: _fake_layout_client([
+            {"block_id": "profile:baseinfo", "component": "field_group", "text": "重大诉讼未发现"},
+            {"block_id": "profile:holder", "component": "expandable_list"},
+            {"block_id": "profile:boundaries", "component": "status_list"},
+        ], prompt_capture),
     )
 
     narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
@@ -412,7 +534,7 @@ def test_narrator_rejects_profile_layout_that_changes_an_uncertain_conclusion(mo
     assert "模型排版" not in narrated.summary
     assert any(
         level == "warning" and event == "answer_narration_degraded"
-        and fields["fallback_mode"] == "validated_company_profile_markdown"
+        and fields["fallback_mode"] == "deterministic_answer_layout"
         for level, event, fields in log_events
     )
 
@@ -446,13 +568,13 @@ def test_narrator_rejects_profile_layout_that_injects_a_link(monkeypatch) -> Non
     narrated = narrate_answer(answer, "查询青岛三祥科技股份有限公司工商资料")
 
     assert len(prompt_capture) == 1
-    assert narrated.summary != answer.summary
-    assert "### 股东信息" in narrated.summary
+    assert narrated.summary.startswith("工商资料\n\n")
+    assert _layout_from_summary(narrated.summary) is not None
     assert "https://" not in narrated.summary
     assert "模型排版" not in narrated.summary
     assert any(
         level == "warning" and event == "answer_narration_degraded"
-        and fields["reason"] == "narrative_link_not_allowed"
+        and fields["reason"].startswith("invalid_response:")
         for level, event, fields in log_events
     )
 
@@ -483,7 +605,7 @@ def test_narrator_uses_claim_based_markdown_when_model_is_not_configured(monkeyp
     assert any(
         level == "info" and event == "answer_narration_skipped"
         and fields["reason"] == "missing_api_key"
-        and fields["fallback_mode"] == "validated_company_profile_markdown"
+        and fields["fallback_mode"] == "deterministic_answer_layout"
         for level, event, fields in log_events
     )
 
@@ -500,7 +622,7 @@ def test_profile_fallback_focuses_follow_up_on_requested_domain(monkeypatch) -> 
 
     narrated = narrate_answer(answer, "它的股东有哪些")
 
-    assert "### 股东信息" in narrated.summary
+    assert _layout_from_summary(narrated.summary)["b"][0]["g"] == "holder"
     assert "甲股东" in narrated.summary
     assert "乙股东" in narrated.summary
     assert "法定代表人" not in narrated.summary
@@ -572,7 +694,8 @@ def test_narrator_falls_back_when_model_adds_unverified_supplier_health(monkeypa
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary == answer.summary
+    assert narrated.summary.startswith(answer.summary)
+    assert _layout_from_summary(narrated.summary) is not None
 
 
 @pytest.mark.parametrize("unsupported_clause", ["现金流风险很高", "暂停采购"])
@@ -637,7 +760,8 @@ def test_narrator_falls_back_when_model_hides_claim_behind_limitation(monkeypatc
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary == answer.summary
+    assert narrated.summary.startswith(answer.summary)
+    assert _layout_from_summary(narrated.summary) is not None
 
 
 def test_narrative_validation_rejects_unsupported_procurement_recommendation() -> None:
@@ -684,7 +808,8 @@ def test_narrator_falls_back_when_model_issues_unapproved_procurement_instructio
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary == answer.summary
+    assert narrated.summary.startswith(answer.summary)
+    assert _layout_from_summary(narrated.summary) is not None
 
 
 def test_narrative_validation_allows_evidence_supported_procurement_review() -> None:
@@ -937,9 +1062,11 @@ def test_narrator_uses_only_validated_claims(monkeypatch) -> None:
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary.startswith("核验结果")
+    layout = _layout_from_summary(narrated.summary)
+    assert layout is not None
+    assert layout["b"][1]["c"] == [0]
     assert "现金流充裕" not in narrated.summary
-    assert "7/100" in narrated.summary
+    assert "规则摘要" in narrated.summary
 
 
 def test_narrator_falls_back_when_model_omits_structured_limitation(monkeypatch) -> None:
@@ -967,7 +1094,8 @@ def test_narrator_falls_back_when_model_omits_structured_limitation(monkeypatch)
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司的风险")
 
-    assert narrated.summary == answer.summary
+    assert narrated.summary.startswith(answer.summary)
+    assert _layout_from_summary(narrated.summary) is not None
     assert "财务数据未覆盖，无法判断现金流风险" in narrated.limitations
 
 
@@ -980,7 +1108,7 @@ def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
                 @staticmethod
                 def create(**_kwargs):
                     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
-                        content='{"type":"json_object","headline":"风险复核结果","body_markdown":"青岛三祥科技股份有限公司 综合风险评分：7/100","claim_refs":["risk-score"]}'
+                        content='{"type":"json_object","blocks":[{"block_id":"summary","component":"overview"},{"block_id":"dimension:risk","component":"fact_list"}]}'
                     ))])
 
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "test-key")
@@ -988,14 +1116,17 @@ def test_narrator_accepts_provider_json_object_wrapper(monkeypatch) -> None:
 
     narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
 
-    assert narrated.summary.startswith("核验结果")
+    assert _layout_from_summary(narrated.summary) is not None
 
 
 def test_narrator_falls_back_when_llm_is_not_configured(monkeypatch) -> None:
     answer = _answer()
     monkeypatch.setattr("app.graphs.agent_core.narrator.settings.LLM_API_KEY", "")
 
-    assert narrate_answer(answer, "复核青岛三祥科技股份有限公司") is answer
+    narrated = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
+    assert narrated is not answer
+    assert narrated.summary.startswith(answer.summary)
+    assert _layout_from_summary(narrated.summary) is not None
 
 
 def test_narrator_falls_back_when_provider_returns_empty_content(monkeypatch) -> None:
@@ -1015,8 +1146,9 @@ def test_narrator_falls_back_when_provider_returns_empty_content(monkeypatch) ->
     monkeypatch.setattr("app.graphs.agent_core.narrator.OpenAI", lambda **_kwargs: FakeClient())
 
     result = narrate_answer(answer, "复核青岛三祥科技股份有限公司")
-    assert result.summary == answer.summary
-    assert any("润色" in item for item in result.limitations)
+    assert result.summary.startswith(answer.summary)
+    assert _layout_from_summary(result.summary) is not None
+    assert result.limitations == answer.limitations
 
 
 def test_narrator_disables_sdk_retries_and_marks_safe_fallback(monkeypatch):
@@ -1046,7 +1178,8 @@ def test_narrator_disables_sdk_retries_and_marks_safe_fallback(monkeypatch):
     assert client_options[0]["max_retries"] == 0
     assert calls[0]["timeout"] == 20
     assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
-    assert any("润色" in item for item in result.limitations)
+    assert _layout_from_summary(result.summary) is not None
+    assert result.limitations == _answer().limitations
 
 
 def test_narrator_does_not_send_deepseek_options_to_other_models(monkeypatch):
