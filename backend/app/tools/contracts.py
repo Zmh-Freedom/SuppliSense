@@ -77,6 +77,8 @@ class TianyanchaProfileOutput(StrictToolOutput):
     source_message: str | None = None
     queried_at: str | None = None
     profile: dict[str, Any] = Field(default_factory=dict)
+    counts: dict[str, int] = Field(default_factory=dict)
+    collection_statuses: dict[str, dict[str, Any]] = Field(default_factory=dict)
     limitations: list[str] = Field(default_factory=list)
 
 

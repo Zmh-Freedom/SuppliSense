@@ -39,6 +39,12 @@ from app.graphs.agent_core.evidence_ledger import (
     EvidenceStatus,
     build_evidence_record,
 )
+from app.graphs.agent_core.profile_scope import (
+    PROFILE_DOMAINS,
+    profile_claim_domain,
+    profile_collection_domain,
+    requested_profile_domains,
+)
 from app.tools import TOOL_REGISTRY
 from app.tools.executor import ToolContext, ToolExecutor, ToolOutcome
 from app.core.logging import get_logger
@@ -1509,9 +1515,73 @@ def _summary(answer: AgentAnswer, state: HarnessState) -> str:
         return _summary_with_boundary(answer, f"已完成 {subject} 的替代供应商分析；找到 {int(count)} 家候选。", "下面展示候选来源、主营产品和当前核验状态。")
     if primary_capability == "company_profile":
         profile_claims = [claim for claim in answer.claims if claim.dimension == "company_profile"]
-        if not profile_claims:
+        data = _latest_tool_data(outcomes, {"lookup_company_profile"})
+        profile_message = str(current_task.get("user_message") or state.get("user_message") or "")
+        focused_domains = requested_profile_domains(profile_message)
+        selected_domains = focused_domains or set(PROFILE_DOMAINS)
+        domain_labels = {
+            "baseinfo": "企业基本信息",
+            "holder": "股东信息",
+            "invest": "对外投资",
+            "change": "历史变更",
+            "branch": "分支机构",
+        }
+        field_labels = {
+            "profile.baseinfo.name": "企业名称",
+            "profile.baseinfo.creditCode": "统一社会信用代码",
+            "profile.baseinfo.legalPersonName": "法定代表人",
+            "profile.baseinfo.regStatus": "登记状态",
+            "profile.baseinfo.regCapital": "注册资本",
+            "profile.baseinfo.regLocation": "注册地址",
+            "profile.baseinfo.established_date": "成立日期",
+            "profile.baseinfo.industry": "所属行业",
+            "profile.holder_names": "股东",
+        }
+        details: list[str] = []
+        for claim in profile_claims:
+            domain = profile_claim_domain(claim.fact_path)
+            if domain is None or domain not in selected_domains:
+                continue
+            label = field_labels.get(str(claim.fact_path or ""))
+            value = claim.value
+            if label and value is not None:
+                details.append(f"{label}：{value}")
+        collection_labels = {
+            "baseinfo": "企业基本信息",
+            "holder": "股东",
+            "invest": "对外投资",
+            "changeInfo": "历史变更",
+            "branch": "分支机构",
+        }
+        collection_statuses = data.get("collection_statuses")
+        if isinstance(collection_statuses, dict):
+            status_labels = {
+                "no_records": "明确无记录",
+                "query_failed": "查询失败",
+                "not_queried": "未查询",
+            }
+            for collection, item in collection_statuses.items():
+                if not isinstance(item, dict):
+                    continue
+                domain = profile_collection_domain(collection)
+                if domain is None or domain not in selected_domains:
+                    continue
+                status_label = status_labels.get(str(item.get("status") or ""))
+                if status_label:
+                    details.append(f"{collection_labels.get(collection, collection)}：{status_label}")
+        details = list(dict.fromkeys(details))
+        if not details:
+            if focused_domains:
+                requested_label = "、".join(domain_labels[domain] for domain in PROFILE_DOMAINS if domain in focused_domains)
+                return f"已完成 {subject} 的{requested_label}检索，但当前没有可验证结果。"
             return f"已完成 {subject} 的工商资料检索，但当前没有可验证的工商资料结果。"
-        return _summary_with_boundary(answer, f"已完成 {subject} 的工商资料检索；已覆盖 {len(profile_claims)} 项资料域结果。", "可继续查看注册信息、股东、变更和分支机构明细。")
+        result = f"已完成 {subject} 的工商资料检索；" + "；".join(details) + "。"
+        suffix = (
+            "已按当前问题展示相关工商资料；其他资料域未在本轮展开。"
+            if focused_domains
+            else "可继续查看注册信息、股东、变更和分支机构明细。"
+        )
+        return _summary_with_boundary(answer, result, suffix)
     if primary_capability == "identity_review":
         identity_claims = [claim for claim in answer.claims if claim.dimension == "identity_review"]
         if not identity_claims:
@@ -2090,6 +2160,21 @@ def build_harness_graph(
                     *[status_limitations.get(status, "名单筛查状态需要人工核验") for status in unresolved_screening],
                 ])),
             })
+        profile_limitations: list[str] = []
+        for outcome in state.get("tool_outcomes", []):
+            if not isinstance(outcome, dict) or outcome.get("tool_name") != "lookup_company_profile":
+                continue
+            data = outcome.get("data") if isinstance(outcome.get("data"), dict) else {}
+            limitations = data.get("limitations")
+            if isinstance(limitations, list):
+                profile_limitations.extend(str(item) for item in limitations if str(item).strip())
+            if data.get("source_mode") == "partial":
+                profile_limitations.append("工商资料来源仅部分成功")
+        if profile_limitations:
+            answer = answer.model_copy(update={
+                "status": "partial" if answer.status == "completed" else answer.status,
+                "limitations": list(dict.fromkeys([*answer.limitations, *profile_limitations])),
+            })
         financial_outcomes = [
             outcome
             for outcome in state.get("tool_outcomes", [])
@@ -2362,6 +2447,22 @@ def build_harness_graph(
 def _no_plan_summary(state: HarnessState) -> str:
     """Explain missing intent/data instead of mislabeling it as an empty finding."""
     message = str((state.get("current_task") or {}).get("user_message") or state.get("user_message") or "")
+    execution_context = state.get("execution_context") or {}
+    conversation_state = execution_context.get("conversation_state") if isinstance(execution_context, dict) else {}
+    conversation_state = conversation_state if isinstance(conversation_state, dict) else {}
+    understanding = conversation_state.get("input_understanding")
+    understanding = understanding if isinstance(understanding, dict) else {}
+    pending = conversation_state.get("pending_clarification")
+    pending = pending if isinstance(pending, dict) else {}
+    if understanding.get("needs_clarification") or pending:
+        question = (
+            understanding.get("clarification_question")
+            or pending.get("clarification_question")
+        )
+        if isinstance(question, str) and question.strip():
+            return question.strip()
+        if understanding.get("capability") == "company_profile" or pending.get("capability") == "company_profile":
+            return "请提供完整企业名称或统一社会信用代码，确认主体后我再查询工商资料。"
     current_task = state.get("current_task") or {}
     if current_task.get("requirement_status") == "clarification_required":
         missing = [

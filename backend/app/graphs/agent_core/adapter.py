@@ -17,6 +17,14 @@ from app.services.conversation_state import build_conversation_state
 
 logger = get_logger()
 _SOURCING_MATERIAL_NUMBER_PATTERN = re.compile(r"物料号(?:为|是|[:：])?\s*(\d{4,})")
+_DIMENSION_ONLY_TARGETS = frozenset({
+    "风险", "风险评估", "风险分析", "财务", "财务风险", "商务", "商务风险",
+    "经营风险", "质量", "质量风险", "交付", "交付风险", "合规", "合规风险",
+    "诉讼", "司法风险", "舆情", "新闻", "esg",
+})
+_ANALYSIS_QUERY_PREFIXES = (
+    "分析", "查看", "查询", "看看", "评估", "复核", "帮我分析", "帮我看看",
+)
 
 
 class ExecutionContextContractViolation(RuntimeError):
@@ -131,6 +139,173 @@ def _raise_context_contract_violation(
 
 def _text_list(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()] if isinstance(value, list) else []
+
+
+def _is_dimension_only_target(
+    user_message: str,
+    target_names: list[str],
+    analysis_dimensions: list[str],
+    references: list[dict[str, Any]],
+) -> bool:
+    """Reject a deterministic short-name candidate that is only a risk dimension."""
+    if len(target_names) != 1 or not analysis_dimensions:
+        return False
+    target = str(target_names[0]).strip().casefold()
+    message = str(user_message or "").strip()
+    if target not in _DIMENSION_ONLY_TARGETS or not message.startswith(_ANALYSIS_QUERY_PREFIXES):
+        return False
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+        known_names = [reference.get("name"), reference.get("supplier_name")]
+        aliases = reference.get("aliases")
+        if isinstance(aliases, list):
+            known_names.extend(aliases)
+        if any(str(name or "").strip().casefold() == target for name in known_names):
+            return False
+    if re.search(r"(?:有限责任公司|股份有限公司|集团有限公司|有限公司|股份公司)", message):
+        return False
+    return True
+
+
+def _is_targetless_dimension_request(
+    user_message: str,
+    execution_context: dict[str, Any],
+    analysis_dimensions: list[str],
+) -> bool:
+    """Recognize a dimension-only question after its provisional target was cleared."""
+    message = str(user_message or "").strip()
+    current_task = execution_context.get("current_task")
+    current_task = current_task if isinstance(current_task, dict) else {}
+    if (
+        _text_list(current_task.get("target_supplier_names"))
+        or not analysis_dimensions
+        or not message.startswith(_ANALYSIS_QUERY_PREFIXES)
+        or re.search(r"(?:有限责任公司|股份有限公司|集团有限公司|有限公司|股份公司)", message)
+    ):
+        return False
+
+    dimension_mentions = {
+        dimension for dimension in _DIMENSION_ONLY_TARGETS if dimension in message.casefold()
+    }
+    if not dimension_mentions:
+        return False
+
+    conversation_state = execution_context.get("conversation_state")
+    conversation_state = conversation_state if isinstance(conversation_state, dict) else {}
+    resolution = conversation_state.get("entity_resolution")
+    if isinstance(resolution, dict) and _text_list(resolution.get("target_supplier_names")):
+        return False
+
+    for reference in execution_context.get("references") or []:
+        if not isinstance(reference, dict):
+            continue
+        known_names = [reference.get("name"), reference.get("supplier_name")]
+        aliases = reference.get("aliases")
+        if isinstance(aliases, list):
+            known_names.extend(aliases)
+        if any(
+            str(name or "").strip().casefold() in dimension_mentions
+            for name in known_names
+        ):
+            return False
+    return True
+
+
+def _clear_dimension_only_target(
+    user_message: str,
+    execution_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep dimension words from becoming unconfirmed supplier identities."""
+    current_task = execution_context.get("current_task")
+    if not isinstance(current_task, dict):
+        return execution_context
+    if not _is_dimension_only_target(
+        user_message,
+        _text_list(current_task.get("target_supplier_names")),
+        _text_list(current_task.get("analysis_dimensions")),
+        execution_context.get("references") or [],
+    ):
+        return execution_context
+
+    cleared_task = {**current_task, "target_supplier_names": [], "subtasks": []}
+    conversation_state = dict(execution_context.get("conversation_state") or {})
+    conversation_state["selected_supplier_names"] = []
+    conversation_state["selected_suppliers"] = []
+    state_task = conversation_state.get("current_task")
+    if isinstance(state_task, dict):
+        conversation_state["current_task"] = {
+            **state_task,
+            "target_supplier_names": [],
+            "subtasks": [],
+        }
+    return {
+        **execution_context,
+        "conversation_state": conversation_state,
+        "current_task": cleared_task,
+    }
+
+
+def _clarify_dimension_only_intent(
+    user_message: str,
+    execution_context: dict[str, Any],
+    extracted: Any,
+) -> Any:
+    """Ask for a supplier when parsing returned only an analysis dimension."""
+    current_task = execution_context.get("current_task")
+    current_task = current_task if isinstance(current_task, dict) else {}
+    if extracted is None:
+        target_names = _text_list(current_task.get("target_supplier_names"))
+        dimensions = _text_list(current_task.get("analysis_dimensions"))
+    else:
+        target_names = _text_list(getattr(extracted, "target_supplier_names", []))
+        dimensions = _text_list(getattr(extracted, "analysis_dimensions", []))
+    is_dimension_only_target = _is_dimension_only_target(
+        user_message,
+        target_names,
+        dimensions,
+        execution_context.get("references") or [],
+    )
+    is_targetless_dimension_request = extracted is None and _is_targetless_dimension_request(
+        user_message,
+        execution_context,
+        dimensions,
+    )
+    if not is_dimension_only_target and not is_targetless_dimension_request:
+        return extracted
+
+    if extracted is None:
+        from app.graphs.agent_core.intent_extractor import ConversationIntentExtraction
+
+        return ConversationIntentExtraction(
+            target_supplier_names=[],
+            analysis_dimensions=dimensions,
+            provider_capabilities=_text_list(current_task.get("provider_capabilities")),
+            capability=str(current_task.get("capability") or "none"),
+            scope=str(current_task.get("scope") or "none"),
+            task_type="analysis",
+            requested_action="none",
+            confidence=0.0,
+            needs_clarification=True,
+            missing_fields=["target_supplier_names"],
+            clarification_question="请补充要分析的供应商名称。",
+        )
+
+    field_sources = dict(getattr(extracted, "field_sources", {}) or {})
+    field_sources.pop("target_supplier_names", None)
+    missing_fields = list(getattr(extracted, "missing_fields", []) or [])
+    if "target_supplier_names" not in missing_fields:
+        missing_fields.append("target_supplier_names")
+    return extracted.model_copy(update={
+        "target_supplier_names": [],
+        "field_sources": field_sources,
+        "needs_clarification": True,
+        "missing_fields": missing_fields,
+        "clarification_question": (
+            getattr(extracted, "clarification_question", None)
+            or "请补充要分析的供应商名称。"
+        ),
+    })
 
 
 def collect_supplier_references(
@@ -344,6 +519,8 @@ def load_execution_context(
         previous_state=context.get("conversation_state", context.get("state", {})),
     )
     previous_state = context.get("conversation_state", context.get("state", {}))
+    pre_sanitized_context = execution_context
+    execution_context = _clear_dimension_only_target(user_message, execution_context)
     extracted = extract_conversation_intent(
         user_message,
         execution_context["references"],
@@ -352,6 +529,11 @@ def load_execution_context(
             "history": execution_context["history"],
             "conversation_state": previous_state if isinstance(previous_state, dict) else {},
         },
+    )
+    extracted = _clarify_dimension_only_intent(
+        user_message,
+        pre_sanitized_context,
+        extracted,
     )
     resolved = apply_extracted_conversation_intent(execution_context, extracted)
     resolved = _enforce_scope_query_intent(resolved, user_message)
@@ -1098,6 +1280,7 @@ def apply_extracted_conversation_intent(
         has_durable_control_expression,
         is_explicit_no_task,
         is_non_operational_request,
+        pure_conversation_kind,
     )
 
     initial_task = dict(execution_context.get("current_task") or {})
@@ -1123,9 +1306,10 @@ def apply_extracted_conversation_intent(
         }
         if initial_task.get("task_id"):
             cleared_task["task_id"] = initial_task["task_id"]
-        conversation_state["current_task"] = cleared_task
-        conversation_state.pop("pending_clarification", None)
-        conversation_state.pop("current_requirement", None)
+        conversation_state["current_task"] = None
+        if pure_conversation_kind(user_message) is None:
+            conversation_state.pop("pending_clarification", None)
+            conversation_state.pop("current_requirement", None)
         intent_snapshot = (
             extracted.model_dump(mode="json")
             if extracted is not None and callable(getattr(extracted, "model_dump", None))
@@ -1294,6 +1478,25 @@ def apply_extracted_conversation_intent(
         current_task["target_supplier_names"] = []
         conversation_state["selected_supplier_names"] = []
         conversation_state["selected_suppliers"] = []
+        missing_fields = list(getattr(extracted, "missing_fields", []) or [])
+        if "target_supplier_names" not in missing_fields:
+            missing_fields.append("target_supplier_names")
+        candidates = "、".join(resolved.candidate_names)
+        clarification_question = (
+            f"这个简称对应多个供应商{f'（{candidates}）' if candidates else ''}，"
+            "请提供完整企业名称或统一社会信用代码。"
+        )
+        extracted = extracted.model_copy(update={
+            "target_supplier_names": [],
+            "scope": "pending_confirmation",
+            "needs_clarification": True,
+            "missing_fields": missing_fields,
+            "ambiguities": list(dict.fromkeys([
+                *getattr(extracted, "ambiguities", []),
+                "简称无法唯一匹配到企业主体",
+            ]))[:5],
+            "clarification_question": clarification_question,
+        })
     else:
         # LLM-extracted explicit names are validated for this turn. The
         # deterministic resolver also handles pronouns/aliases, but must not
@@ -1353,6 +1556,8 @@ def apply_extracted_conversation_intent(
     elif task_type == "comparison":
         current_task["task_type"] = "comparison"
         current_task["comparison"] = True
+    elif task_type == "analysis" and getattr(extracted, "needs_clarification", False):
+        current_task["task_type"] = "analysis"
     elif (target_names or dimensions) and not is_write_action:
         current_task["task_type"] = "analysis"
     conversation_state["entity_memory"] = resolved.memory.model_dump(mode="json")
@@ -1390,6 +1595,18 @@ def apply_extracted_conversation_intent(
     conversation_state["current_task"] = current_task
     intent_snapshot = extracted.model_dump(mode="json")
     conversation_state["input_understanding"] = intent_snapshot
+    if extracted.needs_clarification:
+        conversation_state["pending_clarification"] = {
+            "task_type": task_type,
+            "capability": capability,
+            "scope": extracted.scope,
+            "missing_fields": list(extracted.missing_fields),
+            "target_supplier_names": target_names,
+            "analysis_dimensions": dimensions,
+            "provider_capabilities": provider_capabilities,
+            "clarification_question": extracted.clarification_question,
+            "interpretation_summary": extracted.interpretation_summary,
+        }
     logger.info(
         "conversation_intent_execution_overlay",
         session_id=execution_context.get("session_id"),
@@ -1481,15 +1698,17 @@ def build_execution_context(
         planned["user_message"] = user_message
         conversation_state["current_task"] = planned
         current_task = planned
-    conversation_state["current_task"] = current_task
+    conversation_state["current_task"] = (
+        None if current_task.get("task_type") == "none" else current_task
+    )
 
-    return {
+    return _clear_dimension_only_target(user_message, {
         "session_id": session_id,
         "history": normalized_history,
         "references": normalized_references,
         "conversation_state": conversation_state,
         "current_task": current_task,
-    }
+    })
 
 
 def build_execution_prompt(execution_context: dict[str, Any]) -> str:

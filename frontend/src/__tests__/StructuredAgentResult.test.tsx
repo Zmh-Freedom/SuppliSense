@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import StructuredAgentResult from '../components/StructuredAgentResult';
 import type { AgentAnswer, AgentEvidenceRecord } from '../types';
@@ -51,7 +51,92 @@ const evidence: AgentEvidenceRecord[] = [{
   },
 }];
 
+const profileEvidence: AgentEvidenceRecord[] = [
+  { collection: 'baseinfo', label: '企业基本信息', status: 'available', collectionStatus: 'has_records', count: 1 },
+  { collection: 'holder', label: '股东信息', status: 'available', collectionStatus: 'has_records', count: 2 },
+  { collection: 'invest', label: '对外投资', status: 'unavailable', collectionStatus: 'query_failed', count: 0 },
+  { collection: 'changeInfo', label: '历史变更', status: 'missing', collectionStatus: 'not_queried', count: 0 },
+  { collection: 'branch', label: '分支机构', status: 'confirmed_empty', collectionStatus: 'no_records', count: 0 },
+].map(({ collection, label, status, collectionStatus, count }) => ({
+  evidence_id: `profile-${collection}`,
+  entity_id: 'company:profile',
+  dimension: 'company_profile',
+  provider: 'tianyancha',
+  source_type: 'tianyancha_api',
+  status,
+  data_mode: 'formal',
+  collected_at: '2026-10-30T08:00:00Z',
+  facts: {
+    company_name: '青岛三祥科技股份有限公司',
+    collection,
+    collection_status: collectionStatus,
+    collection_label: label,
+    counts: { [collection]: count },
+  },
+}));
+
+const profileAnswer: AgentAnswer = {
+  status: 'partial',
+  summary: '工商资料：青岛三祥科技股份有限公司法定代表人：张敏；股东：甲股东、乙股东；对外投资：查询失败；历史变更：未查询；分支机构：明确无记录。',
+  claims: [
+    {
+      claim_id: 'profile-legal-person',
+      entity_id: 'company:profile',
+      dimension: 'company_profile',
+      statement: '青岛三祥科技股份有限公司法定代表人：张敏',
+      value: '张敏',
+      fact_path: 'profile.baseinfo.legalPersonName',
+      evidence_refs: ['profile-baseinfo'],
+      confidence: 0.95,
+      validation_status: 'supported',
+      validation_reasons: [],
+    },
+    {
+      claim_id: 'profile-holder-a',
+      entity_id: 'company:profile',
+      dimension: 'company_profile',
+      statement: '青岛三祥科技股份有限公司股东：甲股东',
+      value: '甲股东',
+      fact_path: 'profile.holder_names',
+      evidence_refs: ['profile-holder'],
+      confidence: 0.95,
+      validation_status: 'supported',
+      validation_reasons: [],
+    },
+  ],
+  limitations: [],
+  action_proposals: [],
+  action_receipts: [],
+  evidence_refs: profileEvidence.map(record => record.evidence_id),
+};
+
 describe('StructuredAgentResult', () => {
+  it('labels each company profile evidence status by its data domain', () => {
+    render(<StructuredAgentResult answer={profileAnswer} evidence={profileEvidence} />);
+
+    expect(screen.getByRole('heading', { name: '工商资料' })).toBeInTheDocument();
+    expect(screen.getByText('本次已核验的资料项')).toBeInTheDocument();
+    expect(screen.getByText(/对外投资：查询失败/)).toBeInTheDocument();
+    expect(screen.getByText(/历史变更：未查询/)).toBeInTheDocument();
+    expect(screen.getByText(/分支机构：明确无记录/)).toBeInTheDocument();
+    expect(screen.queryByText(/company_profile：/)).not.toBeInTheDocument();
+  });
+
+  it('reports company profile evidence as domains rather than data records', () => {
+    render(<StructuredAgentResult answer={profileAnswer} evidence={profileEvidence} />);
+
+    expect(screen.getByText('5 个资料域')).toBeInTheDocument();
+    expect(screen.queryByText('5 条数据记录')).not.toBeInTheDocument();
+  });
+
+  it('shows profile domain labels and actual business record counts in source details', () => {
+    render(<StructuredAgentResult answer={profileAnswer} evidence={profileEvidence} />);
+
+    expect(screen.getByText('天眼查 · 企业基本信息')).toBeInTheDocument();
+    expect(screen.getByText('天眼查 · 股东信息')).toBeInTheDocument();
+    expect(screen.getByText(/2 条业务记录/)).toBeInTheDocument();
+  });
+
   it('does not render a business card for a pure conversational answer', () => {
     render(<StructuredAgentResult answer={{
       ...answer,
@@ -108,6 +193,167 @@ describe('StructuredAgentResult', () => {
     expect(screen.queryByText(/平均 76\.7\/100/)).not.toBeInTheDocument();
     expect(screen.queryByText(/可直接打开详情/)).not.toBeInTheDocument();
   });
+
+  it('keeps the review summary compact and collapses detailed claim fields by default', () => {
+    const businessEvidence: AgentEvidenceRecord = {
+      ...evidence[0],
+      evidence_id: 'business-evidence',
+      entity_id: 'company:1',
+      dimension: 'business_risk',
+      provider: 'assess_business_risk',
+      source_type: 'domain_service_result',
+      facts: { settlement_change_ratio: -0.6, missing_month_count: 1 },
+    };
+    const businessAnswer: AgentAnswer = {
+      ...answer,
+      summary: '商务风险：结算金额环比下降，需要复核。',
+      claims: [{
+        ...answer.claims[0],
+        claim_id: 'settlement-change',
+        entity_id: 'company:1',
+        dimension: 'business_risk',
+        fact_path: 'settlement_change_ratio',
+        value: -0.6,
+        unit: 'ratio',
+        statement: '甲公司最新月实结算金额环比变化为 -60%。',
+        evidence_refs: ['business-evidence'],
+      }],
+      evidence_refs: ['business-evidence'],
+    };
+    render(<StructuredAgentResult answer={businessAnswer} evidence={[businessEvidence]} />);
+
+    const review = screen.getByRole('region', { name: '经营与交易分析复核结论' });
+    expect(review).toHaveTextContent('发现');
+    expect(review).toHaveTextContent('结论依据');
+    expect(review).toHaveTextContent('下一步');
+    const reviewDetails = review.querySelector('details');
+    expect(reviewDetails).not.toHaveAttribute('open');
+    expect([...review.querySelectorAll('article')].every(article => reviewDetails?.contains(article))).toBe(true);
+
+    const detailsToggle = screen.getByText(/展开字段明细/);
+    expect(detailsToggle.closest('details')).not.toHaveAttribute('open');
+    fireEvent.click(detailsToggle);
+    expect(screen.getByRole('table', { name: '已核验字段明细' })).toBeInTheDocument();
+  });
+
+  it('describes receipt-row changes without labeling them as delivery deterioration', () => {
+    const receiptClaim: AgentAnswer['claims'][number] = {
+      ...answer.claims[0],
+      claim_id: 'receipt-change',
+      entity_id: 'company:1',
+      dimension: 'business_risk',
+      fact_path: 'receipt_record_change_ratio',
+      value: 0.5,
+      unit: 'ratio',
+      statement: '甲公司最新月收货记录数环比变化为 +50%。',
+      evidence_refs: ['receipt-evidence'],
+    };
+    const receiptEvidence: AgentEvidenceRecord = {
+      ...evidence[0],
+      evidence_id: 'receipt-evidence',
+      entity_id: 'company:1',
+      dimension: 'business_risk',
+      provider: 'assess_business_risk',
+      facts: { receipt_record_change_ratio: 0.5 },
+    };
+    render(<StructuredAgentResult
+      answer={{ ...answer, claims: [receiptClaim], evidence_refs: ['receipt-evidence'] }}
+      evidence={[receiptEvidence]}
+    />);
+
+    fireEvent.click(screen.getByText(/展开字段明细/));
+    expect(screen.getByText('记录数变化，仅反映源明细行数')).toBeInTheDocument();
+    expect(screen.queryByText('波动需复核')).not.toBeInTheDocument();
+  });
+
+  it('keeps each business finding paired with its own evidence and boundary', () => {
+    const businessEvidence: AgentEvidenceRecord = {
+      ...evidence[0],
+      evidence_id: 'business-no-claim',
+      entity_id: 'company:1',
+      dimension: 'business_risk',
+      provider: 'assess_business_risk',
+      source_type: 'domain_service_result',
+      facts: { settlement_change_ratio: -0.6, latest_received_record_count: 4 },
+    };
+    const result: AgentAnswer = {
+      ...answer,
+      summary: '发现交易变化，财务资料未覆盖。',
+      claims: [],
+      limitations: ['财务资料当前未覆盖'],
+      evidence_refs: ['business-no-claim'],
+    };
+    render(<StructuredAgentResult answer={result} evidence={[businessEvidence]} />);
+
+    const review = screen.getByRole('region', { name: /复核结论/ });
+    const compactSummary = review.querySelector('dl');
+    expect(compactSummary).toHaveTextContent('最新月实结算金额环比显著下降');
+    expect(compactSummary).toHaveTextContent('本轮未取得该项可引用的结构化依据。');
+    expect(compactSummary).toHaveTextContent('核对该月是否存在结算跨月、退货冲销、暂停采购或订单调整');
+    expect(compactSummary).toHaveTextContent('结算变化只是复核信号，不能单独推断供应中断、付款逾期或供应商经营风险。');
+    expect(compactSummary).not.toHaveTextContent('本轮未取得可用的财务正式证据');
+  });
+
+  it('prioritizes an evidenced judicial finding over a financial coverage gap', () => {
+    const lawsuitClaim: AgentAnswer['claims'][number] = {
+      ...answer.claims[0],
+      claim_id: 'lawsuit-count',
+      entity_id: 'company:1',
+      dimension: 'risk',
+      fact_path: 'risk_detail.lawsuit_count',
+      value: 2,
+      statement: '甲公司公开司法信息中有 2 起诉讼记录。',
+      evidence_refs: ['risk-evidence'],
+    };
+    const riskEvidence: AgentEvidenceRecord = {
+      ...evidence[0],
+      evidence_id: 'risk-evidence',
+      entity_id: 'company:1',
+      dimension: 'risk',
+      provider: 'assess_risk',
+      source_type: 'risk_service_result',
+      facts: { risk_detail: { lawsuit_count: 2 } },
+    };
+    const businessCoverageEvidence: AgentEvidenceRecord = {
+      ...riskEvidence,
+      evidence_id: 'business-coverage',
+      dimension: 'business_risk',
+      provider: 'assess_business_risk',
+      facts: { missing_month_count: 2 },
+    };
+    const result: AgentAnswer = {
+      ...answer,
+      summary: '司法风险需核实，财务资料未覆盖。',
+      claims: [lawsuitClaim],
+      limitations: ['财务资料当前未覆盖'],
+      evidence_refs: ['risk-evidence'],
+    };
+    render(<StructuredAgentResult answer={result} evidence={[riskEvidence, businessCoverageEvidence]} />);
+
+    const review = screen.getByRole('region', { name: /复核结论/ });
+    const compactSummary = review.querySelector('dl');
+    expect(compactSummary).toHaveTextContent('公开司法信息中有 2 起诉讼记录');
+    expect(compactSummary).toHaveTextContent('诉讼记录数：2');
+    expect(compactSummary).toHaveTextContent('核实诉讼案件当前状态');
+    expect(compactSummary).toHaveTextContent('公开诉讼记录不等于当前存在履约中断');
+    expect(compactSummary).not.toHaveTextContent('财务信息覆盖不足，当前无法判断其财务变化');
+    expect(compactSummary).not.toHaveTextContent('月未取得交易快照');
+  });
+
+  it('shows the coverage gap when no actual finding is available', () => {
+    render(<StructuredAgentResult answer={{
+      ...answer,
+      claims: [],
+      limitations: ['财务资料当前未覆盖'],
+      evidence_refs: [],
+    }} evidence={[]} />);
+
+    const review = screen.getByRole('region', { name: /复核结论/ });
+    const compactSummary = review.querySelector('dl');
+    expect(compactSummary).toHaveTextContent('财务信息覆盖不足，当前无法判断其财务变化。');
+    expect(compactSummary).toHaveTextContent('本轮未取得可用的财务正式证据');
+    expect(compactSummary).toHaveTextContent('未取得财务数据不代表低风险或高风险');
+  });
 });
 
 it('renders operational facts without a formal risk classification', () => {
@@ -159,8 +405,8 @@ it('shows the operational source gap instead of implying a detected risk signal'
 });
 
 it.each([
-  ['unavailable', '暂不可用'],
-  ['confirmed_empty', '已确认无记录'],
+  ['unavailable', '查询未成功或暂不可用'],
+  ['confirmed_empty', '范围内未发现记录'],
 ])('shows the real sentiment source state %s without an empty article card', (status, label) => {
   const sourceRecord: AgentEvidenceRecord = {
     ...evidence[0], evidence_id: `sentiment-${status}`, dimension: 'sentiment', provider: 'news-source',

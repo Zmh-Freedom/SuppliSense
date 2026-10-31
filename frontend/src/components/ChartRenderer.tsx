@@ -89,37 +89,106 @@ function BarChartSimple({ data }: { data: ChartData }) {
   );
 }
 
-function LineChartSimple({ data }: { data: ChartData }) {
-  const items = data.data as Array<{ date: string; value: number }>;
+function LineChartSimple({ data, lineIsContinuous, missingValueLabel }: { data: ChartData; lineIsContinuous: boolean; missingValueLabel: string }) {
+  const items = data.data.map(item => {
+    const value = item.value;
+    return {
+      date: typeof item.date === 'string' ? item.date : '日期未知',
+      value: typeof value === 'number' && Number.isFinite(value) ? value : null,
+    };
+  });
   if (!items.length) return null;
-  const values = items.map(d => Number(d.value ?? 0));
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = max - min || 1;
 
-  const points = items.map((d, i) => {
-    const x = (i / (items.length - 1 || 1)) * 200 + 10;
-    const y = 60 - ((Number(d.value ?? 0) - min) / range) * 50;
-    return `${x},${y}`;
-  }).join(' ');
+  const values = items.flatMap(item => item.value === null ? [] : [item.value]);
+
+  const dateTable = <details className="mt-1 text-xs">
+    <summary className="min-h-8 cursor-pointer py-1 text-[var(--color-primary-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-focus-ring)]">
+      查看日期与数值
+    </summary>
+    <div className="overflow-x-auto">
+      <table aria-label={`${data.title}日期与数值`} className="w-full border-collapse text-left text-xs">
+        <caption className="sr-only">{data.title}日期与数值；缺失值表示该期未取得数值，不表示数值为零。</caption>
+        <thead><tr className="border-b border-[var(--color-border)] text-[var(--color-text-secondary)]"><th scope="col" className="py-1 pr-3 font-medium">日期/报告期</th><th scope="col" className="py-1 pr-3 font-medium">数值</th><th scope="col" className="py-1 font-medium">状态</th></tr></thead>
+        <tbody>{items.map((item, index) => <tr key={`${item.date}-${index}`} className="border-b border-[var(--color-border)] last:border-0">
+          <th scope="row" className="py-1 pr-3 font-normal text-[var(--color-text)]">{item.date}</th>
+          <td className="py-1 pr-3 tabular-nums text-[var(--color-text)]">{item.value === null ? '—' : String(item.value)}</td>
+          <td className="py-1 text-[var(--color-text-secondary)]">{item.value === null ? missingValueLabel : '已取得'}</td>
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </details>;
+
+  if (values.length === 0) {
+    return <div className="py-2">
+      <p className="text-xs text-[var(--color-text-secondary)]">没有可绘制数值；下表保留已有日期。</p>
+      {dateTable}
+    </div>;
+  }
+
+  if (!lineIsContinuous) {
+    return <div className="py-2">
+      <p className="text-xs leading-5 text-[var(--color-text-secondary)]">无法确认日期连续性，折线未绘制；下表仅列出已有日期与数值。</p>
+      {dateTable}
+    </div>;
+  }
+
+  const min = Math.min(0, ...values);
+  let max = Math.max(0, ...values);
+  if (min === max) max = min === 0 ? 1 : 0;
+  const range = max - min;
+  const left = 34;
+  const right = 232;
+  const top = 9;
+  const bottom = 67;
+  const yFor = (value: number) => top + ((max - value) / range) * (bottom - top);
+  const zeroY = yFor(0);
+  const xFor = (index: number) => items.length === 1
+    ? (left + right) / 2
+    : left + (index / (items.length - 1)) * (right - left);
+  const segments: string[][] = [];
+  let currentSegment: string[] = [];
+  items.forEach((item, index) => {
+    if (item.value === null) {
+      if (currentSegment.length > 0) segments.push(currentSegment);
+      currentSegment = [];
+      return;
+    }
+    currentSegment.push(`${xFor(index)},${yFor(item.value)}`);
+  });
+  if (currentSegment.length > 0) segments.push(currentSegment);
+  const formatAxisValue = (value: number) => new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(value);
 
   return (
     <div className="py-2">
-      <svg viewBox="0 0 220 75" className="w-full">
-        <polyline fill="none" stroke="#6366f1" strokeWidth="2" points={points} />
-        {items.map((d, i) => {
-          const x = (i / (items.length - 1 || 1)) * 200 + 10;
-          const y = 60 - ((Number(d.value ?? 0) - min) / range) * 50;
-          return <circle key={i} cx={x} cy={y} r="3" fill="#6366f1" />;
-        })}
-        {/* X 轴标签（首尾） */}
-        {items.length > 1 && (
-          <>
-            <text x="10" y="72" fontSize="7" fill="#9ca3af">{items[0].date}</text>
-            <text x="180" y="72" fontSize="7" fill="#9ca3af">{items[items.length - 1].date}</text>
-          </>
-        )}
+      <svg
+        role="img"
+        aria-label={`${data.title}趋势图；日期按已确认的等周期排列；纵轴含零基线；未取得数值的日期不补零，折线在缺口处断开。`}
+        viewBox="0 0 240 91"
+        className="w-full"
+      >
+        <line x1={left} y1={zeroY} x2={right} y2={zeroY} stroke="#9ca3af" strokeDasharray="3 2" strokeWidth="1" />
+        <text x={left - 5} y={top + 3} textAnchor="end" fontSize="8" fill="#6b7280">{formatAxisValue(max)}</text>
+        <text x={left - 5} y={zeroY + 3} textAnchor="end" fontSize="8" fill="#6b7280">0</text>
+        {min < 0 && <text x={left - 5} y={bottom + 3} textAnchor="end" fontSize="8" fill="#6b7280">{formatAxisValue(min)}</text>}
+        {items.map((item, index) => item.value === null ? (
+          <line
+            key={`missing-${item.date}-${index}`}
+            x1={xFor(index)} y1={top} x2={xFor(index)} y2={bottom}
+            stroke="#cbd5e1" strokeDasharray="2 3" strokeWidth="1"
+          >
+            <title>{item.date}：{missingValueLabel}，折线不跨越该日期</title>
+          </line>
+        ) : null)}
+        {segments.filter(segment => segment.length > 1).map((segment, index) => (
+          <polyline key={`segment-${index}`} fill="none" stroke="#6366f1" strokeWidth="2" points={segment.join(' ')} />
+        ))}
+        {items.map((item, index) => item.value === null ? null : (
+          <circle key={`point-${item.date}-${index}`} cx={xFor(index)} cy={yFor(item.value)} r="3" fill="#6366f1" />
+        ))}
+        <text x={left} y="86" fontSize="8" fill="#6b7280">{items[0].date}</text>
+        {items.length > 1 && <text x={right} y="86" textAnchor="end" fontSize="8" fill="#6b7280">{items[items.length - 1].date}</text>}
       </svg>
+      {dateTable}
     </div>
   );
 }
@@ -208,12 +277,12 @@ function RadarChartSimple({ data }: { data: ChartData }) {
   );
 }
 
-export default function ChartRenderer({ data }: { data: ChartData }) {
+export default function ChartRenderer({ data, compact = false, lineIsContinuous = false, missingValueLabel = '未提供数值' }: { data: ChartData; compact?: boolean; lineIsContinuous?: boolean; missingValueLabel?: string }) {
   const renderChart = () => {
     switch (data.type) {
       case 'gauge': return <GaugeChart data={data} />;
       case 'bar': return <BarChartSimple data={data} />;
-      case 'line': return <LineChartSimple data={data} />;
+      case 'line': return <LineChartSimple data={data} lineIsContinuous={lineIsContinuous} missingValueLabel={missingValueLabel} />;
       case 'pie': return <PieChartSimple data={data} />;
       case 'radar': return <RadarChartSimple data={data} />;
       default: return null;
@@ -221,7 +290,7 @@ export default function ChartRenderer({ data }: { data: ChartData }) {
   };
 
   return (
-    <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-3 my-2 max-w-sm">
+    <div className={compact ? 'min-w-0' : 'min-w-0 max-w-sm rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 my-2'}>
       {data.title && <p className="text-xs text-gray-500 mb-1">{data.title}</p>}
       {renderChart()}
     </div>

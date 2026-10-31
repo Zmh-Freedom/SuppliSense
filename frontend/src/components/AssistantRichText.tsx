@@ -1,7 +1,10 @@
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import type { AgentAnswer, AgentEvidenceRecord } from '../types';
 import ChartRenderer from './ChartRenderer';
+import AnswerLayoutView from './AnswerLayoutView';
+import { parseAnswerLayout } from './answerLayout';
 
 const markdownComponents: Components = {
   h1: ({ children }) => <h1 className="mb-3 mt-0 text-lg font-semibold tracking-tight text-[var(--color-text)]">{children}</h1>,
@@ -33,12 +36,26 @@ const markdownComponents: Components = {
   pre: ({ children }) => <pre className="my-4 overflow-x-auto rounded-xl bg-[var(--color-code-bg)] p-3 text-xs leading-5 text-[var(--color-text)]">{children}</pre>,
 };
 
-export default function AssistantRichText({ content, label }: { content: string; label?: string }) {
+export default function AssistantRichText({
+  content,
+  label,
+  answer,
+  evidence = [],
+}: {
+  content: string;
+  label?: string;
+  answer?: AgentAnswer;
+  evidence?: AgentEvidenceRecord[];
+}) {
+  const parsedLayout = parseAnswerLayout(content, answer, evidence);
+  const markdown = (text: string) => <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>;
   return <div className="assistant-rich-text">
     {label && <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] pb-2.5">
       <span className="rounded-full bg-[var(--color-primary-bg)]/10 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-[var(--color-primary-bg)]">{label}</span>
       <span className="text-[11px] text-[var(--color-text-muted)]">基于已核验数据生成</span>
     </div>}
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>
+    {parsedLayout
+      ? <AnswerLayoutView layout={parsedLayout.layout} answer={answer!} fallbackMarkdown={parsedLayout.fallbackMarkdown} renderOverview={markdown} />
+      : markdown(content)}
   </div>;
 }

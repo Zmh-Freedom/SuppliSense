@@ -1,5 +1,6 @@
 """Regression tests for LLM-first conversation intent extraction."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 
@@ -14,6 +15,9 @@ from app.graphs.agent_core.capability_routing import (
     normalize_analysis_dimensions,
     normalize_primary_capability,
 )
+from app.graphs.harness import ExecutionBudget, run_harness
+from app.tools.executor import ToolExecutor
+from app.tools.registry import ToolRegistry
 
 
 def test_llm_extractor_parses_current_explicit_company_before_history(monkeypatch):
@@ -943,6 +947,261 @@ def test_deterministic_fallback_does_not_turn_quoted_translation_into_supplier_a
     assert result.capability == "none"
     assert result.target_supplier_names == []
     assert result.analysis_dimensions == []
+
+
+def test_deterministic_fallback_clarifies_unresolved_short_company_profile_query():
+    result = intent_extractor._deterministic_extraction_fallback(
+        "我想查询青岛三祥的资料"
+    )
+
+    assert result.capability == "company_profile"
+    assert result.provider_capabilities == ["profile"]
+    assert result.task_type == "analysis"
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert result.missing_fields == ["target_supplier_names"]
+    assert "完整企业名称" in (result.clarification_question or "")
+
+
+def test_empty_model_output_retries_then_keeps_short_alias_targetless(monkeypatch):
+    calls = 0
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=""))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "我想查询青岛三祥的资料", []
+    )
+
+    assert calls == 2
+    assert result is not None
+    assert result.capability == "company_profile"
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+
+
+def test_successful_model_risk_candidate_cannot_override_short_company_profile_query(monkeypatch):
+    calls = 0
+    payload = {
+        "capability": "risk",
+        "target_supplier_names": ["青岛三祥"],
+        "analysis_dimensions": ["risk"],
+        "task_type": "analysis",
+        "interpretation_summary": "查询企业风险。",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "我想查询青岛三祥的资料", []
+    )
+
+    assert calls == 1
+    assert result is not None
+    assert result.capability == "company_profile"
+    assert result.provider_capabilities == ["profile"]
+    assert result.analysis_dimensions == []
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert "完整企业名称" in (result.clarification_question or "")
+
+
+def test_successful_model_preserves_risk_dimension_in_mixed_profile_request(monkeypatch):
+    payload = {
+        "capability": "company_profile",
+        "provider_capabilities": ["profile"],
+        "target_supplier_names": ["青岛三祥"],
+        "analysis_dimensions": ["risk"],
+        "task_type": "analysis",
+        "interpretation_summary": "查询工商资料并评估风险。",
+    }
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+
+    result = intent_extractor.extract_conversation_intent(
+        "查询青岛三祥工商资料并评估风险", []
+    )
+
+    assert result is not None
+    assert result.capability == "company_profile"
+    assert result.provider_capabilities == ["profile"]
+    assert result.analysis_dimensions == ["risk"]
+    assert result.target_supplier_names == []
+    assert result.needs_clarification is True
+    assert "完整企业名称" in (result.clarification_question or "")
+
+
+def test_empty_model_output_short_profile_query_is_clarified_without_tool_call(monkeypatch):
+    calls = 0
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=""))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    message = "我想查询青岛三祥的资料"
+    execution_context = adapter.load_execution_context(
+        session_id="short-profile-clarification",
+        user_message=message,
+    )
+
+    assert calls == 2
+    assert execution_context["current_task"]["target_supplier_names"] == []
+    assert execution_context["current_task"]["capability"] == "company_profile"
+    assert execution_context["conversation_state"]["pending_clarification"]["capability"] == "company_profile"
+    assert "完整企业名称" in execution_context["llm_intent"]["clarification_question"]
+
+    result = asyncio.run(run_harness({
+        "session_id": "short-profile-clarification",
+        "turn_id": "profile-clarification-turn",
+        "run_id": "profile-clarification-run",
+        "user_message": message,
+        "execution_context": execution_context,
+        "current_task": execution_context["current_task"],
+        "task_specs": [],
+        "budget": ExecutionBudget().model_dump(mode="json"),
+    }, executor=ToolExecutor(ToolRegistry())))
+
+    assert result["tool_call_count"] == 0
+    assert "完整企业名称" in result["answer"]["summary"]
+
+
+def test_fallback_only_resolves_short_profile_alias_when_unique_reference_exists():
+    message = "我想查询青岛三祥的资料"
+
+    unique = intent_extractor._deterministic_extraction_fallback(
+        message,
+        [{"name": "青岛三祥科技股份有限公司", "aliases": ["青岛三祥"]}],
+    )
+    ambiguous = intent_extractor._deterministic_extraction_fallback(
+        message,
+        [
+            {"name": "青岛三祥科技股份有限公司", "aliases": ["青岛三祥"]},
+            {"name": "青岛三祥新能源有限公司", "aliases": ["青岛三祥"]},
+        ],
+    )
+
+    assert unique.target_supplier_names == ["青岛三祥科技股份有限公司"]
+    assert unique.needs_clarification is False
+    assert ambiguous.target_supplier_names == []
+    assert ambiguous.needs_clarification is True
+    assert "多个供应商" in (ambiguous.clarification_question or "")
+
+
+def test_harness_rejects_llm_binding_for_ambiguous_short_profile_alias():
+    references = [
+        {"name": "青岛三祥科技股份有限公司", "aliases": ["青岛三祥"], "supplier_id": "supplier-a"},
+        {"name": "青岛三祥新能源有限公司", "aliases": ["青岛三祥"], "supplier_id": "supplier-b"},
+    ]
+    message = "我想查询青岛三祥的资料"
+    context = adapter.build_execution_context(
+        session_id="ambiguous-profile-alias",
+        user_message=message,
+        references=references,
+    )
+    extracted = intent_extractor.ConversationIntentExtraction(
+        target_supplier_names=["青岛三祥科技股份有限公司"],
+        provider_capabilities=["profile"],
+        capability="company_profile",
+        scope="single_supplier",
+        task_type="analysis",
+    )
+
+    resolved = adapter.apply_extracted_conversation_intent(context, extracted)
+
+    assert resolved["current_task"]["target_supplier_names"] == []
+    assert resolved["llm_intent"]["needs_clarification"] is True
+    assert "多个供应商" in resolved["llm_intent"]["clarification_question"]
+    assert "青岛三祥科技股份有限公司" in resolved["llm_intent"]["clarification_question"]
+    assert "青岛三祥新能源有限公司" in resolved["llm_intent"]["clarification_question"]
+
+
+def test_empty_model_follow_up_restores_pending_profile_query(monkeypatch):
+    calls = 0
+
+    class FakeCompletions:
+        def create(self, **_kwargs):
+            nonlocal calls
+            calls += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=""))]
+            )
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr(intent_extractor.settings, "LLM_API_KEY", "test-key")
+    monkeypatch.setattr(intent_extractor, "OpenAI", FakeOpenAI)
+    extracted = intent_extractor.extract_conversation_intent(
+        "青岛三祥科技股份有限公司",
+        [],
+        conversation_context={
+            "session_id": "profile-follow-up",
+            "conversation_state": {
+                "pending_clarification": {
+                    "task_type": "analysis",
+                    "capability": "company_profile",
+                    "scope": "pending_confirmation",
+                    "target_supplier_names": [],
+                    "provider_capabilities": ["profile"],
+                    "missing_fields": ["target_supplier_names"],
+                },
+            },
+        },
+    )
+
+    assert calls == 2
+    assert extracted is not None
+    assert extracted.capability == "company_profile"
+    assert extracted.provider_capabilities == ["profile"]
+    assert extracted.target_supplier_names == ["青岛三祥科技股份有限公司"]
+    assert extracted.needs_clarification is False
 
 
 def test_deterministic_fallback_keeps_quantity_purchase_on_sourcing_path():

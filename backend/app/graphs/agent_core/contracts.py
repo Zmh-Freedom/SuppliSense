@@ -189,7 +189,20 @@ def migrate_conversation_state(
 
 
 def _migrate_task(raw_task: Any, selected_names: list[str]) -> AgentTask | None:
-    if not isinstance(raw_task, dict):
+    if not isinstance(raw_task, dict) or not raw_task:
+        return None
+    if raw_task.get("task_type") == "none":
+        business_fields = (
+            "target_supplier_names", "analysis_dimensions", "requirement",
+            "llm_sourcing_requirement", "provider_capabilities", "subtasks",
+            "pending_clarification",
+        )
+        has_business_routing = any(
+            raw_task.get(field) not in (None, "", "none")
+            for field in ("capability", "scope", "requested_action")
+        )
+        if any(raw_task.get(field) for field in business_fields) or has_business_routing:
+            raise ValueError("task_type=none 包含待恢复的业务状态字段")
         return None
     dimensions = _string_items(raw_task.get("analysis_dimensions", []))
     task_type: TaskType = "analysis" if dimensions or selected_names else "sourcing"

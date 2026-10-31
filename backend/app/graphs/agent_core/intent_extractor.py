@@ -20,6 +20,7 @@ from app.graphs.agent_core.capability_routing import (
     detect_explicit_capabilities,
     explicit_primary_capability,
     has_durable_control_expression,
+    has_risk_scope_intent,
     is_explicit_no_task,
     is_generic_sourcing_category,
     is_non_operational_request,
@@ -197,8 +198,12 @@ def _sourcing_specification_is_required(
     return sufficient_filters < 3
 
 
-def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtraction:
-    """Recover intent from the current clause when the LLM is unavailable."""
+def _deterministic_extraction_fallback(
+    message: str,
+    supplier_references: list[dict[str, Any]] | None = None,
+    conversation_context: dict[str, Any] | None = None,
+) -> ConversationIntentExtraction:
+    """Keep explicit quoted targets executable when the LLM is unavailable."""
     if is_non_operational_request(message):
         return ConversationIntentExtraction(
             capability="none",
@@ -206,6 +211,75 @@ def _deterministic_extraction_fallback(message: str) -> ConversationIntentExtrac
             requested_action=explicit_write_action(message),
             confidence=0.0,
         )
+    requested_action = explicit_write_action(message)
+    profile_requested = any(token in message for token in (
+        "工商资料", "工商信息", "企业资料", "公司资料", "企业信息", "公司信息",
+        "注册资本", "注册地址", "法定代表人", "联系人", "联系方式", "联系电话", "官网",
+    )) or (
+        "资料" in message
+        and any(token in message for token in ("查询", "查一下", "查找", "查看", "给我", "提供", "了解"))
+    )
+    context_state = (conversation_context or {}).get("conversation_state")
+    context_state = context_state if isinstance(context_state, dict) else {}
+    pending = context_state.get("pending_clarification")
+    pending = pending if isinstance(pending, dict) else {}
+    pending_provider_capabilities = pending.get("provider_capabilities")
+    pending_profile = (
+        pending.get("capability") == "company_profile"
+        or (
+            isinstance(pending_provider_capabilities, list)
+            and "profile" in pending_provider_capabilities
+        )
+    )
+    if (profile_requested or pending_profile) and requested_action == "none":
+        from app.graphs.agent_core.entity_memory import memory_from_state, resolve_turn
+
+        resolution = resolve_turn(
+            message,
+            session_id=str((conversation_context or {}).get("session_id") or ""),
+            previous_memory=memory_from_state(
+                context_state,
+                session_id=str((conversation_context or {}).get("session_id") or ""),
+            ),
+            references=supplier_references or [],
+        )
+        target_names = [] if resolution.needs_clarification else resolution.target_supplier_names
+        continue_profile = profile_requested or bool(target_names) or resolution.needs_clarification
+        if continue_profile:
+            missing_fields = [] if target_names else ["target_supplier_names"]
+            if resolution.needs_clarification:
+                candidates = "、".join(resolution.candidate_names)
+                clarification_question = (
+                    f"这个简称对应多个供应商{f'（{candidates}）' if candidates else ''}，"
+                    "请提供完整企业名称或统一社会信用代码。"
+                )
+                ambiguities = ["简称无法唯一匹配到企业主体"]
+            elif target_names:
+                clarification_question = None
+                ambiguities = []
+            else:
+                clarification_question = "请提供完整企业名称或统一社会信用代码，确认主体后我再查询工商资料。"
+                ambiguities = ["当前简称未能映射到唯一企业主体"]
+            return ConversationIntentExtraction(
+                target_supplier_names=target_names,
+                provider_capabilities=["profile"],
+                capability="company_profile",
+                scope=("single_supplier" if len(target_names) == 1 else "supplier_group")
+                if target_names else "pending_confirmation",
+                task_type="analysis",
+                requested_action="none",
+                confidence=0.85 if target_names else 0.25,
+                interpretation_summary="识别到工商资料查询请求。",
+                ambiguities=ambiguities,
+                missing_fields=missing_fields,
+                needs_clarification=bool(missing_fields),
+                clarification_question=clarification_question,
+                field_sources={
+                    "target_supplier_names": (
+                        "explicit" if any(name in message for name in target_names) else "alias_resolution"
+                    )
+                } if target_names else {},
+            )
     intent_text = current_intent_text(message)
     is_supplier_risk_analysis = intent_text != message
     quoted = (
@@ -338,7 +412,7 @@ def extract_conversation_intent(
         client = OpenAI(api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
     except Exception as exc:
         logger.warning("conversation_intent_client_init_failed", error=str(exc))
-        return _deterministic_extraction_fallback(message)
+        return _deterministic_extraction_fallback(message, supplier_references, conversation_context)
     base_messages = [
         {
             "role": "system",
@@ -399,13 +473,13 @@ def extract_conversation_intent(
             ])
         except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as retry_exc:
             logger.warning("conversation_intent_extraction_retry_invalid", error=str(retry_exc))
-            return _deterministic_extraction_fallback(message)
+            return _deterministic_extraction_fallback(message, supplier_references, conversation_context)
         except Exception as retry_exc:
             logger.warning("conversation_intent_extraction_retry_failed", error=str(retry_exc))
-            return _deterministic_extraction_fallback(message)
+            return _deterministic_extraction_fallback(message, supplier_references, conversation_context)
     except Exception as exc:
         logger.warning("conversation_intent_extraction_failed", error=str(exc))
-        return _deterministic_extraction_fallback(message)
+        return _deterministic_extraction_fallback(message, supplier_references, conversation_context)
 
     if (
         extracted.requested_action == "none"
@@ -429,6 +503,22 @@ def extract_conversation_intent(
             "missing_fields": [],
             "field_sources": {},
         })
+
+    # A successful model response can still map a company-information request
+    # to generic supplier risk and bind an unverified short name. Keep this
+    # explicit profile route deterministic so an unknown or shared alias is
+    # clarified before any tool can receive it.
+    if (
+        explicit_primary_capability(message) == "company_profile"
+        and explicit_write_action(message) == "none"
+    ):
+        deterministic_profile = _deterministic_extraction_fallback(
+            message,
+            supplier_references,
+            conversation_context,
+        )
+        if deterministic_profile.capability == "company_profile":
+            extracted = deterministic_profile
 
     explicit_capability = explicit_primary_capability(message)
     semantic_conflicts: list[str] = []
@@ -615,6 +705,7 @@ def extract_conversation_intent(
         references=supplier_references,
     )
     context_requires_clarification = contextual_resolution.needs_clarification
+    profile_clarification_question: str | None = None
     if context_requires_clarification:
         # LLM candidates are suggestions. A deterministic ambiguous alias or
         # singular reference must not be converted into one or more targets.
@@ -625,6 +716,23 @@ def extract_conversation_intent(
         # Ordinals and pronouns are bound by the stored focus set. A model
         # suggestion for a different supplier must not replace that binding.
         validated_targets = contextual_resolution.target_supplier_names
+    if (
+        "company_profile" in explicit_capabilities
+        and has_risk_scope_intent(message)
+        and detected_action == "none"
+    ):
+        deterministic_profile = _deterministic_extraction_fallback(
+            message,
+            supplier_references,
+            conversation_context,
+        )
+        if deterministic_profile.capability == "company_profile":
+            if deterministic_profile.needs_clarification:
+                validated_targets = []
+                context_requires_clarification = True
+                profile_clarification_question = deterministic_profile.clarification_question
+            elif deterministic_profile.target_supplier_names:
+                validated_targets = deterministic_profile.target_supplier_names
     if "risk_comparison" in explicit_capabilities and len(validated_targets) >= 2:
         capability = "risk_comparison"
         task_type = "comparison"
@@ -703,7 +811,7 @@ def extract_conversation_intent(
     if context_requires_clarification and "target_supplier_names" not in missing_fields:
         missing_fields.append("target_supplier_names")
     if context_requires_clarification:
-        clarification_question = "我无法从当前会话唯一确定要处理的供应商，请确认具体企业。"
+        clarification_question = profile_clarification_question or "我无法从当前会话唯一确定要处理的供应商，请确认具体企业。"
     if (require_sourcing_specification or generic_sourcing_category) and "sourcing_requirement" not in missing_fields:
         missing_fields.append("sourcing_requirement")
     if generic_sourcing_category:
@@ -841,7 +949,7 @@ def _conversation_context_snapshot(context: dict[str, Any] | None) -> dict[str, 
             for key in (
                 "task_type", "capability", "scope", "missing_fields",
                 "target_supplier_names", "analysis_dimensions", "provider_capabilities",
-                "time_range", "requirement", "interpretation_summary",
+                "time_range", "requirement", "interpretation_summary", "clarification_question",
             )
             if key in pending and pending[key] not in (None, "", [])
         }

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 from typing import Any
 
 from langchain_core.tools import tool
@@ -34,6 +35,11 @@ _BUSINESS_COLLECTIONS = (
 _PROFILE_COLLECTIONS = ("baseinfo", "holder", "invest", "changeInfo", "branch")
 
 _COLLECTION_LABELS = {
+    "baseinfo": "企业基本信息",
+    "holder": "股东信息",
+    "invest": "对外投资",
+    "changeInfo": "历史变更",
+    "branch": "分支机构",
     "lawSuit": "法律诉讼",
     "courtRegister": "立案信息",
     "dishonesty": "失信被执行人",
@@ -77,7 +83,11 @@ def _unwrap(document: dict[str, Any] | None) -> Any:
 
 
 def _records(document: dict[str, Any] | None, limit: int = 20) -> list[dict[str, Any]]:
+    if document is not None and _document_provider_error_code(document) == 300000:
+        return []
     value = _unwrap(document)
+    if isinstance(value, dict) and _provider_error_code(value) == 300000:
+        return []
     if isinstance(value, dict) and isinstance(value.get("items"), list):
         value = value["items"]
     if isinstance(value, list):
@@ -145,10 +155,43 @@ def _unpack_ensure_result(result: Any) -> tuple[dict[str, dict[str, Any]], str, 
 
 def _collection_status(document: dict[str, Any] | None, attempted: str | None) -> str:
     if document is not None:
+        error_code = _document_provider_error_code(document)
+        if error_code == 300000:
+            return "no_records"
+        if error_code is not None:
+            return "query_failed"
         return "has_records" if _records(document) or _provider_total(document) > 0 else "no_records"
     if attempted in {"query_failed", "queried"}:
         return "query_failed"
     return "not_queried"
+
+
+def _provider_error_code(value: dict[str, Any]) -> int | None:
+    raw_code = value.get("error_code")
+    try:
+        code = int(raw_code)
+    except (TypeError, ValueError):
+        return None
+    return code if code != 0 else None
+
+
+def _document_provider_error_code(document: dict[str, Any]) -> int | None:
+    """Read provider status before ``_unwrap`` drops its outer response envelope."""
+    candidates: list[dict[str, Any]] = [document]
+    for key in ("items", "item"):
+        wrapper = document.get(key)
+        if isinstance(wrapper, dict):
+            candidates.append(wrapper)
+            result = wrapper.get("result")
+            if isinstance(result, dict):
+                candidates.append(result)
+    unwrapped = _unwrap(document)
+    if isinstance(unwrapped, dict):
+        candidates.append(unwrapped)
+    codes = [code for candidate in candidates if (code := _provider_error_code(candidate)) is not None]
+    if 300000 in codes:
+        return 300000
+    return codes[0] if codes else None
 
 
 def _provider_total(document: dict[str, Any] | None) -> int:
@@ -253,6 +296,195 @@ def _with_evidence(
     # the validated tool response.
     result.pop("evidence", None)
     return result
+
+
+def _active_profile_entity_id(company_name: str) -> str:
+    from app.tools.executor import get_active_tool_context
+
+    context = get_active_tool_context()
+    return str(context.entity_id if context and context.entity_id else f"entity:{company_name}")
+
+
+def _profile_claim(
+    *,
+    company_name: str,
+    entity_id: str,
+    collection: str,
+    fact_path: str,
+    statement: str,
+    value: str | int | float | bool,
+    evidence_id: str,
+    operator: str = "eq",
+    claim_id_suffix: str = "",
+) -> dict[str, Any]:
+    claim_id = f"lookup_company_profile:tianyancha:{company_name}:{collection}:{fact_path}"
+    if claim_id_suffix:
+        claim_id = f"{claim_id}:{claim_id_suffix}"
+    return {
+        "claim_id": claim_id,
+        "entity_id": entity_id,
+        "dimension": "company_profile",
+        "statement": statement,
+        "value": value,
+        "fact_path": fact_path,
+        "operator": operator,
+        "evidence_refs": [evidence_id],
+        "confidence": 0.95,
+    }
+
+
+def _profile_evidence(
+    *,
+    company_name: str,
+    source_mode: str,
+    source_message: str,
+    queried_at: str,
+    sections: dict[str, Any],
+    counts: dict[str, int],
+    collection_statuses: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    status_map = {
+        "has_records": "available",
+        "no_records": "confirmed_empty",
+        "not_queried": "missing",
+        "query_failed": "unavailable",
+    }
+    records: list[dict[str, Any]] = []
+    for collection in _PROFILE_COLLECTIONS:
+        status = collection_statuses[collection]["status"]
+        section = sections[collection]
+        profile_facts: dict[str, Any] = {collection: section}
+        if collection == "baseinfo" and isinstance(section, dict):
+            established_date = _established_date(section.get("estiblishTime"))
+            if established_date:
+                profile_facts[collection] = {**section, "established_date": established_date}
+        if collection == "holder":
+            profile_facts["holder_names"] = list(dict.fromkeys(
+                str(item.get("name") or item.get("holderName") or item.get("shareholderName") or "").strip()
+                for item in section
+                if isinstance(item, dict)
+                and str(item.get("name") or item.get("holderName") or item.get("shareholderName") or "").strip()
+            ))
+        records.append({
+            "evidence_id": f"lookup_company_profile:tianyancha:{company_name}:{collection}",
+            "dimension": "company_profile",
+            "provider": "tianyancha",
+            "source_type": "tianyancha_api",
+            "status": status_map[status],
+            "collected_at": queried_at,
+            "data_mode": "formal",
+            "facts": {
+                "company_name": company_name,
+                "source_mode": source_mode,
+                "source_message": source_message,
+                "collection": collection,
+                "collection_status": status,
+                "collection_label": collection_statuses[collection]["label"],
+                "counts": {collection: counts[collection]},
+                "profile": profile_facts,
+            },
+        })
+    return records
+
+
+def _profile_claims(
+    *,
+    company_name: str,
+    entity_id: str,
+    sections: dict[str, Any],
+    counts: dict[str, int],
+    collection_statuses: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    labels = {
+        "name": "企业名称",
+        "creditCode": "统一社会信用代码",
+        "legalPersonName": "法定代表人",
+        "regStatus": "登记状态",
+        "regCapital": "注册资本",
+        "regLocation": "注册地址",
+        "industry": "所属行业",
+    }
+    claims: list[dict[str, Any]] = []
+    for collection in _PROFILE_COLLECTIONS:
+        status = collection_statuses[collection]["status"]
+        if status not in {"has_records", "no_records"}:
+            continue
+        evidence_id = f"lookup_company_profile:tianyancha:{company_name}:{collection}"
+        count = counts[collection]
+        collection_label = collection_statuses[collection]["label"]
+        if collection != "baseinfo":
+            claims.append(_profile_claim(
+                company_name=company_name,
+                entity_id=entity_id,
+                collection=collection,
+                fact_path=f"counts.{collection}",
+                statement=(
+                    f"{company_name}工商资料，{collection_label}：明确无记录"
+                    if status == "no_records"
+                    else f"{company_name}工商资料，{collection_label}：{count}条记录"
+                ),
+                value=count,
+                evidence_id=evidence_id,
+            ))
+        if status != "has_records":
+            continue
+        if collection == "baseinfo":
+            profile = sections[collection]
+            for field, label in labels.items():
+                value = profile.get(field)
+                if not isinstance(value, (str, int, float, bool)) or not str(value).strip():
+                    continue
+                claims.append(_profile_claim(
+                    company_name=company_name,
+                    entity_id=entity_id,
+                    collection=collection,
+                    fact_path=f"profile.baseinfo.{field}",
+                    statement=f"{company_name}工商资料，{label}：{value}",
+                    value=value,
+                    evidence_id=evidence_id,
+                ))
+            established_date = _established_date(profile.get("estiblishTime"))
+            if established_date:
+                claims.append(_profile_claim(
+                    company_name=company_name,
+                    entity_id=entity_id,
+                    collection=collection,
+                    fact_path="profile.baseinfo.established_date",
+                    statement=f"{company_name}工商资料，成立日期：{established_date}",
+                    value=established_date,
+                    evidence_id=evidence_id,
+                ))
+        elif collection == "holder":
+            holder_names = sections[collection]
+            normalized_names = list(dict.fromkeys(
+                str(item.get("name") or item.get("holderName") or item.get("shareholderName") or "").strip()
+                for item in holder_names
+                if isinstance(item, dict)
+                and str(item.get("name") or item.get("holderName") or item.get("shareholderName") or "").strip()
+            ))
+            for holder_name in normalized_names:
+                claims.append(_profile_claim(
+                    company_name=company_name,
+                    entity_id=entity_id,
+                    collection=collection,
+                    fact_path="profile.holder_names",
+                    statement=f"{company_name}工商资料，股东：{holder_name}",
+                    value=holder_name,
+                    evidence_id=evidence_id,
+                    operator="contains",
+                    claim_id_suffix=hashlib.sha256(holder_name.encode("utf-8")).hexdigest()[:16],
+                ))
+    return claims
+
+
+def _established_date(value: Any) -> str | None:
+    """Format Tianyancha's millisecond timestamp as an explicit UTC date."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 100_000_000_000:
+        return None
+    try:
+        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).date().isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 @tool
@@ -487,8 +719,15 @@ def lookup_company_profile(company_name: str) -> dict:
             "limitations": ["企业名称至少需要两个字符"],
             "message": "企业名称至少需要两个字符",
         }
-    documents, source_mode, source_message, _ = _unpack_ensure_result(_ensure_documents(name, _PROFILE_COLLECTIONS))
-    profile = _base_profile(documents.get("baseinfo"))
+    documents, source_mode, source_message, fetch_statuses = _unpack_ensure_result(
+        _ensure_documents(name, _PROFILE_COLLECTIONS)
+    )
+    collection_statuses = _collection_statuses(_PROFILE_COLLECTIONS, documents, fetch_statuses)
+    profile = (
+        _base_profile(documents.get("baseinfo"))
+        if collection_statuses["baseinfo"]["status"] == "has_records"
+        else {}
+    )
     sections = {
         "baseinfo": profile,
         "holder": _records(documents.get("holder")),
@@ -496,34 +735,60 @@ def lookup_company_profile(company_name: str) -> dict:
         "changeInfo": _records(documents.get("changeInfo")),
         "branch": _records(documents.get("branch")),
     }
-    available = bool(documents)
+    counts = {
+        collection: (
+            _provider_total(documents.get(collection))
+            or len(_records(documents.get(collection)))
+        ) if documents.get(collection) else 0
+        for collection in _PROFILE_COLLECTIONS
+    }
+    resolved_statuses = {"has_records", "no_records"}
+    unresolved_statuses = {"not_queried", "query_failed"}
+    has_resolved_domains = any(
+        item["status"] in resolved_statuses for item in collection_statuses.values()
+    )
+    has_unresolved_domains = any(
+        item["status"] in unresolved_statuses for item in collection_statuses.values()
+    )
+    result_status = (
+        "partial" if has_resolved_domains and has_unresolved_domains
+        else "available" if has_resolved_domains
+        else source_mode
+    )
+    queried_at = _now()
+    entity_id = _active_profile_entity_id(name)
     payload = {
-        "status": "available" if available else source_mode,
+        "status": result_status,
         "company_name": name,
         "source": "天眼查工商资料",
         "source_mode": source_mode,
         "source_message": source_message,
-        "queried_at": _now(),
+        "queried_at": queried_at,
         "profile": sections,
-        "limitations": [] if available else ["未取得天眼查工商资料，不能形成工商信息结论"],
-        "evidence": _provider_evidence(
-            tool_name="lookup_company_profile",
+        "counts": counts,
+        "collection_statuses": collection_statuses,
+        "limitations": [
+            f"{item['label']}：{item['status_label']}"
+            for item in collection_statuses.values()
+            if item["status"] in unresolved_statuses
+        ] or ([] if has_resolved_domains else ["未取得天眼查工商资料，不能形成工商信息结论"]),
+        "evidence": _profile_evidence(
             company_name=name,
-            dimension="company_profile",
-            status=source_mode,
             source_mode=source_mode,
             source_message=source_message,
-            records=[{"section": key, "count": len(value) if isinstance(value, list) else int(bool(value))} for key, value in sections.items()],
+            queried_at=queried_at,
+            sections=sections,
+            counts=counts,
+            collection_statuses=collection_statuses,
+        ),
+        "claims": _profile_claims(
+            company_name=name,
+            entity_id=entity_id,
+            sections=sections,
+            counts=counts,
+            collection_statuses=collection_statuses,
         ),
     }
-    if available:
-        payload["claims"] = [_claim(
-            tool_name="lookup_company_profile",
-            company_name=name,
-            dimension="company_profile",
-            statement=f"天眼查工商资料已覆盖 {len(documents)} 个资料域",
-            value={key: len(value) if isinstance(value, list) else int(bool(value)) for key, value in sections.items()},
-        )]
     return _with_evidence(payload, tool_name="lookup_company_profile", company_name=name, dimension="company_profile")
 
 

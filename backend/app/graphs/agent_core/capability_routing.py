@@ -60,7 +60,11 @@ _EXPLICIT_CAPABILITY_RULES: tuple[ExplicitCapabilityRule, ...] = (
     ),
     ExplicitCapabilityRule(
         "company_profile",
-        ("工商资料", "注册资本", "注册地址", "法定代表人", "联系人", "联系方式", "官网", "联系电话", "电话"),
+        (
+            "工商资料", "企业资料", "公司资料", "企业信息", "公司信息", "的资料",
+            "资料查询", "注册资本", "注册地址", "法定代表人", "联系人",
+            "联系方式", "官网", "联系电话", "电话",
+        ),
     ),
     ExplicitCapabilityRule(
         "risk_comparison",
@@ -212,6 +216,12 @@ def has_durable_control_expression(message: str) -> bool:
     return any(phrase in text for phrase in _CONTROL_PHRASES)
 
 
+def has_risk_scope_intent(message: str) -> bool:
+    """Fail closed when a turn mentions risk, scoring, or supplier review."""
+    text = str(message or "")
+    return any(token in text for token in ("风险", "评分", "复核"))
+
+
 def explicit_primary_capability(message: str) -> str | None:
     """Return one capability only when the message is unambiguous."""
     text = str(message or "")
@@ -224,6 +234,8 @@ def explicit_primary_capability(message: str) -> str | None:
     if any(phrase in text for phrase in _GENERIC_RISK_REQUEST_PHRASES):
         return None
     candidates = detect_explicit_capabilities(text)
+    if "company_profile" in candidates and has_risk_scope_intent(text):
+        return None
     # A correction clause states the final requested capability. Earlier
     # capabilities in the same sentence may have been explicitly cancelled.
     if any(token in str(message or "") for token in ("改查", "改看", "改为", "改成")) and candidates:

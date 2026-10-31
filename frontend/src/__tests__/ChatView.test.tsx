@@ -80,6 +80,22 @@ describe('ChatView session lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  it('shows a terminal context error once and keeps it once after remount', async () => {
+    mocks.chatStream.mockImplementation(async (_message: string, _sid: string, handlers: StreamCallbacks) => {
+      handlers.onError?.({ message: '会话上下文暂不可用，已停止执行，请稍后重试。' })
+      return ''
+    })
+    const user = userEvent.setup()
+    const view = renderChat()
+    await user.type(screen.getByLabelText('向 AI 采购助手提问'), '查看供应商')
+    await user.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(screen.getAllByText(/会话上下文暂不可用/)).toHaveLength(1))
+    expect(screen.queryByRole('button', { name: '停止' })).not.toBeInTheDocument()
+    view.unmount()
+    renderChat()
+    expect(screen.getAllByText(/会话上下文暂不可用/)).toHaveLength(1)
+  })
+
   it('shows the initial processing status after the new user message inside the chat', async () => {
     let finishStream: (() => void) | undefined;
     mocks.chatStream.mockImplementation(() => new Promise<string>(resolve => {
@@ -1359,21 +1375,23 @@ describe('ChatView session lifecycle', () => {
     expect(screen.getByText('当前未覆盖')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '建议复核' })).not.toBeInTheDocument()
     expect(screen.queryByText('2 / 2 条已支持')).not.toBeInTheDocument()
-    expect(screen.getByText('发现了什么')).toBeInTheDocument()
-    expect(screen.getByText('依据是什么')).toBeInTheDocument()
-    expect(screen.getByText('采购人员需要核实什么')).toBeInTheDocument()
-    expect(screen.getByText('财务信息覆盖不足，当前无法判断其财务变化。')).toBeInTheDocument()
-    expect(screen.getByText('最新月实结算金额环比显著下降，需要核实交易变化原因。')).toBeInTheDocument()
+    expect(screen.getByText('发现')).toBeInTheDocument()
+    expect(screen.getByText('结论依据')).toBeInTheDocument()
+    expect(screen.getByText('下一步')).toBeInTheDocument()
+    expect(screen.getAllByText('财务信息覆盖不足，当前无法判断其财务变化。').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('最新月实结算金额环比显著下降，需要核实交易变化原因。').length).toBeGreaterThan(0)
     expect(screen.getAllByText('最新月实结算金额环比变化').length).toBeGreaterThan(0)
-    expect(screen.getByText('波动需复核')).toBeInTheDocument()
+    expect(screen.getByText('结算波动需复核')).toBeInTheDocument()
     expect(screen.getAllByText('商务风险')[0]).toHaveClass('bg-teal-50')
-    expect(screen.getByText(/收货记录数仅表示源明细行数/)).toBeInTheDocument()
-    expect(screen.getByText(/不将数据缺失判定为低风险或高风险/)).toBeInTheDocument()
-    expect(screen.getByText('采购人员需要核实什么').closest('article')?.querySelector('ol')).toBeTruthy()
-    expect(screen.getByText('供应商交易连续性趋势')).toBeInTheDocument()
+    expect(screen.getByText(/收货记录数表示源明细行数/)).toBeInTheDocument()
+    expect(screen.getByText(/这不是低风险或高风险判断/)).toBeInTheDocument()
+    const reviewDetails = screen.getByText('查看完整复核依据与检查项').closest('details')
+    expect(reviewDetails).not.toHaveAttribute('open')
+    expect(reviewDetails?.querySelector('ol')).toBeTruthy()
+    expect(screen.getByText('供应商交易连续性')).toBeInTheDocument()
     expect(screen.getByText('实结算金额（元）')).toBeInTheDocument()
     expect(screen.getByText('收货记录数（条）')).toBeInTheDocument()
-    expect(screen.getByText('财务趋势暂未覆盖。')).toBeInTheDocument()
+    expect(screen.getByText('财务趋势当前未覆盖。')).toBeInTheDocument()
   })
 
   it('trusts the server terminal status instead of turning partial into completed', async () => {

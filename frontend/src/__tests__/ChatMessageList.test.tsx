@@ -38,6 +38,18 @@ const verifiedEvidence: AgentEvidenceRecord = {
   collected_at: '2026-10-29T00:00:00Z',
 };
 
+function withRiskLayout(): AgentAnswer {
+  const layout = { v: 1, b: [
+    { t: 'overview', g: 'summary' },
+    { t: 'fact_list', g: 'risk', c: [0] },
+  ] };
+  const bytes = new TextEncoder().encode(JSON.stringify(layout));
+  let binary = '';
+  bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+  const marker = `[//]: # "ss-answer-layout:v1:${btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}"`;
+  return { ...verifiedAnswer, summary: `${verifiedAnswer.summary}\n\n${marker}` };
+}
+
 const noEvidenceConversation: AgentAnswer = {
   status: 'completed',
   summary: '我可以帮你查询和分析供应商风险。',
@@ -158,6 +170,13 @@ describe.each(surfaces)('$name', surface => {
     expect(screen.getByText('采购分析')).toBeInTheDocument();
     expect(screen.getByText('基于已核验数据生成')).toBeInTheDocument();
     expect(screen.getByTestId('business-result')).toHaveTextContent(verifiedAnswer.summary);
+  });
+
+  it('renders the same validated layout for persisted messages and live SSE answers', () => {
+    surface.render(withRiskLayout(), [verifiedEvidence]);
+
+    expect(screen.getByRole('group', { name: '综合风险' })).toBeInTheDocument();
+    expect(screen.getByText('综合风险评分为 73。')).toBeInTheDocument();
   });
 });
 

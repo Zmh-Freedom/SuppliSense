@@ -217,7 +217,7 @@ def test_postgres_workbench_groups_count_all_rows_and_pages_stably(
         )
         monkeypatch.setattr(
             workbench_service.case_service,
-            "_can_read_case",
+            "_can_read_case_for_workbench",
             lambda *_args: {
                 "can_read": True, "can_claim": True, "can_assign": False, "can_update": True,
                 "can_request_closure": True, "can_decide_closure": False, "can_reopen": False,
