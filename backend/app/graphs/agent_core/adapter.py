@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.logging import get_logger
+from app.graphs.agent_core.capability_routing import is_generic_sourcing_category
 from app.graphs.agent_core.entity_memory import memory_from_state, resolve_turn
 from app.graphs.agent_core.planner import plan_supplier_analysis_task
 from app.services.conversation_state import build_conversation_state
@@ -1011,6 +1012,28 @@ def _apply_harness_sourcing_requirement(
                 "requirement": merged_requirement,
                 "extraction_source": "context_merge",
             }
+    existing_category = (
+        str(existing.get("category") or existing.get("product") or "").strip()
+        if isinstance(existing, dict)
+        else ""
+    )
+    has_specific_existing_category = bool(existing_category) and not _is_generic_sourcing_constraint(
+        "", {"category": existing_category}
+    )
+    resolved_requirement = resolved.get("requirement") if isinstance(resolved, dict) else None
+    if (
+        resolved.get("status") == "ready"
+        and _is_generic_sourcing_constraint(user_message, resolved_requirement)
+        and not has_specific_existing_category
+    ):
+        # Broad suitability wording is not a procurement category. Preserve the
+        # sourcing intent, but require the user to identify what to source.
+        resolved = {
+            "status": "clarification_required",
+            "requirement": {},
+            "missing": ["category"],
+            "extraction_source": resolved.get("extraction_source"),
+        }
     current_task["requirement_status"] = resolved.get("status")
     current_task["requirement_extraction_source"] = resolved.get("extraction_source")
     if resolved.get("status") == "ready":
@@ -1172,7 +1195,10 @@ def _is_generic_sourcing_constraint(
         "替代方案",
         "预算有限",
     )
-    if category and any(token in category for token in generic_category_tokens):
+    if category and (
+        is_generic_sourcing_category(category)
+        or any(token in category for token in generic_category_tokens)
+    ):
         return True
     if any(token in message for token in generic_category_tokens) and not category:
         return True

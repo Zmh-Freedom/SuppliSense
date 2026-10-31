@@ -281,7 +281,7 @@ describe('AssistantRichText', () => {
 
     const unsupportedAnswer = {
       ...source,
-      claims: source.claims.map((claim, index) => index === 2 ? { ...claim, validation_status: 'unsupported' } : claim),
+      claims: source.claims.map((claim, index) => index === 2 ? { ...claim, validation_status: 'unsupported' as const } : claim),
     }
     rerender(<AssistantRichText content={unsupportedAnswer.summary} answer={unsupportedAnswer} evidence={profileEvidence()} />)
     expect(screen.queryByRole('group', { name: '企业基本信息' })).toBeNull()
